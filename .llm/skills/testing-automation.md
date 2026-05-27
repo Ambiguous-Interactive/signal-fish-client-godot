@@ -18,6 +18,14 @@ The LLM harness is validated with:
 ```powershell
 pwsh -NoProfile -File scripts/generate-llm-index.ps1 -Check
 pwsh -NoProfile -File scripts/lint-llm.ps1
+pwsh -NoProfile -File scripts/test-llm-harness.ps1
+```
+
+Or run all three plus the staged-generated-files check via the single hook
+entry point used by `.githooks/pre-commit` and CI:
+
+```powershell
+pwsh -NoProfile -File scripts/run-llm-hooks.ps1
 ```
 
 These checks enforce:
@@ -27,6 +35,12 @@ These checks enforce:
   `.llm/index.md`.
 - Vendor pointer files referencing `.llm/context.md`.
 - Generated `.llm/index.md` and context index freshness.
+- Frontmatter parsing edge cases (closed vs unclosed fences, quoted values,
+  case-insensitive keys) covered by `scripts/test-llm-harness.ps1`.
+- Generator and linter both import the shared
+  `scripts/lib/LlmHarness.psm1` module instead of redefining helpers.
+- Pre-commit hook detects untracked generated files (not just unstaged
+  modifications) so a fresh-from-generator file cannot slip through.
 
 ## Generated Files
 
@@ -54,4 +68,3 @@ integration tests:
 
 Keep CI fast at repo bootstrap. Add heavier Godot matrix jobs once there is
 runtime code to validate.
-

@@ -1,27 +1,36 @@
 name: LLM Harness
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+    pull_request:
+    push:
+        branches:
+            - main
 
 permissions:
-  contents: read
+    contents: read
 
 jobs:
-  validate:
-    name: Validate LLM context
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
+    validate:
+        name: Validate LLM context
+        runs-on: ubuntu-latest
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v6
 
-      - name: Validate generated index
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/generate-llm-index.ps1 -Check
+            - name: Run LLM harness (regenerate, lint, self-tests)
+              # Single source of truth shared with `.githooks/pre-commit`.
+              # `-SkipStagedCheck` because CI has no git index to stage against.
+              shell: pwsh
+              run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -SkipStagedCheck -VerboseOutput
 
-      - name: Lint LLM harness
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/lint-llm.ps1 -VerboseOutput
-
+            - name: Verify generated files are committed
+              # CI must additionally catch the case where a contributor forgot to
+              # commit regenerated files. `git diff` after the harness ran will
+              # show any drift introduced by regeneration.
+              shell: pwsh
+              run: |
+                  git diff --exit-code -- .llm/index.md .llm/context.md
+                  if ($LASTEXITCODE -ne 0) {
+                    Write-Host '::error::Generated .llm files differ from committed versions. Run scripts/run-llm-hooks.ps1 and commit the result.'
+                    exit 1
+                  }

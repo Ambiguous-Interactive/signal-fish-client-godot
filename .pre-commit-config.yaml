@@ -1,14 +1,11 @@
 repos:
   - repo: local
     hooks:
-      - id: generate-llm-index
-        name: Validate generated LLM index
-        entry: pwsh -NoProfile -File scripts/generate-llm-index.ps1 -Check
+      - id: llm-harness
+        name: LLM harness (regenerate index, lint, self-tests)
+        # Single source of truth: matches `.githooks/pre-commit` and CI.
+        # `-SkipStagedCheck` because the pre-commit framework manages its
+        # own staging of files in a temp area.
+        entry: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -SkipStagedCheck
         language: system
         pass_filenames: false
-      - id: lint-llm
-        name: Lint LLM harness
-        entry: pwsh -NoProfile -File scripts/lint-llm.ps1
-        language: system
-        pass_filenames: false
-

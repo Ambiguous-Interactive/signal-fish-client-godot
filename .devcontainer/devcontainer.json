@@ -1,0 +1,340 @@
+// Signal Fish Godot Client — VS Code Dev Container
+// Reference: https://aka.ms/devcontainer.json
+{
+  "name": "Signal Fish Godot Client",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".",
+    "args": {
+      "GODOT_VERSION": "4.3-stable",
+      "GODOT_RELEASE_LABEL": "4.3"
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": false,
+      "configureZshAsDefaultShell": false,
+      "installOhMyZsh": false,
+      "upgradePackages": true,
+      "username": "vscode",
+      "userUid": "automatic",
+      "userGid": "automatic"
+    },
+    // Upgrade git from the base image to a recent release via the official PPA;
+    // useful for GitHub Actions parity and modern `git` features.
+    "ghcr.io/devcontainers/features/git:1": {
+      "version": "latest",
+      "ppa": true
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/powershell:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12",
+      "installTools": false
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts",
+      "nodeGypDependencies": false
+    }
+  },
+  "overrideFeatureInstallOrder": [
+    "ghcr.io/devcontainers/features/common-utils",
+    "ghcr.io/devcontainers/features/git",
+    "ghcr.io/devcontainers/features/github-cli",
+    "ghcr.io/devcontainers/features/powershell",
+    "ghcr.io/devcontainers/features/python",
+    "ghcr.io/devcontainers/features/node"
+  ],
+  "remoteUser": "vscode",
+  "containerUser": "vscode",
+  "updateRemoteUserUID": true,
+  "forwardPorts": [
+    6005,
+    6006,
+    6007
+  ],
+  "portsAttributes": {
+    "6005": {
+      "label": "Godot LSP",
+      "onAutoForward": "silent"
+    },
+    "6006": {
+      "label": "Godot Debugger",
+      "onAutoForward": "silent"
+    },
+    "6007": {
+      "label": "Godot Debugger (alt)",
+      "onAutoForward": "silent"
+    }
+  },
+  "mounts": [
+    "source=sf-godot-precommit-cache,target=/home/vscode/.cache/pre-commit,type=volume",
+    "source=sf-godot-shell-history,target=/commandhistory,type=volume"
+  ],
+  "remoteEnv": {
+    "GODOT_HEADLESS": "/usr/local/bin/godot",
+    "POWERSHELL_TELEMETRY_OPTOUT": "1",
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "git config --global --add safe.directory ${containerWorkspaceFolder}",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // Godot
+        "geequlim.godot-tools",
+        // Language & format
+        "ms-vscode.powershell",
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml",
+        "editorconfig.editorconfig",
+        // Markdown
+        "davidanson.vscode-markdownlint",
+        "yzhang.markdown-all-in-one",
+        // Quality of life
+        "streetsidesoftware.code-spell-checker",
+        "usernamehw.errorlens",
+        "eamodio.gitlens",
+        "mhutchie.git-graph",
+        // GitHub
+        "github.vscode-github-actions",
+        "github.vscode-pull-request-github",
+        "github.remotehub",
+        // Note: GitHub Copilot / Copilot Chat are intentionally NOT auto-installed;
+        // they require a subscription. Install on demand if you use them.
+        // Theme & icons
+        "github.github-vscode-theme",
+        "pkief.material-icon-theme",
+        // AI
+        "openai.chatgpt",
+        "github.copilot-chat",
+        "anthropic.claude-code",
+        // Pretty
+        "oderwat.indent-rainbow"
+      ],
+      "settings": {
+        // Appearance
+        "workbench.colorTheme": "GitHub Dark Default",
+        "workbench.iconTheme": "material-icon-theme",
+        "workbench.productIconTheme": "default",
+        "workbench.tree.indent": 16,
+        "workbench.list.smoothScrolling": true,
+        "workbench.editor.highlightModifiedTabs": true,
+        "workbench.editor.tabSizing": "shrink",
+        "window.title": "${rootName}${separator}${activeEditorMedium}${separator}Signal Fish",
+        // Editor
+        "editor.fontFamily": "'FiraCode Nerd Font', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', Consolas, 'Courier New', monospace",
+        "editor.fontLigatures": true,
+        "editor.fontSize": 14,
+        "editor.lineHeight": 1.6,
+        "editor.cursorBlinking": "smooth",
+        "editor.cursorSmoothCaretAnimation": "on",
+        "editor.smoothScrolling": true,
+        "editor.minimap.renderCharacters": false,
+        "editor.minimap.maxColumn": 100,
+        "editor.bracketPairColorization.enabled": true,
+        "editor.guides.bracketPairs": "active",
+        "editor.guides.indentation": true,
+        "editor.renderWhitespace": "boundary",
+        "editor.renderLineHighlight": "all",
+        "editor.rulers": [
+          80,
+          100
+        ],
+        "editor.stickyScroll.enabled": true,
+        "editor.suggestSelection": "first",
+        "editor.inlineSuggest.enabled": true,
+        "editor.formatOnSave": true,
+        "editor.formatOnPaste": false,
+        "editor.tabSize": 4,
+        "editor.insertSpaces": false,
+        // Keep indentation explicit per-language; detection can fight with the
+        // language-specific overrides below (GDScript = tabs, YAML = 2-space).
+        "editor.detectIndentation": false,
+        // Files
+        "files.eol": "\n",
+        "files.encoding": "utf8",
+        "files.insertFinalNewline": true,
+        "files.trimFinalNewlines": true,
+        "files.trimTrailingWhitespace": true,
+        "files.associations": {
+          "*.gd": "gdscript",
+          "*.tres": "gdresource",
+          "*.tscn": "gdresource",
+          "*.gdshader": "gdshader",
+          "AGENTS.md": "markdown",
+          "CLAUDE.md": "markdown",
+          "GEMINI.md": "markdown",
+          "CHATGPT.md": "markdown",
+          "CODEX.md": "markdown",
+          ".cursorrules": "markdown",
+          ".windsurfrules": "markdown",
+          "llms.txt": "markdown"
+        },
+        "files.exclude": {
+          "**/.godot": true,
+          "**/.import": true,
+          "**/*.translation": true
+        },
+        "files.watcherExclude": {
+          "**/.godot/**": true,
+          "**/.import/**": true
+        },
+        // Terminal — pwsh as default to match repo automation
+        "terminal.integrated.defaultProfile.linux": "pwsh",
+        "terminal.integrated.profiles.linux": {
+          "pwsh": {
+            "path": "/usr/bin/pwsh",
+            "icon": "terminal-powershell",
+            "args": [
+              "-NoLogo"
+            ]
+          },
+          "bash": {
+            "path": "bash",
+            "icon": "terminal-bash"
+          }
+        },
+        "terminal.integrated.fontFamily": "'FiraCode Nerd Font', 'Cascadia Code', 'JetBrains Mono', monospace",
+        "terminal.integrated.fontSize": 13,
+        "terminal.integrated.cursorBlinking": true,
+        "terminal.integrated.smoothScrolling": true,
+        "terminal.integrated.scrollback": 10000,
+        "terminal.integrated.persistentSessionReviveProcess": "never",
+        // Git / GitLens
+        "git.autofetch": true,
+        "git.confirmSync": false,
+        "git.enableSmartCommit": true,
+        "gitlens.codeLens.enabled": false,
+        "gitlens.currentLine.enabled": true,
+        "gitlens.hovers.currentLine.over": "line",
+        // PowerShell
+        "powershell.codeFormatting.preset": "OTBS",
+        "powershell.codeFormatting.autoCorrectAliases": true,
+        "powershell.codeFormatting.trimWhitespaceAroundPipe": true,
+        "powershell.integratedConsole.showOnStartup": false,
+        "powershell.promptToUpdatePowerShell": false,
+        // YAML
+        "yaml.format.enable": true,
+        "yaml.validate": true,
+        "yaml.schemas": {
+          "https://json.schemastore.org/github-workflow.json": ".github/workflows/*.{yml,yaml}",
+          "https://json.schemastore.org/pre-commit-config.json": ".pre-commit-config.yaml"
+        },
+        // Markdown
+        "markdown.extension.toc.levels": "2..4",
+        "markdownlint.config": {
+          "default": true,
+          "MD013": false,
+          "MD033": false,
+          "MD041": false
+        },
+        // Godot Tools
+        "godotTools.editorPath.godot4": "/usr/local/bin/godot",
+        "godotTools.lsp.serverPort": 6005,
+        "godotTools.lsp.headless": true,
+        "[gdscript]": {
+          "editor.insertSpaces": false,
+          "editor.tabSize": 4,
+          "editor.defaultFormatter": "geequlim.godot-tools"
+        },
+        "[gdresource]": {
+          "editor.insertSpaces": false,
+          "editor.tabSize": 4
+        },
+        // Language-specific tab sizing
+        "[powershell]": {
+          "editor.tabSize": 4,
+          "editor.insertSpaces": true
+        },
+        "[python]": {
+          "editor.tabSize": 4,
+          "editor.insertSpaces": true
+        },
+        "[yaml]": {
+          "editor.tabSize": 2,
+          "editor.insertSpaces": true
+        },
+        "[json]": {
+          "editor.tabSize": 2,
+          "editor.insertSpaces": true
+        },
+        "[jsonc]": {
+          "editor.tabSize": 2,
+          "editor.insertSpaces": true
+        },
+        "[markdown]": {
+          "editor.tabSize": 2,
+          "editor.insertSpaces": true,
+          "editor.wordWrap": "on"
+        },
+        "[shellscript]": {
+          "editor.tabSize": 2,
+          "editor.insertSpaces": true,
+          "files.eol": "\n"
+        },
+        // Error Lens
+        "errorLens.enabledDiagnosticLevels": [
+          "error",
+          "warning",
+          "info"
+        ],
+        "errorLens.excludeBySource": [
+          "cSpell"
+        ],
+        // Spell checker — project vocabulary
+        "cSpell.language": "en",
+        "cSpell.words": [
+          "addon",
+          "addons",
+          "ambiguous",
+          "backpressure",
+          "devcontainer",
+          "devcontainers",
+          "gdresource",
+          "gdscript",
+          "gdshader",
+          "geequlim",
+          "godot",
+          "godotengine",
+          "godottools",
+          "jsonc",
+          "llms",
+          "markdownlint",
+          "nerd",
+          "pipx",
+          "pkief",
+          "postcreate",
+          "poststart",
+          "precommit",
+          "pwsh",
+          "reconnect",
+          "signalfish",
+          "streetsidesoftware",
+          "tamasfe",
+          "tres",
+          "tscn",
+          "tuxfamily",
+          "unmute",
+          "usernamehw",
+          "websocketclient",
+          "websocketpeer",
+          "yzhang"
+        ],
+        "cSpell.enabledFileTypes": {
+          "gdscript": true,
+          "gdresource": true,
+          "gdshader": true
+        },
+        // Telemetry off — match repo posture
+        "telemetry.telemetryLevel": "off",
+        "redhat.telemetry.enabled": false
+      }
+    }
+  }
+}

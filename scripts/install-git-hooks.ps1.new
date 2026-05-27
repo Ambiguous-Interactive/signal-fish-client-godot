@@ -19,7 +19,8 @@ function ConvertTo-FullHooksPath {
 
     if ([System.IO.Path]::IsPathRooted($ConfiguredPath)) {
         $fullPath = [System.IO.Path]::GetFullPath($ConfiguredPath)
-    } else {
+    }
+    else {
         $fullPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $ConfiguredPath))
     }
 
@@ -34,33 +35,29 @@ if (-not (Test-Path $hooksPath)) {
     throw "Missing hooks directory: $hooksPath"
 }
 
+# Surface the cross-platform requirement up-front so a contributor without
+# `pwsh` discovers it now rather than at first commit.
+if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+    Write-Warning '[llm-hooks] pwsh (PowerShell 7+) is required to run the LLM harness hooks. Install from https://aka.ms/powershell.'
+}
+
+# On systems without a POSIX `sh` (rare; Git for Windows ships one), the
+# committed shell hook will not execute. Fall back to the PowerShell mirror
+# in that case so Windows-only PowerShell setups still work.
+$shAvailable = $null -ne (Get-Command sh -ErrorAction SilentlyContinue)
+if (-not $shAvailable) {
+    $shimSource = Join-Path $hooksPath 'pre-commit.ps1'
+    $shimTarget = Join-Path $hooksPath 'pre-commit'
+    if (Test-Path -LiteralPath $shimSource -PathType Leaf) {
+        Write-Host '[llm-hooks] sh not detected; installing PowerShell-only pre-commit shim.'
+        Copy-Item -LiteralPath $shimSource -Destination $shimTarget -Force
+    }
+}
+
 Push-Location $repoRoot
 try {
     $existingHooksPath = (@(git config --get core.hooksPath 2>$null) | Select-Object -First 1)
     if ($null -eq $existingHooksPath) {
-        $existingHooksPath = ''
-    }
-
-    $configuredPath = ConvertTo-FullHooksPath $existingHooksPath
-    $expectedPath = ConvertTo-FullHooksPath $desiredHooksPath
-
-    if (-not [string]::IsNullOrWhiteSpace($existingHooksPath) -and
-        $configuredPath -ne $expectedPath -and
-        -not $Force) {
-        throw "Refusing to overwrite existing core.hooksPath '$existingHooksPath'. Re-run with -Force to replace it with $desiredHooksPath."
-    }
-
-    # Best-effort executable bit (no-op on Windows, required on Unix).
-    $chmod = Get-Command chmod -ErrorAction SilentlyContinue
-    if ($null -ne $chmod) {
-        & chmod +x $shimTarget 2>$null | Out-Null
-    }
-    git config core.hooksPath $desiredHooksPath
-    Write-Host '[llm-hooks] Git hooks installed from .githooks'
-} finally {
-    Pop-Location
-}
-
         $existingHooksPath = ''
     }
 

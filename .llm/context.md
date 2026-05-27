@@ -81,14 +81,30 @@ Definition of done for the first usable client:
   file's generated section.
 - `scripts/lint-llm.ps1`: enforces line limits, metadata, pointers, and index
   freshness.
+- `scripts/run-llm-hooks.ps1`: single entry point used by `.githooks/pre-commit`
+  and CI; regenerates, lints, and verifies staged generated files.
+- `scripts/test-llm-harness.ps1`: dependency-free self-tests for the shared
+  harness library and hook wiring.
+- `scripts/lib/LlmHarness.psm1`: shared module (frontmatter parsing, path
+  helpers) imported by the generator, linter, and tests.
 
 ## Required Checks
 
-Run these after editing `.llm` Markdown files or known pointer files:
+Primary entry point (used by `.githooks/pre-commit` and CI):
+
+```powershell
+pwsh -NoProfile -File scripts/run-llm-hooks.ps1
+```
+
+This regenerates `.llm/index.md` and `.llm/context.md`, runs the linter and
+self-tests, and verifies generated files are staged.
+
+Granular alternatives when iterating:
 
 ```powershell
 pwsh -NoProfile -File scripts/generate-llm-index.ps1
 pwsh -NoProfile -File scripts/lint-llm.ps1
+pwsh -NoProfile -File scripts/test-llm-harness.ps1
 ```
 
 Use `-Check` in CI to validate generated files without modifying them:
@@ -135,4 +151,3 @@ Do not edit the section below manually. Regenerate it with
 - [GStack Adaptation Notes](research/gstack-adaptations.md) - Practical gstack practices adapted for this repo's lightweight LLM harness.
 - [Signal Fish Upstream References](research/protocol-links.md) - Curated upstream references for Signal Fish protocol and client compatibility work.
 <!-- LLM-INDEX:END -->
-

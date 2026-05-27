@@ -27,9 +27,20 @@ scripts that maintain AI context.
 ## Required Flow
 
 1. Edit the focused context, skill, sample, or research Markdown file.
-2. Run `pwsh -NoProfile -File scripts/generate-llm-index.ps1`.
-3. Run `pwsh -NoProfile -File scripts/lint-llm.ps1`.
-4. Include regenerated `.llm/index.md` and `.llm/context.md` when changed.
+2. Run `pwsh -NoProfile -File scripts/run-llm-hooks.ps1` (regenerates the
+   index, runs the linter, and verifies staged generated files). Or run
+   `generate-llm-index.ps1` + `lint-llm.ps1` + `test-llm-harness.ps1`
+   individually.
+3. Include regenerated `.llm/index.md` and `.llm/context.md` when changed.
+
+## Shared Library
+
+- `scripts/lib/LlmHarness.psm1` owns frontmatter parsing and path helpers.
+  Both `generate-llm-index.ps1` and `lint-llm.ps1` import it; never reintroduce
+  a local `Read-Frontmatter` in either script (the self-tests enforce this).
+- `scripts/run-llm-hooks.ps1` is the single source of truth for the
+  pre-commit / CI flow. `.githooks/pre-commit` (sh) and
+  `.githooks/pre-commit.ps1` (Windows-only fallback) both delegate to it.
 
 ## Adding A Skill
 
@@ -43,4 +54,3 @@ scripts that maintain AI context.
 
 Keep pointer files short. If guidance is useful to every agent, place it in
 `.llm/context.md` or a skill and regenerate the index.
-
