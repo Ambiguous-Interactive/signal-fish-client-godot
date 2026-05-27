@@ -1,0 +1,24 @@
+name: LLM Harness
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    name: Validate LLM context
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate generated index
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/generate-llm-index.ps1 -Check
+
+      - name: Lint LLM harness
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/lint-llm.ps1
+

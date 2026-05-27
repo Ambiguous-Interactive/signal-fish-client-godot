@@ -1,0 +1,14 @@
+repos:
+  - repo: local
+    hooks:
+      - id: generate-llm-index
+        name: Validate generated LLM index
+        entry: pwsh -NoProfile -File scripts/generate-llm-index.ps1 -Check
+        language: system
+        pass_filenames: false
+      - id: lint-llm
+        name: Lint LLM harness
+        entry: pwsh -NoProfile -File scripts/lint-llm.ps1
+        language: system
+        pass_filenames: false
+

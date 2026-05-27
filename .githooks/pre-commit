@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+set -eu
+
+if ! command -v pwsh >/dev/null 2>&1; then
+  echo "[llm-hook] ERROR: pwsh is required for LLM harness validation." >&2
+  exit 1
+fi
+
+pwsh -NoProfile -File scripts/generate-llm-index.ps1
+pwsh -NoProfile -File scripts/lint-llm.ps1
+
+if ! git diff --quiet -- .llm/index.md .llm/context.md; then
+  echo "[llm-hook] Generated LLM files changed. Stage them and commit again." >&2
+  exit 1
+fi
+
