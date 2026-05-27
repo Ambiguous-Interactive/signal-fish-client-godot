@@ -15,3 +15,8 @@ export_credentials.cfg
 .mono/
 data_*/
 mono_crash.*.json
+
+pr-description.md
+pre-commit.xt
+pre-push.txt
+logs_*.zip

@@ -21,6 +21,26 @@ function Write-Info {
     }
 }
 
+function Read-FileLines {
+    param([string]$Path)
+    try {
+        return @(Get-Content -LiteralPath $Path -ErrorAction Stop)
+    }
+    catch {
+        throw "Failed to read lines from ${Path}: $($_.Exception.Message)"
+    }
+}
+
+function Read-FileText {
+    param([string]$Path)
+    try {
+        return (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop)
+    }
+    catch {
+        throw "Failed to read text from ${Path}: $($_.Exception.Message)"
+    }
+}
+
 function ConvertTo-LlmRelativePath {
     param([string]$Path)
     $relative = [System.IO.Path]::GetRelativePath($LlmDir, $Path)
@@ -30,7 +50,7 @@ function ConvertTo-LlmRelativePath {
 function Read-Frontmatter {
     param([string]$Path)
     $metadata = [ordered]@{}
-    $lines = @(Get-Content -LiteralPath $Path)
+    $lines = @(Read-FileLines $Path)
     if ($lines.Count -lt 3 -or $lines[0] -ne '---') {
         return $metadata
     }
@@ -50,7 +70,7 @@ function Read-Frontmatter {
 
 function Get-Title {
     param([string]$Path)
-    foreach ($line in @(Get-Content -LiteralPath $Path)) {
+    foreach ($line in @(Read-FileLines $Path)) {
         if ($line -match '^#\s+(.+)$') {
             return $Matches[1].Trim()
         }
@@ -73,7 +93,7 @@ function Get-MetadataValue {
 function New-IndexLines {
     $skillRoot = Join-Path $LlmDir 'skills'
     $skillFiles = @()
-    if (Test-Path $skillRoot) {
+    if (Test-Path -LiteralPath $skillRoot -PathType Container) {
         $skillFiles = @(Get-ChildItem -LiteralPath $skillRoot -Filter '*.md' -Recurse -File | Sort-Object FullName)
     }
 
@@ -157,16 +177,16 @@ function Normalize-Newlines {
     return $Content.Replace("`r`n", "`n")
 }
 
-if (-not (Test-Path $LlmDir)) {
+if (-not (Test-Path -LiteralPath $LlmDir -PathType Container)) {
     throw "Missing .llm directory at $LlmDir"
 }
-if (-not (Test-Path $ContextPath)) {
+if (-not (Test-Path -LiteralPath $ContextPath -PathType Leaf)) {
     throw "Missing context file at $ContextPath"
 }
 
 $expectedIndex = Join-Lines (New-IndexLines)
 $embedded = (Join-Lines (New-EmbeddedLines)).TrimEnd()
-$context = Get-Content -LiteralPath $ContextPath -Raw
+$context = Read-FileText $ContextPath
 $start = $context.IndexOf($StartMarker)
 $end = $context.IndexOf($EndMarker)
 if ($start -lt 0 -or $end -lt 0 -or $end -lt $start) {
@@ -177,8 +197,8 @@ $suffix = $context.Substring($end + $EndMarker.Length)
 $expectedContext = "$prefix$StartMarker`n$embedded`n$EndMarker$suffix"
 
 $changes = New-Object System.Collections.Generic.List[string]
-if (-not (Test-Path $IndexPath) -or
-    (Normalize-Newlines (Get-Content -LiteralPath $IndexPath -Raw)) -ne (Normalize-Newlines $expectedIndex)) {
+if (-not (Test-Path -LiteralPath $IndexPath -PathType Leaf) -or
+    (Normalize-Newlines (Read-FileText $IndexPath)) -ne (Normalize-Newlines $expectedIndex)) {
     $changes.Add('.llm/index.md')
 }
 if ((Normalize-Newlines $context) -ne (Normalize-Newlines $expectedContext)) {

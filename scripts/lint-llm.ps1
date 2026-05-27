@@ -11,10 +11,50 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $LlmDir = Join-Path $RepoRoot '.llm'
 $errors = New-Object System.Collections.Generic.List[string]
 
+$pointerChecks = @(
+    [PSCustomObject]@{ Path = 'AGENTS.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+    [PSCustomObject]@{ Path = 'CLAUDE.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+    [PSCustomObject]@{ Path = 'GEMINI.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+    [PSCustomObject]@{ Path = 'CHATGPT.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+    [PSCustomObject]@{ Path = 'CODEX.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+    [PSCustomObject]@{ Path = 'llms.txt'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+    [PSCustomObject]@{ Path = '.cursorrules'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+    [PSCustomObject]@{ Path = '.windsurfrules'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+    [PSCustomObject]@{ Path = '.github/copilot-instructions.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+    [PSCustomObject]@{ Path = '.cursor/rules/signal-fish-llm-context.mdc'; Required = $true; RequiredPattern = '\.llm/context\.md' }
+)
+
 function Add-Error {
     param([string]$Message)
     $errors.Add($Message)
     Write-Host "[llm-lint] ERROR: $Message" -ForegroundColor Red
+}
+
+function Write-Diagnostic {
+    param([string]$Message)
+    if ($VerboseOutput) {
+        Write-Host "[llm-lint] DIAG: $Message" -ForegroundColor DarkGray
+    }
+}
+
+function Try-ResolveFilePath {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+
+    try {
+        $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop | Select-Object -First 1
+        if ($null -eq $resolved) {
+            return $null
+        }
+        return [System.IO.Path]::GetFullPath($resolved.ProviderPath)
+    }
+    catch {
+        Add-Error "Failed to resolve file path '$Path': $($_.Exception.Message)"
+        return $null
+    }
 }
 
 function Add-TrackedFile {
@@ -22,23 +62,98 @@ function Add-TrackedFile {
         [System.Collections.Generic.Dictionary[string, string]]$Files,
         [string]$Path
     )
-    if (Test-Path -LiteralPath $Path) {
-        $fullPath = (Get-Item -LiteralPath $Path).FullName
-        if (-not $Files.ContainsKey($fullPath)) {
-            $Files[$fullPath] = $fullPath
+
+    $fullPath = Try-ResolveFilePath -Path $Path
+    if ([string]::IsNullOrWhiteSpace($fullPath)) {
+        return
+    }
+
+    if (-not $Files.ContainsKey($fullPath)) {
+        $Files[$fullPath] = $fullPath
+    }
+}
+
+function Test-PointerFile {
+    param([PSCustomObject]$PointerCheck)
+
+    $path = Join-Path $RepoRoot $PointerCheck.Path
+    $exists = Test-Path -LiteralPath $path -PathType Leaf
+    Write-Diagnostic "pointer '$($PointerCheck.Path)' exists=$exists"
+
+    if (-not $exists) {
+        if ($PointerCheck.Required) {
+            Add-Error "Missing pointer file: $($PointerCheck.Path)"
+        }
+        return
+    }
+
+    try {
+        $content = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+    }
+    catch {
+        Add-Error "Failed to read pointer file $($PointerCheck.Path): $($_.Exception.Message)"
+        return
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($PointerCheck.RequiredPattern) -and $content -notmatch $PointerCheck.RequiredPattern) {
+        $message = "$($PointerCheck.Path) must point to .llm/context.md"
+        if ($PointerCheck.Required) {
+            Add-Error $message
+        }
+        else {
+            Write-Host "[llm-lint] WARNING: $message" -ForegroundColor Yellow
+        }
+    }
+}
+
+function Invoke-GeneratedIndexCheck {
+    $generateScriptPath = Join-Path $PSScriptRoot 'generate-llm-index.ps1'
+    if (-not (Test-Path -LiteralPath $generateScriptPath -PathType Leaf)) {
+        Add-Error 'Missing generator script: scripts/generate-llm-index.ps1'
+        return
+    }
+
+    $output = @()
+    try {
+        $output = @(& pwsh -NoProfile -File "$generateScriptPath" -Check 2>&1)
+    }
+    catch {
+        Add-Error "Failed to execute generated index check: $($_.Exception.Message)"
+        return
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        Add-Error "Generated LLM index validation failed (exit code: $LASTEXITCODE)."
+        foreach ($line in $output) {
+            if (-not [string]::IsNullOrWhiteSpace("$line")) {
+                Write-Host "[llm-lint] INDEX-CHECK: $line" -ForegroundColor Yellow
+            }
         }
     }
 }
 
 function Get-RepoRelativePath {
     param([string]$Path)
-    return ([System.IO.Path]::GetRelativePath($RepoRoot, $Path)).Replace('\', '/')
+    try {
+        return ([System.IO.Path]::GetRelativePath($RepoRoot, $Path)).Replace('\', '/')
+    }
+    catch {
+        return $Path
+    }
 }
 
 function Read-Frontmatter {
     param([string]$Path)
     $metadata = [ordered]@{}
-    $lines = @(Get-Content -LiteralPath $Path)
+    $lines = @()
+    try {
+        $lines = @(Get-Content -LiteralPath $Path -ErrorAction Stop)
+    }
+    catch {
+        Add-Error "Failed to read frontmatter from $(Get-RepoRelativePath $Path): $($_.Exception.Message)"
+        return $metadata
+    }
+
     if ($lines.Count -lt 3 -or $lines[0] -ne '---') {
         return $metadata
     }
@@ -53,38 +168,42 @@ function Read-Frontmatter {
     return $metadata
 }
 
-if (-not (Test-Path $LlmDir)) {
+Write-Diagnostic "Repo root: $RepoRoot"
+Write-Diagnostic "Working directory: $((Get-Location).Path)"
+Write-Diagnostic "PowerShell version: $($PSVersionTable.PSVersion)"
+
+if (-not (Test-Path -LiteralPath $LlmDir -PathType Container)) {
     Add-Error 'Missing .llm directory.'
 }
 
 $files = [System.Collections.Generic.Dictionary[string, string]]::new()
-if (Test-Path $LlmDir) {
-    Get-ChildItem -LiteralPath $LlmDir -Recurse -File | Where-Object {
-        $_.Extension -eq '.md'
-    } | ForEach-Object {
-        Add-TrackedFile $files $_.FullName
+if (Test-Path -LiteralPath $LlmDir -PathType Container) {
+    try {
+        Get-ChildItem -LiteralPath $LlmDir -Recurse -File | Where-Object {
+            $_.Extension -eq '.md'
+        } | ForEach-Object {
+            Add-TrackedFile $files $_.FullName
+        }
+    }
+    catch {
+        Add-Error "Failed to enumerate markdown files in .llm: $($_.Exception.Message)"
     }
 }
 
-$pointerFiles = @(
-    'AGENTS.md',
-    'CLAUDE.md',
-    'GEMINI.md',
-    'CHATGPT.md',
-    'CODEX.md',
-    'llms.txt',
-    '.cursorrules',
-    '.windsurfrules',
-    '.github/copilot-instructions.md',
-    '.cursor/rules/signal-fish-llm-context.mdc'
-)
-
-foreach ($pointer in $pointerFiles) {
-    Add-TrackedFile $files (Join-Path $RepoRoot $pointer)
+foreach ($pointerCheck in $pointerChecks) {
+    Add-TrackedFile $files (Join-Path $RepoRoot $pointerCheck.Path)
 }
 
-foreach ($path in $files.Keys) {
-    $lineCount = @(Get-Content -LiteralPath $path).Count
+foreach ($path in ($files.Keys | Sort-Object)) {
+    $lineCount = 0
+    try {
+        $lineCount = @(Get-Content -LiteralPath $path -ErrorAction Stop).Count
+    }
+    catch {
+        Add-Error "Failed to read $(Get-RepoRelativePath $path): $($_.Exception.Message)"
+        continue
+    }
+
     if ($lineCount -gt $MaxLines) {
         Add-Error "$(Get-RepoRelativePath $path): $lineCount lines exceeds max $MaxLines"
     }
@@ -94,37 +213,37 @@ foreach ($path in $files.Keys) {
 }
 
 $requiredKeys = @('description', 'triggers', 'category')
-if (Test-Path $LlmDir) {
-    Get-ChildItem -LiteralPath $LlmDir -Filter '*.md' -Recurse -File | Where-Object {
-        (Get-RepoRelativePath $_.FullName) -ne '.llm/index.md'
-    } | ForEach-Object {
-        $metadata = Read-Frontmatter $_.FullName
-        foreach ($key in $requiredKeys) {
-            if (-not $metadata.Contains($key) -or [string]::IsNullOrWhiteSpace($metadata[$key])) {
-                Add-Error "$(Get-RepoRelativePath $_.FullName) missing frontmatter key: $key"
+if (Test-Path -LiteralPath $LlmDir -PathType Container) {
+    try {
+        Get-ChildItem -LiteralPath $LlmDir -Filter '*.md' -Recurse -File | Where-Object {
+            (Get-RepoRelativePath $_.FullName) -ne '.llm/index.md'
+        } | ForEach-Object {
+            $metadata = Read-Frontmatter $_.FullName
+            foreach ($key in $requiredKeys) {
+                if (-not $metadata.Contains($key) -or [string]::IsNullOrWhiteSpace($metadata[$key])) {
+                    Add-Error "$(Get-RepoRelativePath $_.FullName) missing frontmatter key: $key"
+                }
             }
         }
     }
-}
-
-foreach ($pointer in $pointerFiles) {
-    $path = Join-Path $RepoRoot $pointer
-    if (-not (Test-Path -LiteralPath $path)) {
-        Add-Error "Missing pointer file: $pointer"
-        continue
-    }
-    $content = Get-Content -LiteralPath $path -Raw
-    if ($content -notmatch '\.llm/context\.md') {
-        Add-Error "$pointer must point to .llm/context.md"
+    catch {
+        Add-Error "Failed while validating frontmatter metadata: $($_.Exception.Message)"
     }
 }
 
-& (Join-Path $PSScriptRoot 'generate-llm-index.ps1') -Check
-if ($LASTEXITCODE -ne 0) {
-    Add-Error 'Generated LLM index is stale.'
+foreach ($pointerCheck in $pointerChecks) {
+    Test-PointerFile -PointerCheck $pointerCheck
 }
+
+Invoke-GeneratedIndexCheck
 
 if ($errors.Count -gt 0) {
+    Write-Host "[llm-lint] Diagnostics: repoRoot=$RepoRoot cwd=$((Get-Location).Path)" -ForegroundColor Yellow
+    foreach ($pointerCheck in $pointerChecks) {
+        $path = Join-Path $RepoRoot $pointerCheck.Path
+        $exists = Test-Path -LiteralPath $path -PathType Leaf
+        Write-Host "[llm-lint] Pointer status: $($pointerCheck.Path) => $exists" -ForegroundColor Yellow
+    }
     Write-Host "[llm-lint] Failed with $($errors.Count) error(s)." -ForegroundColor Red
     exit 1
 }

@@ -6,13 +6,16 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: Validate LLM context
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Validate generated index
         shell: pwsh
@@ -20,5 +23,5 @@ jobs:
 
       - name: Lint LLM harness
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/lint-llm.ps1
+        run: pwsh -NoProfile -File scripts/lint-llm.ps1 -VerboseOutput
 
