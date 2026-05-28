@@ -11,6 +11,6 @@ repos:
         # mirroring the installed hook's auto-recovery behavior. CI runs
         # `run-llm-hooks.ps1 -NoAutoFix` directly (see
         # `.github/workflows/llm-harness.yml`) so drift fails loudly there.
-        entry: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -SkipStagedCheck
+        entry: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -SkipStagedCheck -AutoFix
         language: system
         pass_filenames: false

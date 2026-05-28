@@ -135,37 +135,29 @@ function Invoke-GeneratedIndexCheck {
     }
 }
 
-# Stray staging artifacts (e.g. `*.new`, `*.bak`, `*.orig`, `*.old`) are a
-# recurring source of confusion and silent drift: contributors commit a
-# `script.ps1.new` alongside a broken `script.ps1`, or leave a `.bak` from a
-# manual edit. Fail the lint if any tracked file matches these patterns.
+# Stray staging artifacts (e.g. `*.new`, `*.bak`, `*.orig`, `*.old`, `*.tmp`,
+# `*.swp`, editor backups) are a recurring source of confusion and silent
+# drift: contributors commit a `script.ps1.new` alongside a broken
+# `script.ps1`, or leave a `.bak` from a manual edit, or `.tmp` from an
+# editor's atomic-save. Fail the lint if any tracked or gitignored stray
+# matches the canonical pattern set sourced from the shared module
+# (Get-LlmDefaultStrayPatterns). The set is single-sourced via
+# scripts/lib/LlmHarness.psm1 so the linter, hook runner, and helper
+# never drift apart.
 function Invoke-StagingArtifactCheck {
-    $patterns = @('*.new', '*.bak', '*.orig', '*.old', '*.rej')
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-Diagnostic 'git not available; skipping staging-artifact check.'
         return
     }
-    Push-Location $RepoRoot
+    $patterns = @(Get-LlmDefaultStrayPatterns)
     try {
-        $tracked = @(& git ls-files -- @patterns)
-        if ($LASTEXITCODE -ne 0) {
-            Add-Error "git ls-files (tracked) failed with exit $LASTEXITCODE."
-            return
-        }
-        $untracked = @(& git ls-files --others --exclude-standard -- @patterns)
-        if ($LASTEXITCODE -ne 0) {
-            Add-Error "git ls-files (untracked) failed with exit $LASTEXITCODE."
-            return
-        }
-        $offenders = @($tracked + $untracked) |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            Sort-Object -Unique
-        foreach ($path in $offenders) {
-            Add-Error "Stray staging artifact: $path (patterns: $($patterns -join ', '))"
-        }
+        $offenders = @(Get-LlmStrayWorkingTreeArtifacts -RepoRoot $RepoRoot -Patterns $patterns)
+    } catch {
+        Add-Error $_.Exception.Message
+        return
     }
-    finally {
-        Pop-Location
+    foreach ($artifact in $offenders) {
+        Add-Error "Stray staging artifact: $($artifact.Path) (patterns: $($patterns -join ', '))"
     }
 }
 

@@ -17,9 +17,19 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v6
 
+            - name: Preflight (parse-check toolkit sources)
+              # MUST run before the main harness step. If any toolkit script
+              # (lint-llm.ps1, install-git-hooks.ps1, etc.) is corrupted,
+              # `run-llm-hooks.ps1` may not even be parseable. `-NoAutoFix`
+              # keeps CI loud: a corrupted commit fails here rather than
+              # being silently recovered.
+              shell: pwsh
+              run: pwsh -NoProfile -File scripts/preflight.ps1 -NoAutoFix -VerboseOutput
+
             - name: Run LLM harness (regenerate, lint, self-tests)
               # Single source of truth shared with `.githooks/pre-commit`.
-              # `-SkipStagedCheck` because CI has no git index to stage against.
+              # `-SkipStagedCheck` because CI validates committed content with
+              # `git diff` below instead of participating in a local staging flow.
               shell: pwsh
               run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -SkipStagedCheck -NoAutoFix -VerboseOutput
 

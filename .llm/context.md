@@ -16,9 +16,9 @@ point here unless a tool requires a tiny wrapper format.
   Godot versions once compatibility is validated.
 - Prioritize Godot 4 and web exports, where C# is not available.
 - Keep protocol behavior aligned with:
-  - https://github.com/Ambiguous-Interactive/signal-fish-cloud
-  - https://github.com/Ambiguous-Interactive/signal-fish-server
-  - https://github.com/Ambiguous-Interactive/signal-fish-client-rust
+  - <https://github.com/Ambiguous-Interactive/signal-fish-cloud>
+  - <https://github.com/Ambiguous-Interactive/signal-fish-server>
+  - <https://github.com/Ambiguous-Interactive/signal-fish-client-rust>
 - Keep AI-facing context concise; split Markdown details into `.llm/skills`,
   `.llm/code-samples`, and `.llm/research`.
 
@@ -88,25 +88,53 @@ Definition of done for the first usable client:
   freshness.
 - `scripts/run-llm-hooks.ps1`: single entry point invoked by the installed
   `.git/hooks/pre-commit` shim and by CI; regenerates, lints, and verifies
-  staged generated files. Accepts `-AutoFix` (used by the pre-commit hook
+  staged generated files. Accepts `-AutoFix` (used by local hook entry points
   to auto-stage regenerated files and remove stray `*.new` / `*.bak`
-  artifacts) and `-NoAutoFix` (used by CI to keep failures loud).
+  artifacts) and `-NoAutoFix` (used by CI and `agent-check.ps1` to keep
+  failures loud). Use `-SkipStagedCheck` only when an outer wrapper validates
+  content outside the local staging flow, such as CI or the pre-commit
+  framework.
 - `scripts/install-git-hooks.ps1`: materializes a portable POSIX-sh shim
   (`#!/usr/bin/env sh`) into the repo's `.git/hooks/pre-commit`. Sh is
   available on Linux, macOS, and Windows (Git for Windows bundles
   `sh.exe`); a pwsh shebang would break on Windows because `pwsh -File`
   refuses extensionless files. The committed `.githooks/pre-commit*`
   files are reference templates only; the live hook lives in
-  `.git/hooks/` after running the installer.
+  `.git/hooks/` after running the installer. The installer clears legacy
+  `core.hooksPath` values that normalize to `.githooks`, including trailing
+  slash or backslash variants, and warns before leaving foreign hook paths in
+  place unless `-Force` is used.
 - `scripts/agent-check.ps1`: fast post-edit / pre-commit validator that
   agents and humans should run after editing PowerShell or `.llm/**` files.
-  Wraps `run-llm-hooks.ps1 -SkipStagedCheck -NoAutoFix`.
+  Runs `preflight.ps1 -NoAutoFix` then `run-llm-hooks.ps1 -SkipStagedCheck
+  -NoAutoFix`.
+- `scripts/preflight.ps1`: self-healing bootstrap. Parse-checks itself
+  first, then every tracked `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers
+  corrupted sources via `git checkout HEAD -- <path>`, backing up the
+  corrupt working-tree copy under `.git/preflight-recovery/<timestamp>-
+  <pid>-<rand>/<encoded-path>` first (most recent 20 retained). See
+  `.llm/skills/agent-harness.md` "Recovery From AutoFix" for the full
+  backup naming scheme and the restore recipe. Run first by
+  `run-llm-hooks.ps1`, by `agent-check.ps1`, and as a separate CI step so
+  a corrupted toolkit script fails loudly before any other tool tries to
+  execute it. The Claude Code `Stop` hook also runs it.
 - `scripts/test-llm-harness.ps1`: dependency-free self-tests for the shared
   harness library and hook wiring.
 - `scripts/lib/LlmHarness.psm1`: shared module (frontmatter parsing, path
-  helpers) imported by the generator, linter, and tests.
+  helpers, staging-artifact discovery including the `--ignored` blind-spot
+  helper `Get-LlmStrayWorkingTreeArtifacts`) imported by the generator,
+  linter, hook runner, and tests.
+- `.claude/settings.json` + `.claude/hooks/*.ps1`: agentic guardrails.
+  `PostToolUse` parse-checks every `.ps1`/`.psm1`/`.psd1` write/edit and
+  runs `agent-check.ps1` after `.llm/**` edits; `Stop` runs preflight;
+  `SessionStart` emits a one-shot reminder.
 
 ## Required Checks
+
+Prerequisite: PowerShell 7+ (`pwsh`) on PATH. Windows users should
+install from <https://aka.ms/powershell>. The pre-commit shim, hooks,
+and CI all hard-require `pwsh`; bare `powershell.exe` is not supported
+(the shim detects it only to emit a clear error).
 
 Primary entry point (invoked by the installed `.git/hooks/pre-commit` and
 CI):

@@ -36,11 +36,28 @@ These checks enforce:
 - Vendor pointer files referencing `.llm/context.md`.
 - Generated `.llm/index.md` and context index freshness.
 - Frontmatter parsing edge cases (closed vs unclosed fences, quoted values,
-  case-insensitive keys) covered by `scripts/test-llm-harness.ps1`.
+  case-insensitive keys, blank lines, and UTF-8 BOMs) covered by
+  `scripts/test-llm-harness.ps1`.
 - Generator and linter both import the shared
   `scripts/lib/LlmHarness.psm1` module instead of redefining helpers.
 - Pre-commit hook detects untracked generated files (not just unstaged
   modifications) so a fresh-from-generator file cannot slip through.
+- Local hook entry points pass `-AutoFix`; CI and `agent-check.ps1` pass
+  `-NoAutoFix`. `-SkipStagedCheck` means an outer wrapper validates content
+  outside the local staging flow, not that Git lacks an index.
+- Stray artifact detection is single-sourced through
+  `Get-LlmStagingArtifacts` (tracked + non-ignored) and
+  `Get-LlmStrayWorkingTreeArtifacts` (includes gitignored junk like
+  `*.tmp`, `*.swp`, `.DS_Store`). The hook runner's `-AutoFix` uses both.
+- `scripts/preflight.ps1` parse-checks itself first, then every tracked
+  `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers via `git checkout HEAD --
+  <path>`. `run-llm-hooks.ps1`, `agent-check.ps1`, and CI all run it
+  first.
+- `.claude/settings.json` runs `.claude/hooks/parse-check-powershell.ps1`
+  on every PowerShell write/edit so a stale-buffer corruption surfaces
+  in the agent's tool_result on the next turn (exit 2 + JSON reason),
+  not at commit time. The `Stop` hook re-runs preflight as a final
+  defense.
 
 ## Generated Files
 

@@ -26,6 +26,11 @@ scripts that maintain AI context.
 
 ## Required Flow
 
+0. Install PowerShell 7+ (`pwsh`). The harness, all hook scripts, and CI
+   all require `pwsh` on PATH (Windows users: install from
+   <https://aka.ms/powershell>). Legacy `powershell.exe` is detected by
+   the pre-commit shim only to emit a clear "install pwsh" error; it is
+   not a supported runtime.
 1. Edit the focused context, skill, sample, or research Markdown file.
 2. Run `pwsh -NoProfile -File scripts/agent-check.ps1` after any edit to
    `.ps1`, `.psm1`, `.psd1`, or `.llm/**` files. This is the fast,
@@ -36,19 +41,27 @@ scripts that maintain AI context.
    `generate-llm-index.ps1` + `lint-llm.ps1` + `test-llm-harness.ps1`
    individually.
 4. Include regenerated `.llm/index.md` and `.llm/context.md` when changed.
-   The pre-commit hook runs with `-AutoFix` and will auto-stage these and
-   delete stray `*.new` / `*.bak` artifacts; CI runs with `-NoAutoFix` and
-   will fail loudly on any drift, so do not rely on auto-fix as the only
-   safety net.
+    Local hook entry points (`.git/hooks/pre-commit` and
+    `.pre-commit-config.yaml`) run with `-AutoFix` and will auto-stage these
+    and delete stray `*.new` / `*.bak` artifacts; CI and `agent-check.ps1` run
+    with `-NoAutoFix` and will fail loudly on any drift, so do not rely on
+    auto-fix as the only safety net.
 
 ## Shared Library
 
-- `scripts/lib/LlmHarness.psm1` owns frontmatter parsing and path helpers.
-  Both `generate-llm-index.ps1` and `lint-llm.ps1` import it; never reintroduce
-  a local `Read-Frontmatter` in either script (the self-tests enforce this).
+- `scripts/lib/LlmHarness.psm1` owns frontmatter parsing, path helpers, and
+  staging-artifact discovery (`Get-LlmStagingArtifacts` for tracked / non-
+  ignored; `Get-LlmStrayWorkingTreeArtifacts` for the gitignored blind
+  spot, e.g. `*.tmp`, `*.swp`). Both `generate-llm-index.ps1` and
+  `lint-llm.ps1` import it; never reintroduce a local `Read-Frontmatter`
+  in either script (the self-tests enforce this).
 - `scripts/run-llm-hooks.ps1` is the single source of truth for the
-  pre-commit / CI flow: it regenerates the index, runs the linter, and runs
-  the harness self-tests.
+  pre-commit / CI flow: it runs preflight first, then regenerates the
+  index, runs the linter, and runs the harness self-tests.
+- `scripts/preflight.ps1` parse-checks itself first, then every tracked
+  `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers a corrupt source by
+  `git checkout HEAD -- <path>`. It is the first line of defense against
+  stale-editor-buffer corruption.
 - `scripts/install-git-hooks.ps1` materializes a portable POSIX-sh shim
   (`#!/usr/bin/env sh`) into the per-checkout `.git/hooks/pre-commit`.
   Sh is shipped on every platform git supports (Linux, macOS, Git for
@@ -56,18 +69,116 @@ scripts that maintain AI context.
   refuses files without a `.ps1` extension. The committed
   `.githooks/pre-commit` (sh) and `.githooks/pre-commit.ps1` files are
   reference templates only; they are not the live hook and editing them
-  alone has no effect until the installer is re-run.
+  alone has no effect until the installer is re-run. The installer clears
+  legacy `core.hooksPath` values only after normalizing trailing separators
+  and relative path variants; foreign hook paths require `-Force`.
 
 ## Automated Guardrails
 
-The linter and self-tests enforce repo-wide invariants beyond `.llm`:
+The linter, preflight, and self-tests enforce repo-wide invariants beyond
+`.llm`:
 
 - All committed `*.ps1` / `*.psm1` / `*.psd1` files must parse cleanly.
+  `preflight.ps1` enforces this; in `-AutoFix` mode it restores corrupted
+  sources from `git HEAD`.
 - No tracked or untracked staging artifacts (`*.new`, `*.bak`, `*.orig`,
-  `*.old`, `*.rej`) may exist. `.gitignore` blocks them as a second layer.
-- `install-git-hooks.ps1` must have no undefined variable references.
+  `*.old`, `*.rej`) may exist. `Get-LlmStagingArtifacts` covers the
+  tracked / non-ignored set; `Get-LlmStrayWorkingTreeArtifacts` covers
+  the gitignored blind spot (`*.tmp`, `*.swp`, editor backups). The hook
+  runner's `-AutoFix` deletes both. `.gitignore` blocks them as a second
+  layer.
+- `install-git-hooks.ps1` must have no undefined variable references and
+  exposes `Get-InstallPathComparison`, `ConvertTo-NormalizedHooksPath`,
+  `Test-LegacyHooksPath` so trailing-separator and relative-path
+  variants of `.githooks` are recognized.
 
 When adding a script, edit it in place — do not commit a `.new` copy.
+
+## Agentic Hooks (Claude Code)
+
+`.claude/settings.json` wires Claude Code hooks that catch corruption
+DURING the edit, not at commit time:
+
+- `PostToolUse` (matcher `^(Write|Edit|MultiEdit)$`) runs
+  `.claude/hooks/parse-check-powershell.ps1` after every PowerShell
+  write/edit. The matcher is anchored so a tool name like `NotebookEdit`
+  cannot silently match a substring filter. A parse error exits 2 with a
+  JSON-shaped reason; the agent sees the failure as `tool_result` on the
+  next turn and self-corrects.
+- `PostToolUse` also runs `.claude/hooks/validate-llm-context.ps1` after
+  any `.llm/**/*.md` edit. This hook is a FAST per-file structural
+  check (required frontmatter keys present, line count under 300, file
+  is parseable as UTF-8 text) and intentionally does NOT delegate to
+  `agent-check.ps1`; running the full harness on every edit would blow
+  the cold-start budget. The slower full check runs via `Stop` and at
+  commit time.
+- `Stop` runs `.claude/hooks/preflight-stop.ps1` as a final safety net.
+- `SessionStart` emits a one-shot reminder so the agent knows its writes
+  are being auto-validated.
+- All hook commands use `$CLAUDE_PROJECT_DIR` (set by Claude Code to the
+  absolute project root) so they work regardless of cwd. Hooks that key
+  on file paths (like `validate-llm-context.ps1`) also gate on this
+  value so a `.llm/**` edit OUTSIDE this repo is silently ignored
+  instead of false-blocking.
+
+Recovery path when the auto-validator complains:
+
+```powershell
+pwsh -NoProfile -File scripts/preflight.ps1 -AutoFix
+```
+
+This restores corrupted sources from `HEAD` (the gitignored `*.tmp`
+blind-spot recovery also runs through the hook runner's `-AutoFix`).
+
+## Recovery From AutoFix
+
+When `preflight.ps1 -AutoFix` restores a file from `HEAD`, the corrupt
+working-tree copy is backed up first so no WIP is silently destroyed.
+
+- Backups live under `.git/preflight-recovery/<token>/<encoded-path>`.
+- `<token>` is `<unixMs>-<pid>-<rand>` so concurrent preflights cannot
+  collide on the same directory; `New-Item -ErrorAction Stop` makes any
+  collision LOUD rather than overwriting a sibling's backup.
+- `<encoded-path>` is the repo-relative path with `/` and `\` replaced
+  by `__` (`scripts/lib/LlmHarness.psm1` becomes
+  `scripts__lib__LlmHarness.psm1`) so two files with the same basename
+  cannot overwrite each other within a single invocation.
+- The 20 most recent backup directories are retained; older ones are
+  pruned at preflight startup. Cleanup failures NEVER block recovery.
+- Recovery is also gated: if the backup directory cannot be created
+  (read-only fs, EACCES, etc.) preflight REFUSES to run `git checkout`
+  and exits non-zero, because losing WIP to a silent restore is worse
+  than the corruption it was trying to fix.
+
+To restore WIP from a backup:
+
+```powershell
+# Find the most recent backup directory.
+$recent = Get-ChildItem .git/preflight-recovery -Directory |
+    Sort-Object CreationTimeUtc -Descending | Select-Object -First 1
+# List backups inside it.
+Get-ChildItem $recent
+# Copy a specific file back (replace __ with /):
+Copy-Item "$($recent.FullName)/scripts__lib__LlmHarness.psm1" `
+          scripts/lib/LlmHarness.psm1
+```
+
+## N-Level Self-Heal Chain
+
+The harness layers parse-checks so a corruption in any single layer is
+caught and recovered by the layer above. Each row parse-checks the row
+below it before invoking:
+
+| Layer                            | Recovers                          |
+|----------------------------------|-----------------------------------|
+| `.git/hooks/pre-commit` (sh shim) | `scripts/run-llm-hooks.ps1`       |
+| `scripts/run-llm-hooks.ps1`       | `scripts/preflight.ps1`           |
+| `scripts/preflight.ps1`           | all other tracked `.ps1`/`.psm1`/`.psd1` |
+
+Recovery is via `git checkout HEAD -- <path>` after backing up the
+working-tree copy (see "Recovery From AutoFix"). Each layer makes a
+single recovery attempt, then continues; if `HEAD` is also corrupt
+the layer fails loudly and the user must escalate manually.
 
 ## Adding A Skill
 
