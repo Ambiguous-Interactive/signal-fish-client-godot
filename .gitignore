@@ -17,6 +17,15 @@ data_*/
 mono_crash.*.json
 
 pr-description.md
-pre-commit.xt
+pre-commit.txt
 pre-push.txt
 logs_*.zip
+
+# Common staging / backup artifacts. The LLM harness linter also fails the
+# build if any of these are tracked, but ignoring them prevents accidental
+# `git add .` from picking them up in the first place.
+*.new
+*.bak
+*.orig
+*.old
+*.rej

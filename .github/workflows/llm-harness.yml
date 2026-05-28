@@ -21,7 +21,7 @@ jobs:
               # Single source of truth shared with `.githooks/pre-commit`.
               # `-SkipStagedCheck` because CI has no git index to stage against.
               shell: pwsh
-              run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -SkipStagedCheck -VerboseOutput
+              run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -SkipStagedCheck -NoAutoFix -VerboseOutput
 
             - name: Verify generated files are committed
               # CI must additionally catch the case where a contributor forgot to

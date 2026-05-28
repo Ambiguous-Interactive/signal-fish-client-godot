@@ -36,6 +36,11 @@ point here unless a tool requires a tiny wrapper format.
   file-system decisions.
 - Do not invent protocol details. Anchor concrete wire, auth, and reconnect
   semantics to upstream paths and commits before runtime implementation.
+- After editing any `.ps1`, `.psm1`, `.psd1`, or `.llm/**` file, run
+  `pwsh -NoProfile -File scripts/agent-check.ps1` and resolve every reported
+  issue before continuing or proposing a commit. This is the same validation
+  the pre-commit hook and CI run; running it locally turns hook failures
+  into fast in-loop feedback.
 
 ## Runtime Implementation Checklist
 
@@ -81,8 +86,21 @@ Definition of done for the first usable client:
   file's generated section.
 - `scripts/lint-llm.ps1`: enforces line limits, metadata, pointers, and index
   freshness.
-- `scripts/run-llm-hooks.ps1`: single entry point used by `.githooks/pre-commit`
-  and CI; regenerates, lints, and verifies staged generated files.
+- `scripts/run-llm-hooks.ps1`: single entry point invoked by the installed
+  `.git/hooks/pre-commit` shim and by CI; regenerates, lints, and verifies
+  staged generated files. Accepts `-AutoFix` (used by the pre-commit hook
+  to auto-stage regenerated files and remove stray `*.new` / `*.bak`
+  artifacts) and `-NoAutoFix` (used by CI to keep failures loud).
+- `scripts/install-git-hooks.ps1`: materializes a portable POSIX-sh shim
+  (`#!/usr/bin/env sh`) into the repo's `.git/hooks/pre-commit`. Sh is
+  available on Linux, macOS, and Windows (Git for Windows bundles
+  `sh.exe`); a pwsh shebang would break on Windows because `pwsh -File`
+  refuses extensionless files. The committed `.githooks/pre-commit*`
+  files are reference templates only; the live hook lives in
+  `.git/hooks/` after running the installer.
+- `scripts/agent-check.ps1`: fast post-edit / pre-commit validator that
+  agents and humans should run after editing PowerShell or `.llm/**` files.
+  Wraps `run-llm-hooks.ps1 -SkipStagedCheck -NoAutoFix`.
 - `scripts/test-llm-harness.ps1`: dependency-free self-tests for the shared
   harness library and hook wiring.
 - `scripts/lib/LlmHarness.psm1`: shared module (frontmatter parsing, path
@@ -90,7 +108,8 @@ Definition of done for the first usable client:
 
 ## Required Checks
 
-Primary entry point (used by `.githooks/pre-commit` and CI):
+Primary entry point (invoked by the installed `.git/hooks/pre-commit` and
+CI):
 
 ```powershell
 pwsh -NoProfile -File scripts/run-llm-hooks.ps1
@@ -98,6 +117,12 @@ pwsh -NoProfile -File scripts/run-llm-hooks.ps1
 
 This regenerates `.llm/index.md` and `.llm/context.md`, runs the linter and
 self-tests, and verifies generated files are staged.
+
+Install the pre-commit hook once per checkout:
+
+```powershell
+pwsh -NoProfile -File scripts/install-git-hooks.ps1
+```
 
 Granular alternatives when iterating:
 

@@ -105,8 +105,9 @@
         "github.vscode-github-actions",
         "github.vscode-pull-request-github",
         "github.remotehub",
-        // Note: GitHub Copilot / Copilot Chat are intentionally NOT auto-installed;
-        // they require a subscription. Install on demand if you use them.
+        // AI assistants. Installation always succeeds; the assistant
+        // features themselves are gated by sign-in / subscription, so they
+        // are inert until the user authenticates.
         // Theme & icons
         "github.github-vscode-theme",
         "pkief.material-icon-theme",

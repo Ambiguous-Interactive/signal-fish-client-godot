@@ -3,9 +3,14 @@ repos:
     hooks:
       - id: llm-harness
         name: LLM harness (regenerate index, lint, self-tests)
-        # Single source of truth: matches `.githooks/pre-commit` and CI.
+        # Runs the same single source of truth as the installed
+        # `.git/hooks/pre-commit` shim and as CI: `scripts/run-llm-hooks.ps1`.
         # `-SkipStagedCheck` because the pre-commit framework manages its
-        # own staging of files in a temp area.
+        # own staging of files in a temp area. We intentionally do NOT pass
+        # `-NoAutoFix` here: this config is meant for local development,
+        # mirroring the installed hook's auto-recovery behavior. CI runs
+        # `run-llm-hooks.ps1 -NoAutoFix` directly (see
+        # `.github/workflows/llm-harness.yml`) so drift fails loudly there.
         entry: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -SkipStagedCheck
         language: system
         pass_filenames: false

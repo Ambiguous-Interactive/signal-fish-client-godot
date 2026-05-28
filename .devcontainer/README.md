@@ -42,12 +42,12 @@ Only reputable, well-maintained extensions are pre-installed:
 - **Inline diagnostics:** `usernamehw.errorlens`
 - **Git:** `eamodio.gitlens`, `mhutchie.git-graph`
 - **GitHub:** `github.vscode-github-actions`,
-  `github.vscode-pull-request-github`
-
-> GitHub Copilot / Copilot Chat are intentionally **not** auto-installed
-> (subscription required). Install on demand from the Extensions view.
+  `github.vscode-pull-request-github`, `github.remotehub`
+- **AI assistants (require a subscription or account; install will succeed
+  but the assistant features are gated by sign-in):**
+  `github.copilot-chat`, `openai.chatgpt`, `anthropic.claude-code`
 - **Theme:** `github.github-vscode-theme` (GitHub Dark Default)
-- **Icons:** `pkief.material-icon-theme`
+- **Icons:** `pkief.material-icon-theme`, `oderwat.indent-rainbow`
 
 ## Forwarded ports
 

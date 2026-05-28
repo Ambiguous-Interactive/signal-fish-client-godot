@@ -17,4 +17,4 @@ fi
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HOOK_DIR/.." && pwd)"
 
-exec pwsh -NoProfile -File "$REPO_ROOT/scripts/run-llm-hooks.ps1"
+exec pwsh -NoProfile -File "$REPO_ROOT/scripts/run-llm-hooks.ps1" -AutoFix

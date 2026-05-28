@@ -135,6 +135,87 @@ function Invoke-GeneratedIndexCheck {
     }
 }
 
+# Stray staging artifacts (e.g. `*.new`, `*.bak`, `*.orig`, `*.old`) are a
+# recurring source of confusion and silent drift: contributors commit a
+# `script.ps1.new` alongside a broken `script.ps1`, or leave a `.bak` from a
+# manual edit. Fail the lint if any tracked file matches these patterns.
+function Invoke-StagingArtifactCheck {
+    $patterns = @('*.new', '*.bak', '*.orig', '*.old', '*.rej')
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Diagnostic 'git not available; skipping staging-artifact check.'
+        return
+    }
+    Push-Location $RepoRoot
+    try {
+        $tracked = @(& git ls-files -- @patterns)
+        if ($LASTEXITCODE -ne 0) {
+            Add-Error "git ls-files (tracked) failed with exit $LASTEXITCODE."
+            return
+        }
+        $untracked = @(& git ls-files --others --exclude-standard -- @patterns)
+        if ($LASTEXITCODE -ne 0) {
+            Add-Error "git ls-files (untracked) failed with exit $LASTEXITCODE."
+            return
+        }
+        $offenders = @($tracked + $untracked) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Sort-Object -Unique
+        foreach ($path in $offenders) {
+            Add-Error "Stray staging artifact: $path (patterns: $($patterns -join ', '))"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+# Parse every committed PowerShell source file. This catches structural
+# regressions like the orphaned-code / undefined-variable failure in
+# `install-git-hooks.ps1` *before* a contributor runs the hook for real.
+function Invoke-PowerShellParseCheck {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Diagnostic 'git not available; skipping PowerShell parse check.'
+        return
+    }
+    Push-Location $RepoRoot
+    try {
+        $files = @(& git ls-files -- '*.ps1' '*.psm1' '*.psd1')
+        if ($LASTEXITCODE -ne 0) {
+            Add-Error "git ls-files (powershell sources) failed with exit $LASTEXITCODE."
+            return
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
+    foreach ($rel in ($files | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        $full = Join-Path $RepoRoot $rel
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+            # Tracked but deleted in working tree; nothing to parse.
+            continue
+        }
+        $tokens = $null
+        $parseErrors = $null
+        try {
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+                $full, [ref]$tokens, [ref]$parseErrors)
+        }
+        catch {
+            Add-Error "PowerShell parse threw for $rel`: $($_.Exception.Message)"
+            continue
+        }
+        if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+            foreach ($err in $parseErrors) {
+                Add-Error "PowerShell parse error in $rel`:$($err.Extent.StartLineNumber): $($err.Message)"
+            }
+        }
+        else {
+            Write-Diagnostic "parse OK: $rel"
+        }
+    }
+}
+
 Write-Diagnostic "Repo root: $RepoRoot"
 Write-Diagnostic "Working directory: $((Get-Location).Path)"
 Write-Diagnostic "PowerShell version: $($PSVersionTable.PSVersion)"
@@ -203,6 +284,8 @@ foreach ($pointerCheck in $pointerChecks) {
 }
 
 Invoke-GeneratedIndexCheck
+Invoke-StagingArtifactCheck
+Invoke-PowerShellParseCheck
 
 if ($errors.Count -gt 0) {
     Write-Host "[llm-lint] Diagnostics: repoRoot=$RepoRoot cwd=$((Get-Location).Path)" -ForegroundColor Yellow
