@@ -206,7 +206,7 @@ if ($SelfCheck) {
 # parent pwsh refused to start this script, we never reach this line.
 # The PRIMARY defense lives upstream in `run-llm-hooks.ps1` which
 # parse-checks `preflight.ps1` before invoking it, and in the installed
-# installed pre-commit shim which parse-checks `run-llm-hooks.ps1`.
+# pre-commit shim which parse-checks `run-llm-hooks.ps1`.
 if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
     Write-PreLine 'pwsh not found on PATH; cannot bootstrap self-check.' 'Red'
     exit 1
