@@ -295,6 +295,9 @@ Assert-Test 'run-llm-hooks.ps1 uses shared staging artifact helper' {
     if ($content -notmatch 'Get-LlmStagingArtifacts' -and $content -notmatch 'Get-LlmStrayWorkingTreeArtifacts') {
         throw 'run-llm-hooks.ps1 must use Get-LlmStagingArtifacts or Get-LlmStrayWorkingTreeArtifacts for null-safe, single-sourced artifact discovery.'
     }
+    if ($content -match '(?m)^\s*\$StagingArtifactPatterns\s*=') {
+        throw 'run-llm-hooks.ps1 must not declare $StagingArtifactPatterns; use Get-LlmDefaultStrayPatterns from the shared module.'
+    }
     if ($content -match '@\(& git ls-files -- @StagingArtifactPatterns\)\s*\|') {
         throw 'run-llm-hooks.ps1 must not filter git artifact output during assignment; that pattern can collapse empty arrays to $null.'
     }
@@ -334,13 +337,99 @@ Assert-Test 'staging artifact helper returns empty array for empty patterns' {
     Expect-Equal $artifacts.Count 0
 }
 
+Assert-Test 'stray-artifact pathspec expansion recurses basename patterns' {
+    if (-not (Get-Command ConvertTo-LlmStrayArtifactPathspecs -ErrorAction SilentlyContinue)) {
+        throw 'ConvertTo-LlmStrayArtifactPathspecs is not exported from the shared module.'
+    }
+    $pathspecs = @(ConvertTo-LlmStrayArtifactPathspecs -Patterns @(
+            '.DS_Store', 'Thumbs.db', '.#*', '#*#', 'scripts/*.tmp', '', $null
+        ))
+    foreach ($expected in @(
+            '.DS_Store',
+            ':(glob)**/.DS_Store',
+            'Thumbs.db',
+            ':(glob)**/Thumbs.db',
+            '.#*',
+            ':(glob)**/.#*',
+            '#*#',
+            ':(glob)**/#*#',
+            'scripts/*.tmp'
+        )) {
+        if ($pathspecs -notcontains $expected) {
+            throw "Expected expanded pathspec '$expected'; got: $($pathspecs -join ', ')"
+        }
+    }
+    if ($pathspecs -contains ':(glob)**/scripts/*.tmp') {
+        throw 'Directory-qualified pathspecs must not be rewritten as basename globs.'
+    }
+
+    $deduped = @(ConvertTo-LlmStrayArtifactPathspecs -Patterns @('.DS_Store', '.DS_Store'))
+    Expect-Equal (@($deduped | Where-Object { $_ -eq '.DS_Store' }).Count) 1
+    Expect-Equal (@($deduped | Where-Object { $_ -eq ':(glob)**/.DS_Store' }).Count) 1
+}
+
+Assert-Test 'staging artifact helper default patterns find non-ignored editor artifacts' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        return  # git unavailable; skip silently in this test (linter has its own check).
+    }
+    $tempName = "llm-harness-default-pattern-$([Guid]::NewGuid()).swp"
+    $tempPath = Join-Path $repoRoot $tempName
+    [System.IO.File]::WriteAllText($tempPath, 'sentinel')
+    try {
+        $artifacts = @(Get-LlmStagingArtifacts -RepoRoot $repoRoot)
+        $found = @($artifacts | Where-Object { $_.Path -eq $tempName })
+        if ($found.Count -ne 1) {
+            throw "Expected Get-LlmStagingArtifacts default patterns to find $tempName; got: $($artifacts.Path -join ', ')"
+        }
+        if ($found[0].IsTracked) {
+            throw "$tempName should be reported as IsTracked=false."
+        }
+    } finally {
+        Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Assert-Test 'stray helpers find nested basename-style editor artifacts' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        return  # git unavailable; skip silently in this test (linter has its own check).
+    }
+    $tempDirName = "llm-harness-recursive-stray-$([Guid]::NewGuid())"
+    $nestedDir = Join-Path (Join-Path (Join-Path $repoRoot $tempDirName) 'deep') 'nested'
+    New-Item -ItemType Directory -Path $nestedDir -Force | Out-Null
+    $files = @(
+        @{ Rel = "$tempDirName/deep/nested/.DS_Store"; Full = Join-Path $nestedDir '.DS_Store' },
+        @{ Rel = "$tempDirName/deep/nested/.#notes.md"; Full = Join-Path $nestedDir '.#notes.md' },
+        @{ Rel = "$tempDirName/deep/nested/#notes.md#"; Full = Join-Path $nestedDir '#notes.md#' }
+    )
+    foreach ($file in $files) {
+        [System.IO.File]::WriteAllText($file.Full, 'sentinel')
+    }
+    try {
+        $patterns = @('.DS_Store', '.#*', '#*#')
+        $stagingArtifacts = @(Get-LlmStagingArtifacts -RepoRoot $repoRoot -Patterns $patterns)
+        $strayArtifacts = @(Get-LlmStrayWorkingTreeArtifacts -RepoRoot $repoRoot -Patterns $patterns)
+        foreach ($file in $files) {
+            if ($stagingArtifacts.Path -notcontains $file.Rel) {
+                throw "Expected Get-LlmStagingArtifacts to find nested artifact $($file.Rel); got: $($stagingArtifacts.Path -join ', ')"
+            }
+            if ($strayArtifacts.Path -notcontains $file.Rel) {
+                throw "Expected Get-LlmStrayWorkingTreeArtifacts to find nested artifact $($file.Rel); got: $($strayArtifacts.Path -join ', ')"
+            }
+        }
+    } finally {
+        Remove-Item -LiteralPath (Join-Path $repoRoot $tempDirName) -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Assert-Test 'no stray staging artifacts in the working tree' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         return  # git unavailable; skip silently in this test (linter has its own check).
     }
-    $patterns = @('*.new', '*.bak', '*.orig', '*.old', '*.rej')
-    $offenders = @(Get-LlmStagingArtifacts -RepoRoot $repoRoot -Patterns $patterns)
+    $patterns = @(Get-LlmDefaultStrayPatterns)
+    $offenders = @(Get-LlmStrayWorkingTreeArtifacts -RepoRoot $repoRoot -Patterns $patterns)
     if ($offenders.Count -gt 0) {
         throw "Found stray staging artifacts: $($offenders.Path -join ', ')"
     }
@@ -379,6 +468,61 @@ Assert-Test 'all committed PowerShell sources parse cleanly' {
     }
     if ($failed.Count -gt 0) {
         throw "PowerShell parse errors:`n  - " + ($failed -join "`n  - ")
+    }
+}
+
+Assert-Test 'tracked shebang scripts use LF attributes and bytes' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        return  # git unavailable; skip silently.
+    }
+    Push-Location $repoRoot
+    try {
+        $files = @(& git ls-files -- '*.ps1' '*.psm1' '*.psd1' '.githooks/*' '.claude/hooks/*' 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "git ls-files (shebang candidates) failed with exit $LASTEXITCODE`: $($files -join '; ')"
+        }
+        $files = @($files | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    } finally {
+        Pop-Location
+    }
+
+    $checked = 0
+    $failed = New-Object System.Collections.Generic.List[string]
+    foreach ($rel in $files) {
+        $full = Join-Path $repoRoot $rel
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+        $bytes = [System.IO.File]::ReadAllBytes($full)
+        if ($bytes.Length -lt 2 -or $bytes[0] -ne 35 -or $bytes[1] -ne 33) {
+            continue
+        }
+        $checked++
+        $newlineIndex = [Array]::IndexOf($bytes, [byte]10)
+        if ($newlineIndex -lt 0) {
+            $failed.Add("$rel has a shebang but no LF newline after it.")
+        } elseif ($newlineIndex -gt 0 -and $bytes[$newlineIndex - 1] -eq 13) {
+            $failed.Add("$rel has a CRLF shebang line; direct Unix execution may look for pwsh\\r.")
+        }
+        Push-Location $repoRoot
+        try {
+            $attrOutput = @(& git check-attr eol -- $rel 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                $failed.Add("git check-attr failed for $rel`: $($attrOutput -join '; ')")
+                continue
+            }
+        } finally {
+            Pop-Location
+        }
+        $attrLine = ($attrOutput -join "`n")
+        if ($attrLine -notmatch ':\s+eol:\s+lf(\s|$)') {
+            $failed.Add("$rel must have git attribute eol=lf; got '$attrLine'.")
+        }
+    }
+    if ($checked -eq 0) {
+        throw 'No tracked shebang scripts were found; the LF guard is not exercising anything.'
+    }
+    if ($failed.Count -gt 0) {
+        throw "Shebang line-ending failures:`n  - " + ($failed -join "`n  - ")
     }
 }
 
@@ -1069,6 +1213,47 @@ Assert-Test '.claude/hooks scripts exist and self-parse cleanly' {
     }
 }
 
+Assert-Test '.claude hook JSON variables use explicit names' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $hooksDir = Join-Path $repoRoot '.claude/hooks'
+    $expectations = @{
+        'parse-check-powershell.ps1' = @('hookInput', 'blockResponse')
+        'validate-llm-context.ps1'   = @('hookInput', 'blockResponse')
+        'preflight-stop.ps1'         = @('blockResponse')
+        'session-reminder.ps1'       = @('sessionStartResponse')
+    }
+
+    foreach ($name in $expectations.Keys) {
+        $full = Join-Path $hooksDir $name
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+            throw "Missing agent hook script: .claude/hooks/$name"
+        }
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            $full, [ref]$tokens, [ref]$parseErrors)
+        if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+            throw "Parse error in .claude/hooks/$name`: $($parseErrors | ForEach-Object { $_.Message } | Out-String)"
+        }
+        $variables = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($node in @($ast.FindAll({
+                    param($n)
+                    $n -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    -not $n.VariablePath.IsDriveQualified
+                }, $true))) {
+            [void]$variables.Add($node.VariablePath.UserPath)
+        }
+        if ($variables.Contains('payload')) {
+            throw ".claude/hooks/$name must not use generic `$payload; use explicit hookInput/blockResponse/sessionStartResponse names."
+        }
+        foreach ($expected in $expectations[$name]) {
+            if (-not $variables.Contains($expected)) {
+                throw ".claude/hooks/$name must use `$$expected for JSON hook data."
+            }
+        }
+    }
+}
+
 # --- FIX-15: toolkit scripts respect minimum line counts -------------------
 
 Assert-Test 'toolkit scripts respect minimum line counts (catch empty-file regressions)' {
@@ -1183,6 +1368,88 @@ Assert-Test 'validate-llm-context.ps1 ignores .llm paths outside the repo' {
             }
         } finally {
             Remove-Item -LiteralPath $stdinPath -Force -ErrorAction SilentlyContinue
+        }
+    } finally {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'validate-llm-context.ps1 blocks invalid and accepts valid repo-local LLM markdown' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $hook = Join-Path $repoRoot '.claude/hooks/validate-llm-context.ps1'
+    if (-not (Test-Path -LiteralPath $hook -PathType Leaf)) {
+        throw 'Missing validate-llm-context hook.'
+    }
+
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-validate-hook-$([Guid]::NewGuid())")
+    $tempSkills = Join-Path $tempRoot '.llm/skills'
+    $tempLib = Join-Path $tempRoot 'scripts/lib'
+    New-Item -ItemType Directory -Path $tempSkills, $tempLib -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/lib/LlmHarness.psm1') `
+        -Destination (Join-Path $tempLib 'LlmHarness.psm1') -Force
+
+    $invalidFile = Join-Path $tempSkills 'missing-frontmatter.md'
+    $validFile = Join-Path $tempSkills 'valid.md'
+    [System.IO.File]::WriteAllText($invalidFile, "# Missing Frontmatter`n")
+    [System.IO.File]::WriteAllText($validFile, "---`ndescription: Valid hook test`ntriggers: hook`ncategory: Test`n---`n# Valid`n")
+
+    function Invoke-ValidateHookForTest {
+        param([Parameter(Mandatory)][string]$FilePath)
+        $stdinPath = [System.IO.Path]::GetTempFileName()
+        $stdoutPath = [System.IO.Path]::GetTempFileName()
+        $stderrPath = [System.IO.Path]::GetTempFileName()
+        $hookPayloadJson = @{ tool_name = 'Edit'; tool_input = @{ file_path = $FilePath } } | ConvertTo-Json -Compress
+        [System.IO.File]::WriteAllText($stdinPath, $hookPayloadJson)
+        $envBackup = $env:CLAUDE_PROJECT_DIR
+        try {
+            $env:CLAUDE_PROJECT_DIR = $tempRoot
+            $proc = Start-Process -FilePath 'pwsh' -ArgumentList @(
+                '-NoProfile', '-File', $hook
+            ) -RedirectStandardInput $stdinPath `
+                -RedirectStandardOutput $stdoutPath `
+                -RedirectStandardError $stderrPath `
+                -PassThru -Wait -NoNewWindow
+            return [pscustomobject]@{
+                ExitCode = $proc.ExitCode
+                Stdout   = (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue)
+                Stderr   = (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue)
+            }
+        } finally {
+            if ($null -eq $envBackup) {
+                Remove-Item Env:CLAUDE_PROJECT_DIR -ErrorAction SilentlyContinue
+            } else {
+                $env:CLAUDE_PROJECT_DIR = $envBackup
+            }
+            Remove-Item -LiteralPath $stdinPath, $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    try {
+        $invalid = Invoke-ValidateHookForTest -FilePath $invalidFile
+        if ($invalid.ExitCode -ne 2) {
+            throw "validate hook must exit 2 for missing frontmatter; got $($invalid.ExitCode). stdout: '$($invalid.Stdout)' stderr: '$($invalid.Stderr)'"
+        }
+        if ([string]::IsNullOrWhiteSpace($invalid.Stdout)) {
+            throw 'validate hook must emit JSON to stdout when blocking missing frontmatter.'
+        }
+        $parsed = $null
+        try { $parsed = $invalid.Stdout | ConvertFrom-Json -ErrorAction Stop } catch {
+            throw "validate hook stdout must be valid JSON; got '$($invalid.Stdout)'"
+        }
+        if ($parsed.decision -ne 'block') {
+            throw "validate hook stdout decision must equal 'block'; got '$($parsed.decision)'."
+        }
+        if (-not ($parsed.PSObject.Properties.Name -contains 'reason') -or
+            [string]::IsNullOrWhiteSpace($parsed.reason)) {
+            throw 'validate hook stdout JSON must contain a non-empty `reason` field.'
+        }
+        if ($parsed.reason -notmatch 'missing required frontmatter keys') {
+            throw "validate hook block reason must name missing frontmatter; got '$($parsed.reason)'."
+        }
+
+        $valid = Invoke-ValidateHookForTest -FilePath $validFile
+        if ($valid.ExitCode -ne 0) {
+            throw "validate hook must exit 0 for valid frontmatter; got $($valid.ExitCode). stdout: '$($valid.Stdout)' stderr: '$($valid.Stderr)'"
         }
     } finally {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -1407,6 +1674,16 @@ Assert-Test 'MIN-1: stray-artifact patterns sourced from shared module' {
     $lintSrc = Get-Content -LiteralPath (Join-Path $ScriptsDir 'lint-llm.ps1') -Raw
     $hookSrc = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
     $libSrc = Get-Content -LiteralPath (Join-Path $ScriptsDir 'lib/LlmHarness.psm1') -Raw
+
+    if ($hookSrc -match '(?m)^\s*\$StagingArtifactPatterns\s*=') {
+        throw 'run-llm-hooks.ps1 must not retain an unused $StagingArtifactPatterns variable.'
+    }
+    if ($libSrc -match '\[string\[\]\]\$Patterns\s*=\s*@\(') {
+        throw 'Get-LlmStagingArtifacts must not hardcode a local default pattern list; use Get-LlmDefaultStrayPatterns.'
+    }
+    if ($libSrc -notmatch '\[string\[\]\]\$Patterns\s*=\s*\(Get-LlmDefaultStrayPatterns\)') {
+        throw 'Get-LlmStagingArtifacts must default -Patterns to Get-LlmDefaultStrayPatterns.'
+    }
 
     foreach ($entry in @(
             @{ Name = 'lint-llm.ps1'; Content = $lintSrc },

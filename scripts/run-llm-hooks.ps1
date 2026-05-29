@@ -6,8 +6,8 @@ param(
     # Auto-recover from the two most common, deterministic failure modes:
     #   * Generated `.llm/index.md` / `.llm/context.md` regenerated but not
     #     staged -> `git add` them.
-    #   * Stray staging artifacts (`*.new`, `*.bak`, `*.orig`, `*.old`,
-    #     `*.rej`) in the working tree -> delete them.
+    #   * Scoped stray working-tree artifacts matching the shared harness
+    #     junk list -> delete them.
     # Default OFF for direct script invocation (loud failure surface). The
     # pre-commit hook ENABLES this so commits do not fail for mechanical
     # reasons. CI passes `-NoAutoFix` to keep failures loud.
@@ -39,7 +39,6 @@ $Linter = Join-Path $ScriptsDir 'lint-llm.ps1'
 $SelfTests = Join-Path $ScriptsDir 'test-llm-harness.ps1'
 $Preflight = Join-Path $ScriptsDir 'preflight.ps1'
 $GeneratedFiles = @('.llm/index.md', '.llm/context.md')
-$StagingArtifactPatterns = @('*.new', '*.bak', '*.orig', '*.old', '*.rej')
 # Broader cleanup set used in AutoFix. Sourced from the shared module
 # (Get-LlmDefaultStrayPatterns) so the linter, hook runner, and helper
 # defaults never drift apart (MIN-1). The assignment happens AFTER
@@ -208,10 +207,10 @@ $WorkingTreeJunkPatterns = @(Get-LlmDefaultStrayPatterns)
 Push-Location $RepoRoot
 try {
     # Stray artifact handling. The broader pattern set (Get-LlmStray...)
-    # closes the gitignored `*.tmp` / `*.swp` blind spot the linter's
-    # tracked-only check cannot see. We ALWAYS run this scan; the only
-    # difference between AutoFix and NoAutoFix is whether we delete the
-    # in-scope ones or just report-and-fail.
+    # closes the gitignored `*.tmp` blind spot that plain
+    # `git ls-files --others --exclude-standard` cannot see. We ALWAYS
+    # run this scan; the only difference between AutoFix and NoAutoFix is
+    # whether we delete the in-scope ones or just report-and-fail.
     if (Get-Command git -ErrorAction SilentlyContinue) {
         try {
             $strayArtifacts = @(Get-LlmStrayWorkingTreeArtifacts -RepoRoot $RepoRoot -Patterns $WorkingTreeJunkPatterns)

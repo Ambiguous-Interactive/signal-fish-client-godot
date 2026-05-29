@@ -10,8 +10,9 @@ $ErrorActionPreference = 'Stop'
 # `Get-LlmStrayWorkingTreeArtifacts` helper default. Anything that wants
 # the harness's idea of "junk in the working tree" must consume this
 # variable (or the `Get-LlmDefaultStrayPatterns` accessor below) rather
-# than hardcode its own copy. A self-test asserts the three call sites
-# do not redeclare the list literally.
+# than hardcode its own copy. Git pathspec expansion is derived from this
+# list by `ConvertTo-LlmStrayArtifactPathspecs`. A self-test asserts the
+# three call sites do not redeclare the list literally.
 $script:LlmDefaultStrayPatterns = @(
     '*.tmp', '*.swp', '*.swo', '*~', '.#*', '#*#',
     '*.bak', '*.orig', '*.old', '*.new', '*.rej',
@@ -33,6 +34,44 @@ function Get-LlmDefaultStrayPatterns {
     [CmdletBinding()]
     param()
     return @($script:LlmDefaultStrayPatterns)
+}
+
+function ConvertTo-LlmStrayArtifactPathspecs {
+    <#
+    .SYNOPSIS
+    Converts stray-artifact filename globs into Git pathspecs.
+
+    .DESCRIPTION
+    Basename-style artifacts include literal names and filename globs.
+    Literal names only match the repository root when passed directly to
+    `git ls-files`, so this helper preserves each source pattern and adds a
+    recursive glob pathspec for patterns that do not already name a directory.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [string[]]$Patterns = $null
+    )
+
+    $pathspecs = [System.Collections.Generic.List[string]]::new()
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($pattern in @($Patterns)) {
+        $normalized = "$pattern".Trim() -replace '\\', '/'
+        if ([string]::IsNullOrWhiteSpace($normalized)) { continue }
+
+        $candidates = @($normalized)
+        if ($normalized -notmatch '/') {
+            $candidates += ":(glob)**/$normalized"
+        }
+        foreach ($candidate in $candidates) {
+            if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+            if ($seen.Add($candidate)) {
+                $pathspecs.Add($candidate)
+            }
+        }
+    }
+
+    return @($pathspecs)
 }
 
 function Get-LlmRepoRoot {
@@ -152,15 +191,15 @@ function Get-LlmStagingArtifacts {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$RepoRoot,
-        [string[]]$Patterns = @('*.new', '*.bak', '*.orig', '*.old', '*.rej')
+        [string[]]$Patterns = (Get-LlmDefaultStrayPatterns)
     )
 
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         throw 'git not available; cannot inspect staging artifacts.'
     }
 
-    $activePatterns = @($Patterns | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($activePatterns.Count -eq 0) {
+    $activePathspecs = @(ConvertTo-LlmStrayArtifactPathspecs -Patterns $Patterns)
+    if ($activePathspecs.Count -eq 0) {
         return @()
     }
 
@@ -169,7 +208,7 @@ function Get-LlmStagingArtifacts {
 
     Push-Location $RepoRoot
     try {
-        $tracked = @(& git ls-files -- @activePatterns 2> $trackedErrorPath)
+        $tracked = @(& git ls-files -- @activePathspecs 2> $trackedErrorPath)
         $trackedExitCode = $LASTEXITCODE
         if ($trackedExitCode -ne 0) {
             $trackedError = (Get-Content -LiteralPath $trackedErrorPath -Raw -ErrorAction SilentlyContinue).Trim()
@@ -179,7 +218,7 @@ function Get-LlmStagingArtifacts {
             throw "git ls-files (tracked) failed with exit $trackedExitCode`: $trackedError"
         }
 
-        $untracked = @(& git ls-files --others --exclude-standard -- @activePatterns 2> $untrackedErrorPath)
+        $untracked = @(& git ls-files --others --exclude-standard -- @activePathspecs 2> $untrackedErrorPath)
         $untrackedExitCode = $LASTEXITCODE
         if ($untrackedExitCode -ne 0) {
             $untrackedError = (Get-Content -LiteralPath $untrackedErrorPath -Raw -ErrorAction SilentlyContinue).Trim()
@@ -250,8 +289,8 @@ function Get-LlmStrayWorkingTreeArtifacts {
         throw 'git not available; cannot inspect stray working tree artifacts.'
     }
 
-    $activePatterns = @($Patterns | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($activePatterns.Count -eq 0) {
+    $activePathspecs = @(ConvertTo-LlmStrayArtifactPathspecs -Patterns $Patterns)
+    if ($activePathspecs.Count -eq 0) {
         return @()
     }
 
@@ -261,12 +300,12 @@ function Get-LlmStrayWorkingTreeArtifacts {
 
     Push-Location $RepoRoot
     try {
-        $tracked = @(& git ls-files -- @activePatterns 2> $trackedErrorPath)
+        $tracked = @(& git ls-files -- @activePathspecs 2> $trackedErrorPath)
         if ($LASTEXITCODE -ne 0) {
             $err = (Get-Content -LiteralPath $trackedErrorPath -Raw -ErrorAction SilentlyContinue).Trim()
             throw "git ls-files (tracked) failed with exit $LASTEXITCODE`: $err"
         }
-        $untracked = @(& git ls-files --others --exclude-standard -- @activePatterns 2> $untrackedErrorPath)
+        $untracked = @(& git ls-files --others --exclude-standard -- @activePathspecs 2> $untrackedErrorPath)
         if ($LASTEXITCODE -ne 0) {
             $err = (Get-Content -LiteralPath $untrackedErrorPath -Raw -ErrorAction SilentlyContinue).Trim()
             throw "git ls-files (untracked) failed with exit $LASTEXITCODE`: $err"
@@ -274,7 +313,7 @@ function Get-LlmStrayWorkingTreeArtifacts {
         # `--others --ignored --exclude-standard` is the canonical
         # incantation for "untracked files that match a .gitignore rule".
         # Without --others, --ignored will error out on modern git.
-        $ignored = @(& git ls-files --others --ignored --exclude-standard -- @activePatterns 2> $ignoredErrorPath)
+        $ignored = @(& git ls-files --others --ignored --exclude-standard -- @activePathspecs 2> $ignoredErrorPath)
         if ($LASTEXITCODE -ne 0) {
             $err = (Get-Content -LiteralPath $ignoredErrorPath -Raw -ErrorAction SilentlyContinue).Trim()
             throw "git ls-files (ignored) failed with exit $LASTEXITCODE`: $err"
@@ -444,6 +483,7 @@ Export-ModuleMember -Function `
     Get-LlmMarkdownTitle, `
     Write-LlmTextFile, `
     ConvertTo-LlmNormalizedNewlines, `
+    ConvertTo-LlmStrayArtifactPathspecs, `
     Get-LlmStagingArtifacts, `
     Get-LlmStrayWorkingTreeArtifacts, `
     Get-LlmDefaultStrayPatterns, `

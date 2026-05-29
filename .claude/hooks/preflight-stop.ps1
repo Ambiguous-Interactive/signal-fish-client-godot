@@ -59,11 +59,11 @@ $output = & pwsh -NoProfile -File $preflight -NoAutoFix 2>&1
 $exitCode = $LASTEXITCODE
 if ($exitCode -ne 0) {
     $reason = "Preflight failed (exit $exitCode) before turn end. A toolkit script may be corrupted. Output:`n$($output -join "`n")`nRun: pwsh -NoProfile -File scripts/preflight.ps1 -AutoFix to recover from HEAD."
-    $obj = [pscustomobject]@{
+    $blockResponse = [pscustomobject]@{
         decision = 'block'
         reason   = $reason
     }
-    [System.Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress))
+    [System.Console]::Out.WriteLine(($blockResponse | ConvertTo-Json -Compress))
     exit 2
 }
 exit 0

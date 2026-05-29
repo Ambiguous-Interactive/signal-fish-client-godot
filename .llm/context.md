@@ -89,11 +89,11 @@ Definition of done for the first usable client:
 - `scripts/run-llm-hooks.ps1`: single entry point invoked by the installed
   `.git/hooks/pre-commit` shim and by CI; regenerates, lints, and verifies
   staged generated files. Accepts `-AutoFix` (used by local hook entry points
-  to auto-stage regenerated files and remove stray `*.new` / `*.bak`
-  artifacts) and `-NoAutoFix` (used by CI and `agent-check.ps1` to keep
-  failures loud). Use `-SkipStagedCheck` only when an outer wrapper validates
-  content outside the local staging flow, such as CI or the pre-commit
-  framework.
+  to auto-stage regenerated files and remove scoped stray artifacts matching
+  the shared harness junk list) and `-NoAutoFix` (used by CI and
+  `agent-check.ps1` to keep failures loud). Use `-SkipStagedCheck` only when
+  an outer wrapper validates content outside the local staging flow, such as
+  CI or the pre-commit framework.
 - `scripts/install-git-hooks.ps1`: materializes a portable POSIX-sh shim
   (`#!/usr/bin/env sh`) into the repo's `.git/hooks/pre-commit`. Sh is
   available on Linux, macOS, and Windows (Git for Windows bundles
@@ -126,8 +126,11 @@ Definition of done for the first usable client:
   linter, hook runner, and tests.
 - `.claude/settings.json` + `.claude/hooks/*.ps1`: agentic guardrails.
   `PostToolUse` parse-checks every `.ps1`/`.psm1`/`.psd1` write/edit and
-  runs `agent-check.ps1` after `.llm/**` edits; `Stop` runs preflight;
-  `SessionStart` emits a one-shot reminder.
+  runs a fast per-file `.llm` structural validator after `.llm/**` edits;
+  `Stop` runs preflight; `SessionStart` emits a one-shot reminder.
+  PowerShell hook/reference scripts with shebangs are forced to LF by
+  `.gitattributes` and by a byte-level self-test so direct Unix execution
+  cannot resolve `pwsh\r`.
 
 ## Required Checks
 

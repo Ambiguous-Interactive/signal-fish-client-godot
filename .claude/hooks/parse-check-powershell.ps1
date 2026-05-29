@@ -55,11 +55,11 @@ function Send-BlockReason {
     # the very module it depends on). Keep these two copies in sync by
     # convention; the duplication is small (~10 lines) and the safety
     # property is more valuable than the DRY win.
-    $obj = [pscustomobject]@{
+    $blockResponse = [pscustomobject]@{
         decision = 'block'
         reason   = $Reason
     }
-    [System.Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress))
+    [System.Console]::Out.WriteLine(($blockResponse | ConvertTo-Json -Compress))
     exit 2
 }
 
@@ -67,26 +67,26 @@ function Send-BlockReason {
 $raw = [System.Console]::In.ReadToEnd()
 if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
 
-$payload = $null
+$hookInput = $null
 try {
-    $payload = $raw | ConvertFrom-Json -ErrorAction Stop
+    $hookInput = $raw | ConvertFrom-Json -ErrorAction Stop
 } catch {
     # Malformed input is not the agent's fault; bail out silently.
     exit 0
 }
 
-if ($null -eq $payload -or -not ($payload.PSObject.Properties.Name -contains 'tool_input')) {
+if ($null -eq $hookInput -or -not ($hookInput.PSObject.Properties.Name -contains 'tool_input')) {
     exit 0
 }
 # Defensive matcher: trust but verify the upstream matcher. If a future
 # Claude Code version routes an unexpected tool here (or a misconfigured
 # settings.json forgets the matcher), exit silently rather than running
 # the parse check against a non-write tool's payload.
-if ($payload.PSObject.Properties.Name -contains 'tool_name' -and
-    $payload.tool_name -notin @('Write', 'Edit', 'MultiEdit')) {
+if ($hookInput.PSObject.Properties.Name -contains 'tool_name' -and
+    $hookInput.tool_name -notin @('Write', 'Edit', 'MultiEdit')) {
     exit 0
 }
-$filePath = $payload.tool_input.file_path
+$filePath = $hookInput.tool_input.file_path
 if ([string]::IsNullOrWhiteSpace($filePath)) { exit 0 }
 if ($filePath -notmatch '\.(ps1|psm1|psd1)$') { exit 0 }
 if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) { exit 0 }

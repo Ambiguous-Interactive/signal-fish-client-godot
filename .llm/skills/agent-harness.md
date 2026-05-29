@@ -43,18 +43,19 @@ scripts that maintain AI context.
 4. Include regenerated `.llm/index.md` and `.llm/context.md` when changed.
     Local hook entry points (`.git/hooks/pre-commit` and
     `.pre-commit-config.yaml`) run with `-AutoFix` and will auto-stage these
-    and delete stray `*.new` / `*.bak` artifacts; CI and `agent-check.ps1` run
-    with `-NoAutoFix` and will fail loudly on any drift, so do not rely on
-    auto-fix as the only safety net.
+    and delete scoped stray artifacts matching the shared harness junk list;
+    CI and `agent-check.ps1` run with `-NoAutoFix` and will fail loudly on
+    any drift, so do not rely on auto-fix as the only safety net.
 
 ## Shared Library
 
 - `scripts/lib/LlmHarness.psm1` owns frontmatter parsing, path helpers, and
   staging-artifact discovery (`Get-LlmStagingArtifacts` for tracked / non-
   ignored; `Get-LlmStrayWorkingTreeArtifacts` for the gitignored blind
-  spot, e.g. `*.tmp`, `*.swp`). Both `generate-llm-index.ps1` and
-  `lint-llm.ps1` import it; never reintroduce a local `Read-Frontmatter`
-  in either script (the self-tests enforce this).
+  spot). `Get-LlmDefaultStrayPatterns` is the canonical junk-pattern list
+  used by both helpers. Both `generate-llm-index.ps1` and `lint-llm.ps1`
+  import it; never reintroduce a local `Read-Frontmatter` in either script
+  (the self-tests enforce this).
 - `scripts/run-llm-hooks.ps1` is the single source of truth for the
   pre-commit / CI flow: it runs preflight first, then regenerates the
   index, runs the linter, and runs the harness self-tests.
@@ -82,11 +83,14 @@ The linter, preflight, and self-tests enforce repo-wide invariants beyond
   `preflight.ps1` enforces this; in `-AutoFix` mode it restores corrupted
   sources from `git HEAD`.
 - No tracked or untracked staging artifacts (`*.new`, `*.bak`, `*.orig`,
-  `*.old`, `*.rej`) may exist. `Get-LlmStagingArtifacts` covers the
-  tracked / non-ignored set; `Get-LlmStrayWorkingTreeArtifacts` covers
-  the gitignored blind spot (`*.tmp`, `*.swp`, editor backups). The hook
-  runner's `-AutoFix` deletes both. `.gitignore` blocks them as a second
-  layer.
+  `*.old`, `*.rej`, plus editor junk from `Get-LlmDefaultStrayPatterns`) may
+  exist. `Get-LlmStagingArtifacts` covers the tracked / non-ignored set;
+  `Get-LlmStrayWorkingTreeArtifacts` covers gitignored blind spots like
+  `*.tmp`. The hook runner's `-AutoFix` deletes scoped matches. `.gitignore`
+  blocks common backups as a second layer.
+- PowerShell hook/reference scripts with shebangs must stay LF-normalized.
+  `.gitattributes` overrides `.claude/hooks/*.ps1` and `.githooks/*.ps1`,
+  and the self-tests check both git attributes and first-newline bytes.
 - `install-git-hooks.ps1` must have no undefined variable references and
   exposes `Get-InstallPathComparison`, `ConvertTo-NormalizedHooksPath`,
   `Test-LegacyHooksPath` so trailing-separator and relative-path

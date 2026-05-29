@@ -19,11 +19,11 @@ try {
 if ($null -ne $selfErrors -and $selfErrors.Count -gt 0) { exit 0 }
 
 $reminder = 'Harness invariants: PostToolUse hooks auto parse-check .ps1/.psm1/.psd1 and validate .llm/**/*.md edits; Stop hook runs preflight. Recover with: pwsh -NoProfile -File scripts/preflight.ps1 -AutoFix'
-$payload = [pscustomobject]@{
+$sessionStartResponse = [pscustomobject]@{
     hookSpecificOutput = [pscustomobject]@{
         hookEventName     = 'SessionStart'
         additionalContext = $reminder
     }
 }
-[System.Console]::Out.WriteLine(($payload | ConvertTo-Json -Depth 4 -Compress))
+[System.Console]::Out.WriteLine(($sessionStartResponse | ConvertTo-Json -Depth 4 -Compress))
 exit 0

@@ -48,7 +48,11 @@ These checks enforce:
 - Stray artifact detection is single-sourced through
   `Get-LlmStagingArtifacts` (tracked + non-ignored) and
   `Get-LlmStrayWorkingTreeArtifacts` (includes gitignored junk like
-  `*.tmp`, `*.swp`, `.DS_Store`). The hook runner's `-AutoFix` uses both.
+  `*.tmp`, `*.swp`, `.DS_Store`). Both helpers default to
+  `Get-LlmDefaultStrayPatterns`; the hook runner's `-AutoFix` uses the
+  broader scan.
+- Tracked shebang scripts are checked at byte level and by `git check-attr`
+  so PowerShell hook/reference scripts that can run directly on Unix stay LF.
 - `scripts/preflight.ps1` parse-checks itself first, then every tracked
   `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers via `git checkout HEAD --
   <path>`. `run-llm-hooks.ps1`, `agent-check.ps1`, and CI all run it

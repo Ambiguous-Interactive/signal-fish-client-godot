@@ -21,23 +21,11 @@ pre-commit.txt
 pre-push.txt
 logs_*.zip
 
-# Common staging / backup artifacts.
-#
-# The LLM harness checks these patterns at two layers:
-#   1. lint-llm.ps1 / run-llm-hooks.ps1 -AutoFix call
-#      `Get-LlmStagingArtifacts` (tracked + non-ignored) on this
-#      checked-against list. Tracked files matching these patterns FAIL
-#      the lint; the AutoFix path deletes them.
-#   2. The broader cleanup set used by the AutoFix path and
-#      `Get-LlmStrayWorkingTreeArtifacts` ALSO covers editor junk
-#      (`*.swp`, `*.swo`, `*~`, `.#*`, `#*#`, `.DS_Store`, `Thumbs.db`).
-#      Those are NOT all listed here so they appear as untracked rather
-#      than ignored, which lets the linter flag them via the standard
-#      `--others --exclude-standard` path. The `*.tmp` pattern above IS
-#      gitignored (Godot 4 convention); `Get-LlmStrayWorkingTreeArtifacts`
-#      uses `git ls-files --ignored` to find those anyway, closing the
-#      blind spot where a stale `*.tmp` corrupts the working tree but
-#      is invisible to the standard listing.
+# Common staging / backup artifacts. The canonical harness pattern list lives
+# in `scripts/lib/LlmHarness.psm1` (`Get-LlmDefaultStrayPatterns`). Some editor
+# junk is intentionally left unignored so `git status` surfaces it; `*.tmp` is
+# already ignored by Godot convention, and the harness uses `git ls-files
+# --ignored` to catch that blind spot.
 *.new
 *.bak
 *.orig

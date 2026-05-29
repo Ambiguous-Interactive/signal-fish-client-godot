@@ -16,10 +16,15 @@
 Dockerfile  text eol=lf
 *.dockerfile text eol=lf
 
-# PowerShell stays CRLF (Windows-native convention; pwsh on Linux handles both)
+# PowerShell stays CRLF unless a shebang makes direct Unix execution possible.
 *.ps1       text eol=crlf
 *.psm1      text eol=crlf
 *.psd1      text eol=crlf
+
+# PowerShell files with shebangs must stay LF; otherwise Unix may look for
+# an interpreter named "pwsh\r" when a script is executed directly.
+.claude/hooks/*.ps1 text eol=lf
+.githooks/*.ps1     text eol=lf
 
 # Godot resources are text but stay as-is to match upstream tooling
 *.gd        text eol=lf

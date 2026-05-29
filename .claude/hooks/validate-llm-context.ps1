@@ -65,30 +65,30 @@ function Send-BlockReason {
     # dependency: if a shared helper module were corrupted, the very
     # hooks meant to diagnose corruption would themselves fail to load.
     # Keep these two copies in sync by convention.
-    $payload = [pscustomobject]@{
+    $blockResponse = [pscustomobject]@{
         decision = 'block'
         reason   = $Reason
     }
-    [System.Console]::Out.WriteLine(($payload | ConvertTo-Json -Compress))
+    [System.Console]::Out.WriteLine(($blockResponse | ConvertTo-Json -Compress))
     exit 2
 }
 
 $raw = [System.Console]::In.ReadToEnd()
 if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
 
-$payload = $null
-try { $payload = $raw | ConvertFrom-Json -ErrorAction Stop } catch { exit 0 }
-if ($null -eq $payload -or -not ($payload.PSObject.Properties.Name -contains 'tool_input')) {
+$hookInput = $null
+try { $hookInput = $raw | ConvertFrom-Json -ErrorAction Stop } catch { exit 0 }
+if ($null -eq $hookInput -or -not ($hookInput.PSObject.Properties.Name -contains 'tool_input')) {
     exit 0
 }
 # Defensive matcher: trust but verify the upstream matcher. Same shape
 # as parse-check-powershell.ps1 so a misconfigured settings.json cannot
 # route an unexpected tool here.
-if ($payload.PSObject.Properties.Name -contains 'tool_name' -and
-    $payload.tool_name -notin @('Write', 'Edit', 'MultiEdit')) {
+if ($hookInput.PSObject.Properties.Name -contains 'tool_name' -and
+    $hookInput.tool_name -notin @('Write', 'Edit', 'MultiEdit')) {
     exit 0
 }
-$filePath = $payload.tool_input.file_path
+$filePath = $hookInput.tool_input.file_path
 if ([string]::IsNullOrWhiteSpace($filePath)) { exit 0 }
 
 # Normalize separators for the per-segment check.
