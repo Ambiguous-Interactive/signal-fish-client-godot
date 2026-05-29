@@ -85,6 +85,63 @@ function Expect-Equal {
     }
 }
 
+function Get-TextDiagnosticLines {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Content,
+        [Parameter(Mandatory)][string]$Pattern,
+        [int]$Limit = 8
+    )
+
+    $matches = [System.Collections.Generic.List[string]]::new()
+    $lines = @($Content -split "`r?`n")
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match $Pattern) {
+            $matches.Add(("{0}: {1}" -f ($i + 1), $lines[$i].TrimEnd()))
+            if ($matches.Count -ge $Limit) { break }
+        }
+    }
+    if ($matches.Count -eq 0) {
+        return "(no lines matched diagnostic pattern '$Pattern')"
+    }
+    return ($matches -join "`n")
+}
+
+function Assert-TextMatches {
+    param(
+        [Parameter(Mandatory)][string]$Subject,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Content,
+        [Parameter(Mandatory)][string]$Pattern,
+        [Parameter(Mandatory)][string]$Requirement,
+        [string]$DiagnosticPattern = ''
+    )
+
+    if ($Content -match $Pattern) { return }
+    $details = if ([string]::IsNullOrWhiteSpace($DiagnosticPattern)) {
+        ''
+    } else {
+        "`nDiagnostic lines:`n$(Get-TextDiagnosticLines -Content $Content -Pattern $DiagnosticPattern)"
+    }
+    throw "$Subject must $Requirement. Missing pattern: $Pattern$details"
+}
+
+function Assert-TextDoesNotMatch {
+    param(
+        [Parameter(Mandatory)][string]$Subject,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Content,
+        [Parameter(Mandatory)][string]$Pattern,
+        [Parameter(Mandatory)][string]$Requirement,
+        [string]$DiagnosticPattern = ''
+    )
+
+    if ($Content -notmatch $Pattern) { return }
+    $details = if ([string]::IsNullOrWhiteSpace($DiagnosticPattern)) {
+        ''
+    } else {
+        "`nMatching lines:`n$(Get-TextDiagnosticLines -Content $Content -Pattern $DiagnosticPattern)"
+    }
+    throw "$Subject must $Requirement. Forbidden pattern: $Pattern$details"
+}
+
 function Assert-DirectPosixShimBootstrap {
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -773,27 +830,63 @@ Assert-Test 'devcontainer post-create installs direct hooks, Codex, and reports 
         throw 'Missing .devcontainer/post-create.sh'
     }
     $content = Get-Content -LiteralPath $postCreate -Raw
-    if ($content -notmatch 'install-codex\.sh') {
-        throw 'post-create.sh must invoke .devcontainer/install-codex.sh.'
+
+    foreach ($requirement in @(
+            [pscustomobject]@{
+                Pattern     = 'install-codex\.sh'
+                Requirement = 'invoke .devcontainer/install-codex.sh'
+                Diagnostic  = 'install-codex|Codex CLI|CODEX_VERSION_OUTPUT'
+            },
+            [pscustomobject]@{
+                Pattern     = 'install-git-hooks\.ps1\s+-Force'
+                Requirement = 'install the direct .git/hooks shim with scripts/install-git-hooks.ps1 -Force'
+                Diagnostic  = 'install-git-hooks|git hooks|pre-commit'
+            },
+            [pscustomobject]@{
+                Pattern     = 'codex --version'
+                Requirement = 'include codex --version in the toolchain summary'
+                Diagnostic  = 'Toolchain summary|codex|CODEX_VERSION_OUTPUT'
+            },
+            [pscustomobject]@{
+                Pattern     = 'CODEX_VERSION_OUTPUT='
+                Requirement = 'capture Codex version output before reporting the toolchain summary'
+                Diagnostic  = 'CODEX_VERSION_OUTPUT|codex --version|Codex CLI'
+            },
+            [pscustomobject]@{
+                Pattern     = 'Codex CLI is missing after post-create install'
+                Requirement = 'fail loudly if Codex is missing after install-codex.sh runs'
+                Diagnostic  = 'Codex CLI|CODEX_VERSION_OUTPUT|exit 1'
+            },
+            [pscustomobject]@{
+                Pattern     = 'Failed to install PowerShell profile'
+                Requirement = 'fail loudly if PowerShell profile installation fails'
+                Diagnostic  = 'PowerShell profile|profile.ps1|exit 1'
+            },
+            [pscustomobject]@{
+                Pattern     = 'ensure_writable_dir'
+                Requirement = 'repair root-owned mounted directories before installing hooks'
+                Diagnostic  = 'ensure_writable_dir|sudo chown|commandhistory'
+            },
+            [pscustomobject]@{
+                Pattern     = 'sudo chown -R'
+                Requirement = 'repair root-owned mounted directories before installing hooks'
+                Diagnostic  = 'ensure_writable_dir|sudo chown|commandhistory'
+            }
+        )) {
+        Assert-TextMatches `
+            -Subject '.devcontainer/post-create.sh' `
+            -Content $content `
+            -Pattern $requirement.Pattern `
+            -Requirement $requirement.Requirement `
+            -DiagnosticPattern $requirement.Diagnostic
     }
-    if ($content -notmatch 'install-git-hooks\.ps1\s+-Force') {
-        throw 'post-create.sh must install the direct .git/hooks shim with scripts/install-git-hooks.ps1 -Force.'
-    }
-    if ($content -match 'pre-commit\s+install') {
-        throw 'post-create.sh must not install the pre-commit framework hook; the direct shim is canonical.'
-    }
-    if ($content -notmatch 'codex --version') {
-        throw 'post-create.sh must include codex --version in the toolchain summary.'
-    }
-    if ($content -notmatch 'CODEX_VERSION_OUTPUT=' -or $content -notmatch 'Codex CLI is missing after post-create install') {
-        throw 'post-create.sh must fail loudly if Codex is missing after install-codex.sh runs.'
-    }
-    if ($content -notmatch 'Failed to install PowerShell profile') {
-        throw 'post-create.sh must fail loudly if PowerShell profile installation fails.'
-    }
-    if ($content -notmatch 'ensure_writable_dir' -or $content -notmatch 'sudo chown -R') {
-        throw 'post-create.sh must repair root-owned mounted directories before installing hooks.'
-    }
+    Assert-TextDoesNotMatch `
+        -Subject '.devcontainer/post-create.sh' `
+        -Content $content `
+        -Pattern 'pre-commit\s+install' `
+        -Requirement 'not install the pre-commit framework hook; the direct shim is canonical' `
+        -DiagnosticPattern 'pre-commit|install-git-hooks|direct git hooks'
+
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash -n $postCreate
         if ($LASTEXITCODE -ne 0) {
@@ -809,28 +902,69 @@ Assert-Test 'devcontainer pre-commit remnants are optional compatibility only' {
     $postCreate = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-create.sh') -Raw
     $readme = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/README.md') -Raw
 
-    if ($postCreate -match 'pre-commit\s+install') {
-        throw 'post-create.sh must not install the pre-commit framework hook; scripts/install-git-hooks.ps1 owns the canonical direct shim.'
-    }
-    if ($dockerfile -match 'pipx install pre-commit' -and
-        ($dockerfile -notmatch 'Optional compatibility' -or
-            $dockerfile -notmatch 'git rev-parse --git-path hooks' -or
-            $dockerfile -notmatch 'devcontainer must not run\s+`pre-commit install`')) {
-        throw 'Dockerfile pre-commit installation must be documented as optional compatibility tooling, not the canonical hook path.'
-    }
-    if ($devcontainer -match '\.cache/pre-commit' -and
-        ($devcontainer -notmatch 'Optional compatibility cache' -or
-            $devcontainer -notmatch 'canonical hook is the direct shim')) {
-        throw 'devcontainer pre-commit cache mount must be marked optional compatibility tooling.'
-    }
-    if ($readme -match 'pre-commit' -and
-        ($readme -notmatch 'optional compatibility' -or
-            $readme -notmatch 'no framework hook')) {
-        throw 'devcontainer README must identify pre-commit as optional compatibility tooling only.'
-    }
-    if ($postCreate -match 'pre-commit --version' -and
-        $postCreate -notmatch 'precmt \(optional\)') {
-        throw 'post-create.sh tool summary must label pre-commit as optional if it reports the CLI.'
+    Assert-TextDoesNotMatch `
+        -Subject '.devcontainer/post-create.sh' `
+        -Content $postCreate `
+        -Pattern 'pre-commit\s+install' `
+        -Requirement 'not install the pre-commit framework hook; scripts/install-git-hooks.ps1 owns the canonical direct shim' `
+        -DiagnosticPattern 'pre-commit|install-git-hooks|direct git hooks'
+
+    $optionalCompatibilityContracts = @(
+        [pscustomobject]@{
+            Subject           = '.devcontainer/Dockerfile'
+            Content           = $dockerfile
+            AppliesWhen       = 'pipx install pre-commit'
+            Requirements      = @(
+                [pscustomobject]@{ Pattern = 'Optional compatibility'; Requirement = 'document pre-commit as optional compatibility tooling' },
+                [pscustomobject]@{ Pattern = 'git rev-parse --git-path hooks'; Requirement = 'point readers at the canonical direct hook path' },
+                [pscustomobject]@{ Pattern = 'devcontainer must not run\s+`pre-commit install`'; Requirement = 'explicitly forbid framework hook installation' }
+            )
+            DiagnosticPattern = 'pre-commit|compatibility|canonical|git rev-parse'
+        },
+        [pscustomobject]@{
+            Subject           = '.devcontainer/devcontainer.json'
+            Content           = $devcontainer
+            AppliesWhen       = '\.cache/pre-commit'
+            Requirements      = @(
+                [pscustomobject]@{ Pattern = 'Optional compatibility cache'; Requirement = 'mark the pre-commit cache as optional compatibility tooling' },
+                [pscustomobject]@{ Pattern = 'canonical hook is the direct shim'; Requirement = 'name the direct shim as canonical' }
+            )
+            DiagnosticPattern = 'pre-commit|compatibility|canonical|cache'
+        },
+        [pscustomobject]@{
+            Subject           = '.devcontainer/README.md'
+            Content           = $readme
+            AppliesWhen       = 'pre-commit'
+            Requirements      = @(
+                [pscustomobject]@{ Pattern = 'optional compatibility'; Requirement = 'identify pre-commit as optional compatibility tooling only' },
+                [pscustomobject]@{ Pattern = 'no framework hook'; Requirement = 'document that no framework hook is installed' }
+            )
+            DiagnosticPattern = 'pre-commit|compatibility|framework hook|Git hook'
+        },
+        [pscustomobject]@{
+            Subject           = '.devcontainer/post-create.sh'
+            Content           = $postCreate
+            AppliesWhen       = 'pre-commit --version'
+            Requirements      = @(
+                [pscustomobject]@{
+                    Pattern     = '(?m)^\s*printf\s+[''"]\s*pre-commit(?:\s+optional|\s*\(optional\)|\s*\[optional\])\s*:\s+%s\\n[''"]\s+["'']\$\(\s*pre-commit --version\b'
+                    Requirement = 'label the pre-commit toolchain summary as optional when reporting the CLI'
+                }
+            )
+            DiagnosticPattern = 'pre-commit|Toolchain summary'
+        }
+    )
+
+    foreach ($contract in $optionalCompatibilityContracts) {
+        if ($contract.Content -notmatch $contract.AppliesWhen) { continue }
+        foreach ($requirement in @($contract.Requirements)) {
+            Assert-TextMatches `
+                -Subject $contract.Subject `
+                -Content $contract.Content `
+                -Pattern $requirement.Pattern `
+                -Requirement $requirement.Requirement `
+                -DiagnosticPattern $contract.DiagnosticPattern
+        }
     }
 }
 
@@ -2031,27 +2165,33 @@ Assert-Test 'NIT-5: env var suppresses inner preflight pass and emits skip notic
     #   (a) the inner preflight pass does NOT spawn its own preflight
     #       (no `Running preflight` HOOK line),
     #   (b) the skip notice DOES appear.
-    # We do this without recursing into agent-check.ps1 so the test does
-    # not run the entire self-test suite under itself.
+    # Check the skip invariants before the child exit code so a downstream
+    # failure cannot hide whether preflight gating itself worked.
     $hooks = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
     $envBackup = $env:LLM_HARNESS_PREFLIGHT_DONE
+    $behaviorBackup = $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS
     $env:LLM_HARNESS_PREFLIGHT_DONE = '1'
+    $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = '1'
     try {
-        $output = & pwsh -NoProfile -File $hooks -SkipStagedCheck -NoAutoFix 2>&1
+        $output = & pwsh -NoProfile -File $hooks -Mode Full -SkipStagedCheck -NoAutoFix 2>&1
         $exitCode = $LASTEXITCODE
     } finally {
         $env:LLM_HARNESS_PREFLIGHT_DONE = $envBackup
+        $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = $behaviorBackup
     }
     $combined = ($output | Out-String)
-    if ($exitCode -ne 0) {
-        throw "run-llm-hooks.ps1 exited $exitCode under the env-var skip path. Output: $combined"
-    }
     $matches = [regex]::Matches($combined, 'Running preflight \(parse-check toolkit sources\)')
     if ($matches.Count -ne 0) {
         throw "run-llm-hooks.ps1 emitted 'Running preflight' $($matches.Count) time(s); expected 0 when LLM_HARNESS_PREFLIGHT_DONE=1. Output: $combined"
     }
     if ($combined -notmatch 'Skipping preflight \(LLM_HARNESS_PREFLIGHT_DONE=1') {
         throw "run-llm-hooks.ps1 must announce the preflight skip when the env var is set. Output: $combined"
+    }
+    if ($combined -notmatch 'Running LLM harness self-tests') {
+        throw "run-llm-hooks.ps1 did not reach the self-test stage after skipping preflight. exit=$exitCode Output: $combined"
+    }
+    if ($exitCode -ne 0) {
+        throw "run-llm-hooks.ps1 validated the skip notice/no-preflight invariants but exited $exitCode afterward. Output: $combined"
     }
 } -Behavioral
 
