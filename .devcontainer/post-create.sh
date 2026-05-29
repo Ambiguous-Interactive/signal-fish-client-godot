@@ -74,7 +74,7 @@ echo "==> Toolchain summary"
     printf '  gh      : %s\n' "$(gh --version 2>/dev/null | head -n1 || echo 'NOT FOUND')"
     printf '  godot   : %s\n' "$(godot --version 2>/dev/null || echo 'NOT FOUND')"
     printf '  codex   : %s\n' "${CODEX_VERSION_OUTPUT}"
-    printf '  precmt (optional): %s\n' "$(pre-commit --version 2>/dev/null || echo 'NOT FOUND')"
+    printf '  pre-commit (optional): %s\n' "$(pre-commit --version 2>/dev/null || echo 'NOT FOUND')"
 } | tee /tmp/sf-toolchain.txt
 
 echo "==> Dev container ready."
