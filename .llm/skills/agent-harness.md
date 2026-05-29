@@ -97,7 +97,7 @@ The linter, preflight, and self-tests enforce repo-wide invariants beyond
 
 - All committed `*.ps1` / `*.psm1` / `*.psd1` files must parse cleanly.
   `preflight.ps1` enforces this; in `-AutoFix` mode the self-heal chain tries
-  the index/staged copy first and falls back to `git HEAD`.
+  the index/staged copy first and falls back to `git checkout HEAD -- <path>`.
 - No tracked or untracked staging artifacts (`*.new`, `*.bak`, `*.orig`,
   `*.old`, `*.rej`, plus editor junk from `Get-LlmDefaultStrayPatterns`) may
   exist. `Get-LlmStagingArtifacts` covers the tracked / non-ignored set;
@@ -161,9 +161,10 @@ corrupt working-tree copy is backed up first so no WIP is silently destroyed.
 
 - Backups live under the path from `git rev-parse --git-path
   preflight-recovery`, with layout `<resolved-parent>/<token>/<encoded-path>`.
-- `<token>` is `<unixMs>-<pid>-<rand>` so concurrent preflights cannot
-  collide on the same directory; `New-Item -ErrorAction Stop` makes any
-  collision LOUD rather than overwriting a sibling's backup.
+- `<token>` is `<unixMs>-<pid>-<guid>` so concurrent preflights cannot
+  collide on the same directory; the final recovery directory create omits
+  `-Force` and uses `New-Item -ErrorAction Stop` so any collision is LOUD
+  rather than overwriting a sibling's backup.
 - `<encoded-path>` is the repo-relative path with `/` and `\` replaced
   by `__` (`scripts/lib/LlmHarness.psm1` becomes
   `scripts__lib__LlmHarness.psm1`) so two files with the same basename

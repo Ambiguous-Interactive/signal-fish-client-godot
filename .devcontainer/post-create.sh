@@ -65,6 +65,7 @@ else
 fi
 
 echo "==> Toolchain summary"
+TOOLCHAIN_SUMMARY="$(mktemp "${TMPDIR:-/tmp}/sf-toolchain.XXXXXX")"
 {
     printf '  bash    : %s\n' "$(bash --version | head -n1)"
     printf '  git     : %s\n' "$(git --version)"
@@ -75,6 +76,7 @@ echo "==> Toolchain summary"
     printf '  godot   : %s\n' "$(godot --version 2>/dev/null || echo 'NOT FOUND')"
     printf '  codex   : %s\n' "${CODEX_VERSION_OUTPUT}"
     printf '  pre-commit (optional): %s\n' "$(pre-commit --version 2>/dev/null || echo 'NOT FOUND')"
-} | tee /tmp/sf-toolchain.txt
+} | tee "${TOOLCHAIN_SUMMARY}"
+echo "==> Toolchain summary saved to ${TOOLCHAIN_SUMMARY}"
 
 echo "==> Dev container ready."

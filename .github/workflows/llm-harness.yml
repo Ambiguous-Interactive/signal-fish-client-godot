@@ -31,9 +31,7 @@ jobs:
               # `-SkipStagedCheck` because CI validates committed content with
               # `git diff` below instead of participating in a local staging flow.
               shell: pwsh
-              run: |
-                  $env:LLM_HARNESS_PREFLIGHT_DONE = '1'
-                  pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode CI -SkipStagedCheck -NoAutoFix -VerboseOutput
+              run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode CI -SkipStagedCheck -NoAutoFix -VerboseOutput -PreflightAlreadyDone
 
             - name: Verify generated files are committed
               # CI must additionally catch the case where a contributor forgot to

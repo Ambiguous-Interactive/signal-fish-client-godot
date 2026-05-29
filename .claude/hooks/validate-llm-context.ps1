@@ -106,10 +106,10 @@ try {
 }
 $repoPrefix = $repoRoot + [System.IO.Path]::DirectorySeparatorChar
 $pathComparison = if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-        [System.Runtime.InteropServices.OSPlatform]::Linux)) {
-    [System.StringComparison]::Ordinal
-} else {
+        [System.Runtime.InteropServices.OSPlatform]::Windows)) {
     [System.StringComparison]::OrdinalIgnoreCase
+} else {
+    [System.StringComparison]::Ordinal
 }
 if (-not ($fullPath.StartsWith($repoPrefix, $pathComparison) -or
         $fullPath.Equals($repoRoot, $pathComparison))) {

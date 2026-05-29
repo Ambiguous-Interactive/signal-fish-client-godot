@@ -11,7 +11,10 @@ param(
     [switch]$NoAutoFix,
     [switch]$VerboseOutput,
     # Print per-stage timings.
-    [switch]$Profile
+    [switch]$Profile,
+    # Used by CI after it has already run scripts/preflight.ps1 as a separate
+    # loud -NoAutoFix step.
+    [switch]$PreflightAlreadyDone
 )
 
 Set-StrictMode -Version Latest
@@ -155,9 +158,9 @@ function Invoke-PreflightIfNeeded {
     param([switch]$Required)
     if (-not $Required) { return }
 
-    $skipPreflight = ($env:LLM_HARNESS_PREFLIGHT_DONE -eq '1')
+    $skipPreflight = [bool]$PreflightAlreadyDone
     if ($skipPreflight) {
-        Write-HookLine 'Skipping preflight (LLM_HARNESS_PREFLIGHT_DONE=1; already run by outer wrapper).'
+        Write-HookLine 'Skipping preflight (PreflightAlreadyDone; already run by outer wrapper).'
         return
     }
 
@@ -186,7 +189,7 @@ function Invoke-PreflightIfNeeded {
                 -FullPath $Preflight `
                 -BackupPath $backupPath
         } else {
-            Write-HookLine 'Re-run with -AutoFix (or restore HEAD manually) to recover.' 'Yellow'
+            Write-HookLine 'Re-run with -AutoFix to recover from the index first, then HEAD fallback, with backups preserved.' 'Yellow'
             exit 1
         }
     }
@@ -217,11 +220,14 @@ function New-HookRecoveryBackup {
         return $null
     }
     $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $token = "$stamp-$PID-$(Get-Random -Maximum 65536)"
+    $token = "$stamp-$PID-$([Guid]::NewGuid().ToString('N'))"
     $recoveryParent = Resolve-HookGitPath -GitPath 'preflight-recovery'
     $dir = Join-Path $recoveryParent $token
     try {
-        New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+        if (-not (Test-Path -LiteralPath $recoveryParent -PathType Container)) {
+            New-Item -ItemType Directory -Path $recoveryParent -Force -ErrorAction Stop | Out-Null
+        }
+        New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
         $encoded = $RelativePath -replace '[\\/]', '__'
         $backupPath = Join-Path $dir $encoded
         [System.IO.File]::Copy($full, $backupPath, $true)

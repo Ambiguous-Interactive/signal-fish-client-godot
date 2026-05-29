@@ -58,7 +58,7 @@ if (-not (Test-Path -LiteralPath $preflight -PathType Leaf)) {
 $output = & pwsh -NoProfile -File $preflight -NoAutoFix 2>&1
 $exitCode = $LASTEXITCODE
 if ($exitCode -ne 0) {
-    $reason = "Preflight failed (exit $exitCode) before turn end. A toolkit script may be corrupted. Output:`n$($output -join "`n")`nRun: pwsh -NoProfile -File scripts/preflight.ps1 -AutoFix to recover from HEAD."
+    $reason = "Preflight failed (exit $exitCode) before turn end. A toolkit script may be corrupted. Output:`n$($output -join "`n")`nRun: pwsh -NoProfile -File scripts/preflight.ps1 -AutoFix to recover from the index first, then HEAD fallback; backups are preserved."
     $blockResponse = [pscustomobject]@{
         decision = 'block'
         reason   = $reason

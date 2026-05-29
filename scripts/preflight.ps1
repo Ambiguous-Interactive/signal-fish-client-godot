@@ -76,7 +76,7 @@ param(
 #      the user can fix it manually.
 #
 # Backup directory layout:
-#   <git-path:preflight-recovery>/<unixMs>-<pid>-<rand>/
+#   <git-path:preflight-recovery>/<unixMs>-<pid>-<guid>/
 #     <encoded-path>     (e.g. scripts__lib__LlmHarness.psm1)
 #     <encoded-path>.index     (staged/index copy, when present)
 # Use `git rev-parse --git-path preflight-recovery` to print the parent
@@ -298,17 +298,17 @@ function Get-RecoveryDir {
     if ($script:recoveryRootFailed) {
         return $null
     }
-    # PID + UnixTimeMilliseconds is already unique-enough in practice:
-    # two preflights cannot share a PID in the same millisecond. The
-    # Get-Random suffix is belt-and-suspenders against pathological clock
-    # rewinds or PID reuse on long-lived hosts. `New-Item -ErrorAction
-    # Stop` makes any real collision LOUD instead of silently overwriting.
-    # (NIT-3)
+    # A GUID makes same-timestamp/PID collisions practically irrelevant, and
+    # the final New-Item deliberately omits -Force so any real collision is
+    # loud instead of silently reusing another recovery directory.
     $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $token = "$stamp-$PID-$(Get-Random -Maximum 65536)"
+    $token = "$stamp-$PID-$([Guid]::NewGuid().ToString('N'))"
     $dir = Join-Path $recoveryParent $token
     try {
-        New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+        if (-not (Test-Path -LiteralPath $recoveryParent -PathType Container)) {
+            New-Item -ItemType Directory -Path $recoveryParent -Force -ErrorAction Stop | Out-Null
+        }
+        New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
         $script:recoveryRoot = $dir
         return $dir
     } catch {

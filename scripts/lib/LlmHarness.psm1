@@ -176,17 +176,6 @@ function Get-LlmFrontmatterValue {
     return $Fallback
 }
 
-function Get-LlmMarkdownTitle {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Path)
-    foreach ($line in @(Read-LlmFileLines -Path $Path)) {
-        if ($line -match '^#\s+(.+)$') {
-            return $Matches[1].Trim()
-        }
-    }
-    return [System.IO.Path]::GetFileNameWithoutExtension($Path)
-}
-
 function Write-LlmTextFile {
     [CmdletBinding()]
     param(
@@ -988,7 +977,6 @@ Export-ModuleMember -Function `
     Read-LlmFileText, `
     Read-LlmFrontmatter, `
     Get-LlmFrontmatterValue, `
-    Get-LlmMarkdownTitle, `
     Write-LlmTextFile, `
     ConvertTo-LlmNormalizedNewlines, `
     ConvertTo-LlmStrayArtifactPathspecs, `
@@ -999,5 +987,4 @@ Export-ModuleMember -Function `
     Get-LlmTrackedFileSet, `
     Get-LlmGeneratedContentState, `
     Invoke-LlmIndexGenerator, `
-    Invoke-LlmLint `
-    -Variable LlmDefaultStrayPatterns
+    Invoke-LlmLint

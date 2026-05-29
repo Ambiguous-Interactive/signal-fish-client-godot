@@ -60,6 +60,10 @@ These checks enforce:
   broader scan.
 - Tracked shebang scripts are checked at byte level and by `git check-attr`
   so PowerShell hook/reference scripts that can run directly on Unix stay LF.
+- POSIX hook bootstraps must create a private temp directory with `mktemp -d`
+  and run a fixed `bootstrap.ps1` inside it. Do not use predictable `/tmp`
+  fallback paths or BSD/macOS `mktemp -t ...ps1` patterns that can produce a
+  non-`.ps1` suffix.
 - `scripts/preflight.ps1` parse-checks itself first, then every tracked
   `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers from the index/staged copy
   first, then falls back to `git checkout HEAD -- <path>` after writing

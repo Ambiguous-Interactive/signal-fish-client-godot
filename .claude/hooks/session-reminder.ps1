@@ -1,8 +1,7 @@
 #!/usr/bin/env pwsh
 # SessionStart hook: emit a one-shot reminder so the agent knows its
-# writes are auto-validated by the PostToolUse parse-check hook and that
-# preflight is the recovery path. Kept short (<200 chars) to minimize
-# per-session context overhead.
+# writes are auto-validated. Kept short (<200 chars) to minimize per-session
+# context overhead.
 
 [CmdletBinding()]
 param()
@@ -18,7 +17,7 @@ try {
 } catch { exit 0 }
 if ($null -ne $selfErrors -and $selfErrors.Count -gt 0) { exit 0 }
 
-$reminder = 'Harness invariants: PostToolUse hooks auto parse-check .ps1/.psm1/.psd1 and validate .llm/**/*.md edits; Stop hook runs preflight. Recover with: pwsh -NoProfile -File scripts/preflight.ps1 -AutoFix'
+$reminder = 'Harness: hooks validate PowerShell and .llm edits. Recovery: pwsh -NoProfile -File scripts/preflight.ps1 -AutoFix'
 $sessionStartResponse = [pscustomobject]@{
     hookSpecificOutput = [pscustomobject]@{
         hookEventName     = 'SessionStart'

@@ -52,10 +52,10 @@ fi
 install -m 0755 "${BIN_PATH}" /usr/local/bin/godot
 
 echo "==> Verifying binary executes"
-if ! /usr/local/bin/godot --headless --version >/tmp/godot-version.txt 2>&1; then
+GODOT_VERSION_OUTPUT="${TMPDIR}/godot-version.txt"
+if ! /usr/local/bin/godot --headless --version >"${GODOT_VERSION_OUTPUT}" 2>&1; then
     echo "Godot binary failed to run:" >&2
-    cat /tmp/godot-version.txt >&2 || true
+    cat "${GODOT_VERSION_OUTPUT}" >&2 || true
     exit 1
 fi
-echo "==> Installed: $(cat /tmp/godot-version.txt)"
-rm -f /tmp/godot-version.txt
+echo "==> Installed: $(cat "${GODOT_VERSION_OUTPUT}")"

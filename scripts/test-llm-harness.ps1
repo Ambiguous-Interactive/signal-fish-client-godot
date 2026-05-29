@@ -85,6 +85,29 @@ function Expect-Equal {
     }
 }
 
+function Save-EnvVar {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $path = "Env:$Name"
+    $exists = Test-Path $path
+    return [pscustomobject]@{
+        Name   = $Name
+        Exists = $exists
+        Value  = if ($exists) { (Get-Item $path).Value } else { $null }
+    }
+}
+
+function Restore-EnvVar {
+    param([Parameter(Mandatory)]$Snapshot)
+
+    $path = "Env:$($Snapshot.Name)"
+    if ($Snapshot.Exists) {
+        Set-Item -Path $path -Value $Snapshot.Value
+    } else {
+        Remove-Item -Path $path -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-TextDiagnosticLines {
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Content,
@@ -155,6 +178,10 @@ function Assert-DirectPosixShimBootstrap {
             'unset LLM_HARNESS_SKIP_BEHAVIORAL_TESTS',
             'BOOTSTRAP_SCRIPT=',
             'SHIM_BOOTSTRAP',
+            'mktemp -d',
+            'BOOTSTRAP_DIR',
+            'bootstrap.ps1',
+            'trap cleanup_bootstrap EXIT',
             'ParseFile',
             'Test-TargetParsesClean',
             'Resolve-HookGitPath',
@@ -168,6 +195,20 @@ function Assert-DirectPosixShimBootstrap {
     }
     if ($normalized -match 'Join-Path\s+\$repoRoot\s+["'']\.git/preflight-recovery') {
         throw "$Name must resolve preflight-recovery via git rev-parse --git-path, not Join-Path `$repoRoot .git/preflight-recovery."
+    }
+    foreach ($forbidden in @(
+            '/tmp/llm-hook-bootstrap-$$.ps1',
+            'mktemp -t llm-hook-bootstrap-XXXXXX.ps1',
+            'Get-Random -Maximum 65536')) {
+        if ($normalized -match [regex]::Escape($forbidden)) {
+            throw "$Name must not contain insecure or platform-fragile bootstrap/recovery pattern '$forbidden'."
+        }
+    }
+    if ($normalized -notmatch 'New-Item -ItemType Directory -Path \$backupDir -ErrorAction Stop') {
+        throw "$Name must create recovery directories without -Force so collisions fail loudly."
+    }
+    if ($normalized -notmatch '\[Guid\]::NewGuid\(\)\.ToString\(''N''\)') {
+        throw "$Name must use a GUID in recovery directory names instead of low-entropy random suffixes."
     }
     if ($normalized -notmatch 'git checkout -- \$entryScript') {
         throw "$Name must try the index/staged copy before HEAD when the entry script is parse-corrupt."
@@ -394,6 +435,46 @@ Assert-Test 'hook runner imports shared module' {
     $content = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
     if ($content -notmatch 'lib/LlmHarness\.psm1') {
         throw 'run-llm-hooks.ps1 must import lib/LlmHarness.psm1'
+    }
+}
+
+Assert-Test 'LlmHarness exported surface is explicit and contains no dead markdown-title wrapper' {
+    $module = Get-Module LlmHarness
+    if ($null -eq $module) {
+        throw 'LlmHarness module must be imported before exported-surface tests run.'
+    }
+    $expectedFunctions = @(
+        'ConvertTo-LlmNormalizedNewlines',
+        'ConvertTo-LlmStrayArtifactPathspecs',
+        'Get-LlmDefaultStrayPatterns',
+        'Get-LlmFrontmatterValue',
+        'Get-LlmGeneratedContentState',
+        'Get-LlmRepoRelativePath',
+        'Get-LlmRepoRoot',
+        'Get-LlmStagingArtifacts',
+        'Get-LlmStrayWorkingTreeArtifacts',
+        'Get-LlmTrackedFileSet',
+        'Invoke-LlmIndexGenerator',
+        'Invoke-LlmLint',
+        'Read-LlmFileLines',
+        'Read-LlmFileText',
+        'Read-LlmFrontmatter',
+        'Resolve-LlmGitPath',
+        'Test-LlmDeletableArtifact',
+        'Write-LlmTextFile'
+    )
+    $actualFunctions = @($module.ExportedFunctions.Keys | Sort-Object)
+    $expectedSorted = @($expectedFunctions | Sort-Object)
+    if (($actualFunctions -join "`n") -ne ($expectedSorted -join "`n")) {
+        throw "LlmHarness exported functions drifted. Expected:`n$($expectedSorted -join "`n")`nActual:`n$($actualFunctions -join "`n")"
+    }
+    if ($module.ExportedVariables.Keys.Count -ne 0) {
+        throw "LlmHarness must not export mutable variables; exported: $($module.ExportedVariables.Keys -join ', ')"
+    }
+    $content = Get-Content -LiteralPath $ModulePath -Raw
+    if ($content -match '(?m)^\s*function\s+Get-LlmMarkdownTitle\b' -or
+        $content -match 'Get-LlmMarkdownTitle,') {
+        throw 'Get-LlmMarkdownTitle was a dead exported wrapper; use Get-LlmMarkdownTitleFromLines internally instead.'
     }
 }
 
@@ -895,6 +976,25 @@ Assert-Test 'devcontainer post-create installs direct hooks, Codex, and reports 
     }
 }
 
+Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $paths = @(
+        '.devcontainer/install-godot.sh',
+        '.devcontainer/post-create.sh'
+    )
+    foreach ($rel in $paths) {
+        $path = Join-Path $repoRoot $rel
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        $content = Get-Content -LiteralPath $path -Raw
+        Assert-TextDoesNotMatch `
+            -Subject $rel `
+            -Content $content `
+            -Pattern '/tmp/(godot-version|sf-toolchain)\.txt' `
+            -Requirement 'not write fixed diagnostic files under /tmp; use mktemp or an existing private temp directory' `
+            -DiagnosticPattern '/tmp/|mktemp|TMPDIR'
+    }
+}
+
 Assert-Test 'devcontainer pre-commit remnants are optional compatibility only' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $dockerfile = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/Dockerfile') -Raw
@@ -1205,6 +1305,14 @@ foreach (`$variant in `$variants) {
         throw "Expected variant '`$variant' to be recognized as legacy .githooks."
     }
 }
+`$windows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+    [System.Runtime.InteropServices.OSPlatform]::Windows)
+foreach (`$caseVariant in @('.GitHooks', '.GITHOOKS/')) {
+    `$actual = Test-LegacyHooksPath `$caseVariant
+    if (`$actual -ne `$windows) {
+        throw "Case-distinct variant '`$caseVariant' must match only on Windows. expected=`$windows actual=`$actual"
+    }
+}
 if (Test-LegacyHooksPath '.githooks-other') {
     throw 'Foreign hook paths must not be treated as legacy .githooks values.'
 }
@@ -1483,6 +1591,12 @@ Assert-Test 'CI workflow runs preflight as a separate -NoAutoFix step' {
     if ($content -notmatch 'preflight\.ps1') {
         throw 'CI workflow must run scripts/preflight.ps1 so a corrupted toolkit script fails CI immediately.'
     }
+    if ($content -notmatch '-PreflightAlreadyDone') {
+        throw 'CI workflow must pass -PreflightAlreadyDone after its separate preflight step.'
+    }
+    if ($content -match 'LLM_HARNESS_PREFLIGHT_DONE') {
+        throw 'CI workflow must not rely on ambient LLM_HARNESS_PREFLIGHT_DONE; use -PreflightAlreadyDone.'
+    }
 }
 
 Assert-Test '.claude/settings.json wires PostToolUse parse-check hook' {
@@ -1552,6 +1666,95 @@ Assert-Test '.claude/settings.json wires PostToolUse parse-check hook' {
         }
     }
 }
+
+Assert-Test 'session-reminder.ps1 keeps additional context short and literal' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $hook = Join-Path $repoRoot '.claude/hooks/session-reminder.ps1'
+    if (-not (Test-Path -LiteralPath $hook -PathType Leaf)) {
+        throw 'Missing session-reminder hook.'
+    }
+    $content = Get-Content -LiteralPath $hook -Raw
+    $match = [regex]::Match($content, '(?m)^\s*\$reminder\s*=\s*''(?<text>[^'']*)''')
+    if (-not $match.Success) {
+        throw 'session-reminder.ps1 must assign $reminder from a single-quoted literal so tests can enforce the length cap.'
+    }
+    $reminder = $match.Groups['text'].Value
+    if ($reminder.Length -gt 200) {
+        throw "SessionStart reminder is $($reminder.Length) chars; keep it <= 200."
+    }
+    if ($reminder -match '\r|\n') {
+        throw 'SessionStart reminder must be a single line.'
+    }
+    if ($content -notmatch 'additionalContext\s*=\s*\$reminder') {
+        throw 'session-reminder.ps1 must emit the tested $reminder literal as hookSpecificOutput.additionalContext.'
+    }
+}
+
+Assert-Test 'preflight-stop.ps1 recovery wording matches index-first behavior' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $hook = Join-Path $repoRoot '.claude/hooks/preflight-stop.ps1'
+    if (-not (Test-Path -LiteralPath $hook -PathType Leaf)) {
+        throw 'Missing preflight-stop hook.'
+    }
+    $content = Get-Content -LiteralPath $hook -Raw
+    Assert-TextDoesNotMatch `
+        -Subject '.claude/hooks/preflight-stop.ps1' `
+        -Content $content `
+        -Pattern 'recover from HEAD' `
+        -Requirement 'not imply AutoFix recovers only from HEAD' `
+        -DiagnosticPattern 'recover|HEAD|index'
+    Assert-TextMatches `
+        -Subject '.claude/hooks/preflight-stop.ps1' `
+        -Content $content `
+        -Pattern 'index first, then HEAD fallback' `
+        -Requirement 'tell agents AutoFix tries the index/staged copy before HEAD fallback' `
+        -DiagnosticPattern 'recover|HEAD|index'
+}
+
+Assert-Test 'preflight-stop.ps1 block reason mentions index-first recovery' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $hook = Join-Path $repoRoot '.claude/hooks/preflight-stop.ps1'
+    if (-not (Test-Path -LiteralPath $hook -PathType Leaf)) {
+        throw 'Missing preflight-stop hook.'
+    }
+
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-stop-hook-$([Guid]::NewGuid())")
+    $tempScripts = Join-Path $tempRoot 'scripts'
+    New-Item -ItemType Directory -Path $tempScripts -Force | Out-Null
+    $fakePreflight = Join-Path $tempScripts 'preflight.ps1'
+    [System.IO.File]::WriteAllText($fakePreflight, "Write-Host 'fake preflight failure'`nexit 1`n", [System.Text.UTF8Encoding]::new($false))
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    $envSnapshot = Save-EnvVar -Name 'CLAUDE_PROJECT_DIR'
+    try {
+        $env:CLAUDE_PROJECT_DIR = $tempRoot
+        $proc = Start-Process -FilePath 'pwsh' -ArgumentList @(
+            '-NoProfile', '-File', $hook
+        ) -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath `
+            -PassThru -Wait -NoNewWindow
+        $stdout = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
+        $stderr = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+        if ($proc.ExitCode -ne 2) {
+            throw "preflight-stop hook must exit 2 on preflight failure; got $($proc.ExitCode). stdout='$stdout' stderr='$stderr'"
+        }
+        $json = $null
+        try { $json = $stdout | ConvertFrom-Json -ErrorAction Stop } catch {
+            throw "preflight-stop stdout must be JSON; got '$stdout'"
+        }
+        if ($json.decision -ne 'block') {
+            throw "preflight-stop decision must be block; got '$($json.decision)'."
+        }
+        if ($json.reason -match 'recover from HEAD' -or
+            $json.reason -notmatch 'index first, then HEAD fallback') {
+            throw "preflight-stop reason must describe index-first recovery with HEAD fallback; got '$($json.reason)'."
+        }
+    } finally {
+        Restore-EnvVar -Snapshot $envSnapshot
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
 
 Assert-Test '.claude/settings.local.json is local-only, untracked, and gitignored' {
     $repoRoot = Split-Path -Parent $ScriptsDir
@@ -1765,6 +1968,24 @@ Assert-Test 'validate-llm-context.ps1 ignores .llm paths outside the repo' {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
+
+Assert-Test 'validate-llm-context.ps1 uses Windows-only case-insensitive repo containment' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $hook = Join-Path $repoRoot '.claude/hooks/validate-llm-context.ps1'
+    if (-not (Test-Path -LiteralPath $hook -PathType Leaf)) {
+        throw 'Missing validate-llm-context hook.'
+    }
+    $content = Get-Content -LiteralPath $hook -Raw
+    if ($content -match 'OSPlatform\]::Linux\)\).*?OrdinalIgnoreCase') {
+        throw 'validate-llm-context.ps1 must not treat every non-Linux platform as case-insensitive; macOS can be case-sensitive.'
+    }
+    Assert-TextMatches `
+        -Subject '.claude/hooks/validate-llm-context.ps1' `
+        -Content $content `
+        -Pattern 'OSPlatform\]::Windows[\s\S]*?OrdinalIgnoreCase[\s\S]*?Ordinal' `
+        -Requirement 'reserve OrdinalIgnoreCase for Windows and use Ordinal on Unix-like platforms' `
+        -DiagnosticPattern 'OSPlatform|OrdinalIgnoreCase|Ordinal'
+}
 
 Assert-Test 'validate-llm-context.ps1 blocks invalid and accepts valid repo-local LLM markdown' {
     $repoRoot = Split-Path -Parent $ScriptsDir
@@ -2078,6 +2299,28 @@ Assert-Test 'POSIX git-hook shims parse-check run-llm-hooks.ps1 before invoking 
     Assert-DirectPosixShimBootstrap -Name '.githooks/pre-commit reference shim' -Content $referenceContent
 }
 
+Assert-Test 'PowerShell recovery directories are high-entropy and collision-loud' {
+    foreach ($entry in @(
+            [pscustomobject]@{ Name = 'scripts/preflight.ps1'; Path = (Join-Path $ScriptsDir 'preflight.ps1'); DirVar = 'dir' },
+            [pscustomobject]@{ Name = 'scripts/run-llm-hooks.ps1'; Path = (Join-Path $ScriptsDir 'run-llm-hooks.ps1'); DirVar = 'dir' }
+        )) {
+        $content = Get-Content -LiteralPath $entry.Path -Raw
+        if ($content -match 'Get-Random -Maximum 65536') {
+            throw "$($entry.Name) must not use a low-entropy Get-Random suffix for recovery directories."
+        }
+        if ($content -notmatch '\[Guid\]::NewGuid\(\)\.ToString\(''N''\)') {
+            throw "$($entry.Name) recovery directory names must include a GUID."
+        }
+        $forceOnRecoveryDir = "New-Item -ItemType Directory -Path `$$($entry.DirVar) -Force"
+        if ($content.Contains($forceOnRecoveryDir)) {
+            throw "$($entry.Name) must not create the per-run recovery directory with -Force; collisions must fail loudly."
+        }
+        if (-not $content.Contains("New-Item -ItemType Directory -Path `$$($entry.DirVar) -ErrorAction Stop")) {
+            throw "$($entry.Name) must create the per-run recovery directory with -ErrorAction Stop."
+        }
+    }
+}
+
 # --- MIN-1: pattern triplication closed -----------------------------------
 
 Assert-Test 'MIN-1: stray-artifact patterns sourced from shared module' {
@@ -2142,7 +2385,7 @@ Assert-Test 'MIN-1: stray-artifact patterns sourced from shared module' {
 
 # --- NIT-5: runner owns preflight gating ----------------------------------
 
-Assert-Test 'NIT-5: run-llm-hooks.ps1 owns preflight skip and agent-check stays in-process' {
+Assert-Test 'NIT-5: run-llm-hooks.ps1 owns explicit preflight skip and agent-check stays in-process' {
     $check = Get-Content -LiteralPath (Join-Path $ScriptsDir 'agent-check.ps1') -Raw
     if ($check -match '&\s+pwsh') {
         throw 'agent-check.ps1 must not spawn a second pwsh; it invokes run-llm-hooks.ps1 in-process.'
@@ -2151,47 +2394,115 @@ Assert-Test 'NIT-5: run-llm-hooks.ps1 owns preflight skip and agent-check stays 
         throw 'agent-check.ps1 must use AgentFast for the fast post-edit path.'
     }
     $hook = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
-    if ($hook -notmatch 'LLM_HARNESS_PREFLIGHT_DONE') {
-        throw 'run-llm-hooks.ps1 must honor LLM_HARNESS_PREFLIGHT_DONE so an outer wrapper can suppress the duplicate preflight.'
+    if ($hook -notmatch '\[switch\]\$PreflightAlreadyDone') {
+        throw 'run-llm-hooks.ps1 must expose an explicit PreflightAlreadyDone switch for CI rather than relying on leaked env vars.'
     }
     if ($hook -notmatch 'skipPreflight') {
         throw 'run-llm-hooks.ps1 must guard the preflight block with the $skipPreflight flag.'
     }
+    if ($hook -match '\$env:LLM_HARNESS_PREFLIGHT_DONE') {
+        throw 'run-llm-hooks.ps1 must not trust ambient LLM_HARNESS_PREFLIGHT_DONE; use the explicit PreflightAlreadyDone switch.'
+    }
 }
 
-Assert-Test 'NIT-5: env var suppresses inner preflight pass and emits skip notice' {
-    # Behavioral: invoke `run-llm-hooks.ps1 -SkipStagedCheck` directly
-    # with LLM_HARNESS_PREFLIGHT_DONE=1 set and confirm
-    #   (a) the inner preflight pass does NOT spawn its own preflight
-    #       (no `Running preflight` HOOK line),
-    #   (b) the skip notice DOES appear.
-    # Check the skip invariants before the child exit code so a downstream
-    # failure cannot hide whether preflight gating itself worked.
-    $hooks = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
-    $envBackup = $env:LLM_HARNESS_PREFLIGHT_DONE
-    $behaviorBackup = $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS
-    $env:LLM_HARNESS_PREFLIGHT_DONE = '1'
-    $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = '1'
+Assert-Test 'NIT-5: explicit switch suppresses inner preflight pass and emits skip notice' {
+    $hookSource = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($hookSource, [ref]$tokens, [ref]$parseErrors)
+    if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+        throw "run-llm-hooks.ps1 has parse errors: $($parseErrors | ForEach-Object { $_.Message } | Out-String)"
+    }
+    $func = @($ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Invoke-PreflightIfNeeded'
+            }, $false))
+    if ($func.Count -ne 1) {
+        throw "Expected exactly one Invoke-PreflightIfNeeded definition; got $($func.Count)."
+    }
+
+    $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-preflight-skip-$([Guid]::NewGuid())")
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $fakePreflight = Join-Path $tempDir 'preflight.ps1'
+    $sentinel = Join-Path $tempDir 'ran.txt'
+    [System.IO.File]::WriteAllText($fakePreflight, "[System.IO.File]::WriteAllText('$($sentinel.Replace("'", "''"))', 'ran')`nexit 0`n", [System.Text.UTF8Encoding]::new($false))
+    $sentinelExists = $false
     try {
-        $output = & pwsh -NoProfile -File $hooks -Mode Full -SkipStagedCheck -NoAutoFix 2>&1
-        $exitCode = $LASTEXITCODE
+        $output = & {
+            function Write-HookLine { param([string]$Message, [string]$Color = 'Gray') Write-Output "[llm-hook] $Message" }
+            $Preflight = $fakePreflight
+            $PreflightAlreadyDone = $true
+            $autoFixEnabled = $false
+            $VerboseOutput = $false
+            . ([scriptblock]::Create($func[0].Extent.Text))
+            Invoke-PreflightIfNeeded -Required
+        } 2>&1
+        $sentinelExists = Test-Path -LiteralPath $sentinel -PathType Leaf
     } finally {
-        $env:LLM_HARNESS_PREFLIGHT_DONE = $envBackup
-        $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = $behaviorBackup
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     $combined = ($output | Out-String)
-    $matches = [regex]::Matches($combined, 'Running preflight \(parse-check toolkit sources\)')
-    if ($matches.Count -ne 0) {
-        throw "run-llm-hooks.ps1 emitted 'Running preflight' $($matches.Count) time(s); expected 0 when LLM_HARNESS_PREFLIGHT_DONE=1. Output: $combined"
+    if ($combined -match 'Running preflight \(parse-check toolkit sources\)') {
+        throw "run-llm-hooks.ps1 emitted 'Running preflight'; expected 0 with -PreflightAlreadyDone. Output: $combined"
     }
-    if ($combined -notmatch 'Skipping preflight \(LLM_HARNESS_PREFLIGHT_DONE=1') {
-        throw "run-llm-hooks.ps1 must announce the preflight skip when the env var is set. Output: $combined"
+    if ($combined -notmatch 'Skipping preflight \(PreflightAlreadyDone') {
+        throw "run-llm-hooks.ps1 must announce the preflight skip when -PreflightAlreadyDone is set. Output: $combined"
     }
-    if ($combined -notmatch 'Running LLM harness self-tests') {
-        throw "run-llm-hooks.ps1 did not reach the self-test stage after skipping preflight. exit=$exitCode Output: $combined"
+    if ($sentinelExists) {
+        throw "Invoke-PreflightIfNeeded must not execute preflight when -PreflightAlreadyDone is set. Output: $combined"
     }
-    if ($exitCode -ne 0) {
-        throw "run-llm-hooks.ps1 validated the skip notice/no-preflight invariants but exited $exitCode afterward. Output: $combined"
+} -Behavioral
+
+Assert-Test 'NIT-5: leaked preflight env var does not suppress direct Full preflight' {
+    $hookSource = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($hookSource, [ref]$tokens, [ref]$parseErrors)
+    if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+        throw "run-llm-hooks.ps1 has parse errors: $($parseErrors | ForEach-Object { $_.Message } | Out-String)"
+    }
+    $func = @($ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Invoke-PreflightIfNeeded'
+            }, $false))
+    if ($func.Count -ne 1) {
+        throw "Expected exactly one Invoke-PreflightIfNeeded definition; got $($func.Count)."
+    }
+
+    $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-preflight-env-$([Guid]::NewGuid())")
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $fakePreflight = Join-Path $tempDir 'preflight.ps1'
+    $sentinel = Join-Path $tempDir 'ran.txt'
+    [System.IO.File]::WriteAllText($fakePreflight, "[System.IO.File]::WriteAllText('$($sentinel.Replace("'", "''"))', 'ran')`nexit 0`n", [System.Text.UTF8Encoding]::new($false))
+    $preflightSnapshot = Save-EnvVar -Name 'LLM_HARNESS_PREFLIGHT_DONE'
+    $env:LLM_HARNESS_PREFLIGHT_DONE = '1'
+    $sentinelExists = $false
+    try {
+        $output = & {
+            function Write-HookLine { param([string]$Message, [string]$Color = 'Gray') Write-Output "[llm-hook] $Message" }
+            $Preflight = $fakePreflight
+            $PreflightAlreadyDone = $false
+            $autoFixEnabled = $false
+            $VerboseOutput = $false
+            . ([scriptblock]::Create($func[0].Extent.Text))
+            Invoke-PreflightIfNeeded -Required
+        } 2>&1
+        $sentinelExists = Test-Path -LiteralPath $sentinel -PathType Leaf
+    } finally {
+        Restore-EnvVar -Snapshot $preflightSnapshot
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $combined = ($output | Out-String)
+    if ($combined -notmatch 'Running preflight \(parse-check toolkit sources\)') {
+        throw "Ambient LLM_HARNESS_PREFLIGHT_DONE must not skip a direct Full run. Output: $combined"
+    }
+    if ($combined -match 'Skipping preflight') {
+        throw "Ambient LLM_HARNESS_PREFLIGHT_DONE caused a skip notice in a direct Full run. Output: $combined"
+    }
+    if (-not $sentinelExists) {
+        throw "Invoke-PreflightIfNeeded must execute preflight when only ambient LLM_HARNESS_PREFLIGHT_DONE is set. Output: $combined"
     }
 } -Behavioral
 
@@ -2207,6 +2518,11 @@ Assert-Test 'MIN-2: agent-check uses AgentFast and Full remains explicit' {
     }
     if ($check -notmatch 'LLM_HARNESS_SKIP_BEHAVIORAL_TESTS') {
         throw 'agent-check.ps1 must set LLM_HARNESS_SKIP_BEHAVIORAL_TESTS for the fast path.'
+    }
+    if ($check -notmatch 'Remove-Item Env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS' -or
+        $check -notmatch 'finally' -or
+        $check -notmatch 'hadSkipBehavioralEnv') {
+        throw 'agent-check.ps1 must scope and restore LLM_HARNESS_SKIP_BEHAVIORAL_TESTS so -Full cannot inherit a stale fast-path skip.'
     }
     $runner = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
     if ($runner -notmatch 'Invoke-FastStructuralGuards') {
@@ -2234,6 +2550,51 @@ Assert-Test 'MIN-2: agent-check uses AgentFast and Full remains explicit' {
         throw 'test-llm-harness.ps1 must tag at least one test with -Behavioral.'
     }
 }
+
+Assert-Test 'MIN-2: agent-check -Full clears leaked behavioral skip for its runner' {
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-agent-check-env-$([Guid]::NewGuid())")
+    $sandboxScriptsDir = Join-Path $tempRoot 'scripts'
+    New-Item -ItemType Directory -Path $sandboxScriptsDir -Force | Out-Null
+    try {
+        Copy-Item -LiteralPath (Join-Path $ScriptsDir 'agent-check.ps1') `
+            -Destination (Join-Path $sandboxScriptsDir 'agent-check.ps1') -Force
+        $fakeRunner = @'
+if (Test-Path Env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS) {
+    Write-Host "skip=$env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS"
+} else {
+    Write-Host 'skip=<unset>'
+}
+Write-Host "args=$($args -join ' ')"
+exit 0
+'@
+        [System.IO.File]::WriteAllText((Join-Path $sandboxScriptsDir 'run-llm-hooks.ps1'), $fakeRunner, [System.Text.UTF8Encoding]::new($false))
+        $agentCheck = Join-Path $sandboxScriptsDir 'agent-check.ps1'
+
+        $skipSnapshot = Save-EnvVar -Name 'LLM_HARNESS_SKIP_BEHAVIORAL_TESTS'
+        try {
+            $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = '1'
+            $fullOutput = & pwsh -NoProfile -File $agentCheck -Full 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "agent-check -Full sandbox failed: $($fullOutput | Out-String)"
+            }
+            $fastOutput = & pwsh -NoProfile -File $agentCheck 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "agent-check fast sandbox failed: $($fastOutput | Out-String)"
+            }
+        } finally {
+            Restore-EnvVar -Snapshot $skipSnapshot
+        }
+
+        if (($fullOutput | Out-String) -notmatch 'skip=<unset>') {
+            throw "agent-check -Full must clear leaked LLM_HARNESS_SKIP_BEHAVIORAL_TESTS before invoking its runner. Output: $($fullOutput | Out-String)"
+        }
+        if (($fastOutput | Out-String) -notmatch 'skip=1') {
+            throw "agent-check fast path must still set LLM_HARNESS_SKIP_BEHAVIORAL_TESTS for its runner. Output: $($fastOutput | Out-String)"
+        }
+    } finally {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
 
 Assert-Test 'MIN-2: every self-test pwsh subprocess is behavioral or full-only' {
     $tests = Get-Content -LiteralPath (Join-Path $ScriptsDir 'test-llm-harness.ps1') -Raw

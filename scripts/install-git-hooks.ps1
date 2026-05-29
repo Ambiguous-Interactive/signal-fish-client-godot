@@ -46,16 +46,15 @@ function Write-Install {
     Write-Host "[llm-hooks] $Message" -ForegroundColor $Color
 }
 
-# Filesystem case sensitivity is platform-dependent. Linux is case-sensitive;
-# Windows and macOS default to case-insensitive. Pick the StringComparison
-# that matches the OS so a legacy hook path like '.GitHooks' is normalized
-# the way the underlying filesystem would interpret it.
+# Filesystem case sensitivity is volume-dependent on Unix-like systems. Keep
+# hook path normalization case-insensitive only on Windows, where path casing is
+# case-preserving but not case-sensitive for normal local paths.
 function Get-InstallPathComparison {
     if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-            [System.Runtime.InteropServices.OSPlatform]::Linux)) {
-        return [System.StringComparison]::Ordinal
+            [System.Runtime.InteropServices.OSPlatform]::Windows)) {
+        return [System.StringComparison]::OrdinalIgnoreCase
     }
-    return [System.StringComparison]::OrdinalIgnoreCase
+    return [System.StringComparison]::Ordinal
 }
 
 # Normalize a user-supplied core.hooksPath value to a fully resolved
@@ -169,7 +168,28 @@ if [ -z "`$REPO_ROOT" ]; then
   exit 1
 fi
 
-BOOTSTRAP_SCRIPT="`$(mktemp -t llm-hook-bootstrap-XXXXXX.ps1 2>/dev/null || echo "/tmp/llm-hook-bootstrap-`$`$.ps1")"
+if ! command -v mktemp >/dev/null 2>&1; then
+  echo "[llm-hook] ERROR: mktemp is required to create a secure temporary bootstrap script." >&2
+  exit 1
+fi
+
+# Create a private temp directory, then put a fixed .ps1 file inside it.
+# This keeps pwsh -File happy on macOS/BSD mktemp and avoids predictable
+# fallback filenames or symlinkable /tmp paths.
+BOOTSTRAP_ROOT="`${TMPDIR:-/tmp}"
+BOOTSTRAP_ROOT="`${BOOTSTRAP_ROOT%/}"
+if [ -z "`$BOOTSTRAP_ROOT" ]; then
+  BOOTSTRAP_ROOT="/"
+fi
+if ! BOOTSTRAP_DIR="`$(mktemp -d "`$BOOTSTRAP_ROOT/llm-hook-bootstrap.XXXXXX" 2>/dev/null)"; then
+  echo "[llm-hook] ERROR: mktemp failed; cannot create a secure temporary bootstrap directory." >&2
+  exit 1
+fi
+cleanup_bootstrap() {
+  rm -rf "`$BOOTSTRAP_DIR" 2>/dev/null || true
+}
+trap cleanup_bootstrap EXIT
+BOOTSTRAP_SCRIPT="`$BOOTSTRAP_DIR/bootstrap.ps1"
 cat >"`$BOOTSTRAP_SCRIPT" <<'SHIM_BOOTSTRAP'
 Set-StrictMode -Version Latest
 `$ErrorActionPreference = 'Stop'
@@ -251,9 +271,12 @@ if (`$parseErrors -and `$parseErrors.Count -gt 0) {
     Write-Host "[llm-hook] WARNING: `$entryScript has parse errors; restoring from index or HEAD..." -ForegroundColor Yellow
     `$stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     `$recoveryParent = Resolve-HookGitPath -GitPath 'preflight-recovery'
-    `$backupDir = Join-Path `$recoveryParent "`$stamp-`$PID-`$(Get-Random -Maximum 65536)"
+    `$backupDir = Join-Path `$recoveryParent "`$stamp-`$PID-`$([Guid]::NewGuid().ToString('N'))"
     try {
-        New-Item -ItemType Directory -Path `$backupDir -Force -ErrorAction Stop | Out-Null
+        if (-not (Test-Path -LiteralPath `$recoveryParent -PathType Container)) {
+            New-Item -ItemType Directory -Path `$recoveryParent -Force -ErrorAction Stop | Out-Null
+        }
+        New-Item -ItemType Directory -Path `$backupDir -ErrorAction Stop | Out-Null
         `$backupPath = Join-Path `$backupDir (`$entryScript -replace '[\\/]', '__')
         [System.IO.File]::Copy(`$target, `$backupPath, `$true)
     } catch {
@@ -334,7 +357,7 @@ set +e
 pwsh -NoProfile -File "`$BOOTSTRAP_SCRIPT"
 HOOK_STATUS="`$?"
 set -e
-rm -f "`$BOOTSTRAP_SCRIPT" 2>/dev/null || true
+unset LLM_HARNESS_REPO_ROOT LLM_HARNESS_ENTRY_SCRIPT
 exit "`$HOOK_STATUS"
 "@
 
