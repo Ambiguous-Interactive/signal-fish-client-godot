@@ -16,9 +16,10 @@ PowerShell 7, Python, Node LTS, and a curated set of reputable extensions.
 First build pulls the base image, installs system libs, and downloads the
 pinned Godot release; subsequent starts are fast.
 
-The direct `.git/hooks/pre-commit` shim installed by post-create is canonical.
-The `pre-commit` CLI is present only as optional compatibility tooling for
-manual `.pre-commit-config.yaml` runs.
+The direct Git hook installed by post-create is canonical. Its path is resolved
+with `git rev-parse --git-path hooks`, so linked worktrees do not assume `.git`
+is a directory. The `pre-commit` CLI is present only as optional compatibility
+tooling for manual `.pre-commit-config.yaml` runs.
 
 ## What's inside
 
@@ -31,7 +32,7 @@ manual `.pre-commit-config.yaml` runs.
 | Node.js     | LTS via devcontainer feature                        |
 | Codex CLI   | Pinned `@openai/codex` npm package via post-create  |
 | GitHub CLI  | Latest via devcontainer feature                     |
-| Git hooks   | Direct `.git/hooks/pre-commit` shim via post-create |
+| Git hooks   | Direct `git rev-parse --git-path hooks` shim via post-create |
 | pre-commit  | Optional compatibility CLI; no framework hook install |
 
 ## Extensions

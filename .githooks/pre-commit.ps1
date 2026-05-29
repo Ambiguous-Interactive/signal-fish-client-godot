@@ -5,10 +5,11 @@
 #
 # This file is NOT the live hook. Production installs run
 # `pwsh -NoProfile -File scripts/install-git-hooks.ps1`, which materialises
-# a `#!/usr/bin/env sh` shim into `.git/hooks/pre-commit`. The sh shim
-# works on Linux, macOS, and Windows because Git for Windows always
-# bundles `sh.exe`. A pwsh shebang on the extensionless live hook would
-# break on Windows: `pwsh -File` refuses files without a `.ps1` extension.
+# a `#!/usr/bin/env sh` shim into the path from `git rev-parse --git-path
+# hooks`. The sh shim works on Linux, macOS, and Windows because Git for
+# Windows always bundles `sh.exe`. A pwsh shebang on the extensionless live
+# hook would break on Windows: `pwsh -File` refuses files without a `.ps1`
+# extension.
 
 [CmdletBinding()]
 param()

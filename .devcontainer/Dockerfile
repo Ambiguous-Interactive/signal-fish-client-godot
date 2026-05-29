@@ -64,8 +64,8 @@ RUN chmod +x /usr/local/bin/install-godot.sh \
 
 # Optional compatibility tooling: install the pre-commit CLI cleanly outside
 # system Python so users can manually run `.pre-commit-config.yaml` if desired.
-# The canonical hook is still the direct `.git/hooks/pre-commit` shim installed
-# by post-create; the devcontainer must not run `pre-commit install`.
+# The canonical hook is still the direct shim installed by post-create into the
+# path from `git rev-parse --git-path hooks`; the devcontainer must not run `pre-commit install`.
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends pipx python3-venv; \

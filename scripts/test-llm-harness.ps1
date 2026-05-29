@@ -99,19 +99,33 @@ function Assert-DirectPosixShimBootstrap {
             'BOOTSTRAP_SCRIPT=',
             'SHIM_BOOTSTRAP',
             'ParseFile',
-            '.git/preflight-recovery',
+            'Test-TargetParsesClean',
+            'Resolve-HookGitPath',
+            'git rev-parse --git-path $GitPath',
+            "Resolve-HookGitPath -GitPath 'preflight-recovery'",
+            'index WIP',
             'restoring backed-up WIP')) {
         if ($normalized -notmatch ([regex]::Escape($needle))) {
             throw "$Name must contain '$needle'."
         }
     }
+    if ($normalized -match 'Join-Path\s+\$repoRoot\s+["'']\.git/preflight-recovery') {
+        throw "$Name must resolve preflight-recovery via git rev-parse --git-path, not Join-Path `$repoRoot .git/preflight-recovery."
+    }
+    if ($normalized -notmatch 'git checkout -- \$entryScript') {
+        throw "$Name must try the index/staged copy before HEAD when the entry script is parse-corrupt."
+    }
     if ($normalized -notmatch 'git checkout HEAD -- \$entryScript') {
-        throw "$Name must restore run-llm-hooks.ps1 from HEAD when the entry script is parse-corrupt."
+        throw "$Name must fall back to restoring run-llm-hooks.ps1 from HEAD when the index copy is unavailable or corrupt."
     }
     $backupIdx = $normalized.IndexOf('[System.IO.File]::Copy($target, $backupPath, $true)')
-    $checkoutIdx = $normalized.IndexOf('git checkout HEAD -- $entryScript')
-    if ($backupIdx -lt 0 -or $checkoutIdx -lt 0 -or $backupIdx -gt $checkoutIdx) {
-        throw "$Name must back up run-llm-hooks.ps1 before restoring it from HEAD."
+    $indexCheckoutIdx = $normalized.IndexOf('git checkout -- $entryScript')
+    $headCheckoutIdx = $normalized.IndexOf('git checkout HEAD -- $entryScript')
+    if ($backupIdx -lt 0 -or $indexCheckoutIdx -lt 0 -or $backupIdx -gt $indexCheckoutIdx) {
+        throw "$Name must back up run-llm-hooks.ps1 before restoring it from the index."
+    }
+    if ($headCheckoutIdx -lt 0 -or $indexCheckoutIdx -gt $headCheckoutIdx) {
+        throw "$Name must try index recovery before HEAD fallback."
     }
     if ($normalized -notmatch '&\s+\$target\s+-Mode\s+PreCommit\s+-AutoFix') {
         throw "$Name must invoke run-llm-hooks.ps1 -Mode PreCommit -AutoFix inside the bootstrap pwsh process."
@@ -184,6 +198,15 @@ function New-HookBehaviorSandbox {
     return $sandbox
 }
 
+function Resolve-TestGitPath {
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$GitPath
+    )
+
+    return (Resolve-LlmGitPath -RepoRoot $RepoRoot -GitPath $GitPath)
+}
+
 # --- Read-LlmFrontmatter ---------------------------------------------------
 
 Assert-Test 'frontmatter: parses standard block' {
@@ -194,6 +217,33 @@ Assert-Test 'frontmatter: parses standard block' {
         Expect-Equal $meta['triggers'] 'a, b'
         Expect-Equal $meta['category'] 'Core'
     } finally { Remove-Item -LiteralPath $path -Force }
+}
+
+Assert-Test 'frontmatter: Read-LlmFrontmatter delegates to line parser' {
+    $moduleContent = Get-Content -LiteralPath $ModulePath -Raw
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput(
+        $moduleContent, [ref]$tokens, [ref]$parseErrors)
+    if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+        throw "LlmHarness.psm1 has parse errors: $($parseErrors | ForEach-Object { $_.Message } | Out-String)"
+    }
+    $func = @($ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Read-LlmFrontmatter'
+            }, $false))
+    if ($func.Count -ne 1) {
+        throw "Expected exactly one Read-LlmFrontmatter definition; got $($func.Count)."
+    }
+    $body = $func[0].Body.Extent.Text
+    if ($body -notmatch 'ConvertFrom-LlmFrontmatterLines') {
+        throw 'Read-LlmFrontmatter must delegate parsing to ConvertFrom-LlmFrontmatterLines so file and pre-read line callers cannot drift.'
+    }
+    if ($body -match 'for\s*\(' -or $body -match '^\s*\$closed\s*=' -or
+        $body -match '\[A-Za-z0-9_-\]\+\):') {
+        throw 'Read-LlmFrontmatter must not duplicate the frontmatter parsing loop or regex.'
+    }
 }
 
 Assert-Test 'frontmatter: parses UTF-8 BOM-prefixed block' {
@@ -343,6 +393,52 @@ Assert-Test 'run-llm-hooks.ps1 exposes -AutoFix and -NoAutoFix switches' {
     }
     if ($content -notmatch '\[switch\]\$Profile') {
         throw 'run-llm-hooks.ps1 must expose -Profile for hook performance diagnostics.'
+    }
+}
+
+Assert-Test 'run-llm-hooks.ps1 generated status parser separates index and worktree states' {
+    $entry = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
+    $content = Get-Content -LiteralPath $entry -Raw
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput(
+        $content, [ref]$tokens, [ref]$parseErrors)
+    if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+        throw "run-llm-hooks.ps1 has parse errors: $($parseErrors | ForEach-Object { $_.Message } | Out-String)"
+    }
+    $func = @($ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'ConvertFrom-GeneratedFileStatusLine'
+            }, $false))
+    if ($func.Count -ne 1) {
+        throw "Expected exactly one ConvertFrom-GeneratedFileStatusLine definition; got $($func.Count)."
+    }
+    if ($func[0].Extent.Text -match '\bNeedsStaging\b') {
+        throw 'Generated status parser must not expose the ambiguous NeedsStaging name; use explicit index/worktree fields.'
+    }
+    . ([scriptblock]::Create($func[0].Extent.Text))
+
+    $cases = @(
+        @{ Line = ' M .llm/index.md'; Index = ' '; Worktree = 'M'; Path = '.llm/index.md'; IsUntracked = $false; HasIndex = $false; HasWorktree = $true; Needs = $true },
+        @{ Line = 'M  .llm/index.md'; Index = 'M'; Worktree = ' '; Path = '.llm/index.md'; IsUntracked = $false; HasIndex = $true; HasWorktree = $false; Needs = $false },
+        @{ Line = 'MM .llm/index.md'; Index = 'M'; Worktree = 'M'; Path = '.llm/index.md'; IsUntracked = $false; HasIndex = $true; HasWorktree = $true; Needs = $true },
+        @{ Line = 'A  .llm/index.md'; Index = 'A'; Worktree = ' '; Path = '.llm/index.md'; IsUntracked = $false; HasIndex = $true; HasWorktree = $false; Needs = $false },
+        @{ Line = 'AM .llm/index.md'; Index = 'A'; Worktree = 'M'; Path = '.llm/index.md'; IsUntracked = $false; HasIndex = $true; HasWorktree = $true; Needs = $true },
+        @{ Line = '?? .llm/new.md'; Index = '?'; Worktree = '?'; Path = '.llm/new.md'; IsUntracked = $true; HasIndex = $false; HasWorktree = $false; Needs = $true },
+        @{ Line = ' D .llm/index.md'; Index = ' '; Worktree = 'D'; Path = '.llm/index.md'; IsUntracked = $false; HasIndex = $false; HasWorktree = $true; Needs = $true },
+        @{ Line = 'D  .llm/index.md'; Index = 'D'; Worktree = ' '; Path = '.llm/index.md'; IsUntracked = $false; HasIndex = $true; HasWorktree = $false; Needs = $false },
+        @{ Line = ''; Index = ' '; Worktree = ' '; Path = ''; IsUntracked = $false; HasIndex = $false; HasWorktree = $false; Needs = $false }
+    )
+    foreach ($case in $cases) {
+        $parsed = ConvertFrom-GeneratedFileStatusLine -Line $case.Line
+        Expect-Equal "$($parsed.Index)" $case.Index "index column for '$($case.Line)'"
+        Expect-Equal "$($parsed.Worktree)" $case.Worktree "worktree column for '$($case.Line)'"
+        Expect-Equal $parsed.Path $case.Path "path for '$($case.Line)'"
+        Expect-Equal $parsed.IsUntracked $case.IsUntracked "IsUntracked for '$($case.Line)'"
+        Expect-Equal $parsed.HasIndexChange $case.HasIndex "HasIndexChange for '$($case.Line)'"
+        Expect-Equal $parsed.HasWorktreeChange $case.HasWorktree "HasWorktreeChange for '$($case.Line)'"
+        Expect-Equal $parsed.NeedsWorktreeStaging $case.Needs "NeedsWorktreeStaging for '$($case.Line)'"
     }
 }
 
@@ -718,7 +814,8 @@ Assert-Test 'devcontainer pre-commit remnants are optional compatibility only' {
     }
     if ($dockerfile -match 'pipx install pre-commit' -and
         ($dockerfile -notmatch 'Optional compatibility' -or
-            $dockerfile -notmatch 'devcontainer must not run `pre-commit install`')) {
+            $dockerfile -notmatch 'git rev-parse --git-path hooks' -or
+            $dockerfile -notmatch 'devcontainer must not run\s+`pre-commit install`')) {
         throw 'Dockerfile pre-commit installation must be documented as optional compatibility tooling, not the canonical hook path.'
     }
     if ($devcontainer -match '\.cache/pre-commit' -and
@@ -838,11 +935,11 @@ Assert-Test 'install-git-hooks.ps1 has no undefined variable references' {
     }
 }
 
-Assert-Test 'install-git-hooks.ps1 materializes a portable POSIX-sh hook into .git/hooks' {
+Assert-Test 'install-git-hooks.ps1 materializes a portable POSIX-sh hook into git hooks path' {
     $path = Join-Path $ScriptsDir 'install-git-hooks.ps1'
     $content = Get-Content -LiteralPath $path -Raw
-    if ($content -notmatch '\.git/hooks' -and $content -notmatch 'git rev-parse --git-path hooks') {
-        throw 'install-git-hooks.ps1 must install into the per-checkout hooks directory (resolved via git rev-parse --git-path hooks).'
+    if ($content -notmatch 'git rev-parse --git-path hooks') {
+        throw 'install-git-hooks.ps1 must install into the hooks directory resolved via git rev-parse --git-path hooks.'
     }
     # MUST be a POSIX sh shebang, NOT pwsh: PowerShell's -File parameter
     # refuses files without a `.ps1` extension, so on Windows (where git
@@ -904,7 +1001,7 @@ Assert-Test 'install-git-hooks.ps1 has no legacy / duplicate-block regressions' 
     #   git config core.hooksPath $desiredHooksPath
     #   git config core.hooksPath .githooks
     if ($content -match '(?m)^\s*(?:&\s*)?git\s+config\s+core\.hooksPath\s+(?!--unset|--get)\S') {
-        throw 'install-git-hooks.ps1 must NOT set core.hooksPath; the live hook lives in .git/hooks/ and the script only clears stale legacy values.'
+        throw 'install-git-hooks.ps1 must NOT set core.hooksPath; the live hook lives in the resolved git hooks path and the script only clears stale legacy values.'
     }
 
     # The legacy installer used `$shimTarget`; the new installer uses
@@ -932,7 +1029,7 @@ Assert-Test 'install-git-hooks.ps1 has no legacy / duplicate-block regressions' 
     # precondition (`throw "Missing hooks directory: $hooksPath"`). The
     # new installer does not. Catch reintroduction of the legacy check.
     if ($content -match 'Missing hooks directory:') {
-        throw 'install-git-hooks.ps1 contains the legacy "Missing hooks directory" precondition; the new installer materialises into .git/hooks/ instead.'
+        throw 'install-git-hooks.ps1 contains the legacy "Missing hooks directory" precondition; the new installer materialises into the resolved git hooks path instead.'
     }
 }
 
@@ -1318,6 +1415,34 @@ Assert-Test '.claude/settings.json wires PostToolUse parse-check hook' {
             if ($hook.command -notmatch '\$CLAUDE_PROJECT_DIR') {
                 throw "SessionStart hook command must use `$CLAUDE_PROJECT_DIR; got '$($hook.command)'."
             }
+        }
+    }
+}
+
+Assert-Test '.claude/settings.local.json is local-only, untracked, and gitignored' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $gitignore = Get-Content -LiteralPath (Join-Path $repoRoot '.gitignore') -Raw
+    if ($gitignore -notmatch '(?m)^\.claude/settings\.local\.json$') {
+        throw '.gitignore must ignore .claude/settings.local.json so local Claude permission overrides stay local.'
+    }
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        Push-Location $repoRoot
+        try {
+            $tracked = @(& git ls-files -- '.claude/settings.local.json' 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                throw "git ls-files failed while checking .claude/settings.local.json: $($tracked -join '; ')"
+            }
+            $status = @(& git status --porcelain -- '.claude/settings.local.json' 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                throw "git status failed while checking .claude/settings.local.json: $($status -join '; ')"
+            }
+        } finally {
+            Pop-Location
+        }
+        $trackedLocalSettings = @($tracked | Where-Object { $_ -eq '.claude/settings.local.json' })
+        $isDeletedInThisWorktree = (($status -join "`n") -match '(?m)^(?:D | D)\s+\.claude/settings\.local\.json$')
+        if ($trackedLocalSettings.Count -gt 0 -and -not $isDeletedInThisWorktree) {
+            throw '.claude/settings.local.json must not be tracked; use .claude/settings.json for shared hooks and local ignored files for machine-specific permissions.'
         }
     }
 }
@@ -1793,9 +1918,14 @@ Assert-Test 'run-llm-hooks.ps1 parse-checks preflight.ps1 before invoking it' {
         throw 'run-llm-hooks.ps1 must parse-check preflight.ps1 BEFORE the "Running preflight" stage.'
     }
     $backupIdx = $content.IndexOf("New-HookRecoveryBackup -RelativePath 'scripts/preflight.ps1'")
-    $checkoutIdx = $content.IndexOf("git checkout HEAD -- 'scripts/preflight.ps1'")
-    if ($backupIdx -lt 0 -or $checkoutIdx -lt 0 -or $backupIdx -gt $checkoutIdx) {
-        throw 'run-llm-hooks.ps1 must back up preflight.ps1 before restoring it from HEAD.'
+    $restoreFuncIdx = $content.IndexOf('Restore-HookPowerShellFileFromGit')
+    $indexCheckoutIdx = $content.IndexOf('git checkout -- $RelativePath')
+    $headCheckoutIdx = $content.IndexOf('git checkout HEAD -- $RelativePath')
+    if ($backupIdx -lt 0 -or $restoreFuncIdx -lt 0 -or $backupIdx -gt $restoreFuncIdx) {
+        throw 'run-llm-hooks.ps1 must back up preflight.ps1 before restoring it from git.'
+    }
+    if ($indexCheckoutIdx -lt 0 -or $headCheckoutIdx -lt 0 -or $indexCheckoutIdx -gt $headCheckoutIdx) {
+        throw 'run-llm-hooks.ps1 must try index/staged recovery before HEAD fallback.'
     }
     if ($content -notmatch 'restoring backed-up WIP') {
         throw 'run-llm-hooks.ps1 must restore the preflight WIP backup if the HEAD copy is also corrupt.'
@@ -2779,7 +2909,15 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
         # Corrupt run-llm-hooks.ps1 so the shim's parse-check + git
         # checkout path actually has to fire.
         $sandboxEntry = Join-Path $sandboxScripts 'run-llm-hooks.ps1'
-        Add-Content -LiteralPath $sandboxEntry -Value "`n}}}garbage`n"
+        $entryOriginal = [System.IO.File]::ReadAllText($sandboxEntry)
+        $shimIndexSentinel = 'SHIM_INDEX_ONLY_SENTINEL'
+        $shimWorktreeSentinel = 'SHIM_WORKTREE_ONLY_SENTINEL'
+        [System.IO.File]::WriteAllText($sandboxEntry, "$entryOriginal`n}}}$shimIndexSentinel`n")
+        Push-Location $sandbox
+        try {
+            & git add -- 'scripts/run-llm-hooks.ps1' 2>&1 | Out-Null
+        } finally { Pop-Location }
+        [System.IO.File]::WriteAllText($sandboxEntry, "$entryOriginal`n}}}$shimWorktreeSentinel`n")
 
         # Invoke the shim directly via sh, exactly like git would.
         $shOutput = $null
@@ -2790,9 +2928,9 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
         } finally { Pop-Location }
         $combined = ($shOutput | Out-String)
         # The shim must announce the recovery action.
-        if ($combined -notmatch 'WARNING.*has parse errors.*restoring from HEAD' -and
-            $combined -notmatch 'restoring from HEAD') {
-            throw "Shim must emit a 'restoring from HEAD' warning when run-llm-hooks.ps1 is corrupt. Output: $combined"
+        if ($combined -notmatch 'WARNING.*has parse errors.*restoring from index or HEAD' -and
+            $combined -notmatch 'Recovered .* from (index|HEAD)') {
+            throw "Shim must emit an index/HEAD restore warning when run-llm-hooks.ps1 is corrupt. Output: $combined"
         }
 
         # After the shim ran, run-llm-hooks.ps1 must parse clean again.
@@ -2803,14 +2941,26 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
         if ($null -ne $errors -and $errors.Count -gt 0) {
             throw "Sandbox run-llm-hooks.ps1 should parse cleanly after the shim self-heal. shExit=$shExit Output: $combined"
         }
-        $backupFiles = @(Get-ChildItem -LiteralPath (Join-Path $sandbox '.git/preflight-recovery') -Recurse -File -ErrorAction SilentlyContinue |
+        $recoveryParent = Resolve-TestGitPath -RepoRoot $sandbox -GitPath 'preflight-recovery'
+        $backupFiles = @(Get-ChildItem -LiteralPath $recoveryParent -Recurse -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -eq 'scripts__run-llm-hooks.ps1' })
         if ($backupFiles.Count -eq 0) {
-            throw "Shim recovery must preserve corrupt run-llm-hooks.ps1 WIP under .git/preflight-recovery. Output: $combined"
+            throw "Shim recovery must preserve corrupt run-llm-hooks.ps1 WIP under $recoveryParent. Output: $combined"
         }
         $backupText = [System.IO.File]::ReadAllText($backupFiles[0].FullName)
-        if ($backupText -notmatch 'garbage') {
+        if ($backupText -notmatch [regex]::Escape($shimWorktreeSentinel) -or
+            $backupText -match [regex]::Escape($shimIndexSentinel)) {
             throw "Shim recovery backup must contain the corrupt WIP bytes; got: $backupText"
+        }
+        $indexBackupFiles = @(Get-ChildItem -LiteralPath $recoveryParent -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq 'scripts__run-llm-hooks.ps1.index' })
+        if ($indexBackupFiles.Count -eq 0) {
+            throw "Shim recovery must preserve corrupt staged/index run-llm-hooks.ps1 WIP under $recoveryParent. Output: $combined"
+        }
+        $indexBackupText = [System.IO.File]::ReadAllText($indexBackupFiles[0].FullName)
+        if ($indexBackupText -notmatch [regex]::Escape($shimIndexSentinel) -or
+            $indexBackupText -match [regex]::Escape($shimWorktreeSentinel)) {
+            throw "Shim recovery index backup must contain the corrupt staged bytes; got: $indexBackupText"
         }
     } finally {
         $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = $envBehaviorBackup
@@ -2863,7 +3013,7 @@ Assert-Test 'MIN-4: preflight prunes recovery dirs to 20 most-recent' {
 
         # Materialise 25 fake recovery dirs with staggered mtimes so we
         # can verify the most-recent 20 survive.
-        $recoveryParent = Join-Path $sandbox '.git/preflight-recovery'
+        $recoveryParent = Resolve-TestGitPath -RepoRoot $sandbox -GitPath 'preflight-recovery'
         New-Item -ItemType Directory -Path $recoveryParent -Force | Out-Null
         $baseTime = [DateTime]::UtcNow.AddHours(-24)
         for ($i = 1; $i -le 25; $i++) {
@@ -3035,8 +3185,8 @@ Assert-Test 'MIN-6: preflight refuses AutoFix when recovery dir is read-only' {
         $wipBytes = [System.IO.File]::ReadAllBytes($victimFull)
 
         # Pre-create the recovery parent and make it read-only so the
-        # `New-Item .git/preflight-recovery/<token>` call fails.
-        $recoveryParent = Join-Path $sandbox '.git/preflight-recovery'
+        # `New-Item <resolved-preflight-recovery>/<token>` call fails.
+        $recoveryParent = Resolve-TestGitPath -RepoRoot $sandbox -GitPath 'preflight-recovery'
         New-Item -ItemType Directory -Path $recoveryParent -Force | Out-Null
         & chmod 555 -- $recoveryParent 2>&1 | Out-Null
 
@@ -3065,6 +3215,177 @@ Assert-Test 'MIN-6: preflight refuses AutoFix when recovery dir is read-only' {
         # Restore perms BEFORE recursive delete or rmdir fails.
         if ($null -ne $recoveryParent -and (Test-Path -LiteralPath $recoveryParent)) {
             & chmod 755 -- $recoveryParent 2>&1 | Out-Null
+        }
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'worktree: preflight AutoFix writes backups under resolved git path' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-worktree-preflight-main'
+    $worktree = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-worktree-preflight-linked-$([Guid]::NewGuid())")
+    try {
+        Push-Location $sandbox
+        try {
+            $out = @(& git worktree add --detach $worktree HEAD 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                throw "git worktree add failed: $($out -join '; ')"
+            }
+        } finally {
+            Pop-Location
+        }
+
+        $gitFile = Join-Path $worktree '.git'
+        if (-not (Test-Path -LiteralPath $gitFile -PathType Leaf)) {
+            throw 'Linked worktree setup must produce a .git file; otherwise this test is not exercising the worktree path.'
+        }
+        $legacyRecoveryParent = Join-Path $gitFile 'preflight-recovery'
+        $resolvedRecoveryParent = Resolve-TestGitPath -RepoRoot $worktree -GitPath 'preflight-recovery'
+        if ($resolvedRecoveryParent -like "$worktree/.git/*") {
+            throw "Resolved recovery path must not live under the linked worktree .git file; got $resolvedRecoveryParent"
+        }
+
+        $victimRel = 'scripts/lint-llm.ps1'
+        $victimFull = Join-Path $worktree $victimRel
+        $victimOriginal = [System.IO.File]::ReadAllText($victimFull)
+        [System.IO.File]::WriteAllText($victimFull, "$victimOriginal`n}}}worktree-preflight-index-corrupt`n")
+        Push-Location $worktree
+        try {
+            & git add -- $victimRel 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+        [System.IO.File]::WriteAllText($victimFull, "$victimOriginal`n}}}worktree-preflight-corrupt`n")
+        $preflight = Join-Path $worktree 'scripts/preflight.ps1'
+        Push-Location $worktree
+        try {
+            $output = & pwsh -NoProfile -File $preflight -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -ne 2) {
+            throw "Expected preflight -AutoFix to recover and exit 2 in linked worktree; got $exitCode. Output: $combined"
+        }
+        if ($combined -notmatch [regex]::Escape($resolvedRecoveryParent)) {
+            throw "Preflight output must print the resolved recovery path. Expected '$resolvedRecoveryParent'. Output: $combined"
+        }
+        if (Test-Path -LiteralPath $legacyRecoveryParent) {
+            throw "Preflight must not create recovery data under linked worktree .git file path: $legacyRecoveryParent"
+        }
+        $backupFiles = @(Get-ChildItem -LiteralPath $resolvedRecoveryParent -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq ($victimRel -replace '[\\/]', '__') })
+        if ($backupFiles.Count -eq 0) {
+            throw "Expected corrupt worktree WIP backup under $resolvedRecoveryParent. Output: $combined"
+        }
+        $backupText = [System.IO.File]::ReadAllText($backupFiles[0].FullName)
+        if ($backupText -notmatch 'worktree-preflight-corrupt') {
+            throw "Preflight worktree backup did not contain corrupt WIP bytes; got: $backupText"
+        }
+        $indexBackupFiles = @(Get-ChildItem -LiteralPath $resolvedRecoveryParent -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq "$( $victimRel -replace '[\\/]', '__' ).index" })
+        if ($indexBackupFiles.Count -eq 0) {
+            throw "Expected corrupt staged/index backup under $resolvedRecoveryParent. Output: $combined"
+        }
+        $indexBackupText = [System.IO.File]::ReadAllText($indexBackupFiles[0].FullName)
+        if ($indexBackupText -notmatch 'worktree-preflight-index-corrupt') {
+            throw "Preflight index backup did not contain corrupt staged bytes; got: $indexBackupText"
+        }
+    } finally {
+        if (Test-Path -LiteralPath $worktree) {
+            & git -C $sandbox worktree remove --force $worktree 2>&1 | Out-Null
+            Remove-Item -LiteralPath $worktree -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'worktree: run-llm-hooks recovery backup uses resolved git path' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-worktree-runner-main'
+    $worktree = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-worktree-runner-linked-$([Guid]::NewGuid())")
+    $envBehaviorBackup = $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS
+    $envPreflightBackup = $env:LLM_HARNESS_PREFLIGHT_DONE
+    $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = '1'
+    $env:LLM_HARNESS_PREFLIGHT_DONE = $null
+    try {
+        Push-Location $sandbox
+        try {
+            $out = @(& git worktree add --detach $worktree HEAD 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                throw "git worktree add failed: $($out -join '; ')"
+            }
+        } finally {
+            Pop-Location
+        }
+
+        $gitFile = Join-Path $worktree '.git'
+        if (-not (Test-Path -LiteralPath $gitFile -PathType Leaf)) {
+            throw 'Linked worktree setup must produce a .git file; otherwise this test is not exercising the worktree path.'
+        }
+        $resolvedRecoveryParent = Resolve-TestGitPath -RepoRoot $worktree -GitPath 'preflight-recovery'
+        $legacyRecoveryParent = Join-Path $gitFile 'preflight-recovery'
+
+        $preflightRel = 'scripts/preflight.ps1'
+        $preflight = Join-Path $worktree $preflightRel
+        $preflightOriginal = [System.IO.File]::ReadAllText($preflight)
+        [System.IO.File]::WriteAllText($preflight, "$preflightOriginal`n}}}worktree-runner-index-corrupt`n")
+        Push-Location $worktree
+        try {
+            & git add -- $preflightRel 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+        [System.IO.File]::WriteAllText($preflight, "$preflightOriginal`n}}}worktree-runner-corrupt`n")
+        $hooks = Join-Path $worktree 'scripts/run-llm-hooks.ps1'
+        Push-Location $worktree
+        try {
+            $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -SkipStagedCheck -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -ne 0) {
+            throw "run-llm-hooks.ps1 should recover corrupt preflight in linked worktree and complete; got $exitCode. Output: $combined"
+        }
+        if ($combined -notmatch 'preflight\.ps1 has parse errors' -and
+            $combined -notmatch 'PowerShell parse error in scripts/preflight\.ps1') {
+            throw "Expected run-llm-hooks.ps1 to detect corrupt preflight.ps1. Output: $combined"
+        }
+        if ($combined -notmatch [regex]::Escape($resolvedRecoveryParent)) {
+            throw "run-llm-hooks.ps1 recovery output must include resolved recovery path '$resolvedRecoveryParent'. Output: $combined"
+        }
+        if (Test-Path -LiteralPath $legacyRecoveryParent) {
+            throw "run-llm-hooks.ps1 must not create recovery data under linked worktree .git file path: $legacyRecoveryParent"
+        }
+        $backupFiles = @(Get-ChildItem -LiteralPath $resolvedRecoveryParent -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq 'scripts__preflight.ps1' })
+        if ($backupFiles.Count -eq 0) {
+            throw "Expected preflight.ps1 recovery backup under $resolvedRecoveryParent. Output: $combined"
+        }
+        $backupText = [System.IO.File]::ReadAllText($backupFiles[0].FullName)
+        if ($backupText -notmatch 'worktree-runner-corrupt') {
+            throw "run-llm-hooks worktree backup did not contain corrupt WIP bytes; got: $backupText"
+        }
+        $indexBackupFiles = @(Get-ChildItem -LiteralPath $resolvedRecoveryParent -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq 'scripts__preflight.ps1.index' })
+        if ($indexBackupFiles.Count -eq 0) {
+            throw "Expected preflight.ps1 staged/index recovery backup under $resolvedRecoveryParent. Output: $combined"
+        }
+        $indexBackupText = [System.IO.File]::ReadAllText($indexBackupFiles[0].FullName)
+        if ($indexBackupText -notmatch 'worktree-runner-index-corrupt') {
+            throw "run-llm-hooks index backup did not contain corrupt staged bytes; got: $indexBackupText"
+        }
+    } finally {
+        $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = $envBehaviorBackup
+        $env:LLM_HARNESS_PREFLIGHT_DONE = $envPreflightBackup
+        if (Test-Path -LiteralPath $worktree) {
+            & git -C $sandbox worktree remove --force $worktree 2>&1 | Out-Null
+            Remove-Item -LiteralPath $worktree -Recurse -Force -ErrorAction SilentlyContinue
         }
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -3188,10 +3509,11 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
         if ($null -ne $errors -and $errors.Count -gt 0) {
             throw "Sandbox preflight.ps1 should parse cleanly after AutoFix. Output: $combined"
         }
-        $backupFiles = @(Get-ChildItem -LiteralPath (Join-Path $sandbox '.git/preflight-recovery') -Recurse -File -ErrorAction SilentlyContinue |
+        $recoveryParent = Resolve-TestGitPath -RepoRoot $sandbox -GitPath 'preflight-recovery'
+        $backupFiles = @(Get-ChildItem -LiteralPath $recoveryParent -Recurse -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -eq 'scripts__preflight.ps1' })
         if ($backupFiles.Count -eq 0) {
-            throw "run-llm-hooks.ps1 recovery must preserve corrupt preflight.ps1 WIP under .git/preflight-recovery. Output: $combined"
+            throw "run-llm-hooks.ps1 recovery must preserve corrupt preflight.ps1 WIP under $recoveryParent. Output: $combined"
         }
         $backupText = [System.IO.File]::ReadAllText($backupFiles[0].FullName)
         if ($backupText -notmatch 'garbage') {

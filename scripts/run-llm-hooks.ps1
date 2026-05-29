@@ -63,15 +63,21 @@ function ConvertFrom-GeneratedFileStatusLine {
     $index = if ($Line.Length -ge 1) { $Line[0] } else { ' ' }
     $worktree = if ($Line.Length -ge 2) { $Line[1] } else { ' ' }
     $path = if ($Line.Length -ge 4) { $Line.Substring(3) } else { $Line }
-    $needsStaging = -not [string]::IsNullOrWhiteSpace($Line) -and
-        (($index -eq '?' -and $worktree -eq '?') -or $worktree -ne ' ')
+    $isUntracked = $index -eq '?' -and $worktree -eq '?'
+    $hasIndexChange = -not $isUntracked -and $index -ne ' '
+    $hasWorktreeChange = -not $isUntracked -and $worktree -ne ' '
+    $needsWorktreeStaging = -not [string]::IsNullOrWhiteSpace($Line) -and
+        ($isUntracked -or $hasWorktreeChange)
 
     return [pscustomobject]@{
-        Raw          = $Line
-        Index        = $index
-        Worktree     = $worktree
-        Path         = $path
-        NeedsStaging = $needsStaging
+        Raw                  = $Line
+        Index                = $index
+        Worktree             = $worktree
+        Path                 = $path
+        IsUntracked          = $isUntracked
+        HasIndexChange       = $hasIndexChange
+        HasWorktreeChange    = $hasWorktreeChange
+        NeedsWorktreeStaging = $needsWorktreeStaging
     }
 }
 
@@ -175,33 +181,10 @@ function Invoke-PreflightIfNeeded {
                 Write-HookLine 'AutoFix: refusing to restore scripts/preflight.ps1 without a recovery backup.' 'Red'
                 exit 1
             }
-            Push-Location $RepoRoot
-            try {
-                $headOut = @(& git checkout HEAD -- 'scripts/preflight.ps1' 2>&1)
-                if ($LASTEXITCODE -ne 0) {
-                    Write-HookLine "AutoFix: git checkout HEAD failed for scripts/preflight.ps1 (exit $LASTEXITCODE): $($headOut -join '; '). Recovery backup at $backupPath." 'Red'
-                    exit 1
-                }
-            } finally {
-                Pop-Location
-            }
-            $recheckTokens = $null
-            $recheckErrors = $null
-            [void][System.Management.Automation.Language.Parser]::ParseFile(
-                $Preflight, [ref]$recheckTokens, [ref]$recheckErrors)
-            if ($null -ne $recheckErrors -and $recheckErrors.Count -gt 0) {
-                Write-HookLine 'AutoFix: HEAD copy of scripts/preflight.ps1 is also corrupt; restoring backed-up WIP.' 'Red'
-                try {
-                    Copy-Item -LiteralPath $backupPath -Destination $Preflight -Force
-                } catch {
-                    Write-HookLine "AutoFix: failed to restore scripts/preflight.ps1 from $backupPath`: $($_.Exception.Message)" 'Red'
-                }
-                foreach ($e in $recheckErrors) {
-                    Write-HookLine "  HEAD preflight.ps1:$($e.Extent.StartLineNumber): $($e.Message)" 'Red'
-                }
-                exit 1
-            }
-            Write-HookLine "AutoFix: recovered scripts/preflight.ps1 from HEAD; corrupt WIP backed up to $backupPath." 'Yellow'
+            Restore-HookPowerShellFileFromGit `
+                -RelativePath 'scripts/preflight.ps1' `
+                -FullPath $Preflight `
+                -BackupPath $backupPath
         } else {
             Write-HookLine 'Re-run with -AutoFix (or restore HEAD manually) to recover.' 'Yellow'
             exit 1
@@ -235,7 +218,8 @@ function New-HookRecoveryBackup {
     }
     $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     $token = "$stamp-$PID-$(Get-Random -Maximum 65536)"
-    $dir = Join-Path $RepoRoot ".git/preflight-recovery/$token"
+    $recoveryParent = Resolve-HookGitPath -GitPath 'preflight-recovery'
+    $dir = Join-Path $recoveryParent $token
     try {
         New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
         $encoded = $RelativePath -replace '[\\/]', '__'
@@ -246,6 +230,203 @@ function New-HookRecoveryBackup {
         Write-HookLine "AutoFix: failed to back up $RelativePath before restore: $($_.Exception.Message)" 'Red'
         return $null
     }
+}
+
+function Copy-HookGitBlobToFile {
+    param(
+        [Parameter(Mandatory)][string]$Blob,
+        [Parameter(Mandatory)][string]$Destination
+    )
+
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'git'
+    [void]$psi.ArgumentList.Add('cat-file')
+    [void]$psi.ArgumentList.Add('blob')
+    [void]$psi.ArgumentList.Add($Blob)
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+
+    Push-Location $RepoRoot
+    try {
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $stream = [System.IO.File]::Open($Destination, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $proc.StandardOutput.BaseStream.CopyTo($stream)
+        } finally {
+            $stream.Dispose()
+        }
+        $stderr = $proc.StandardError.ReadToEnd()
+        $proc.WaitForExit()
+        if ($proc.ExitCode -ne 0) {
+            Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+            throw "git cat-file blob $Blob failed with exit $($proc.ExitCode): $stderr"
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
+function New-HookIndexRecoveryBackup {
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)][string]$WorktreeBackupPath
+    )
+
+    Push-Location $RepoRoot
+    try {
+        $stageLine = @(& git ls-files --stage -- $RelativePath 2>&1) | Select-Object -First 1
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($stageLine)) {
+            return $null
+        }
+    } finally {
+        Pop-Location
+    }
+    if ($stageLine -notmatch '^(?<Mode>\d+)\s+(?<Sha>[0-9a-f]{40,64})\s+\d+\s+') {
+        throw "Could not parse index entry for $RelativePath`: $stageLine"
+    }
+
+    $indexBackupPath = "$WorktreeBackupPath.index"
+    Copy-HookGitBlobToFile -Blob $Matches['Sha'] -Destination $indexBackupPath
+    return [pscustomobject]@{
+        Path = $indexBackupPath
+        Mode = $Matches['Mode']
+    }
+}
+
+function Restore-HookIndexRecoveryBackup {
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)]$IndexBackup
+    )
+
+    Push-Location $RepoRoot
+    try {
+        $hashOutput = @(& git hash-object -w -- $IndexBackup.Path 2>&1)
+        if ($LASTEXITCODE -ne 0 -or $hashOutput.Count -eq 0) {
+            Write-HookLine "AutoFix: failed to hash index backup for $RelativePath (exit $LASTEXITCODE): $($hashOutput -join '; ')" 'Red'
+            return
+        }
+        $blobSha = "$($hashOutput[0])".Trim()
+        $updateOutput = @(& git update-index --add --cacheinfo $IndexBackup.Mode $blobSha $RelativePath 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            Write-HookLine "AutoFix: failed to restore index backup for $RelativePath (exit $LASTEXITCODE): $($updateOutput -join '; ')" 'Red'
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
+function Get-HookPowerShellParseErrors {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $tokens = $null
+    $parseErrors = $null
+    try {
+        [void][System.Management.Automation.Language.Parser]::ParseFile(
+            $Path, [ref]$tokens, [ref]$parseErrors)
+    } catch {
+        return @($_)
+    }
+    return @($parseErrors)
+}
+
+function Restore-HookPowerShellFileFromGit {
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)][string]$FullPath,
+        [Parameter(Mandatory)][string]$BackupPath
+    )
+
+    $restoredFrom = $null
+    $recheckErrors = @()
+    $indexBackup = $null
+    try {
+        $indexBackup = New-HookIndexRecoveryBackup -RelativePath $RelativePath -WorktreeBackupPath $BackupPath
+        if ($null -ne $indexBackup) {
+            Write-HookLine "AutoFix: backed up index copy of $RelativePath to $($indexBackup.Path)" 'Yellow'
+        }
+    } catch {
+        Write-HookLine "AutoFix: failed to write index recovery backup for $RelativePath`: $($_.Exception.Message). Refusing to overwrite staged WIP." 'Red'
+        exit 1
+    }
+
+    Push-Location $RepoRoot
+    try {
+        $indexOut = @(& git checkout -- $RelativePath 2>&1)
+        if ($LASTEXITCODE -eq 0) {
+            $recheckErrors = @(Get-HookPowerShellParseErrors -Path $FullPath)
+            if ($recheckErrors.Count -eq 0) {
+                $restoredFrom = 'index'
+            } else {
+                Write-HookLine "AutoFix: index copy of $RelativePath also has parse errors; falling back to HEAD." 'Yellow'
+            }
+        } else {
+            Write-HookLine "AutoFix: git checkout from index failed for $RelativePath (exit $LASTEXITCODE): $($indexOut -join '; '). Falling back to HEAD." 'Yellow'
+        }
+
+        if ($null -eq $restoredFrom) {
+            if ($null -eq $indexBackup) {
+                Write-HookLine "AutoFix: cannot fall back to HEAD for $RelativePath without an index backup; restoring backed-up WIP." 'Red'
+                Copy-Item -LiteralPath $BackupPath -Destination $FullPath -Force
+                exit 1
+            }
+            $headOut = @(& git checkout HEAD -- $RelativePath 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                Write-HookLine "AutoFix: git checkout HEAD failed for $RelativePath (exit $LASTEXITCODE): $($headOut -join '; '). Recovery backup at $BackupPath." 'Red'
+                Restore-HookIndexRecoveryBackup -RelativePath $RelativePath -IndexBackup $indexBackup
+                exit 1
+            }
+            $recheckErrors = @(Get-HookPowerShellParseErrors -Path $FullPath)
+            if ($recheckErrors.Count -eq 0) {
+                $restoredFrom = 'HEAD'
+            }
+        }
+    } finally {
+        Pop-Location
+    }
+
+    if ($null -eq $restoredFrom) {
+        Write-HookLine "AutoFix: HEAD copy of $RelativePath is also corrupt; restoring backed-up WIP." 'Red'
+        try {
+            Copy-Item -LiteralPath $BackupPath -Destination $FullPath -Force
+        } catch {
+            Write-HookLine "AutoFix: failed to restore $RelativePath from $BackupPath`: $($_.Exception.Message)" 'Red'
+        }
+        if ($null -ne $indexBackup) {
+            Restore-HookIndexRecoveryBackup -RelativePath $RelativePath -IndexBackup $indexBackup
+        }
+        foreach ($e in $recheckErrors) {
+            $line = if ($e.PSObject.Properties.Name -contains 'Extent') { $e.Extent.StartLineNumber } else { '?' }
+            $message = if ($e.PSObject.Properties.Name -contains 'Message') { $e.Message } else { "$e" }
+            Write-HookLine "  HEAD ${RelativePath}:$line`: $message" 'Red'
+        }
+        exit 1
+    }
+
+    $indexNote = if ($restoredFrom -eq 'HEAD' -and $null -ne $indexBackup) { "; staged/index WIP backed up to $($indexBackup.Path)" } else { '' }
+    Write-HookLine "AutoFix: recovered $RelativePath from $restoredFrom; corrupt WIP backed up to $BackupPath$indexNote." 'Yellow'
+}
+
+function Resolve-HookGitPath {
+    param([Parameter(Mandatory)][string]$GitPath)
+
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        Push-Location $RepoRoot
+        try {
+            $raw = @(& git rev-parse --git-path $GitPath 2>$null) | Select-Object -First 1
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($raw)) {
+                if ([System.IO.Path]::IsPathRooted($raw)) {
+                    return [System.IO.Path]::GetFullPath($raw)
+                }
+                return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $raw))
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path (Join-Path $RepoRoot '.git') $GitPath))
 }
 
 function Invoke-FastPowerShellParseCheck {
@@ -277,26 +458,8 @@ function Invoke-FastPowerShellParseCheck {
                     Write-HookLine "AutoFix: refusing to restore $rel without a recovery backup." 'Red'
                     exit 1
                 }
-                Push-Location $RepoRoot
-                try {
-                    $headOut = @(& git checkout HEAD -- $rel 2>&1)
-                    if ($LASTEXITCODE -ne 0) {
-                        Write-HookLine "AutoFix: git checkout HEAD failed for $rel (exit $LASTEXITCODE): $($headOut -join '; '). Recovery backup at $backupPath." 'Red'
-                        exit 1
-                    }
-                } finally {
-                    Pop-Location
-                }
-                $tokens = $null
-                $parseErrors = $null
-                [void][System.Management.Automation.Language.Parser]::ParseFile(
-                    $full, [ref]$tokens, [ref]$parseErrors)
-                if ($null -eq $parseErrors -or $parseErrors.Count -eq 0) {
-                    Write-HookLine "AutoFix: recovered $rel from HEAD; corrupt WIP backed up to $backupPath." 'Yellow'
-                    continue
-                }
-                Write-HookLine "AutoFix: HEAD copy of $rel is also corrupt; restoring backed-up WIP." 'Red'
-                Copy-Item -LiteralPath $backupPath -Destination $full -Force
+                Restore-HookPowerShellFileFromGit -RelativePath $rel -FullPath $full -BackupPath $backupPath
+                continue
             }
             exit 1
         }
@@ -727,8 +890,8 @@ function Invoke-GeneratedStagingCheck {
     $dirty = [System.Collections.Generic.List[string]]::new()
     foreach ($line in $statusOutput) {
         $statusEntry = ConvertFrom-GeneratedFileStatusLine -Line $line
-        if (-not $statusEntry.NeedsStaging) { continue }
-        if ($statusEntry.Index -eq '?' -and $statusEntry.Worktree -eq '?') {
+        if (-not $statusEntry.NeedsWorktreeStaging) { continue }
+        if ($statusEntry.IsUntracked) {
             $dirty.Add("untracked: $($statusEntry.Path)")
         } else {
             $dirty.Add("unstaged: $($statusEntry.Path)")
@@ -747,14 +910,14 @@ function Invoke-GeneratedStagingCheck {
     $reportDirty = [System.Collections.Generic.List[string]]::new()
     foreach ($line in $statusOutput) {
         $statusEntry = ConvertFrom-GeneratedFileStatusLine -Line $line
-        if (-not $statusEntry.NeedsStaging) { continue }
+        if (-not $statusEntry.NeedsWorktreeStaging) { continue }
         $normalizedPath = $statusEntry.Path -replace '\\', '/'
         if ($effectiveAutoFix -and $autoFixPathSet.Contains($normalizedPath)) {
             $stagePaths.Add($normalizedPath)
             continue
         }
         if ($normalizedPath -eq '.llm/context.md' -and
-            $statusEntry.Index -ne '?' -and
+            -not $statusEntry.IsUntracked -and
             (Test-ContextWorktreeDiffOnlyOutsideGeneratedBlock -RelativePath $normalizedPath)) {
             continue
         }

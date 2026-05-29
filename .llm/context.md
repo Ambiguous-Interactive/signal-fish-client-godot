@@ -87,32 +87,34 @@ Definition of done for the first usable client:
 - `scripts/lint-llm.ps1`: thin wrapper around shared linter functions that
   enforce line limits, metadata, pointers, and index freshness.
 - `scripts/run-llm-hooks.ps1`: single entry point invoked by the installed
-  `.git/hooks/pre-commit` shim and by CI. Modes are `PreCommit` (staged-aware
-  fast path with AutoFix), `AgentFast` (non-mutating fast path), `Full`
-  (structural plus behavioral self-tests), and `CI` (`Full` plus loud generated
-  diff verification). Fast modes use in-process parse/static guards; `Full`
-  and `CI` run `preflight.ps1`. Use `-Profile` when changing hook performance.
+  pre-commit shim (from `git rev-parse --git-path hooks`) and by CI. Modes are
+  `PreCommit` (staged-aware fast path with AutoFix), `AgentFast`
+  (non-mutating fast path), `Full` (structural plus behavioral self-tests), and
+  `CI` (`Full` plus loud generated diff verification). Fast modes use
+  in-process parse/static guards; `Full` and `CI` run `preflight.ps1`. Use
+  `-Profile` when changing hook performance.
 - `scripts/install-git-hooks.ps1`: materializes a portable POSIX-sh shim
-  (`#!/usr/bin/env sh`) into the repo's `.git/hooks/pre-commit`. Sh is
-  available on Linux, macOS, and Windows (Git for Windows bundles
-  `sh.exe`); a pwsh shebang would break on Windows because `pwsh -File`
-  refuses extensionless files. The committed `.githooks/pre-commit*`
-  files are reference templates only; the live hook lives in
-  `.git/hooks/` after running the installer. The installer clears legacy
-  `core.hooksPath` values that normalize to `.githooks`, including trailing
-  slash or backslash variants, and warns before leaving foreign hook paths in
-  place unless `-Force` is used.
+  (`#!/usr/bin/env sh`) into the hook directory resolved by `git rev-parse
+  --git-path hooks` (usually `.git/hooks/pre-commit`). Sh is available on
+  Linux, macOS, and Windows (Git for Windows bundles `sh.exe`); a pwsh shebang
+  would break on Windows because `pwsh -File` refuses extensionless files. The
+  committed `.githooks/pre-commit*` files are reference templates only; the live
+  hook lives in the resolved git hooks directory after running the installer.
+  The installer clears legacy `core.hooksPath` values that normalize to
+  `.githooks`, including trailing slash or backslash variants, and warns before
+  leaving foreign hook paths in place unless `-Force` is used.
 - `scripts/agent-check.ps1`: fast post-edit validator for agents and humans.
   It invokes `run-llm-hooks.ps1 -Mode AgentFast -SkipStagedCheck -NoAutoFix`
   in the same PowerShell process; pass `-Full` for exhaustive behavioral tests.
 - `scripts/preflight.ps1`: self-healing bootstrap. Parse-checks itself
   first, then every tracked `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers
-  corrupted sources via `git checkout HEAD -- <path>`, backing up the
-  corrupt working-tree copy under `.git/preflight-recovery/<timestamp>-
-  <pid>-<rand>/<encoded-path>` first (most recent 20 retained). See
-  `.llm/skills/agent-harness.md` "Recovery From AutoFix" for the full
-  backup naming scheme and the restore recipe. `run-llm-hooks.ps1 -Mode Full`,
-  CI, `agent-check.ps1 -Full`, and the Claude Code `Stop` hook run it before
+  corrupted sources via the index/staged copy first, falling back to
+  `git checkout HEAD -- <path>`, and backs up the corrupt working-tree copy
+  plus any staged/index copy under `git rev-parse --git-path
+  preflight-recovery` first (most recent 20 retained). See
+  `.llm/skills/agent-harness.md` "Recovery From AutoFix" for the full backup
+  naming scheme and the restore recipe. `run-llm-hooks.ps1 -Mode Full`, CI,
+  `agent-check.ps1 -Full`, and the Claude Code `Stop` hook run it before
   downstream validation; fast modes use in-process parse/static guards instead
   of spawning preflight.
 - `scripts/test-llm-harness.ps1`: dependency-free self-tests for the shared
@@ -128,6 +130,8 @@ Definition of done for the first usable client:
   PowerShell hook/reference scripts with shebangs are forced to LF by
   `.gitattributes` and by a byte-level self-test so direct Unix execution
   cannot resolve `pwsh\r`.
+  `.claude/settings.local.json` is intentionally gitignored for local Claude
+  Code permission overrides.
 
 ## Required Checks
 
@@ -136,8 +140,8 @@ install from <https://aka.ms/powershell>. The pre-commit shim, hooks,
 and CI all hard-require `pwsh`; bare `powershell.exe` is not supported
 (the shim detects it only to emit a clear error).
 
-Primary entry point (invoked by the installed `.git/hooks/pre-commit` and
-CI):
+Primary entry point (invoked by the installed git hooks-path pre-commit shim
+and CI):
 
 ```powershell
 pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode Full

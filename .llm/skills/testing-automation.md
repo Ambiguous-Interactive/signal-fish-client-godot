@@ -42,6 +42,9 @@ These checks enforce:
   `scripts/lib/LlmHarness.psm1` module instead of redefining helpers.
 - Pre-commit hook detects untracked generated files (not just unstaged
   modifications) so a fresh-from-generator file cannot slip through.
+- Generated-file status parsing treats Git porcelain index/worktree columns as
+  separate fields. Staged-only generated changes do not need worktree staging;
+  untracked or worktree-dirty generated files do.
 - Local hook entry points pass `-AutoFix`; CI and `agent-check.ps1` pass
   `-NoAutoFix`. `-SkipStagedCheck` means an outer wrapper validates content
   outside the local staging flow, not that Git lacks an index.
@@ -58,8 +61,12 @@ These checks enforce:
 - Tracked shebang scripts are checked at byte level and by `git check-attr`
   so PowerShell hook/reference scripts that can run directly on Unix stay LF.
 - `scripts/preflight.ps1` parse-checks itself first, then every tracked
-  `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers via `git checkout HEAD --
-  <path>`. `run-llm-hooks.ps1 -Mode Full`, CI, and `agent-check.ps1 -Full`
+  `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers from the index/staged copy
+  first, then falls back to `git checkout HEAD -- <path>` after writing
+  backups below `git rev-parse --git-path preflight-recovery`. Worktree
+  behavioral tests cover both worktree and staged/index backups so `.git` is
+  never assumed to be a directory and HEAD fallback cannot silently discard
+  staged WIP. `run-llm-hooks.ps1 -Mode Full`, CI, and `agent-check.ps1 -Full`
   execute it before downstream tools; fast modes use the in-process
   parse/static guards above instead of spawning preflight.
 - `.claude/settings.json` runs `.claude/hooks/parse-check-powershell.ps1`

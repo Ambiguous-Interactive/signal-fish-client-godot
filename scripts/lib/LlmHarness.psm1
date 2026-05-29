@@ -96,6 +96,43 @@ function Get-LlmRepoRelativePath {
     }
 }
 
+function Resolve-LlmGitPath {
+    <#
+    .SYNOPSIS
+    Resolves a path relative to Git's actual metadata directory.
+
+    .DESCRIPTION
+    `Join-Path $RepoRoot .git/...` is wrong in linked worktrees and some
+    submodule layouts because `.git` can be a file that points at the real git
+    dir. This helper wraps `git rev-parse --git-path <path>` and normalizes the
+    returned path to an absolute filesystem path. If git is unavailable or the
+    command fails, it falls back to the ordinary clone layout so diagnostics can
+    still name the intended location.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$GitPath
+    )
+
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        Push-Location $RepoRoot
+        try {
+            $raw = @(& git rev-parse --git-path $GitPath 2>$null) | Select-Object -First 1
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($raw)) {
+                if ([System.IO.Path]::IsPathRooted($raw)) {
+                    return [System.IO.Path]::GetFullPath($raw)
+                }
+                return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $raw))
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path (Join-Path $RepoRoot '.git') $GitPath))
+}
+
 function Read-LlmFileLines {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -122,29 +159,8 @@ function Read-LlmFrontmatter {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
 
-    $metadata = [ordered]@{}
     $lines = @(Read-LlmFileLines -Path $Path)
-    if ($lines.Count -lt 3 -or $lines[0] -ne '---') {
-        return $metadata
-    }
-
-    $closed = $false
-    for ($i = 1; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -eq '---') {
-            $closed = $true
-            break
-        }
-        if ($lines[$i] -match '^\s*([A-Za-z0-9_-]+):\s*(.*?)\s*$') {
-            $key = $Matches[1].Trim().ToLowerInvariant()
-            $value = $Matches[2].Trim().Trim('"').Trim("'")
-            $metadata[$key] = $value
-        }
-    }
-
-    if (-not $closed) {
-        return [ordered]@{}
-    }
-    return $metadata
+    return (ConvertFrom-LlmFrontmatterLines -Lines $lines)
 }
 
 function Get-LlmFrontmatterValue {
@@ -967,6 +983,7 @@ function Invoke-LlmLint {
 Export-ModuleMember -Function `
     Get-LlmRepoRoot, `
     Get-LlmRepoRelativePath, `
+    Resolve-LlmGitPath, `
     Read-LlmFileLines, `
     Read-LlmFileText, `
     Read-LlmFrontmatter, `

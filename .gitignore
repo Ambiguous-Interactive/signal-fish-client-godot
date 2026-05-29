@@ -31,3 +31,7 @@ logs_*.zip
 *.orig
 *.old
 *.rej
+
+# Claude Code local permission overrides are machine/user-specific. Keep the
+# shared hook config in .claude/settings.json.
+.claude/settings.local.json

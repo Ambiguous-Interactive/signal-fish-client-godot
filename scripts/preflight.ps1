@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     # Attempt to auto-recover corrupted PowerShell sources by checking out the
-    # tracked HEAD copy. Default OFF for direct invocation (loud failure).
+    # index/staged copy first, then the tracked HEAD copy. Default OFF for
+    # direct invocation (loud failure).
     [switch]$AutoFix,
     # -NoAutoFix wins over -AutoFix so CI / scripted callers can force loud
     # failure even when a wrapper enabled -AutoFix.
@@ -19,11 +20,14 @@ param(
 #     Default. Parse-check every tracked .ps1/.psm1/.psd1 plus .claude/hooks/*.ps1.
 #     Exit 0 if all clean, 1 if any are corrupt.
 #   pwsh -NoProfile -File scripts/preflight.ps1 -AutoFix
-#     On corruption: back up the corrupt file under
-#     .git/preflight-recovery/<timestamp>-<pid>-<rand>/<encoded-path>, then
-#     `git checkout HEAD -- <path>`. Re-parses; if HEAD is also corrupt the
-#     working-tree backup is restored and exit is 1. Exit 2 on successful
-#     recovery (caller may continue but should warn).
+#     On corruption: back up the corrupt file under the directory resolved by
+#     `git rev-parse --git-path preflight-recovery`
+#     (<recovery-parent>/<timestamp>-<pid>-<rand>/<encoded-path>), then `git
+#     checkout -- <path>` to restore from the index/staged copy first. If the
+#     index copy is unavailable or still corrupt, it falls back to `git checkout
+#     HEAD -- <path>`. Re-parses; if HEAD is also corrupt the working-tree
+#     backup is restored and exit is 1. Exit 2 on successful recovery (caller
+#     may continue but should warn).
 #   pwsh -NoProfile -File scripts/preflight.ps1 -NoAutoFix
 #     Force loud-failure mode regardless of a wrapper setting -AutoFix.
 #     -NoAutoFix wins over -AutoFix.
@@ -50,29 +54,33 @@ param(
 #      rather than an opaque pwsh parse error. NOTE: this is belt-and-
 #      suspenders only. If preflight.ps1 itself has a parse error pwsh
 #      refuses to start it and we never get here; the PRIMARY defense
-#      lives upstream in `run-llm-hooks.ps1` (and in the installed git-
-#      hook shim), each of which parse-checks its callee before invoking.
+#      lives upstream in `run-llm-hooks.ps1` (and in the installed git hook
+#      shim), each of which parse-checks its callee before invoking.
 #   2. -SelfCheck runs ONLY the per-file parse check on $PSCommandPath and
 #      exits; it does NOT recurse into a third invocation.
 #   3. After the child self-check passes, the top-level parent parse-checks
 #      every tracked PowerShell source plus `.claude/hooks/*.ps1` via the
 #      .NET Parser API (no script execution required).
-#   4. In -AutoFix mode, if a file is corrupt but the HEAD copy is clean,
-#      it BACKS UP the corrupt content to
-#      `.git/preflight-recovery/<ts>-<pid>-<rand>/<encoded-path>`
+#   4. In -AutoFix mode, if a file is corrupt, it BACKS UP the corrupt content
+#      to the directory returned by
+#      `git rev-parse --git-path preflight-recovery`
+#      (`<recovery-parent>/<ts>-<pid>-<rand>/<encoded-path>`)
 #      (the encoded path replaces `/` and `\` with `__` so two files with
-#      the same basename do not overwrite each other), then runs
-#      `git checkout HEAD -- <path>` and re-parses. This recovers from the
-#      most common failure mode (an editor saved a stale buffer over a
-#      freshly regenerated file) WITHOUT silently destroying work.
-#   5. If the HEAD copy ALSO fails to parse, AutoFix RESTORES the working-
-#      tree backup back to the file (so we never leave a "broken from
-#      HEAD" file masquerading as success) and exits 1 with the recovery-
-#      backup path so the user can fix it manually.
+#      the same basename do not overwrite each other), then tries the
+#      index/staged copy first and HEAD second. This recovers from the common
+#      failure mode where the staged version is clean but a stale editor buffer
+#      corrupted the working tree.
+#   5. If the HEAD copy ALSO fails to parse, AutoFix RESTORES the working-tree
+#      backup back to the file (so we never leave a "broken from HEAD" file
+#      masquerading as success) and exits 1 with the recovery-backup path so
+#      the user can fix it manually.
 #
 # Backup directory layout:
-#   .git/preflight-recovery/<unixMs>-<pid>-<rand>/
+#   <git-path:preflight-recovery>/<unixMs>-<pid>-<rand>/
 #     <encoded-path>     (e.g. scripts__lib__LlmHarness.psm1)
+#     <encoded-path>.index     (staged/index copy, when present)
+# Use `git rev-parse --git-path preflight-recovery` to print the parent
+# directory for the current clone, worktree, or submodule.
 # Backups are pruned at preflight startup to the most-recent 20 dirs so a
 # debugging loop does not accrue hundreds.
 #
@@ -120,6 +128,29 @@ function Get-PreflightRepoRoot {
 }
 
 $RepoRoot = Get-PreflightRepoRoot -ScriptDir $PSScriptRoot
+
+function Resolve-PreflightGitPath {
+    param(
+        [Parameter(Mandatory)][string]$GitPath
+    )
+
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        Push-Location $RepoRoot
+        try {
+            $raw = @(& git rev-parse --git-path $GitPath 2>$null) | Select-Object -First 1
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($raw)) {
+                if ([System.IO.Path]::IsPathRooted($raw)) {
+                    return [System.IO.Path]::GetFullPath($raw)
+                }
+                return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $raw))
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path (Join-Path $RepoRoot '.git') $GitPath))
+}
 
 # -NoAutoFix overrides -AutoFix (CI / scripted callers force loud failure).
 $autoFixEnabled = [bool]$AutoFix -and -not $NoAutoFix
@@ -175,7 +206,7 @@ if ($SelfCheck) {
 # parent pwsh refused to start this script, we never reach this line.
 # The PRIMARY defense lives upstream in `run-llm-hooks.ps1` which
 # parse-checks `preflight.ps1` before invoking it, and in the installed
-# `.git/hooks/pre-commit` shim which parse-checks `run-llm-hooks.ps1`.
+# installed pre-commit shim which parse-checks `run-llm-hooks.ps1`.
 if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
     Write-PreLine 'pwsh not found on PATH; cannot bootstrap self-check.' 'Red'
     exit 1
@@ -198,7 +229,7 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 # Runs at startup so a debugging loop does not accrue hundreds. Cleanup
 # failures are NEVER fatal; they cannot block recovery.
 $RecoveryRetainCount = 20
-$recoveryParent = Join-Path $RepoRoot '.git/preflight-recovery'
+$recoveryParent = Resolve-PreflightGitPath -GitPath 'preflight-recovery'
 if (Test-Path -LiteralPath $recoveryParent -PathType Container) {
     try {
         # Sort by LastWriteTimeUtc, not CreationTimeUtc, because some
@@ -275,7 +306,7 @@ function Get-RecoveryDir {
     # (NIT-3)
     $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     $token = "$stamp-$PID-$(Get-Random -Maximum 65536)"
-    $dir = Join-Path $RepoRoot ".git/preflight-recovery/$token"
+    $dir = Join-Path $recoveryParent $token
     try {
         New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
         $script:recoveryRoot = $dir
@@ -297,6 +328,92 @@ function Get-RecoveryDir {
 function ConvertTo-RecoveryFileName {
     param([Parameter(Mandatory)][string]$RelativePath)
     return ($RelativePath -replace '[\\/]', '__')
+}
+
+function Copy-GitBlobToFile {
+    param(
+        [Parameter(Mandatory)][string]$Blob,
+        [Parameter(Mandatory)][string]$Destination
+    )
+
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'git'
+    [void]$psi.ArgumentList.Add('cat-file')
+    [void]$psi.ArgumentList.Add('blob')
+    [void]$psi.ArgumentList.Add($Blob)
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+
+    Push-Location $RepoRoot
+    try {
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $stream = [System.IO.File]::Open($Destination, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $proc.StandardOutput.BaseStream.CopyTo($stream)
+        } finally {
+            $stream.Dispose()
+        }
+        $stderr = $proc.StandardError.ReadToEnd()
+        $proc.WaitForExit()
+        if ($proc.ExitCode -ne 0) {
+            Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+            throw "git cat-file blob $Blob failed with exit $($proc.ExitCode): $stderr"
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
+function New-IndexRecoveryBackup {
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)][string]$RecoveryDir
+    )
+
+    Push-Location $RepoRoot
+    try {
+        $stageLine = @(& git ls-files --stage -- $RelativePath 2>&1) | Select-Object -First 1
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($stageLine)) {
+            return $null
+        }
+    } finally {
+        Pop-Location
+    }
+
+    if ($stageLine -notmatch '^(?<Mode>\d+)\s+(?<Sha>[0-9a-f]{40,64})\s+\d+\s+') {
+        throw "Could not parse index entry for $RelativePath`: $stageLine"
+    }
+
+    $indexBackupPath = Join-Path $RecoveryDir "$(ConvertTo-RecoveryFileName -RelativePath $RelativePath).index"
+    Copy-GitBlobToFile -Blob $Matches['Sha'] -Destination $indexBackupPath
+    return [pscustomobject]@{
+        Path = $indexBackupPath
+        Mode = $Matches['Mode']
+    }
+}
+
+function Restore-IndexRecoveryBackup {
+    param(
+        [Parameter(Mandatory)][string]$RelativePath,
+        [Parameter(Mandatory)]$IndexBackup
+    )
+
+    Push-Location $RepoRoot
+    try {
+        $hashOutput = @(& git hash-object -w -- $IndexBackup.Path 2>&1)
+        if ($LASTEXITCODE -ne 0 -or $hashOutput.Count -eq 0) {
+            Write-PreLine "AutoFix: failed to hash index backup for $RelativePath (exit $LASTEXITCODE): $($hashOutput -join '; ')" 'Red'
+            return
+        }
+        $blobSha = "$($hashOutput[0])".Trim()
+        $updateOutput = @(& git update-index --add --cacheinfo $IndexBackup.Mode $blobSha $RelativePath 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            Write-PreLine "AutoFix: failed to restore index backup for $RelativePath (exit $LASTEXITCODE): $($updateOutput -join '; ')" 'Red'
+        }
+    } finally {
+        Pop-Location
+    }
 }
 
 foreach ($rel in $sources) {
@@ -347,6 +464,18 @@ foreach ($rel in $sources) {
         continue
     }
 
+    $indexBackup = $null
+    try {
+        $indexBackup = New-IndexRecoveryBackup -RelativePath $rel -RecoveryDir $recoveryDir
+        if ($null -ne $indexBackup) {
+            Write-PreLine "AutoFix: backed up index copy of $rel to $($indexBackup.Path)" 'Yellow'
+        }
+    } catch {
+        Write-PreLine "AutoFix: failed to write index recovery backup for $rel`: $($_.Exception.Message). Refusing to overwrite staged WIP." 'Red'
+        $corruptedFatal.Add($rel)
+        continue
+    }
+
     $restoredFrom = $null
     Push-Location $RepoRoot
     try {
@@ -367,9 +496,16 @@ foreach ($rel in $sources) {
         }
         # Step 4: fallback to HEAD.
         if ($null -eq $restoredFrom) {
+            if ($null -eq $indexBackup) {
+                Write-PreLine "AutoFix: cannot fall back to HEAD for $rel without an index backup. Restoring working-tree backup and aborting." 'Red'
+                [System.IO.File]::WriteAllBytes($full, $corruptBytes)
+                $corruptedFatal.Add($rel)
+                continue
+            }
             $checkoutOutput = @(& git checkout HEAD -- $rel 2>&1)
             if ($LASTEXITCODE -ne 0) {
                 Write-PreLine "AutoFix: git checkout HEAD failed for $rel (exit $LASTEXITCODE): $($checkoutOutput -join '; '). Recovery backup at $backupPath." 'Red'
+                Restore-IndexRecoveryBackup -RelativePath $rel -IndexBackup $indexBackup
                 $corruptedFatal.Add($rel)
                 continue
             }
@@ -389,12 +525,16 @@ foreach ($rel in $sources) {
         } catch {
             Write-PreLine "AutoFix: failed to restore working-tree copy of $rel from backup ($($_.Exception.Message)). Recover from $backupPath." 'Red'
         }
+        if ($null -ne $indexBackup) {
+            Restore-IndexRecoveryBackup -RelativePath $rel -IndexBackup $indexBackup
+        }
         Write-PreLine "Both working tree and HEAD copy of $rel have parse errors. The repo's HEAD is in a corrupt state; escalate manually. Recovery backup at $backupPath." 'Red'
         $corruptedFatal.Add($rel)
         continue
     }
     if ($restoredFrom -eq 'HEAD') {
-        Write-PreLine "AutoFix: recovered $rel from HEAD. NOTE: Any staged or working-tree WIP that was newer than HEAD is preserved in $backupPath." 'Yellow'
+        $indexNote = if ($null -ne $indexBackup) { "; staged/index WIP is preserved in $($indexBackup.Path)" } else { '' }
+        Write-PreLine "AutoFix: recovered $rel from HEAD. NOTE: working-tree WIP is preserved in $backupPath$indexNote." 'Yellow'
     } else {
         Write-PreLine "AutoFix: recovered $rel from index (staged version)." 'Yellow'
     }
@@ -406,7 +546,7 @@ if ($corruptedFatal.Count -gt 0) {
     exit 1
 }
 if ($corruptedRecovered) {
-    Write-PreLine 'AutoFix recovered one or more PowerShell sources (from index where possible, HEAD as fallback). Review with git status; corrupt originals are preserved in .git/preflight-recovery/.' 'Yellow'
+    Write-PreLine "AutoFix recovered one or more PowerShell sources (from index where possible, HEAD as fallback). Review with git status; corrupt originals are preserved in $recoveryParent." 'Yellow'
     exit 2
 }
 Write-PreLine 'Preflight OK.' 'Green'

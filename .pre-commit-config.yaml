@@ -3,8 +3,8 @@ repos:
     hooks:
       - id: llm-harness
         name: LLM harness (fast mode)
-        # Runs the same single source of truth as the installed
-        # `.git/hooks/pre-commit` shim and as CI: `scripts/run-llm-hooks.ps1`.
+        # Runs the same single source of truth as the installed git hooks-path
+        # pre-commit shim and as CI: `scripts/run-llm-hooks.ps1`.
         # We intentionally do NOT pass `-SkipStagedCheck` or `-NoAutoFix`:
         # this config is meant for local development and must let AutoFix
         # stage regenerated files, mirroring the installed direct shim's

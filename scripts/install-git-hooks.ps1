@@ -16,9 +16,9 @@ param(
 #     `.githooks/pre-commit` for the committed reference shim; this script
 #     writes the same bootstrap behavior with an idempotency marker so
 #     re-installs are safe.
-#   * We materialise into `.git/hooks/pre-commit` (resolved via
-#     `git rev-parse --git-path hooks`, which is worktree- and
-#     submodule-aware) rather than relying on `core.hooksPath = .githooks`.
+#   * We materialise into the path from `git rev-parse --git-path hooks`
+#     (usually `.git/hooks/pre-commit`, but worktree- and submodule-aware)
+#     rather than relying on `core.hooksPath = .githooks`.
 #   * Any prior `core.hooksPath` pointing at the legacy `.githooks/`
 #     directory is cleared automatically; other values warn unless -Force.
 #   * Hooks owned by other tooling (no marker line) are NEVER clobbered
@@ -26,7 +26,8 @@ param(
 #
 # DO NOT REINTRODUCE legacy patterns from prior versions of this script:
 #   * Setting `core.hooksPath` to point at the in-repo `.githooks/`
-#     directory (replaced by per-checkout install into `.git/hooks/`).
+#     directory (replaced by per-checkout install into the resolved git hooks
+#     path).
 #   * A second `Push-Location` / `try` block (the script must have
 #     EXACTLY ONE such block).
 #   * A separate "shim target" variable distinct from `$installedHook`.
@@ -126,10 +127,10 @@ try {
     #
     # If `run-llm-hooks.ps1` itself has a parse error, pwsh `-File`
     # refuses to start it and EVERY downstream self-heal never runs. The
-    # shim's parse-check + `git checkout HEAD` is the only thing that
-    # can recover from that. The check uses pwsh's parser API (not a
-    # naive `pwsh -NoProfile -Command "exit 0"`) so it does not actually
-    # execute the script.
+    # shim's parse-check plus index-first / HEAD-fallback recovery is the
+    # only thing that can recover from that. The check uses pwsh's parser
+    # API (not a naive `pwsh -NoProfile -Command "exit 0"`) so it does not
+    # actually execute the script.
     #
     # The doubled `` `` ` in front of variable references inside the
     # here-string keeps PowerShell from interpolating them at install time;
@@ -175,6 +176,60 @@ Set-StrictMode -Version Latest
 `$repoRoot = `$env:LLM_HARNESS_REPO_ROOT
 `$entryScript = `$env:LLM_HARNESS_ENTRY_SCRIPT
 `$target = Join-Path `$repoRoot `$entryScript
+function Resolve-HookGitPath {
+    param([Parameter(Mandatory)][string]`$GitPath)
+
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        Push-Location `$repoRoot
+        try {
+            `$raw = @(& git rev-parse --git-path `$GitPath 2>`$null) | Select-Object -First 1
+            if (`$LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(`$raw)) {
+                if ([System.IO.Path]::IsPathRooted(`$raw)) {
+                    return [System.IO.Path]::GetFullPath(`$raw)
+                }
+                return [System.IO.Path]::GetFullPath((Join-Path `$repoRoot `$raw))
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path (Join-Path `$repoRoot '.git') `$GitPath))
+}
+function Copy-GitBlobToFile {
+    param(
+        [Parameter(Mandatory)][string]`$Blob,
+        [Parameter(Mandatory)][string]`$Destination
+    )
+
+    `$psi = [System.Diagnostics.ProcessStartInfo]::new()
+    `$psi.FileName = 'git'
+    [void]`$psi.ArgumentList.Add('cat-file')
+    [void]`$psi.ArgumentList.Add('blob')
+    [void]`$psi.ArgumentList.Add(`$Blob)
+    `$psi.RedirectStandardOutput = `$true
+    `$psi.RedirectStandardError = `$true
+    `$psi.UseShellExecute = `$false
+
+    Push-Location `$repoRoot
+    try {
+        `$proc = [System.Diagnostics.Process]::Start(`$psi)
+        `$stream = [System.IO.File]::Open(`$Destination, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            `$proc.StandardOutput.BaseStream.CopyTo(`$stream)
+        } finally {
+            `$stream.Dispose()
+        }
+        `$stderr = `$proc.StandardError.ReadToEnd()
+        `$proc.WaitForExit()
+        if (`$proc.ExitCode -ne 0) {
+            Remove-Item -LiteralPath `$Destination -Force -ErrorAction SilentlyContinue
+            throw "git cat-file blob `$Blob failed with exit `$(`$proc.ExitCode): `$stderr"
+        }
+    } finally {
+        Pop-Location
+    }
+}
 `$tokens = `$null
 `$parseErrors = `$null
 try {
@@ -182,10 +237,21 @@ try {
 } catch {
     `$parseErrors = @(`$_)
 }
+function Test-TargetParsesClean {
+    `$targetTokens = `$null
+    `$targetErrors = `$null
+    try {
+        [void][System.Management.Automation.Language.Parser]::ParseFile(`$target, [ref]`$targetTokens, [ref]`$targetErrors)
+    } catch {
+        return `$false
+    }
+    return (-not `$targetErrors -or `$targetErrors.Count -eq 0)
+}
 if (`$parseErrors -and `$parseErrors.Count -gt 0) {
-    Write-Host "[llm-hook] WARNING: `$entryScript has parse errors; restoring from HEAD..." -ForegroundColor Yellow
+    Write-Host "[llm-hook] WARNING: `$entryScript has parse errors; restoring from index or HEAD..." -ForegroundColor Yellow
     `$stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    `$backupDir = Join-Path `$repoRoot ".git/preflight-recovery/`$stamp-`$PID-`$(Get-Random -Maximum 65536)"
+    `$recoveryParent = Resolve-HookGitPath -GitPath 'preflight-recovery'
+    `$backupDir = Join-Path `$recoveryParent "`$stamp-`$PID-`$(Get-Random -Maximum 65536)"
     try {
         New-Item -ItemType Directory -Path `$backupDir -Force -ErrorAction Stop | Out-Null
         `$backupPath = Join-Path `$backupDir (`$entryScript -replace '[\\/]', '__')
@@ -194,29 +260,67 @@ if (`$parseErrors -and `$parseErrors.Count -gt 0) {
         Write-Host "[llm-hook] ERROR: failed to back up `$entryScript before restore: `$(`$_.Exception.Message)" -ForegroundColor Red
         exit 1
     }
+    `$indexBackupPath = "`$backupPath.index"
+    `$indexMode = `$null
     Push-Location `$repoRoot
     try {
-        & git checkout HEAD -- `$entryScript
-        if (`$LASTEXITCODE -ne 0) {
-            Write-Host "[llm-hook] ERROR: failed to restore `$entryScript from HEAD." -ForegroundColor Red
+        `$stageLine = @(& git ls-files --stage -- `$entryScript 2>&1) | Select-Object -First 1
+        if (`$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(`$stageLine) -or
+            `$stageLine -notmatch '^(?<Mode>\d+)\s+(?<Sha>[0-9a-f]{40,64})\s+\d+\s+') {
+            Write-Host "[llm-hook] ERROR: failed to read index entry for `$entryScript; refusing to overwrite staged WIP." -ForegroundColor Red
             exit 1
+        }
+        `$indexMode = `$Matches['Mode']
+        Copy-GitBlobToFile -Blob `$Matches['Sha'] -Destination `$indexBackupPath
+    } finally {
+        Pop-Location
+    }
+    `$restoredFrom = `$null
+    Push-Location `$repoRoot
+    try {
+        & git checkout -- `$entryScript
+        if (`$LASTEXITCODE -eq 0) {
+            if (Test-TargetParsesClean) {
+                `$restoredFrom = 'index'
+            } else {
+                Write-Host "[llm-hook] WARNING: index copy of `$entryScript still has parse errors; falling back to HEAD." -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "[llm-hook] WARNING: failed to restore `$entryScript from index; falling back to HEAD." -ForegroundColor Yellow
+        }
+        if (`$null -eq `$restoredFrom) {
+            & git checkout HEAD -- `$entryScript
+            if (`$LASTEXITCODE -ne 0) {
+                Write-Host "[llm-hook] ERROR: failed to restore `$entryScript from HEAD." -ForegroundColor Red
+                exit 1
+            }
+            if (Test-TargetParsesClean) {
+                `$restoredFrom = 'HEAD'
+            }
         }
     } finally {
         Pop-Location
     }
-    `$parseErrors = `$null
-    `$tokens = `$null
-    [void][System.Management.Automation.Language.Parser]::ParseFile(`$target, [ref]`$tokens, [ref]`$parseErrors)
-    if (`$parseErrors -and `$parseErrors.Count -gt 0) {
+    if (`$null -eq `$restoredFrom) {
         Write-Host "[llm-hook] ERROR: `$entryScript still has parse errors after restore; restoring backed-up WIP." -ForegroundColor Red
         try {
             Copy-Item -LiteralPath `$backupPath -Destination `$target -Force
+            Push-Location `$repoRoot
+            try {
+                `$indexBlob = (@(& git hash-object -w -- `$indexBackupPath 2>&1) | Select-Object -First 1)
+                if (`$LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(`$indexBlob)) {
+                    `$indexBlob = "`$indexBlob".Trim()
+                    & git update-index --add --cacheinfo `$indexMode `$indexBlob `$entryScript 2>&1 | Out-Null
+                }
+            } finally {
+                Pop-Location
+            }
         } catch {
             Write-Host "[llm-hook] ERROR: failed to restore `$entryScript from `${backupPath}: `$(`$_.Exception.Message)" -ForegroundColor Red
         }
         exit 1
     }
-    Write-Host "[llm-hook] Backed up corrupt `$entryScript to `$backupPath" -ForegroundColor Yellow
+    Write-Host "[llm-hook] Recovered `$entryScript from `$restoredFrom; backed up corrupt WIP to `$backupPath and index WIP to `$indexBackupPath" -ForegroundColor Yellow
 }
 
 & `$target -Mode PreCommit -AutoFix
@@ -261,7 +365,7 @@ exit "`$HOOK_STATUS"
             & git config --unset core.hooksPath 2>$null | Out-Null
             Write-Install "Cleared previous core.hooksPath '$existingHooksPath'."
         } else {
-            Write-Install "WARNING: core.hooksPath is set to '$existingHooksPath'; the installed .git/hooks/pre-commit will be ignored. Re-run with -Force to clear it." 'Yellow'
+            Write-Install "WARNING: core.hooksPath is set to '$existingHooksPath'; the installed git hooks-path pre-commit shim will be ignored. Re-run with -Force to clear it." 'Yellow'
         }
     }
 
