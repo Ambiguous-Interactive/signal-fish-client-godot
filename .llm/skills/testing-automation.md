@@ -25,7 +25,7 @@ Or run all three plus the staged-generated-files check via the single hook
 entry point used by `.githooks/pre-commit` and CI:
 
 ```powershell
-pwsh -NoProfile -File scripts/run-llm-hooks.ps1
+pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode Full
 ```
 
 These checks enforce:
@@ -45,6 +45,10 @@ These checks enforce:
 - Local hook entry points pass `-AutoFix`; CI and `agent-check.ps1` pass
   `-NoAutoFix`. `-SkipStagedCheck` means an outer wrapper validates content
   outside the local staging flow, not that Git lacks an index.
+- `PreCommit` and `AgentFast` are fast modes: no behavioral subprocess tests,
+  no generator/linter child `pwsh`, and staged-aware scoping for ordinary
+  commits. Tooling changes use in-process PowerShell parse/static guards;
+  `Full` and `CI` keep the exhaustive sandbox coverage.
 - Stray artifact detection is single-sourced through
   `Get-LlmStagingArtifacts` (tracked + non-ignored) and
   `Get-LlmStrayWorkingTreeArtifacts` (includes gitignored junk like
@@ -55,13 +59,23 @@ These checks enforce:
   so PowerShell hook/reference scripts that can run directly on Unix stay LF.
 - `scripts/preflight.ps1` parse-checks itself first, then every tracked
   `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers via `git checkout HEAD --
-  <path>`. `run-llm-hooks.ps1`, `agent-check.ps1`, and CI all run it
-  first.
+  <path>`. `run-llm-hooks.ps1 -Mode Full`, CI, and `agent-check.ps1 -Full`
+  execute it before downstream tools; fast modes use the in-process
+  parse/static guards above instead of spawning preflight.
 - `.claude/settings.json` runs `.claude/hooks/parse-check-powershell.ps1`
   on every PowerShell write/edit so a stale-buffer corruption surfaces
   in the agent's tool_result on the next turn (exit 2 + JSON reason),
   not at commit time. The `Stop` hook re-runs preflight as a final
   defense.
+
+## Performance Guardrails
+
+- CI measures the non-mutating fast path and fails if median runtime exceeds
+  5000ms.
+- Keep expensive sandbox tests tagged `-Behavioral` so fast modes can skip
+  them deterministically.
+- Any new broad Git scan or repeated full-file read in a pre-commit path needs
+  a measured budget and a static self-test that prevents accidental drift.
 
 ## Generated Files
 

@@ -82,18 +82,16 @@ Definition of done for the first usable client:
 - `.llm/skills`: task-triggered guidance with metadata.
 - `.llm/code-samples`: compact implementation examples.
 - `.llm/research`: curated notes and upstream links.
-- `scripts/generate-llm-index.ps1`: regenerates `.llm/index.md` and this
-  file's generated section.
-- `scripts/lint-llm.ps1`: enforces line limits, metadata, pointers, and index
-  freshness.
+- `scripts/generate-llm-index.ps1`: thin wrapper around shared generator
+  functions that regenerate `.llm/index.md` and this file's generated section.
+- `scripts/lint-llm.ps1`: thin wrapper around shared linter functions that
+  enforce line limits, metadata, pointers, and index freshness.
 - `scripts/run-llm-hooks.ps1`: single entry point invoked by the installed
-  `.git/hooks/pre-commit` shim and by CI; regenerates, lints, and verifies
-  staged generated files. Accepts `-AutoFix` (used by local hook entry points
-  to auto-stage regenerated files and remove scoped stray artifacts matching
-  the shared harness junk list) and `-NoAutoFix` (used by CI and
-  `agent-check.ps1` to keep failures loud). Use `-SkipStagedCheck` only when
-  an outer wrapper validates content outside the local staging flow, such as
-  CI or the pre-commit framework.
+  `.git/hooks/pre-commit` shim and by CI. Modes are `PreCommit` (staged-aware
+  fast path with AutoFix), `AgentFast` (non-mutating fast path), `Full`
+  (structural plus behavioral self-tests), and `CI` (`Full` plus loud generated
+  diff verification). Fast modes use in-process parse/static guards; `Full`
+  and `CI` run `preflight.ps1`. Use `-Profile` when changing hook performance.
 - `scripts/install-git-hooks.ps1`: materializes a portable POSIX-sh shim
   (`#!/usr/bin/env sh`) into the repo's `.git/hooks/pre-commit`. Sh is
   available on Linux, macOS, and Windows (Git for Windows bundles
@@ -104,26 +102,25 @@ Definition of done for the first usable client:
   `core.hooksPath` values that normalize to `.githooks`, including trailing
   slash or backslash variants, and warns before leaving foreign hook paths in
   place unless `-Force` is used.
-- `scripts/agent-check.ps1`: fast post-edit / pre-commit validator that
-  agents and humans should run after editing PowerShell or `.llm/**` files.
-  Runs `preflight.ps1 -NoAutoFix` then `run-llm-hooks.ps1 -SkipStagedCheck
-  -NoAutoFix`.
+- `scripts/agent-check.ps1`: fast post-edit validator for agents and humans.
+  It invokes `run-llm-hooks.ps1 -Mode AgentFast -SkipStagedCheck -NoAutoFix`
+  in the same PowerShell process; pass `-Full` for exhaustive behavioral tests.
 - `scripts/preflight.ps1`: self-healing bootstrap. Parse-checks itself
   first, then every tracked `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers
   corrupted sources via `git checkout HEAD -- <path>`, backing up the
   corrupt working-tree copy under `.git/preflight-recovery/<timestamp>-
   <pid>-<rand>/<encoded-path>` first (most recent 20 retained). See
   `.llm/skills/agent-harness.md` "Recovery From AutoFix" for the full
-  backup naming scheme and the restore recipe. Run first by
-  `run-llm-hooks.ps1`, by `agent-check.ps1`, and as a separate CI step so
-  a corrupted toolkit script fails loudly before any other tool tries to
-  execute it. The Claude Code `Stop` hook also runs it.
+  backup naming scheme and the restore recipe. `run-llm-hooks.ps1 -Mode Full`,
+  CI, `agent-check.ps1 -Full`, and the Claude Code `Stop` hook run it before
+  downstream validation; fast modes use in-process parse/static guards instead
+  of spawning preflight.
 - `scripts/test-llm-harness.ps1`: dependency-free self-tests for the shared
   harness library and hook wiring.
-- `scripts/lib/LlmHarness.psm1`: shared module (frontmatter parsing, path
-  helpers, staging-artifact discovery including the `--ignored` blind-spot
-  helper `Get-LlmStrayWorkingTreeArtifacts`) imported by the generator,
-  linter, hook runner, and tests.
+- `scripts/lib/LlmHarness.psm1`: shared module (frontmatter parsing, cached
+  Markdown inventory, generated content, linter checks, path helpers, and
+  staging-artifact discovery) imported by the generator, linter, hook runner,
+  and tests.
 - `.claude/settings.json` + `.claude/hooks/*.ps1`: agentic guardrails.
   `PostToolUse` parse-checks every `.ps1`/`.psm1`/`.psd1` write/edit and
   runs a fast per-file `.llm` structural validator after `.llm/**` edits;
@@ -143,11 +140,11 @@ Primary entry point (invoked by the installed `.git/hooks/pre-commit` and
 CI):
 
 ```powershell
-pwsh -NoProfile -File scripts/run-llm-hooks.ps1
+pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode Full
 ```
 
-This regenerates `.llm/index.md` and `.llm/context.md`, runs the linter and
-self-tests, and verifies generated files are staged.
+This regenerates `.llm/index.md` and `.llm/context.md`, runs the linter,
+self-tests, and generated-file checks.
 
 Install the pre-commit hook once per checkout:
 
@@ -161,6 +158,7 @@ Granular alternatives when iterating:
 pwsh -NoProfile -File scripts/generate-llm-index.ps1
 pwsh -NoProfile -File scripts/lint-llm.ps1
 pwsh -NoProfile -File scripts/test-llm-harness.ps1
+pwsh -NoProfile -File scripts/agent-check.ps1
 ```
 
 Use `-Check` in CI to validate generated files without modifying them:

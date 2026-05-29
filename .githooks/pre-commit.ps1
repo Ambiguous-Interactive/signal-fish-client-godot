@@ -25,5 +25,5 @@ if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {
     exit 1
 }
 
-& pwsh -NoProfile -File $entry -AutoFix
+& pwsh -NoProfile -File $entry -Mode PreCommit -AutoFix
 exit $LASTEXITCODE

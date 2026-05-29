@@ -72,6 +72,8 @@
     }
   },
   "mounts": [
+    // Optional compatibility cache for users who manually run pre-commit.
+    // The canonical hook is the direct shim installed by post-create.
     "source=sf-godot-precommit-cache,target=/home/vscode/.cache/pre-commit,type=volume",
     "source=sf-godot-shell-history,target=/commandhistory,type=volume"
   ],

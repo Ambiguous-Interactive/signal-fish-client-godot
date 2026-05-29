@@ -13,9 +13,9 @@ param(
 #     `#!/usr/bin/env pwsh` shebang on the extensionless hook breaks on
 #     Windows. The materialised hook is therefore a POSIX shell shim that
 #     itself invokes `pwsh -File scripts/run-llm-hooks.ps1`. See
-#     `.githooks/pre-commit` for the reference template; this script writes
-#     an equivalent shim with an idempotency marker so re-installs are
-#     safe.
+#     `.githooks/pre-commit` for the committed reference shim; this script
+#     writes the same bootstrap behavior with an idempotency marker so
+#     re-installs are safe.
 #   * We materialise into `.git/hooks/pre-commit` (resolved via
 #     `git rev-parse --git-path hooks`, which is worktree- and
 #     submodule-aware) rather than relying on `core.hooksPath = .githooks`.
@@ -131,10 +131,11 @@ try {
     # naive `pwsh -NoProfile -Command "exit 0"`) so it does not actually
     # execute the script.
     #
-    # The escaped `\` before `$null` / `$errors` and the doubled `` `` `
-    # in front of variable references inside the here-string keep PowerShell
-    # from interpolating them at install time; they must reach the emitted
-    # shim verbatim.
+    # The doubled `` `` ` in front of variable references inside the
+    # here-string keeps PowerShell from interpolating them at install time;
+    # they must reach the emitted shim verbatim. The shim starts exactly one
+    # pwsh process: a generated bootstrap script parse-checks / recovers the
+    # runner, then invokes it in the same PowerShell process.
     $hookBody = @"
 #!/usr/bin/env sh
 $Marker
@@ -167,52 +168,70 @@ if [ -z "`$REPO_ROOT" ]; then
   exit 1
 fi
 
-# Parse-check the harness entry script BEFORE invoking it. If it has
-# a parse error pwsh -File refuses to start it and the downstream self-
-# heal (preflight -> everything) never runs. Restore from HEAD if
-# corrupt. Portable to Git for Windows' bundled sh.exe.
-#
-# We materialise the parse-check into a temp .ps1 file and run
-# `pwsh -NoProfile -File <file>` to avoid the terminal-init ANSI bytes
-# `pwsh -Command -` writes to stdout on some hosts (those bytes
-# pollute command substitution). The temp file is cleaned up after.
-#
-# Cross-platform mktemp note (NIT-4): `mktemp -t <template>` has subtly
-# different semantics across implementations (BSD vs GNU vs Git for
-# Windows' MSYS bundle). GNU mktemp interprets the argument as a template,
-# Git-for-Windows' MSYS mktemp historically used `-t` to mean "use TMPDIR
-# as a prefix", and BSD differs again. The fallback path
-# `/tmp/llm-parse-check-\$\$.ps1` is the cross-platform safe one: every
-# supported shell creates /tmp at boot and `\$\$` is the current PID so
-# concurrent hook runs cannot collide on the same file. The `||` keeps
-# the fallback purely a backstop — the mktemp branch is preferred when
-# it works because mktemp's atomicity defeats TOCTOU races that `/tmp/PID`
-# is theoretically vulnerable to. Either path produces a usable temp file.
-LLM_HARNESS_TARGET="`$REPO_ROOT/$EntryScript"
-export LLM_HARNESS_TARGET
-PARSE_CHECK_SCRIPT="`$(mktemp -t llm-parse-check-XXXXXX.ps1 2>/dev/null || echo "/tmp/llm-parse-check-`$`$.ps1")"
-cat >"`$PARSE_CHECK_SCRIPT" <<'SHIM_PARSE_CHECK'
+BOOTSTRAP_SCRIPT="`$(mktemp -t llm-hook-bootstrap-XXXXXX.ps1 2>/dev/null || echo "/tmp/llm-hook-bootstrap-`$`$.ps1")"
+cat >"`$BOOTSTRAP_SCRIPT" <<'SHIM_BOOTSTRAP'
 Set-StrictMode -Version Latest
-`$ParseErrors = `$null
+`$ErrorActionPreference = 'Stop'
+`$repoRoot = `$env:LLM_HARNESS_REPO_ROOT
+`$entryScript = `$env:LLM_HARNESS_ENTRY_SCRIPT
+`$target = Join-Path `$repoRoot `$entryScript
+`$tokens = `$null
+`$parseErrors = `$null
 try {
-    [void][System.Management.Automation.Language.Parser]::ParseFile(`$env:LLM_HARNESS_TARGET, [ref]`$null, [ref]`$ParseErrors)
+    [void][System.Management.Automation.Language.Parser]::ParseFile(`$target, [ref]`$tokens, [ref]`$parseErrors)
 } catch {
-    Write-Output 'BAD'
-    exit 0
+    `$parseErrors = @(`$_)
 }
-if (`$ParseErrors -and `$ParseErrors.Count -gt 0) { Write-Output 'BAD' } else { Write-Output 'OK' }
-SHIM_PARSE_CHECK
-PARSE_RESULT="`$(pwsh -NoProfile -File "`$PARSE_CHECK_SCRIPT" 2>/dev/null | tr -d '\r' | tail -n 1)"
-rm -f "`$PARSE_CHECK_SCRIPT" 2>/dev/null || true
-if [ "`$PARSE_RESULT" != "OK" ]; then
-    echo "[llm-hook] WARNING: $EntryScript has parse errors; restoring from HEAD..." >&2
-    (cd "`$REPO_ROOT" && git checkout HEAD -- "$EntryScript") || {
-        echo "[llm-hook] ERROR: failed to restore $EntryScript from HEAD." >&2
+if (`$parseErrors -and `$parseErrors.Count -gt 0) {
+    Write-Host "[llm-hook] WARNING: `$entryScript has parse errors; restoring from HEAD..." -ForegroundColor Yellow
+    `$stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    `$backupDir = Join-Path `$repoRoot ".git/preflight-recovery/`$stamp-`$PID-`$(Get-Random -Maximum 65536)"
+    try {
+        New-Item -ItemType Directory -Path `$backupDir -Force -ErrorAction Stop | Out-Null
+        `$backupPath = Join-Path `$backupDir (`$entryScript -replace '[\\/]', '__')
+        [System.IO.File]::Copy(`$target, `$backupPath, `$true)
+    } catch {
+        Write-Host "[llm-hook] ERROR: failed to back up `$entryScript before restore: `$(`$_.Exception.Message)" -ForegroundColor Red
         exit 1
     }
-fi
+    Push-Location `$repoRoot
+    try {
+        & git checkout HEAD -- `$entryScript
+        if (`$LASTEXITCODE -ne 0) {
+            Write-Host "[llm-hook] ERROR: failed to restore `$entryScript from HEAD." -ForegroundColor Red
+            exit 1
+        }
+    } finally {
+        Pop-Location
+    }
+    `$parseErrors = `$null
+    `$tokens = `$null
+    [void][System.Management.Automation.Language.Parser]::ParseFile(`$target, [ref]`$tokens, [ref]`$parseErrors)
+    if (`$parseErrors -and `$parseErrors.Count -gt 0) {
+        Write-Host "[llm-hook] ERROR: `$entryScript still has parse errors after restore; restoring backed-up WIP." -ForegroundColor Red
+        try {
+            Copy-Item -LiteralPath `$backupPath -Destination `$target -Force
+        } catch {
+            Write-Host "[llm-hook] ERROR: failed to restore `$entryScript from `${backupPath}: `$(`$_.Exception.Message)" -ForegroundColor Red
+        }
+        exit 1
+    }
+    Write-Host "[llm-hook] Backed up corrupt `$entryScript to `$backupPath" -ForegroundColor Yellow
+}
 
-exec pwsh -NoProfile -File "`$REPO_ROOT/$EntryScript" -AutoFix
+& `$target -Mode PreCommit -AutoFix
+exit `$LASTEXITCODE
+SHIM_BOOTSTRAP
+
+LLM_HARNESS_REPO_ROOT="`$REPO_ROOT"
+LLM_HARNESS_ENTRY_SCRIPT="$EntryScript"
+export LLM_HARNESS_REPO_ROOT LLM_HARNESS_ENTRY_SCRIPT
+set +e
+pwsh -NoProfile -File "`$BOOTSTRAP_SCRIPT"
+HOOK_STATUS="`$?"
+set -e
+rm -f "`$BOOTSTRAP_SCRIPT" 2>/dev/null || true
+exit "`$HOOK_STATUS"
 "@
 
     if (Test-Path -LiteralPath $installedHook -PathType Leaf) {

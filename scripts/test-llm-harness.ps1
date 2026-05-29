@@ -85,6 +85,43 @@ function Expect-Equal {
     }
 }
 
+function Assert-DirectPosixShimBootstrap {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Content
+    )
+
+    $normalized = $Content -replace '`', ''
+    foreach ($needle in @(
+            '#!/usr/bin/env sh',
+            'unset LLM_HARNESS_PREFLIGHT_DONE',
+            'unset LLM_HARNESS_SKIP_BEHAVIORAL_TESTS',
+            'BOOTSTRAP_SCRIPT=',
+            'SHIM_BOOTSTRAP',
+            'ParseFile',
+            '.git/preflight-recovery',
+            'restoring backed-up WIP')) {
+        if ($normalized -notmatch ([regex]::Escape($needle))) {
+            throw "$Name must contain '$needle'."
+        }
+    }
+    if ($normalized -notmatch 'git checkout HEAD -- \$entryScript') {
+        throw "$Name must restore run-llm-hooks.ps1 from HEAD when the entry script is parse-corrupt."
+    }
+    $backupIdx = $normalized.IndexOf('[System.IO.File]::Copy($target, $backupPath, $true)')
+    $checkoutIdx = $normalized.IndexOf('git checkout HEAD -- $entryScript')
+    if ($backupIdx -lt 0 -or $checkoutIdx -lt 0 -or $backupIdx -gt $checkoutIdx) {
+        throw "$Name must back up run-llm-hooks.ps1 before restoring it from HEAD."
+    }
+    if ($normalized -notmatch '&\s+\$target\s+-Mode\s+PreCommit\s+-AutoFix') {
+        throw "$Name must invoke run-llm-hooks.ps1 -Mode PreCommit -AutoFix inside the bootstrap pwsh process."
+    }
+    $pwshCount = [regex]::Matches($normalized, '(?m)^\s*pwsh\s+-NoProfile\s+-File\s+"\$BOOTSTRAP_SCRIPT"').Count
+    if ($pwshCount -ne 1) {
+        throw "$Name must start exactly one bootstrap pwsh process; found $pwshCount."
+    }
+}
+
 function New-TempFile {
     param(
         [string]$Content,
@@ -94,6 +131,57 @@ function New-TempFile {
     $bytes = [System.Text.UTF8Encoding]::new([bool]$Utf8Bom).GetBytes($Content)
     [System.IO.File]::WriteAllBytes($path, $bytes)
     return $path
+}
+
+function New-HookBehaviorSandbox {
+    param([string]$Prefix = 'llm-hook-behavior')
+
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("$Prefix-$([Guid]::NewGuid())")
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+
+    $files = @(
+        '.gitignore',
+        'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'CHATGPT.md', 'CODEX.md',
+        'llms.txt', '.cursorrules', '.windsurfrules',
+        '.github/copilot-instructions.md', '.cursor/rules/signal-fish-llm-context.mdc',
+        '.githooks/pre-commit',
+        '.devcontainer/post-create.sh',
+        '.github/workflows/llm-harness.yml',
+        '.pre-commit-config.yaml',
+        '.llm/context.md', '.llm/index.md', '.llm/README.md',
+        'scripts/run-llm-hooks.ps1',
+        'scripts/generate-llm-index.ps1',
+        'scripts/test-llm-harness.ps1',
+        'scripts/preflight.ps1',
+        'scripts/lint-llm.ps1',
+        'scripts/install-git-hooks.ps1',
+        'scripts/lib/LlmHarness.psm1'
+    )
+
+    foreach ($file in $files) {
+        $src = Join-Path $repoRoot $file
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { continue }
+        $dst = Join-Path $sandbox $file
+        $dstDir = Split-Path -Parent $dst
+        if (-not (Test-Path -LiteralPath $dstDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $src -Destination $dst -Force
+    }
+
+    Push-Location $sandbox
+    try {
+        & git init -q --initial-branch=main 2>&1 | Out-Null
+        & git config user.email 'test@example.com' 2>&1 | Out-Null
+        & git config user.name 'test' 2>&1 | Out-Null
+        & git add -A 2>&1 | Out-Null
+        & git commit -q -m 'baseline' 2>&1 | Out-Null
+    } finally {
+        Pop-Location
+    }
+
+    return $sandbox
 }
 
 # --- Read-LlmFrontmatter ---------------------------------------------------
@@ -250,6 +338,12 @@ Assert-Test 'run-llm-hooks.ps1 exposes -AutoFix and -NoAutoFix switches' {
     if ($content -notmatch '\[switch\]\$NoAutoFix') {
         throw 'run-llm-hooks.ps1 must declare [switch]$NoAutoFix so CI can force loud failure.'
     }
+    if ($content -notmatch "\[ValidateSet\('PreCommit', 'AgentFast', 'Full', 'CI'\)\]") {
+        throw 'run-llm-hooks.ps1 must expose explicit PreCommit, AgentFast, Full, and CI modes.'
+    }
+    if ($content -notmatch '\[switch\]\$Profile') {
+        throw 'run-llm-hooks.ps1 must expose -Profile for hook performance diagnostics.'
+    }
 }
 
 Assert-Test 'local pre-commit entry points pass -AutoFix; CI passes -NoAutoFix' {
@@ -258,9 +352,15 @@ Assert-Test 'local pre-commit entry points pass -AutoFix; CI passes -NoAutoFix' 
     if ($shim -notmatch '-AutoFix') {
         throw '.githooks/pre-commit must pass -AutoFix to run-llm-hooks.ps1 (automated recovery is required).'
     }
+    if ($shim -notmatch '-Mode PreCommit') {
+        throw '.githooks/pre-commit must pass -Mode PreCommit to use the fast local hook path.'
+    }
     $mirror = Get-Content -LiteralPath (Join-Path $repoRoot '.githooks/pre-commit.ps1') -Raw
     if ($mirror -notmatch '-AutoFix') {
         throw '.githooks/pre-commit.ps1 must pass -AutoFix to run-llm-hooks.ps1.'
+    }
+    if ($mirror -notmatch '-Mode PreCommit') {
+        throw '.githooks/pre-commit.ps1 must pass -Mode PreCommit.'
     }
     $preCommitConfigPath = Join-Path $repoRoot '.pre-commit-config.yaml'
     if (Test-Path -LiteralPath $preCommitConfigPath -PathType Leaf) {
@@ -271,6 +371,12 @@ Assert-Test 'local pre-commit entry points pass -AutoFix; CI passes -NoAutoFix' 
         }
         if ($entryLine -notmatch '-AutoFix') {
             throw '.pre-commit-config.yaml must pass -AutoFix to mirror installed local hook recovery behavior.'
+        }
+        if ($entryLine -notmatch '-Mode\s+PreCommit') {
+            throw '.pre-commit-config.yaml must use -Mode PreCommit so compatibility hooks use the fast path.'
+        }
+        if ($entryLine -match '-SkipStagedCheck') {
+            throw '.pre-commit-config.yaml must not pass -SkipStagedCheck; AutoFix must be able to stage regenerated files.'
         }
         if ($entryLine -match '-NoAutoFix') {
             throw '.pre-commit-config.yaml must not pass -NoAutoFix; CI owns loud failure mode.'
@@ -312,8 +418,11 @@ Assert-Test 'agent-check.ps1 exists and delegates to run-llm-hooks.ps1' {
     if ($content -notmatch 'run-llm-hooks\.ps1') {
         throw 'scripts/agent-check.ps1 must delegate to run-llm-hooks.ps1 to stay single-sourced.'
     }
-    if ($content -notmatch '-SkipStagedCheck' -or $content -notmatch '-NoAutoFix') {
-        throw 'scripts/agent-check.ps1 must pass -SkipStagedCheck and -NoAutoFix.'
+    if ($content -notmatch 'SkipStagedCheck\s*=\s*\$true' -or $content -notmatch 'NoAutoFix\s*=\s*\$true') {
+        throw 'scripts/agent-check.ps1 must pass SkipStagedCheck and NoAutoFix to the runner.'
+    }
+    if ($content -notmatch 'Mode\s*=\s*\$mode' -or $content -notmatch 'AgentFast') {
+        throw 'scripts/agent-check.ps1 must delegate to run-llm-hooks.ps1 -Mode AgentFast by default.'
     }
 }
 
@@ -561,7 +670,7 @@ Assert-Test 'devcontainer Codex installer is pinned, parseable, and validated' {
     }
 }
 
-Assert-Test 'devcontainer post-create installs Codex and reports it in the summary' {
+Assert-Test 'devcontainer post-create installs direct hooks, Codex, and reports summary' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $postCreate = Join-Path $repoRoot '.devcontainer/post-create.sh'
     if (-not (Test-Path -LiteralPath $postCreate -PathType Leaf)) {
@@ -570,6 +679,12 @@ Assert-Test 'devcontainer post-create installs Codex and reports it in the summa
     $content = Get-Content -LiteralPath $postCreate -Raw
     if ($content -notmatch 'install-codex\.sh') {
         throw 'post-create.sh must invoke .devcontainer/install-codex.sh.'
+    }
+    if ($content -notmatch 'install-git-hooks\.ps1\s+-Force') {
+        throw 'post-create.sh must install the direct .git/hooks shim with scripts/install-git-hooks.ps1 -Force.'
+    }
+    if ($content -match 'pre-commit\s+install') {
+        throw 'post-create.sh must not install the pre-commit framework hook; the direct shim is canonical.'
     }
     if ($content -notmatch 'codex --version') {
         throw 'post-create.sh must include codex --version in the toolchain summary.'
@@ -580,14 +695,45 @@ Assert-Test 'devcontainer post-create installs Codex and reports it in the summa
     if ($content -notmatch 'Failed to install PowerShell profile') {
         throw 'post-create.sh must fail loudly if PowerShell profile installation fails.'
     }
-    if ($content -notmatch 'ensure_writable_dir' -or $content -notmatch '\$\{HOME\}/\.cache/pre-commit' -or $content -notmatch 'sudo chown -R') {
-        throw 'post-create.sh must repair root-owned mounted tool cache directories before installing hooks.'
+    if ($content -notmatch 'ensure_writable_dir' -or $content -notmatch 'sudo chown -R') {
+        throw 'post-create.sh must repair root-owned mounted directories before installing hooks.'
     }
     if (Get-Command bash -ErrorAction SilentlyContinue) {
         & bash -n $postCreate
         if ($LASTEXITCODE -ne 0) {
             throw 'post-create.sh failed bash -n syntax validation.'
         }
+    }
+}
+
+Assert-Test 'devcontainer pre-commit remnants are optional compatibility only' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $dockerfile = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/Dockerfile') -Raw
+    $devcontainer = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/devcontainer.json') -Raw
+    $postCreate = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-create.sh') -Raw
+    $readme = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/README.md') -Raw
+
+    if ($postCreate -match 'pre-commit\s+install') {
+        throw 'post-create.sh must not install the pre-commit framework hook; scripts/install-git-hooks.ps1 owns the canonical direct shim.'
+    }
+    if ($dockerfile -match 'pipx install pre-commit' -and
+        ($dockerfile -notmatch 'Optional compatibility' -or
+            $dockerfile -notmatch 'devcontainer must not run `pre-commit install`')) {
+        throw 'Dockerfile pre-commit installation must be documented as optional compatibility tooling, not the canonical hook path.'
+    }
+    if ($devcontainer -match '\.cache/pre-commit' -and
+        ($devcontainer -notmatch 'Optional compatibility cache' -or
+            $devcontainer -notmatch 'canonical hook is the direct shim')) {
+        throw 'devcontainer pre-commit cache mount must be marked optional compatibility tooling.'
+    }
+    if ($readme -match 'pre-commit' -and
+        ($readme -notmatch 'optional compatibility' -or
+            $readme -notmatch 'no framework hook')) {
+        throw 'devcontainer README must identify pre-commit as optional compatibility tooling only.'
+    }
+    if ($postCreate -match 'pre-commit --version' -and
+        $postCreate -notmatch 'precmt \(optional\)') {
+        throw 'post-create.sh tool summary must label pre-commit as optional if it reports the CLI.'
     }
 }
 
@@ -632,7 +778,7 @@ function Import-Module {
     } finally {
         Remove-Item -LiteralPath $tempScript -Force -ErrorAction SilentlyContinue
     }
-}
+} -Behavioral
 
 # --- install-git-hooks.ps1 only references defined variables ---------------
 
@@ -771,7 +917,7 @@ Assert-Test 'install-git-hooks.ps1 has no legacy / duplicate-block regressions' 
     # The script must contain EXACTLY ONE Push-Location block. A second
     # one is the unmistakable signature of the corruption pattern (old
     # block + new block merged together).
-    $pushCount = [regex]::Matches($content, '(?m)^\s*Push-Location\b').Count
+    $pushCount = [regex]::Matches($content, '(?m)^\s*Push-Location\s+\$RepoRoot\b').Count
     if ($pushCount -ne 1) {
         throw "install-git-hooks.ps1 must contain exactly one Push-Location block; found $pushCount. This usually means a stale editor buffer re-merged old code on top of the new script."
     }
@@ -873,8 +1019,8 @@ $ToolkitModules = @(
 # the parse-check above but obviously fail any real check.
 $ToolkitScriptMinLines = @{
     'scripts/run-llm-hooks.ps1'                = 100
-    'scripts/lint-llm.ps1'                     = 100
-    'scripts/generate-llm-index.ps1'           = 50
+    'scripts/lint-llm.ps1'                     = 10
+    'scripts/generate-llm-index.ps1'           = 10
     'scripts/install-git-hooks.ps1'            = 100
     'scripts/test-llm-harness.ps1'             = 200
     'scripts/preflight.ps1'                    = 100
@@ -885,7 +1031,7 @@ $ToolkitScriptMinLines = @{
     '.claude/hooks/session-reminder.ps1'       = 20
 }
 
-Assert-Test 'lint-llm.ps1 has no legacy regressions' {
+Assert-Test 'lint-llm.ps1 is a thin shared-module wrapper' {
     $path = Join-Path $ScriptsDir 'lint-llm.ps1'
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw 'Missing scripts/lint-llm.ps1'
@@ -915,15 +1061,14 @@ Assert-Test 'lint-llm.ps1 has no legacy regressions' {
     if ($content -match 'Get-RepoRelativePath\s+\$') {
         throw 'lint-llm.ps1 must not call Get-RepoRelativePath; use Get-RelPath / Get-LlmRepoRelativePath.'
     }
-    # Catch the duplicate-block corruption signature: a second
-    # Invoke-GeneratedIndexCheck call site after the first is the
-    # smoking gun for the merge.
-    $indexCheckCalls = [regex]::Matches($content, '(?m)^\s*Invoke-GeneratedIndexCheck\s*$').Count
-    if ($indexCheckCalls -ne 1) {
-        throw "lint-llm.ps1 must invoke Invoke-GeneratedIndexCheck exactly once; found $indexCheckCalls."
+    if ($content -notmatch 'Invoke-LlmLint') {
+        throw 'lint-llm.ps1 must delegate lint implementation to Invoke-LlmLint in LlmHarness.psm1.'
     }
-    if ($lines.Count -lt 100 -or $lines.Count -gt 500) {
-        throw "lint-llm.ps1 line count $($lines.Count) is outside the expected range (100..500); HEAD is ~301."
+    if ($content -match 'generate-llm-index\.ps1' -or $content -match '&\s+pwsh') {
+        throw 'lint-llm.ps1 must not invoke the generator or spawn pwsh; runner fast paths call shared functions in-process.'
+    }
+    if ($lines.Count -lt 10 -or $lines.Count -gt 80) {
+        throw "lint-llm.ps1 line count $($lines.Count) is outside the expected thin-wrapper range (10..80)."
     }
 }
 
@@ -1062,16 +1207,9 @@ Assert-Test 'Get-LlmStrayWorkingTreeArtifacts returns empty for empty patterns' 
     Expect-Equal $artifacts.Count 0
 }
 
-Assert-Test 'agent-check.ps1 invokes preflight before run-llm-hooks' {
+Assert-Test 'agent-check.ps1 delegates to AgentFast in-process' {
     $path = Join-Path $ScriptsDir 'agent-check.ps1'
     $content = Get-Content -LiteralPath $path -Raw
-    if ($content -notmatch 'preflight\.ps1') {
-        throw 'agent-check.ps1 must invoke scripts/preflight.ps1 so agents catch corruption in the fast path.'
-    }
-    # Compare the FIRST `& pwsh @preArgs` (or equivalent invocation) of
-    # each script. Header comments may mention `run-llm-hooks.ps1`
-    # textually before the preflight variable; we only care about call
-    # ordering at runtime.
     $tokens = $null
     $parseErrors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -1079,19 +1217,14 @@ Assert-Test 'agent-check.ps1 invokes preflight before run-llm-hooks' {
     if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
         throw "Parse errors in agent-check.ps1: $($parseErrors | ForEach-Object { $_.Message } | Out-String)"
     }
-    $strings = @($ast.FindAll({
-                param($node)
-                $node -is [System.Management.Automation.Language.StringConstantExpressionAst]
-            }, $true) | Where-Object { $_.Value -match 'preflight\.ps1|run-llm-hooks\.ps1' })
-    $preNodes = @($strings | Where-Object { $_.Value -match 'preflight\.ps1' })
-    $runNodes = @($strings | Where-Object { $_.Value -match 'run-llm-hooks\.ps1' })
-    if ($preNodes.Count -eq 0 -or $runNodes.Count -eq 0) {
-        throw 'agent-check.ps1 must reference both preflight.ps1 and run-llm-hooks.ps1 in script (not comment) form.'
+    if ($content -notmatch 'run-llm-hooks\.ps1') {
+        throw 'agent-check.ps1 must delegate to run-llm-hooks.ps1.'
     }
-    $firstPre = ($preNodes | Sort-Object { $_.Extent.StartOffset } | Select-Object -First 1)
-    $firstRun = ($runNodes | Sort-Object { $_.Extent.StartOffset } | Select-Object -First 1)
-    if ($firstPre.Extent.StartOffset -gt $firstRun.Extent.StartOffset) {
-        throw 'agent-check.ps1 must invoke preflight BEFORE run-llm-hooks so corrupted toolkit scripts cannot run.'
+    if ($content -notmatch 'AgentFast') {
+        throw 'agent-check.ps1 must use run-llm-hooks.ps1 -Mode AgentFast by default.'
+    }
+    if ($content -match '&\s+pwsh') {
+        throw 'agent-check.ps1 must invoke run-llm-hooks.ps1 in-process, not spawn another pwsh.'
     }
 }
 
@@ -1507,6 +1640,29 @@ Assert-Test 'run-llm-hooks.ps1 AutoFix uses Test-LlmDeletableArtifact for scoped
     if ($content -notmatch 'leaving for manual review') {
         throw 'run-llm-hooks.ps1 must emit a manual-review warning for out-of-scope artifacts (so the user knows they were skipped).'
     }
+    if ($content -notmatch "ControlledOnly:\(\`$Mode -in @\('PreCommit', 'AgentFast'\)\)" -or
+        $content -notmatch 'Get-LlmStrayWorkingTreeArtifacts') {
+        throw 'run-llm-hooks.ps1 PreCommit and AgentFast modes must catch controlled gitignored strays such as scripts/*.tmp.'
+    }
+}
+
+Assert-Test 'run-llm-hooks.ps1 fast sibling stray scan is directory-based' {
+    $path = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
+    $content = Get-Content -LiteralPath $path -Raw
+    if ($content -match 'Get-TrackedSiblingArtifactCandidates') {
+        throw 'Fast sibling stray detection must not synthesize and probe tracked-file x pattern candidate paths.'
+    }
+    if ($content -notmatch 'Get-TrackedFileDirectories' -or
+        $content -notmatch 'Get-ChildItem -LiteralPath \$fullDir -Force -File') {
+        throw 'Fast sibling stray detection must enumerate each tracked-file directory once and inspect sibling files.'
+    }
+    $controlledFunc = [regex]::Match($content, '(?s)function Get-ControlledStrayArtifacts \{(?<body>.*?)\r?\n\}')
+    if (-not $controlledFunc.Success) {
+        throw 'Missing Get-ControlledStrayArtifacts implementation.'
+    }
+    if ($controlledFunc.Groups['body'].Value -match 'foreach\s*\(\$tracked\b.*?foreach\s*\(\$pattern\b') {
+        throw 'Get-ControlledStrayArtifacts must not do O(tracked files * patterns) sibling probing.'
+    }
 }
 
 # --- M-5: Test-LlmDeletableArtifact strips ./ prefix -----------------------
@@ -1597,6 +1753,30 @@ Assert-Test 'run-llm-hooks.ps1 -NoAutoFix reports stray .tmp and fails' {
     }
 } -Behavioral
 
+Assert-Test 'run-llm-hooks.ps1 PreCommit reports gitignored scripts .tmp before fast exit' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        return
+    }
+    $strayName = "scripts/llm-harness-test-precommit-$([Guid]::NewGuid()).tmp"
+    $strayFull = Join-Path $repoRoot $strayName
+    [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+    try {
+        $hooks = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
+        $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -SkipStagedCheck -NoAutoFix 2>&1
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0) {
+            throw "PreCommit must exit non-zero when a gitignored scripts/*.tmp exists; got 0. Output: $($output -join '; ')"
+        }
+        $combined = ($output | Out-String)
+        if ($combined -notmatch [regex]::Escape($strayName)) {
+            throw "PreCommit must name the gitignored stray artifact; got: $combined"
+        }
+    } finally {
+        Remove-Item -LiteralPath $strayFull -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
 # --- M-9: run-llm-hooks.ps1 parse-checks preflight.ps1 first ---------------
 
 Assert-Test 'run-llm-hooks.ps1 parse-checks preflight.ps1 before invoking it' {
@@ -1612,43 +1792,26 @@ Assert-Test 'run-llm-hooks.ps1 parse-checks preflight.ps1 before invoking it' {
     if ($runIdx -lt 0 -or $parseIdx -gt $runIdx) {
         throw 'run-llm-hooks.ps1 must parse-check preflight.ps1 BEFORE the "Running preflight" stage.'
     }
+    $backupIdx = $content.IndexOf("New-HookRecoveryBackup -RelativePath 'scripts/preflight.ps1'")
+    $checkoutIdx = $content.IndexOf("git checkout HEAD -- 'scripts/preflight.ps1'")
+    if ($backupIdx -lt 0 -or $checkoutIdx -lt 0 -or $backupIdx -gt $checkoutIdx) {
+        throw 'run-llm-hooks.ps1 must back up preflight.ps1 before restoring it from HEAD.'
+    }
+    if ($content -notmatch 'restoring backed-up WIP') {
+        throw 'run-llm-hooks.ps1 must restore the preflight WIP backup if the HEAD copy is also corrupt.'
+    }
 }
 
-Assert-Test 'installed git-hook shim parse-checks run-llm-hooks.ps1 before invoking it' {
+Assert-Test 'POSIX git-hook shims parse-check run-llm-hooks.ps1 before invoking it' {
     $installer = Join-Path $ScriptsDir 'install-git-hooks.ps1'
-    $content = Get-Content -LiteralPath $installer -Raw
-    # The emitted hook body must include a `ParseFile` self-heal of
-    # scripts/run-llm-hooks.ps1 (n-level recovery: shim -> run-llm-hooks
-    # -> preflight -> all other PS files). The source script references
-    # the entry script via the `$EntryScript` PowerShell variable that
-    # gets interpolated into the here-string at install time, so we
-    # check for `git checkout HEAD -- "$EntryScript"` (source form).
-    if ($content -notmatch 'ParseFile') {
-        throw 'install-git-hooks.ps1 must emit a hook that parse-checks run-llm-hooks.ps1 before invoking it (n-level self-heal).'
-    }
-    if ($content -notmatch 'git checkout HEAD -- "\$EntryScript"') {
-        throw 'install-git-hooks.ps1 must emit a hook that recovers $EntryScript (run-llm-hooks.ps1) from HEAD when corrupted.'
-    }
-    # Behaviorally verify: materialise the hook in a sandbox and confirm
-    # it contains the literal `scripts/run-llm-hooks.ps1` after PowerShell
-    # interpolation runs.
-    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-hook-emit-test-$([Guid]::NewGuid())")
-    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
-    try {
-        # Initialize a real git repo so `git rev-parse --git-path hooks`
-        # succeeds; we then invoke the installer with its $PSScriptRoot
-        # pointing at the actual scripts/ dir (the installer trusts
-        # $PSScriptRoot for repo root resolution, so we cannot fully
-        # sandbox without copying; instead we just inspect the source's
-        # emitted here-string body via string substitution).
-        $rendered = $content
-        $rendered = $rendered -replace '\$EntryScript', 'scripts/run-llm-hooks.ps1'
-        if ($rendered -notmatch 'git checkout HEAD -- "scripts/run-llm-hooks\.ps1"') {
-            throw 'After substituting $EntryScript, the emitted hook body must contain `git checkout HEAD -- "scripts/run-llm-hooks.ps1"`.'
-        }
-    } finally {
-        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
-    }
+    $reference = Join-Path (Split-Path -Parent $ScriptsDir) '.githooks/pre-commit'
+    $installerContent = Get-Content -LiteralPath $installer -Raw
+    $referenceContent = Get-Content -LiteralPath $reference -Raw
+
+    # Both POSIX entry points must include the same n-level recovery contract:
+    # shim -> run-llm-hooks -> preflight -> all other PowerShell sources.
+    Assert-DirectPosixShimBootstrap -Name 'install-git-hooks.ps1 emitted hook' -Content $installerContent
+    Assert-DirectPosixShimBootstrap -Name '.githooks/pre-commit reference shim' -Content $referenceContent
 }
 
 # --- MIN-1: pattern triplication closed -----------------------------------
@@ -1686,7 +1849,6 @@ Assert-Test 'MIN-1: stray-artifact patterns sourced from shared module' {
     }
 
     foreach ($entry in @(
-            @{ Name = 'lint-llm.ps1'; Content = $lintSrc },
             @{ Name = 'run-llm-hooks.ps1'; Content = $hookSrc }
         )) {
         if ($entry.Content -notmatch 'Get-LlmDefaultStrayPatterns') {
@@ -1700,6 +1862,9 @@ Assert-Test 'MIN-1: stray-artifact patterns sourced from shared module' {
             throw "$($entry.Name) still contains a hardcoded copy of the stray-artifact pattern list; consume Get-LlmDefaultStrayPatterns instead."
         }
     }
+    if ($lintSrc -notmatch 'Invoke-LlmLint') {
+        throw 'lint-llm.ps1 must delegate artifact checks to Invoke-LlmLint in the shared module.'
+    }
 
     # The library is the SOURCE of truth: it MAY contain the literal list
     # exactly once (in the $script:LlmDefaultStrayPatterns assignment).
@@ -1711,22 +1876,20 @@ Assert-Test 'MIN-1: stray-artifact patterns sourced from shared module' {
     }
 }
 
-# --- NIT-5: agent-check skips the second preflight via env var -------------
+# --- NIT-5: runner owns preflight gating ----------------------------------
 
-Assert-Test 'NIT-5: agent-check.ps1 propagates LLM_HARNESS_PREFLIGHT_DONE to skip the second preflight' {
+Assert-Test 'NIT-5: run-llm-hooks.ps1 owns preflight skip and agent-check stays in-process' {
     $check = Get-Content -LiteralPath (Join-Path $ScriptsDir 'agent-check.ps1') -Raw
-    if ($check -notmatch 'LLM_HARNESS_PREFLIGHT_DONE') {
-        throw 'agent-check.ps1 must set LLM_HARNESS_PREFLIGHT_DONE so the inner run-llm-hooks pass does not re-pay preflight.'
+    if ($check -match '&\s+pwsh') {
+        throw 'agent-check.ps1 must not spawn a second pwsh; it invokes run-llm-hooks.ps1 in-process.'
     }
-    if ($check -notmatch "LLM_HARNESS_PREFLIGHT_DONE\s*=\s*'1'") {
-        throw "agent-check.ps1 must set LLM_HARNESS_PREFLIGHT_DONE='1' exactly (string '1' is the agreed marker)."
+    if ($check -notmatch 'AgentFast') {
+        throw 'agent-check.ps1 must use AgentFast for the fast post-edit path.'
     }
     $hook = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
     if ($hook -notmatch 'LLM_HARNESS_PREFLIGHT_DONE') {
         throw 'run-llm-hooks.ps1 must honor LLM_HARNESS_PREFLIGHT_DONE so an outer wrapper can suppress the duplicate preflight.'
     }
-    # The hook source must skip both the parse-check AND the preflight
-    # invocation when the env var is set.
     if ($hook -notmatch 'skipPreflight') {
         throw 'run-llm-hooks.ps1 must guard the preflight block with the $skipPreflight flag.'
     }
@@ -1762,18 +1925,29 @@ Assert-Test 'NIT-5: env var suppresses inner preflight pass and emits skip notic
     }
 } -Behavioral
 
-# --- MIN-2: -SkipBehavioralTests subset shortcut ---------------------------
+# --- MIN-2: fast mode skips behavioral subprocesses ------------------------
 
-Assert-Test 'MIN-2: agent-check exposes -SkipBehavioralTests and propagates to self-tests' {
+Assert-Test 'MIN-2: agent-check uses AgentFast and Full remains explicit' {
     $check = Get-Content -LiteralPath (Join-Path $ScriptsDir 'agent-check.ps1') -Raw
-    if ($check -notmatch '\[switch\]\$SkipBehavioralTests') {
-        throw 'agent-check.ps1 must declare [switch]$SkipBehavioralTests for sub-3s feedback.'
+    if ($check -notmatch '\[switch\]\$Full') {
+        throw 'agent-check.ps1 must declare [switch]$Full for exhaustive validation.'
+    }
+    if ($check -notmatch 'AgentFast') {
+        throw 'agent-check.ps1 must default to AgentFast.'
     }
     if ($check -notmatch 'LLM_HARNESS_SKIP_BEHAVIORAL_TESTS') {
-        throw 'agent-check.ps1 must propagate -SkipBehavioralTests via the LLM_HARNESS_SKIP_BEHAVIORAL_TESTS env var.'
+        throw 'agent-check.ps1 must set LLM_HARNESS_SKIP_BEHAVIORAL_TESTS for the fast path.'
     }
-    if ($check -notmatch 'Comprehensive pre-commit') {
-        throw 'agent-check.ps1 docstring must be rephrased honestly: "Comprehensive pre-commit ... ~10-15s ... use -SkipBehavioralTests for sub-3s feedback".'
+    $runner = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
+    if ($runner -notmatch 'Invoke-FastStructuralGuards') {
+        throw 'run-llm-hooks.ps1 must run fast in-process structural guards for tooling changes.'
+    }
+    if ($runner -notmatch 'Skipping behavioral subprocess self-tests in fast mode') {
+        throw 'run-llm-hooks.ps1 must not run behavioral subprocess self-tests in fast mode.'
+    }
+    if ($runner -notmatch '\$checkOnly = \(\$Mode -eq ''AgentFast''\)' -or
+        $runner -notmatch 'Invoke-LlmIndexGenerator .* -Check:\$checkOnly') {
+        throw 'AgentFast must check generated LLM files without writing them.'
     }
     $tests = Get-Content -LiteralPath (Join-Path $ScriptsDir 'test-llm-harness.ps1') -Raw
     if ($tests -notmatch '\[switch\]\$SkipBehavioralTests') {
@@ -1790,6 +1964,757 @@ Assert-Test 'MIN-2: agent-check exposes -SkipBehavioralTests and propagates to s
         throw 'test-llm-harness.ps1 must tag at least one test with -Behavioral.'
     }
 }
+
+Assert-Test 'MIN-2: every self-test pwsh subprocess is behavioral or full-only' {
+    $tests = Get-Content -LiteralPath (Join-Path $ScriptsDir 'test-llm-harness.ps1') -Raw
+    $offenders = [System.Collections.Generic.List[string]]::new()
+    $lines = @($tests -split "`r?`n")
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -notmatch '(&\s+pwsh\b|Start-Process\s+-FilePath\s+''pwsh''|pwsh\s+-NoProfile\s+-File)') {
+            continue
+        }
+        $start = $i
+        while ($start -ge 0 -and $lines[$start] -notmatch "Assert-Test\s+'([^']+)'") {
+            $start--
+        }
+        if ($start -lt 0) { continue }
+        [void]($lines[$start] -match "Assert-Test\s+'([^']+)'")
+        $name = $Matches[1]
+        if ($name -eq 'MIN-2: every self-test pwsh subprocess is behavioral or full-only') { continue }
+        $end = $i + 1
+        while ($end -lt $lines.Count -and $lines[$end] -notmatch "Assert-Test\s+'([^']+)'") {
+            $end++
+        }
+        $segment = ($lines[$start..($end - 1)] -join "`n")
+        if ($segment -notmatch '(?m)\}\s*-Behavioral\s*$') {
+            $offenders.Add($name)
+        }
+    }
+    if ($offenders.Count -gt 0) {
+        $unique = @($offenders | Sort-Object -Unique)
+        throw "Subprocess-spawning self-tests must be tagged -Behavioral: $($unique -join ', ')"
+    }
+}
+
+Assert-Test 'MIN-2: fast tooling modes run in-process static guards' {
+    $runner = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
+    if ($runner -match "Invoke-PreflightIfNeeded -Required:\(\`$Mode -in @\('Full', 'CI'\) -or \(\`$Mode -eq 'PreCommit'") {
+        throw 'PreCommit fast tooling changes must not invoke preflight as a child pwsh process.'
+    }
+    if ($runner -notmatch '\$fastMode -and \$toolingTouched') {
+        throw 'run-llm-hooks.ps1 must gate fast static guards on `$fastMode -and $toolingTouched`.'
+    }
+    if ($runner -notmatch 'Invoke-FastStructuralGuards') {
+        throw 'run-llm-hooks.ps1 must run in-process structural guards for fast tooling changes.'
+    }
+    if ($runner -notmatch 'Test-InstallGitHooksUndefinedVariables') {
+        throw 'Fast structural guards must include the install-git-hooks undefined-variable guard.'
+    }
+    if ($runner -notmatch 'Skipping behavioral subprocess self-tests in fast mode') {
+        throw 'run-llm-hooks.ps1 must explicitly skip subprocess self-tests in fast mode.'
+    }
+}
+
+Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without child pwsh' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    if (-not (Get-Command chmod -ErrorAction SilentlyContinue)) { return }
+    $realPwsh = (Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    if ([string]::IsNullOrWhiteSpace($realPwsh)) { return }
+
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-agentfast-static-$([Guid]::NewGuid())")
+    $fakeBin = Join-Path $sandbox 'fake-bin'
+    New-Item -ItemType Directory -Path $fakeBin -Force | Out-Null
+    try {
+        Push-Location $sandbox
+        try {
+            & git init -q --initial-branch=main 2>&1 | Out-Null
+            & git config user.email 'test@example.com' 2>&1 | Out-Null
+            & git config user.name 'test' 2>&1 | Out-Null
+        } finally { Pop-Location }
+
+        foreach ($f in @(
+                'scripts/run-llm-hooks.ps1',
+                'scripts/install-git-hooks.ps1',
+                'scripts/preflight.ps1',
+                'scripts/lint-llm.ps1',
+                'scripts/test-llm-harness.ps1',
+                'scripts/lib/LlmHarness.psm1',
+                '.devcontainer/post-create.sh'
+            )) {
+            $src = Join-Path $repoRoot $f
+            $dst = Join-Path $sandbox $f
+            $dstDir = Split-Path -Parent $dst
+            if (-not (Test-Path -LiteralPath $dstDir -PathType Container)) {
+                New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $src -Destination $dst -Force
+        }
+
+        Push-Location $sandbox
+        try {
+            & git add -A 2>&1 | Out-Null
+            & git commit -q -m 'baseline' 2>&1 | Out-Null
+        } finally { Pop-Location }
+
+        Add-Content -LiteralPath (Join-Path $sandbox 'scripts/install-git-hooks.ps1') `
+            -Value "`n`$undefinedFastGuardProbe | Out-Null`n"
+
+        $fakeLog = Join-Path $sandbox 'fake-pwsh.log'
+        $fakePwsh = Join-Path $fakeBin 'pwsh'
+        [System.IO.File]::WriteAllText(
+            $fakePwsh,
+            "#!/usr/bin/env sh`necho child-pwsh >> `"$fakeLog`"`nexit 97`n",
+            [System.Text.UTF8Encoding]::new($false))
+        & chmod +x -- $fakePwsh 2>&1 | Out-Null
+
+        $pathBackup = $env:PATH
+        try {
+            $env:PATH = "$fakeBin$([System.IO.Path]::PathSeparator)$pathBackup"
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            Push-Location $sandbox
+            try {
+                $output = & $realPwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -NoAutoFix 2>&1
+                $exitCode = $LASTEXITCODE
+            } finally { Pop-Location }
+        } finally {
+            $env:PATH = $pathBackup
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -eq 0) {
+            throw "AgentFast must fail on the injected undefined installer variable; got exit 0. Output: $combined"
+        }
+        if ($combined -notmatch 'undefinedFastGuardProbe') {
+            throw "AgentFast output must name the undefined installer variable; got: $combined"
+        }
+        if (Test-Path -LiteralPath $fakeLog -PathType Leaf) {
+            throw "AgentFast spawned a child pwsh despite fast static-guard mode. Fake log: $([System.IO.File]::ReadAllText($fakeLog))"
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'MIN-2: AgentFast reports controlled gitignored strays without deleting them' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $strayName = "scripts/llm-agentfast-stray-$([Guid]::NewGuid()).tmp"
+    $strayFull = Join-Path $repoRoot $strayName
+    [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+    try {
+        $hooks = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
+        $output = & pwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -NoAutoFix 2>&1
+        $exitCode = $LASTEXITCODE
+        $combined = ($output | Out-String)
+        if ($exitCode -eq 0) {
+            throw "AgentFast must fail when a controlled stray exists; got exit 0. Output: $combined"
+        }
+        if ($combined -notmatch [regex]::Escape($strayName)) {
+            throw "AgentFast must name the controlled stray artifact; got: $combined"
+        }
+        if (-not (Test-Path -LiteralPath $strayFull -PathType Leaf)) {
+            throw 'AgentFast is non-mutating and must not delete controlled strays in NoAutoFix mode.'
+        }
+    } finally {
+        Remove-Item -LiteralPath $strayFull -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'adversarial: AgentFast checks controlled strays before no-change OK and ignores AutoFix' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-agentfast-nochange-stray'
+    $strayName = "scripts/llm-agentfast-nochange-$([Guid]::NewGuid()).tmp"
+    $strayFull = Join-Path $sandbox $strayName
+    [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+    try {
+        Push-Location $sandbox
+        try {
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+            $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+        } finally {
+            Pop-Location
+        }
+        $combined = ($output | Out-String)
+        if ($exitCode -eq 0) {
+            throw "AgentFast must fail on a controlled stray even when there are no relevant changed paths; got 0. Output: $combined"
+        }
+        if ($combined -notmatch [regex]::Escape($strayName)) {
+            throw "AgentFast must name the controlled stray before any no-change OK exit; got: $combined"
+        }
+        if ($combined -match 'No staged LLM/harness changes; fast hook OK') {
+            throw "AgentFast emitted the no-change OK line despite a controlled stray. Output: $combined"
+        }
+        if (-not (Test-Path -LiteralPath $strayFull -PathType Leaf)) {
+            throw 'AgentFast -AutoFix must remain non-mutating and leave controlled strays on disk.'
+        }
+        if (@($stagedGenerated | Where-Object { $_ -match '^\.llm/' }).Count -gt 0) {
+            throw "AgentFast -AutoFix must not stage generated files; staged: $($stagedGenerated -join ', ')"
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'adversarial: AgentFast catches tracked sibling strays outside controlled dirs before no-change OK' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-agentfast-sibling-strays'
+    $strays = @(
+        '.devcontainer/post-create.sh.tmp',
+        '.github/workflows/llm-harness.yml.tmp',
+        '.pre-commit-config.yaml.tmp'
+    )
+    try {
+        foreach ($stray in $strays) {
+            [System.IO.File]::WriteAllText((Join-Path $sandbox $stray), 'sentinel')
+        }
+        Push-Location $sandbox
+        try {
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+            $staged = @(& git diff --cached --name-only 2>&1)
+        } finally {
+            Pop-Location
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -eq 0) {
+            throw "AgentFast must fail on tracked sibling strays outside controlled dirs; got 0. Output: $combined"
+        }
+        foreach ($stray in $strays) {
+            if ($combined -notmatch [regex]::Escape($stray)) {
+                throw "AgentFast must name tracked sibling stray '$stray'; got: $combined"
+            }
+            if (-not (Test-Path -LiteralPath (Join-Path $sandbox $stray) -PathType Leaf)) {
+                throw "AgentFast -AutoFix must remain non-mutating and leave '$stray' on disk."
+            }
+        }
+        if ($combined -match 'No staged LLM/harness changes; fast hook OK') {
+            throw "AgentFast emitted the no-change OK line despite tracked sibling strays. Output: $combined"
+        }
+        if (@($staged | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+            throw "AgentFast -AutoFix must not stage files; staged: $($staged -join ', ')"
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'adversarial: PreCommit AutoFix deletes tracked sibling strays outside controlled dirs' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-precommit-sibling-strays'
+    $strays = @(
+        '.devcontainer/post-create.sh.tmp',
+        '.github/workflows/llm-harness.yml.tmp',
+        '.pre-commit-config.yaml.tmp'
+    )
+    try {
+        foreach ($stray in $strays) {
+            [System.IO.File]::WriteAllText((Join-Path $sandbox $stray), 'sentinel')
+        }
+        Push-Location $sandbox
+        try {
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+            $staged = @(& git diff --cached --name-only 2>&1)
+        } finally {
+            Pop-Location
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -ne 0) {
+            throw "PreCommit -AutoFix must delete tracked sibling strays and pass; got exit $exitCode. Output: $combined"
+        }
+        foreach ($stray in $strays) {
+            if ($combined -notmatch [regex]::Escape($stray)) {
+                throw "PreCommit -AutoFix must name removed tracked sibling stray '$stray'; got: $combined"
+            }
+            if (Test-Path -LiteralPath (Join-Path $sandbox $stray) -PathType Leaf) {
+                throw "PreCommit -AutoFix must delete tracked sibling stray '$stray'."
+            }
+        }
+        if (@($staged | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+            throw "PreCommit stray cleanup must not stage unrelated files; staged: $($staged -join ', ')"
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'adversarial: AgentFast ignores unrelated gitignored tmp outside fast scope' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-agentfast-unrelated-ignored'
+    $unrelated = "unrelated-build-output-$([Guid]::NewGuid()).tmp"
+    $unrelatedFull = Join-Path $sandbox $unrelated
+    [System.IO.File]::WriteAllText($unrelatedFull, 'sentinel')
+    try {
+        Push-Location $sandbox
+        try {
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -NoAutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -ne 0) {
+            throw "AgentFast must not run a broad ignored scan or fail on unrelated ignored tmp files. Output: $combined"
+        }
+        if ($combined -notmatch 'No staged LLM/harness changes; fast hook OK') {
+            throw "AgentFast should take the no-change fast OK path for unrelated ignored tmp files. Output: $combined"
+        }
+        if (-not (Test-Path -LiteralPath $unrelatedFull -PathType Leaf)) {
+            throw 'AgentFast must not delete unrelated ignored tmp files.'
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'adversarial: AgentFast rejects ignored LLM markdown inputs before no-change OK' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-agentfast-ignored-input'
+    $ignoredRel = '.llm/skills/agentfast-ignored-generation-probe.md'
+    $ignoredPath = Join-Path $sandbox $ignoredRel
+    try {
+        Push-Location $sandbox
+        try {
+            Add-Content -LiteralPath (Join-Path $sandbox '.gitignore') -Value "`n$ignoredRel`n"
+            & git add -- '.gitignore' 2>&1 | Out-Null
+            & git commit -q -m 'ignore AgentFast LLM markdown probe' 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+
+        New-Item -ItemType Directory -Path (Split-Path -Parent $ignoredPath) -Force | Out-Null
+        [System.IO.File]::WriteAllText($ignoredPath, @"
+---
+description: AgentFast ignored generation probe.
+triggers: agentfast ignored generation probe
+category: Test
+---
+
+# AgentFast Ignored Generation Probe
+"@, [System.Text.UTF8Encoding]::new($false))
+
+        Push-Location $sandbox
+        try {
+            $ignoredListed = @(& git ls-files --others --ignored --exclude-standard -- $ignoredRel 2>&1)
+            if ($LASTEXITCODE -ne 0 -or $ignoredListed -notcontains $ignoredRel) {
+                throw "Sandbox setup expected $ignoredRel to be ignored and untracked; got: $($ignoredListed -join '; ')"
+            }
+
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+            $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+            $unstagedGenerated = @(& git diff --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+        } finally {
+            Pop-Location
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -eq 0) {
+            throw "AgentFast must fail when ignored untracked .llm Markdown would affect generation. Output: $combined"
+        }
+        if ($combined -notmatch 'Untracked \.llm Markdown inputs' -or
+            $combined -notmatch [regex]::Escape($ignoredRel)) {
+            throw "AgentFast must name the ignored untracked generation input before no-change OK. Output: $combined"
+        }
+        if ($combined -match 'No staged LLM/harness changes; fast hook OK') {
+            throw "AgentFast emitted the no-change OK line despite an ignored .llm Markdown input. Output: $combined"
+        }
+        if (@($stagedGenerated | Where-Object { $_ -match '^\.llm/' }).Count -gt 0) {
+            throw "AgentFast must not stage generated outputs after detecting an ignored input; staged generated: $($stagedGenerated -join ', ')"
+        }
+        if (@($unstagedGenerated | Where-Object { $_ -match '^\.llm/' }).Count -gt 0) {
+            throw "AgentFast should fail before rewriting generated outputs; unstaged generated: $($unstagedGenerated -join ', ')"
+        }
+        if (-not (Test-Path -LiteralPath $ignoredPath -PathType Leaf)) {
+            throw 'AgentFast must not delete ignored untracked LLM markdown inputs.'
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'adversarial: PreCommit AutoFix does not stage generated drift for tooling-only changes' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-precommit-generated-drift'
+    try {
+        Add-Content -LiteralPath (Join-Path $sandbox 'scripts/lint-llm.ps1') `
+            -Value "`n# staged tooling-only change for generated drift guard`n"
+        Push-Location $sandbox
+        try {
+            & git add -- 'scripts/lint-llm.ps1' 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+        Add-Content -LiteralPath (Join-Path $sandbox '.llm/index.md') `
+            -Value "`n<!-- pre-existing generated drift: $([Guid]::NewGuid()) -->`n"
+
+        Push-Location $sandbox
+        try {
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+            $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+            $unstagedGenerated = @(& git diff --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+        } finally {
+            Pop-Location
+        }
+
+        if ($exitCode -ne 0) {
+            throw "PreCommit -AutoFix should not fail or stage unrelated generated drift for tooling-only changes. Output: $($output -join '; ')"
+        }
+        if (@($stagedGenerated | Where-Object { $_ -match '^\.llm/' }).Count -gt 0) {
+            throw "PreCommit -AutoFix staged pre-existing generated drift without an LLM/pointer generation cause: $($stagedGenerated -join ', ')"
+        }
+        if ($unstagedGenerated -notcontains '.llm/index.md') {
+            throw "Expected pre-existing generated drift to remain unstaged in the worktree; got: $($unstagedGenerated -join ', ')"
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'adversarial: PreCommit AutoFix does not stage context prose when generator writes nothing' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-precommit-context-prose'
+    try {
+        Push-Location $sandbox
+        try {
+            $generator = Join-Path $sandbox 'scripts/generate-llm-index.ps1'
+            $genOutput = & pwsh -NoProfile -File $generator 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to normalize generated files in sandbox: $($genOutput -join '; ')"
+            }
+            & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
+            & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+
+        Add-Content -LiteralPath (Join-Path $sandbox '.llm/README.md') `
+            -Value "`nStaged body-only README edit that should not affect generated output.`n"
+        Push-Location $sandbox
+        try {
+            & git add -- '.llm/README.md' 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+        Add-Content -LiteralPath (Join-Path $sandbox '.llm/context.md') `
+            -Value "`nUnstaged prose outside the generated block: $([Guid]::NewGuid())`n"
+
+        Push-Location $sandbox
+        try {
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+            $staged = @(& git diff --cached --name-only 2>&1)
+            $unstaged = @(& git diff --name-only 2>&1)
+        } finally {
+            Pop-Location
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -ne 0) {
+            throw "PreCommit -AutoFix must pass when only unstaged context prose is outside the generated block. Output: $combined"
+        }
+        if ($staged -contains '.llm/context.md') {
+            throw "PreCommit -AutoFix staged unrelated .llm/context.md prose even though the generator wrote nothing. Staged: $($staged -join ', ') Output: $combined"
+        }
+        if ($staged -notcontains '.llm/README.md') {
+            throw "Sandbox setup expected .llm/README.md to remain staged; staged: $($staged -join ', ')"
+        }
+        if ($unstaged -notcontains '.llm/context.md') {
+            throw "Unstaged context prose should remain in the worktree; unstaged: $($unstaged -join ', ')"
+        }
+        if ($combined -match 'AutoFix: staging regenerated LLM files') {
+            throw "PreCommit -AutoFix must not announce generated staging when the generator wrote nothing. Output: $combined"
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'final-review: PreCommit AutoFix stages only generated context block when generator writes' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-precommit-context-block-only'
+    $proseMarker = "Unstaged context prose outside generated block: $([Guid]::NewGuid())"
+    try {
+        Push-Location $sandbox
+        try {
+            $generator = Join-Path $sandbox 'scripts/generate-llm-index.ps1'
+            $genOutput = & pwsh -NoProfile -File $generator 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to normalize generated files in sandbox: $($genOutput -join '; ')"
+            }
+            & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
+            & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+
+        $skillDir = Join-Path $sandbox '.llm/skills'
+        New-Item -ItemType Directory -Path $skillDir -Force | Out-Null
+        $skillRel = '.llm/skills/generated-block-probe.md'
+        $skillPath = Join-Path $sandbox $skillRel
+        $skillContent = @"
+---
+description: Generated block staging probe.
+triggers: generated block, staging probe
+category: Test
+---
+
+# Generated Block Staging Probe
+"@
+        [System.IO.File]::WriteAllText($skillPath, $skillContent, [System.Text.UTF8Encoding]::new($false))
+        Push-Location $sandbox
+        try {
+            & git add -- $skillRel 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+        Add-Content -LiteralPath (Join-Path $sandbox '.llm/context.md') -Value "`n$proseMarker`n"
+
+        Push-Location $sandbox
+        try {
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+            $staged = @(& git diff --cached --name-only 2>&1)
+            $unstaged = @(& git diff --name-only 2>&1)
+            $stagedContext = (@(& git show ':.llm/context.md' 2>&1) -join "`n")
+            $worktreeContext = [System.IO.File]::ReadAllText((Join-Path $sandbox '.llm/context.md'))
+        } finally {
+            Pop-Location
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -ne 0) {
+            throw "PreCommit -AutoFix must pass while staging only the generated context block. Output: $combined"
+        }
+        foreach ($expected in @($skillRel, '.llm/index.md', '.llm/context.md')) {
+            if ($staged -notcontains $expected) {
+                throw "Expected '$expected' to be staged; staged: $($staged -join ', ') Output: $combined"
+            }
+        }
+        if ($stagedContext -notmatch 'Generated Block Staging Probe') {
+            throw "Staged context must include the regenerated block entry. Staged context: $stagedContext"
+        }
+        if ($stagedContext -match [regex]::Escape($proseMarker)) {
+            throw "PreCommit -AutoFix staged unrelated context prose outside the generated block. Staged context: $stagedContext"
+        }
+        if ($worktreeContext -notmatch [regex]::Escape($proseMarker)) {
+            throw 'Unstaged context prose should remain in the working tree.'
+        }
+        if ($unstaged -notcontains '.llm/context.md') {
+            throw "Unstaged context prose should remain as a worktree diff; unstaged: $($unstaged -join ', ')"
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'final-review: PreCommit AutoFix rejects untracked LLM markdown generation inputs' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-precommit-untracked-input'
+    try {
+        Push-Location $sandbox
+        try {
+            $generator = Join-Path $sandbox 'scripts/generate-llm-index.ps1'
+            $genOutput = & pwsh -NoProfile -File $generator 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to normalize generated files in sandbox: $($genOutput -join '; ')"
+            }
+            & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
+            & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+
+        $skillDir = Join-Path $sandbox '.llm/skills'
+        New-Item -ItemType Directory -Path $skillDir -Force | Out-Null
+        $stagedRel = '.llm/skills/staged-generation-probe.md'
+        $stagedPath = Join-Path $sandbox $stagedRel
+        [System.IO.File]::WriteAllText($stagedPath, @"
+---
+description: Staged generation probe.
+triggers: staged generation probe
+category: Test
+---
+
+# Staged Generation Probe
+"@, [System.Text.UTF8Encoding]::new($false))
+        $untrackedRel = '.llm/skills/untracked-generation-probe.md'
+        $untrackedPath = Join-Path $sandbox $untrackedRel
+        [System.IO.File]::WriteAllText($untrackedPath, @"
+---
+description: Untracked generation probe.
+triggers: untracked generation probe
+category: Test
+---
+
+# Untracked Generation Probe
+"@, [System.Text.UTF8Encoding]::new($false))
+        Push-Location $sandbox
+        try {
+            & git add -- $stagedRel 2>&1 | Out-Null
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+            $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+            $unstagedGenerated = @(& git diff --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+            $stagedAll = @(& git diff --cached --name-only 2>&1)
+        } finally {
+            Pop-Location
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -eq 0) {
+            throw "PreCommit -AutoFix must fail when untracked .llm Markdown would affect generation. Output: $combined"
+        }
+        if ($combined -notmatch 'Untracked \.llm Markdown inputs' -or
+            $combined -notmatch [regex]::Escape($untrackedRel)) {
+            throw "PreCommit must name the untracked generation input before staging generated outputs. Output: $combined"
+        }
+        if (@($stagedGenerated | Where-Object { $_ -match '^\.llm/' }).Count -gt 0) {
+            throw "PreCommit must not stage generated outputs after detecting an untracked input; staged generated: $($stagedGenerated -join ', ')"
+        }
+        if (@($unstagedGenerated | Where-Object { $_ -match '^\.llm/' }).Count -gt 0) {
+            throw "PreCommit should fail before rewriting generated outputs; unstaged generated: $($unstagedGenerated -join ', ')"
+        }
+        if ($stagedAll -notcontains $stagedRel) {
+            throw "Sandbox setup expected staged LLM input to remain staged; staged: $($stagedAll -join ', ')"
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'final-review: PreCommit AutoFix rejects ignored untracked LLM markdown generation inputs' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-precommit-ignored-input'
+    try {
+        Push-Location $sandbox
+        try {
+            $generator = Join-Path $sandbox 'scripts/generate-llm-index.ps1'
+            $genOutput = & pwsh -NoProfile -File $generator 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to normalize generated files in sandbox: $($genOutput -join '; ')"
+            }
+            & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
+            & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
+
+            Add-Content -LiteralPath (Join-Path $sandbox '.gitignore') `
+                -Value "`n.llm/skills/ignored-generation-probe.md`n"
+            & git add -- '.gitignore' 2>&1 | Out-Null
+            & git commit -q -m 'ignore ignored LLM markdown probe' 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+
+        $skillDir = Join-Path $sandbox '.llm/skills'
+        New-Item -ItemType Directory -Path $skillDir -Force | Out-Null
+        $stagedRel = '.llm/skills/staged-ignored-generation-probe.md'
+        $stagedPath = Join-Path $sandbox $stagedRel
+        [System.IO.File]::WriteAllText($stagedPath, @"
+---
+description: Staged ignored-input generation probe.
+triggers: staged ignored input generation probe
+category: Test
+---
+
+# Staged Ignored Input Generation Probe
+"@, [System.Text.UTF8Encoding]::new($false))
+        $ignoredRel = '.llm/skills/ignored-generation-probe.md'
+        $ignoredPath = Join-Path $sandbox $ignoredRel
+        [System.IO.File]::WriteAllText($ignoredPath, @"
+---
+description: Ignored untracked generation probe.
+triggers: ignored untracked generation probe
+category: Test
+---
+
+# Ignored Untracked Generation Probe
+"@, [System.Text.UTF8Encoding]::new($false))
+        Push-Location $sandbox
+        try {
+            & git add -- $stagedRel 2>&1 | Out-Null
+            $ignoredListed = @(& git ls-files --others --ignored --exclude-standard -- $ignoredRel 2>&1)
+            if ($LASTEXITCODE -ne 0 -or $ignoredListed -notcontains $ignoredRel) {
+                throw "Sandbox setup expected $ignoredRel to be ignored and untracked; got: $($ignoredListed -join '; ')"
+            }
+
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+            $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+            $unstagedGenerated = @(& git diff --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+            $stagedAll = @(& git diff --cached --name-only 2>&1)
+        } finally {
+            Pop-Location
+        }
+
+        $combined = ($output | Out-String)
+        if ($exitCode -eq 0) {
+            throw "PreCommit -AutoFix must fail when ignored untracked .llm Markdown would affect generation. Output: $combined"
+        }
+        if ($combined -notmatch 'Untracked \.llm Markdown inputs' -or
+            $combined -notmatch [regex]::Escape($ignoredRel)) {
+            throw "PreCommit must name the ignored untracked generation input before staging generated outputs. Output: $combined"
+        }
+        if (@($stagedGenerated | Where-Object { $_ -match '^\.llm/' }).Count -gt 0) {
+            throw "PreCommit must not stage generated outputs after detecting an ignored untracked input; staged generated: $($stagedGenerated -join ', ')"
+        }
+        if (@($unstagedGenerated | Where-Object { $_ -match '^\.llm/' }).Count -gt 0) {
+            throw "PreCommit should fail before rewriting generated outputs; unstaged generated: $($unstagedGenerated -join ', ')"
+        }
+        if ($stagedAll -notcontains $stagedRel) {
+            throw "Sandbox setup expected staged LLM input to remain staged; staged: $($stagedAll -join ', ')"
+        }
+        if (-not (Test-Path -LiteralPath $ignoredPath -PathType Leaf)) {
+            throw 'PreCommit must not delete ignored untracked LLM markdown inputs.'
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'adversarial: AgentFast AutoFix does not stage generated drift' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-agentfast-generated-drift'
+    try {
+        Add-Content -LiteralPath (Join-Path $sandbox '.llm/index.md') `
+            -Value "`n<!-- agentfast generated drift: $([Guid]::NewGuid()) -->`n"
+        Push-Location $sandbox
+        try {
+            $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+            $output = & pwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -AutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+            $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+            $unstagedGenerated = @(& git diff --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
+        } finally {
+            Pop-Location
+        }
+        if ($exitCode -eq 0) {
+            throw "AgentFast should report generated drift in check-only mode; got exit 0. Output: $($output -join '; ')"
+        }
+        if (@($stagedGenerated | Where-Object { $_ -match '^\.llm/' }).Count -gt 0) {
+            throw "AgentFast -AutoFix must not stage generated drift; staged: $($stagedGenerated -join ', ')"
+        }
+        if ($unstagedGenerated -notcontains '.llm/index.md') {
+            throw "Expected AgentFast generated drift to remain unstaged in the worktree; got: $($unstagedGenerated -join ', ')"
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
 
 # --- MIN-3: shim parse-check has a behavioral sandbox cover ----------------
 
@@ -1820,6 +2745,7 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
         $sandboxLib = Join-Path $sandboxScripts 'lib'
         New-Item -ItemType Directory -Path $sandboxLib -Force | Out-Null
         foreach ($f in @(
+                '.githooks/pre-commit',
                 'scripts/run-llm-hooks.ps1', 'scripts/preflight.ps1',
                 'scripts/generate-llm-index.ps1', 'scripts/lint-llm.ps1',
                 'scripts/test-llm-harness.ps1', 'scripts/install-git-hooks.ps1',
@@ -1876,6 +2802,15 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
             $sandboxEntry, [ref]$tokens, [ref]$errors)
         if ($null -ne $errors -and $errors.Count -gt 0) {
             throw "Sandbox run-llm-hooks.ps1 should parse cleanly after the shim self-heal. shExit=$shExit Output: $combined"
+        }
+        $backupFiles = @(Get-ChildItem -LiteralPath (Join-Path $sandbox '.git/preflight-recovery') -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq 'scripts__run-llm-hooks.ps1' })
+        if ($backupFiles.Count -eq 0) {
+            throw "Shim recovery must preserve corrupt run-llm-hooks.ps1 WIP under .git/preflight-recovery. Output: $combined"
+        }
+        $backupText = [System.IO.File]::ReadAllText($backupFiles[0].FullName)
+        if ($backupText -notmatch 'garbage') {
+            throw "Shim recovery backup must contain the corrupt WIP bytes; got: $backupText"
         }
     } finally {
         $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = $envBehaviorBackup
@@ -2252,6 +3187,15 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
             $sandboxPreflight, [ref]$tokens, [ref]$errors)
         if ($null -ne $errors -and $errors.Count -gt 0) {
             throw "Sandbox preflight.ps1 should parse cleanly after AutoFix. Output: $combined"
+        }
+        $backupFiles = @(Get-ChildItem -LiteralPath (Join-Path $sandbox '.git/preflight-recovery') -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq 'scripts__preflight.ps1' })
+        if ($backupFiles.Count -eq 0) {
+            throw "run-llm-hooks.ps1 recovery must preserve corrupt preflight.ps1 WIP under .git/preflight-recovery. Output: $combined"
+        }
+        $backupText = [System.IO.File]::ReadAllText($backupFiles[0].FullName)
+        if ($backupText -notmatch 'garbage') {
+            throw "preflight recovery backup must contain the corrupt WIP bytes; got: $backupText"
         }
     } finally {
         $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = $envBehaviorBackup

@@ -99,13 +99,13 @@ function Get-LlmRepoRelativePath {
 function Read-LlmFileLines {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
-    return @(Get-Content -LiteralPath $Path -ErrorAction Stop)
+    return @([System.IO.File]::ReadAllLines($Path))
 }
 
 function Read-LlmFileText {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
-    return (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop)
+    return [System.IO.File]::ReadAllText($Path)
 }
 
 function Read-LlmFrontmatter {
@@ -177,8 +177,14 @@ function Write-LlmTextFile {
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$Content
     )
+    if ((Test-Path -LiteralPath $Path -PathType Leaf) -and
+        (ConvertTo-LlmNormalizedNewlines (Read-LlmFileText -Path $Path)) -eq
+        (ConvertTo-LlmNormalizedNewlines $Content)) {
+        return $false
+    }
     $encoding = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+    return $true
 }
 
 function ConvertTo-LlmNormalizedNewlines {
@@ -473,6 +479,491 @@ function Get-LlmTrackedFileSet {
     return $set
 }
 
+function ConvertFrom-LlmFrontmatterLines {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines)
+
+    $metadata = [ordered]@{}
+    if ($Lines.Count -lt 3 -or $Lines[0] -ne '---') {
+        return $metadata
+    }
+
+    $closed = $false
+    for ($i = 1; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -eq '---') {
+            $closed = $true
+            break
+        }
+        if ($Lines[$i] -match '^\s*([A-Za-z0-9_-]+):\s*(.*?)\s*$') {
+            $key = $Matches[1].Trim().ToLowerInvariant()
+            $value = $Matches[2].Trim().Trim('"').Trim("'")
+            $metadata[$key] = $value
+        }
+    }
+
+    if (-not $closed) {
+        return [ordered]@{}
+    }
+    return $metadata
+}
+
+function Get-LlmMarkdownTitleFromLines {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
+        [Parameter(Mandatory)][string]$Path
+    )
+    foreach ($line in $Lines) {
+        if ($line -match '^#\s+(.+)$') {
+            return $Matches[1].Trim()
+        }
+    }
+    return [System.IO.Path]::GetFileNameWithoutExtension($Path)
+}
+
+function Get-LlmRelativeMarkdownPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$LlmDir,
+        [Parameter(Mandatory)][string]$Path
+    )
+    return ([System.IO.Path]::GetRelativePath($LlmDir, $Path)).Replace('\', '/')
+}
+
+function Get-LlmMarkdownInventory {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RepoRoot)
+
+    $llmDir = Join-Path $RepoRoot '.llm'
+    if (-not (Test-Path -LiteralPath $llmDir -PathType Container)) {
+        throw "Missing .llm directory at $llmDir"
+    }
+
+    $files = @(Get-ChildItem -LiteralPath $llmDir -Filter '*.md' -Recurse -File | Sort-Object FullName)
+    $records = foreach ($file in $files) {
+        $lines = @(Read-LlmFileLines -Path $file.FullName)
+        $metadata = ConvertFrom-LlmFrontmatterLines -Lines $lines
+        $relative = Get-LlmRelativeMarkdownPath -LlmDir $llmDir -Path $file.FullName
+        [pscustomobject]@{
+            FullName     = $file.FullName
+            RelativePath = $relative
+            Lines        = $lines
+            Text         = ($lines -join "`n") + $(if ($lines.Count -gt 0) { "`n" } else { '' })
+            Metadata     = $metadata
+            Title        = Get-LlmMarkdownTitleFromLines -Lines $lines -Path $file.FullName
+        }
+    }
+    return @($records)
+}
+
+function New-LlmIndexLines {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object[]]$Inventory)
+
+    $skillFiles = @($Inventory | Where-Object { $_.RelativePath.StartsWith('skills/') } | Sort-Object RelativePath)
+    $otherFiles = @($Inventory | Where-Object {
+            $_.RelativePath -ne 'context.md' -and
+            $_.RelativePath -ne 'index.md' -and
+            -not $_.RelativePath.StartsWith('skills/')
+        } | Sort-Object RelativePath)
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('# LLM Context Index')
+    $lines.Add('')
+    $lines.Add('Generated Markdown inventory by `scripts/generate-llm-index.ps1`; do not edit by hand.')
+    $lines.Add('')
+    $lines.Add('## Skills')
+    $lines.Add('')
+
+    if ($skillFiles.Count -eq 0) {
+        $lines.Add('- No skill files found.')
+    } else {
+        foreach ($file in $skillFiles) {
+            $category = Get-LlmFrontmatterValue -Metadata $file.Metadata -Key 'category' -Fallback 'Uncategorized'
+            $description = Get-LlmFrontmatterValue -Metadata $file.Metadata -Key 'description' -Fallback 'No description.'
+            $triggers = Get-LlmFrontmatterValue -Metadata $file.Metadata -Key 'triggers' -Fallback 'No triggers.'
+            $lines.Add("- [$($file.Title)]($($file.RelativePath)) (``$category``) - $description")
+            $lines.Add("  Triggers: $triggers")
+        }
+    }
+
+    $lines.Add('')
+    $lines.Add('## Other LLM Files')
+    $lines.Add('')
+
+    if ($otherFiles.Count -eq 0) {
+        $lines.Add('- No additional LLM files found.')
+    } else {
+        foreach ($file in $otherFiles) {
+            $description = Get-LlmFrontmatterValue -Metadata $file.Metadata -Key 'description' -Fallback 'No description.'
+            $lines.Add("- [$($file.Title)]($($file.RelativePath)) - $description")
+        }
+    }
+
+    return @($lines)
+}
+
+function Join-LlmLines {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines)
+    return (($Lines -join "`n") + "`n")
+}
+
+function Get-LlmGeneratedContentState {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RepoRoot)
+
+    $llmDir = Join-Path $RepoRoot '.llm'
+    $contextPath = Join-Path $llmDir 'context.md'
+    $indexPath = Join-Path $llmDir 'index.md'
+    $startMarker = '<!-- LLM-INDEX:START -->'
+    $endMarker = '<!-- LLM-INDEX:END -->'
+
+    if (-not (Test-Path -LiteralPath $contextPath -PathType Leaf)) {
+        throw "Missing context file at $contextPath"
+    }
+
+    $inventory = @(Get-LlmMarkdownInventory -RepoRoot $RepoRoot)
+    $indexLines = @(New-LlmIndexLines -Inventory $inventory)
+    $expectedIndex = Join-LlmLines -Lines $indexLines
+
+    $skillsIndex = [Array]::IndexOf($indexLines, '## Skills')
+    $embeddedLines = if ($skillsIndex -lt 0) {
+        $indexLines
+    } else {
+        @($indexLines[$skillsIndex..($indexLines.Count - 1)])
+    }
+    $embedded = (Join-LlmLines -Lines $embeddedLines).TrimEnd()
+
+    $context = Read-LlmFileText -Path $contextPath
+    $start = $context.IndexOf($startMarker)
+    $end = $context.IndexOf($endMarker)
+    if ($start -lt 0 -or $end -lt 0 -or $end -lt $start) {
+        throw "context.md must contain $startMarker and $endMarker markers"
+    }
+    $prefix = $context.Substring(0, $start)
+    $suffix = $context.Substring($end + $endMarker.Length)
+    $expectedContext = "$prefix$startMarker`n$embedded`n$endMarker$suffix"
+
+    $changes = [System.Collections.Generic.List[string]]::new()
+    if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf) -or
+        (ConvertTo-LlmNormalizedNewlines (Read-LlmFileText -Path $indexPath)) -ne
+        (ConvertTo-LlmNormalizedNewlines $expectedIndex)) {
+        $changes.Add('.llm/index.md')
+    }
+    if ((ConvertTo-LlmNormalizedNewlines $context) -ne
+        (ConvertTo-LlmNormalizedNewlines $expectedContext)) {
+        $changes.Add('.llm/context.md')
+    }
+
+    return [pscustomobject]@{
+        RepoRoot        = $RepoRoot
+        LlmDir          = $llmDir
+        ContextPath     = $contextPath
+        IndexPath       = $indexPath
+        ExpectedIndex   = $expectedIndex
+        ExpectedContext = $expectedContext
+        Changes         = @($changes)
+        Inventory       = $inventory
+    }
+}
+
+function Invoke-LlmIndexGenerator {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [switch]$Check,
+        [switch]$VerboseOutput,
+        [switch]$PassThru
+    )
+
+    $state = Get-LlmGeneratedContentState -RepoRoot $RepoRoot
+    if ($Check) {
+        if ($state.Changes.Count -gt 0) {
+            Write-Host '[llm-index] Generated LLM index is stale:' -ForegroundColor Red
+            $state.Changes | ForEach-Object { Write-Host " - $_" -ForegroundColor Red }
+            Write-Host 'Run: pwsh -NoProfile -File scripts/generate-llm-index.ps1' -ForegroundColor Yellow
+            if ($PassThru) {
+                return [pscustomobject]@{
+                    Success      = $false
+                    Check        = $true
+                    ChangedPaths = @($state.Changes)
+                    WrittenPaths = @()
+                    WroteIndex   = $false
+                    WroteContext = $false
+                }
+            }
+            return $false
+        }
+        if ($VerboseOutput) {
+            Write-Host '[llm-index] Generated files are up to date.'
+        }
+        if ($PassThru) {
+            return [pscustomobject]@{
+                Success      = $true
+                Check        = $true
+                ChangedPaths = @()
+                WrittenPaths = @()
+                WroteIndex   = $false
+                WroteContext = $false
+            }
+        }
+        return $true
+    }
+
+    $wroteIndex = Write-LlmTextFile -Path $state.IndexPath -Content $state.ExpectedIndex
+    $wroteContext = Write-LlmTextFile -Path $state.ContextPath -Content $state.ExpectedContext
+    $writtenPaths = [System.Collections.Generic.List[string]]::new()
+    if ($wroteIndex) { $writtenPaths.Add('.llm/index.md') }
+    if ($wroteContext) { $writtenPaths.Add('.llm/context.md') }
+    if ($wroteIndex -or $wroteContext) {
+        Write-Host '[llm-index] Generated .llm/index.md and updated .llm/context.md'
+    } elseif ($VerboseOutput) {
+        Write-Host '[llm-index] Generated files already up to date.'
+    }
+    if ($PassThru) {
+        return [pscustomobject]@{
+            Success      = $true
+            Check        = $false
+            ChangedPaths = @($state.Changes)
+            WrittenPaths = @($writtenPaths)
+            WroteIndex   = [bool]$wroteIndex
+            WroteContext = [bool]$wroteContext
+        }
+    }
+    return $true
+}
+
+function Invoke-LlmLint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [int]$MaxLines = 300,
+        [switch]$VerboseOutput,
+        [switch]$SkipGeneratedIndexCheck,
+        [switch]$SkipStagingArtifactCheck,
+        [switch]$SkipPowerShellParseCheck
+    )
+
+    $llmDir = Join-Path $RepoRoot '.llm'
+    $errors = [System.Collections.Generic.List[string]]::new()
+    $pointerChecks = @(
+        [pscustomobject]@{ Path = 'AGENTS.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+        [pscustomobject]@{ Path = 'CLAUDE.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+        [pscustomobject]@{ Path = 'GEMINI.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+        [pscustomobject]@{ Path = 'CHATGPT.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+        [pscustomobject]@{ Path = 'CODEX.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+        [pscustomobject]@{ Path = 'llms.txt'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+        [pscustomobject]@{ Path = '.cursorrules'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+        [pscustomobject]@{ Path = '.windsurfrules'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+        [pscustomobject]@{ Path = '.github/copilot-instructions.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
+        [pscustomobject]@{ Path = '.cursor/rules/signal-fish-llm-context.mdc'; Required = $true; RequiredPattern = '\.llm/context\.md' }
+    )
+
+    function Add-LlmLintError {
+        param([string]$Message)
+        $errors.Add($Message)
+        Write-Host "[llm-lint] ERROR: $Message" -ForegroundColor Red
+    }
+    function Write-LlmLintDiagnostic {
+        param([string]$Message)
+        if ($VerboseOutput) {
+            Write-Host "[llm-lint] DIAG: $Message" -ForegroundColor DarkGray
+        }
+    }
+    function Get-LlmLintRelPath {
+        param([string]$Path)
+        return (Get-LlmRepoRelativePath -RepoRoot $RepoRoot -Path $Path)
+    }
+    function Resolve-LlmLintFile {
+        param([string]$Path)
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+            return $null
+        }
+        try {
+            $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop | Select-Object -First 1
+            if ($null -eq $resolved) { return $null }
+            return [System.IO.Path]::GetFullPath($resolved.ProviderPath)
+        } catch {
+            Add-LlmLintError "Failed to resolve file path '$Path': $($_.Exception.Message)"
+            return $null
+        }
+    }
+    function Add-LlmLintTrackedFile {
+        param(
+            [System.Collections.Generic.Dictionary[string, string]]$Files,
+            [string]$Path
+        )
+        $fullPath = Resolve-LlmLintFile -Path $Path
+        if ([string]::IsNullOrWhiteSpace($fullPath)) { return }
+        if (-not $Files.ContainsKey($fullPath)) {
+            $Files[$fullPath] = $fullPath
+        }
+    }
+
+    Write-LlmLintDiagnostic "Repo root: $RepoRoot"
+    Write-LlmLintDiagnostic "Working directory: $((Get-Location).Path)"
+    Write-LlmLintDiagnostic "PowerShell version: $($PSVersionTable.PSVersion)"
+
+    if (-not (Test-Path -LiteralPath $llmDir -PathType Container)) {
+        Add-LlmLintError 'Missing .llm directory.'
+    }
+
+    $files = [System.Collections.Generic.Dictionary[string, string]]::new()
+    if (Test-Path -LiteralPath $llmDir -PathType Container) {
+        try {
+            Get-ChildItem -LiteralPath $llmDir -Recurse -File | Where-Object {
+                $_.Extension -eq '.md'
+            } | ForEach-Object {
+                Add-LlmLintTrackedFile -Files $files -Path $_.FullName
+            }
+        } catch {
+            Add-LlmLintError "Failed to enumerate markdown files in .llm: $($_.Exception.Message)"
+        }
+    }
+
+    foreach ($pointerCheck in $pointerChecks) {
+        Add-LlmLintTrackedFile -Files $files -Path (Join-Path $RepoRoot $pointerCheck.Path)
+    }
+
+    foreach ($path in ($files.Keys | Sort-Object)) {
+        try {
+            $lineCount = @(Read-LlmFileLines -Path $path).Count
+            if ($lineCount -gt $MaxLines) {
+                Add-LlmLintError "$(Get-LlmLintRelPath $path): $lineCount lines exceeds max $MaxLines"
+            } elseif ($VerboseOutput) {
+                Write-Host "[llm-lint] OK: $(Get-LlmLintRelPath $path) ($lineCount lines)"
+            }
+        } catch {
+            Add-LlmLintError "Failed to read $(Get-LlmLintRelPath $path): $($_.Exception.Message)"
+        }
+    }
+
+    $requiredKeys = @('description', 'triggers', 'category')
+    if (Test-Path -LiteralPath $llmDir -PathType Container) {
+        try {
+            $inventory = @(Get-LlmMarkdownInventory -RepoRoot $RepoRoot)
+            foreach ($file in $inventory) {
+                if ((Get-LlmRepoRelativePath -RepoRoot $RepoRoot -Path $file.FullName) -eq '.llm/index.md') {
+                    continue
+                }
+                foreach ($key in $requiredKeys) {
+                    if (-not $file.Metadata.Contains($key) -or [string]::IsNullOrWhiteSpace($file.Metadata[$key])) {
+                        Add-LlmLintError "$(Get-LlmRepoRelativePath -RepoRoot $RepoRoot -Path $file.FullName) missing frontmatter key: $key"
+                    }
+                }
+            }
+        } catch {
+            Add-LlmLintError "Failed while validating frontmatter metadata: $($_.Exception.Message)"
+        }
+    }
+
+    foreach ($pointerCheck in $pointerChecks) {
+        $path = Join-Path $RepoRoot $pointerCheck.Path
+        $exists = Test-Path -LiteralPath $path -PathType Leaf
+        Write-LlmLintDiagnostic "pointer '$($pointerCheck.Path)' exists=$exists"
+        if (-not $exists) {
+            if ($pointerCheck.Required) {
+                Add-LlmLintError "Missing pointer file: $($pointerCheck.Path)"
+            }
+            continue
+        }
+        try {
+            $content = Read-LlmFileText -Path $path
+            if (-not [string]::IsNullOrWhiteSpace($pointerCheck.RequiredPattern) -and
+                $content -notmatch $pointerCheck.RequiredPattern) {
+                $message = "$($pointerCheck.Path) must point to .llm/context.md"
+                if ($pointerCheck.Required) {
+                    Add-LlmLintError $message
+                } else {
+                    Write-Host "[llm-lint] WARNING: $message" -ForegroundColor Yellow
+                }
+            }
+        } catch {
+            Add-LlmLintError "Failed to read pointer file $($pointerCheck.Path): $($_.Exception.Message)"
+        }
+    }
+
+    if (-not $SkipGeneratedIndexCheck) {
+        try {
+            $state = Get-LlmGeneratedContentState -RepoRoot $RepoRoot
+            if ($state.Changes.Count -gt 0) {
+                Add-LlmLintError "Generated LLM index validation failed (stale: $($state.Changes -join ', '))."
+            }
+        } catch {
+            Add-LlmLintError "Generated LLM index validation failed: $($_.Exception.Message)"
+        }
+    }
+
+    if (-not $SkipStagingArtifactCheck) {
+        if (Get-Command git -ErrorAction SilentlyContinue) {
+            $patterns = @(Get-LlmDefaultStrayPatterns)
+            try {
+                $offenders = @(Get-LlmStrayWorkingTreeArtifacts -RepoRoot $RepoRoot -Patterns $patterns)
+                foreach ($artifact in $offenders) {
+                    Add-LlmLintError "Stray staging artifact: $($artifact.Path) (patterns: $($patterns -join ', '))"
+                }
+            } catch {
+                Add-LlmLintError $_.Exception.Message
+            }
+        } else {
+            Write-LlmLintDiagnostic 'git not available; skipping staging-artifact check.'
+        }
+    }
+
+    if (-not $SkipPowerShellParseCheck) {
+        if (Get-Command git -ErrorAction SilentlyContinue) {
+            Push-Location $RepoRoot
+            try {
+                $psFiles = @(& git ls-files -- '*.ps1' '*.psm1' '*.psd1')
+                if ($LASTEXITCODE -ne 0) {
+                    Add-LlmLintError "git ls-files (powershell sources) failed with exit $LASTEXITCODE."
+                    $psFiles = @()
+                }
+            } finally {
+                Pop-Location
+            }
+
+            foreach ($rel in ($psFiles | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+                $full = Join-Path $RepoRoot $rel
+                if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+                $tokens = $null
+                $parseErrors = $null
+                try {
+                    [void][System.Management.Automation.Language.Parser]::ParseFile(
+                        $full, [ref]$tokens, [ref]$parseErrors)
+                } catch {
+                    Add-LlmLintError "PowerShell parse threw for $rel`: $($_.Exception.Message)"
+                    continue
+                }
+                if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+                    foreach ($err in $parseErrors) {
+                        Add-LlmLintError "PowerShell parse error in $rel`:$($err.Extent.StartLineNumber): $($err.Message)"
+                    }
+                } else {
+                    Write-LlmLintDiagnostic "parse OK: $rel"
+                }
+            }
+        } else {
+            Write-LlmLintDiagnostic 'git not available; skipping PowerShell parse check.'
+        }
+    }
+
+    if ($errors.Count -gt 0) {
+        Write-Host "[llm-lint] Diagnostics: repoRoot=$RepoRoot cwd=$((Get-Location).Path)" -ForegroundColor Yellow
+        foreach ($pointerCheck in $pointerChecks) {
+            $path = Join-Path $RepoRoot $pointerCheck.Path
+            $exists = Test-Path -LiteralPath $path -PathType Leaf
+            Write-Host "[llm-lint] Pointer status: $($pointerCheck.Path) => $exists" -ForegroundColor Yellow
+        }
+        Write-Host "[llm-lint] Failed with $($errors.Count) error(s)." -ForegroundColor Red
+        return $false
+    }
+
+    Write-Host '[llm-lint] All LLM harness checks passed.' -ForegroundColor Green
+    return $true
+}
+
 Export-ModuleMember -Function `
     Get-LlmRepoRoot, `
     Get-LlmRepoRelativePath, `
@@ -488,5 +979,8 @@ Export-ModuleMember -Function `
     Get-LlmStrayWorkingTreeArtifacts, `
     Get-LlmDefaultStrayPatterns, `
     Test-LlmDeletableArtifact, `
-    Get-LlmTrackedFileSet `
+    Get-LlmTrackedFileSet, `
+    Get-LlmGeneratedContentState, `
+    Invoke-LlmIndexGenerator, `
+    Invoke-LlmLint `
     -Variable LlmDefaultStrayPatterns

@@ -31,7 +31,9 @@ jobs:
               # `-SkipStagedCheck` because CI validates committed content with
               # `git diff` below instead of participating in a local staging flow.
               shell: pwsh
-              run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -SkipStagedCheck -NoAutoFix -VerboseOutput
+              run: |
+                  $env:LLM_HARNESS_PREFLIGHT_DONE = '1'
+                  pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode CI -SkipStagedCheck -NoAutoFix -VerboseOutput
 
             - name: Verify generated files are committed
               # CI must additionally catch the case where a contributor forgot to
@@ -42,5 +44,22 @@ jobs:
                   git diff --exit-code -- .llm/index.md .llm/context.md
                   if ($LASTEXITCODE -ne 0) {
                     Write-Host '::error::Generated .llm files differ from committed versions. Run scripts/run-llm-hooks.ps1 and commit the result.'
+                    exit 1
+                  }
+
+            - name: Fast hook performance guard
+              shell: pwsh
+              run: |
+                  $runs = @()
+                  for ($i = 0; $i -lt 3; $i++) {
+                    $elapsed = Measure-Command {
+                      pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode AgentFast -SkipStagedCheck -NoAutoFix | Out-Host
+                    }
+                    $runs += [int]$elapsed.TotalMilliseconds
+                  }
+                  $median = ($runs | Sort-Object)[1]
+                  Write-Host "Fast hook runtimes (ms): $($runs -join ', '); median=$median"
+                  if ($median -gt 5000) {
+                    Write-Host "::error::Fast hook median runtime $median ms exceeds 5000 ms budget."
                     exit 1
                   }

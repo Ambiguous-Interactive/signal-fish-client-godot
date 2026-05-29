@@ -30,8 +30,9 @@ PowerShell profile behavior, or post-create setup.
   `node` and `npm` available, then includes `codex --version` in the toolchain
   summary.
 - `post-create.sh` repairs root-owned mounted directories such as
-  `/commandhistory` and the pre-commit cache before installing hooks or writing
-  shell history.
+  `/commandhistory`, installs the direct `.git/hooks/pre-commit` shim via
+  `scripts/install-git-hooks.ps1 -Force`, and does not install the slower
+  pre-commit framework hook.
 - The Codex installer derives npm's global prefix, prepends its `bin` directory
   to `PATH`, and fails loudly if `codex --version` does not report the pinned
   version. npm registry failures are setup failures, not silent warnings.

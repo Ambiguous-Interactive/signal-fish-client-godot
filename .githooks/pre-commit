@@ -1,20 +1,97 @@
 #!/usr/bin/env sh
-# Minimal POSIX shim. All real logic lives in scripts/run-llm-hooks.ps1
-# so it can be invoked identically from sh-capable systems (Linux, macOS,
-# Git for Windows / Git Bash) and from PowerShell-only environments via
-# `.githooks/pre-commit.ps1`. Keeping logic out of this file prevents the
-# generator and lint flow from drifting between platforms.
+# Reference POSIX shim for the LLM harness pre-commit entry point.
+#
+# This file is not installed as the live hook by default. Run
+# `pwsh -NoProfile -File scripts/install-git-hooks.ps1` to materialize the
+# canonical direct shim into `.git/hooks/pre-commit`. Keep this reference
+# behavior aligned with that generated hook so fallback core.hooksPath users
+# get the same bootstrap recovery path.
 set -eu
+
+# Defensive env-var hygiene: a parent shell that left
+# LLM_HARNESS_PREFLIGHT_DONE or LLM_HARNESS_SKIP_BEHAVIORAL_TESTS set would
+# cause the harness to skip its preflight or behavioral checks inside the
+# commit. Unset both before any pwsh invocation so commit-time behavior matches
+# a clean session every time.
+unset LLM_HARNESS_PREFLIGHT_DONE 2>/dev/null || true
+unset LLM_HARNESS_SKIP_BEHAVIORAL_TESTS 2>/dev/null || true
 
 if ! command -v pwsh >/dev/null 2>&1; then
   echo "[llm-hook] ERROR: pwsh (PowerShell 7+) is required to run the LLM harness hooks." >&2
-  echo "[llm-hook] Install from https://aka.ms/powershell and re-run the commit." >&2
+  if command -v powershell.exe >/dev/null 2>&1; then
+    echo "[llm-hook] Detected legacy powershell.exe (Windows PowerShell 5.x). It is NOT supported." >&2
+  fi
+  echo "[llm-hook] Install PowerShell 7+ from https://aka.ms/powershell and re-run the commit." >&2
   exit 1
 fi
 
-# Resolve repo root from the hook script location so the hook works regardless
-# of the caller's cwd.
-HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$HOOK_DIR/.." && pwd)"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$REPO_ROOT" ]; then
+  echo "[llm-hook] ERROR: git rev-parse --show-toplevel failed; cannot locate repo root." >&2
+  exit 1
+fi
 
-exec pwsh -NoProfile -File "$REPO_ROOT/scripts/run-llm-hooks.ps1" -AutoFix
+BOOTSTRAP_SCRIPT="$(mktemp -t llm-hook-bootstrap-XXXXXX.ps1 2>/dev/null || echo "/tmp/llm-hook-bootstrap-$$.ps1")"
+cat >"$BOOTSTRAP_SCRIPT" <<'SHIM_BOOTSTRAP'
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$repoRoot = $env:LLM_HARNESS_REPO_ROOT
+$entryScript = $env:LLM_HARNESS_ENTRY_SCRIPT
+$target = Join-Path $repoRoot $entryScript
+$tokens = $null
+$parseErrors = $null
+try {
+    [void][System.Management.Automation.Language.Parser]::ParseFile($target, [ref]$tokens, [ref]$parseErrors)
+} catch {
+    $parseErrors = @($_)
+}
+if ($parseErrors -and $parseErrors.Count -gt 0) {
+    Write-Host "[llm-hook] WARNING: $entryScript has parse errors; restoring from HEAD..." -ForegroundColor Yellow
+    $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $backupDir = Join-Path $repoRoot ".git/preflight-recovery/$stamp-$PID-$(Get-Random -Maximum 65536)"
+    try {
+        New-Item -ItemType Directory -Path $backupDir -Force -ErrorAction Stop | Out-Null
+        $backupPath = Join-Path $backupDir ($entryScript -replace '[\\/]', '__')
+        [System.IO.File]::Copy($target, $backupPath, $true)
+    } catch {
+        Write-Host "[llm-hook] ERROR: failed to back up $entryScript before restore: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
+    Push-Location $repoRoot
+    try {
+        & git checkout HEAD -- $entryScript
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[llm-hook] ERROR: failed to restore $entryScript from HEAD." -ForegroundColor Red
+            exit 1
+        }
+    } finally {
+        Pop-Location
+    }
+    $parseErrors = $null
+    $tokens = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($target, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors -and $parseErrors.Count -gt 0) {
+        Write-Host "[llm-hook] ERROR: $entryScript still has parse errors after restore; restoring backed-up WIP." -ForegroundColor Red
+        try {
+            Copy-Item -LiteralPath $backupPath -Destination $target -Force
+        } catch {
+            Write-Host "[llm-hook] ERROR: failed to restore $entryScript from ${backupPath}: $($_.Exception.Message)" -ForegroundColor Red
+        }
+        exit 1
+    }
+    Write-Host "[llm-hook] Backed up corrupt $entryScript to $backupPath" -ForegroundColor Yellow
+}
+
+& $target -Mode PreCommit -AutoFix
+exit $LASTEXITCODE
+SHIM_BOOTSTRAP
+
+LLM_HARNESS_REPO_ROOT="$REPO_ROOT"
+LLM_HARNESS_ENTRY_SCRIPT="scripts/run-llm-hooks.ps1"
+export LLM_HARNESS_REPO_ROOT LLM_HARNESS_ENTRY_SCRIPT
+set +e
+pwsh -NoProfile -File "$BOOTSTRAP_SCRIPT"
+HOOK_STATUS="$?"
+set -e
+rm -f "$BOOTSTRAP_SCRIPT" 2>/dev/null || true
+exit "$HOOK_STATUS"

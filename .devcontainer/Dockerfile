@@ -62,9 +62,10 @@ RUN chmod +x /usr/local/bin/install-godot.sh \
     && /usr/local/bin/install-godot.sh "${GODOT_VERSION}" \
     && rm /usr/local/bin/install-godot.sh
 
-# pipx — used to install pre-commit cleanly outside system Python.
-# Installed system-wide (PIPX_HOME / PIPX_BIN_DIR set above) so all users
-# share the same `pre-commit` on PATH regardless of the runtime UID.
+# Optional compatibility tooling: install the pre-commit CLI cleanly outside
+# system Python so users can manually run `.pre-commit-config.yaml` if desired.
+# The canonical hook is still the direct `.git/hooks/pre-commit` shim installed
+# by post-create; the devcontainer must not run `pre-commit install`.
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends pipx python3-venv; \

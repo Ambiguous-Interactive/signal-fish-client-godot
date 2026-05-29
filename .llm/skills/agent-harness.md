@@ -34,10 +34,10 @@ scripts that maintain AI context.
 1. Edit the focused context, skill, sample, or research Markdown file.
 2. Run `pwsh -NoProfile -File scripts/agent-check.ps1` after any edit to
    `.ps1`, `.psm1`, `.psd1`, or `.llm/**` files. This is the fast,
-   non-mutating validator (parse, lint, self-tests). Fix every reported
-   issue before continuing.
-3. Run `pwsh -NoProfile -File scripts/run-llm-hooks.ps1` (regenerates the
-   index, runs the linter, and verifies staged generated files). Or run
+   non-mutating validator; pass `-Full` before merging automation changes
+   that need behavioral sandbox coverage.
+3. Run `pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode Full`
+   for exhaustive validation, or run
    `generate-llm-index.ps1` + `lint-llm.ps1` + `test-llm-harness.ps1`
    individually.
 4. Include regenerated `.llm/index.md` and `.llm/context.md` when changed.
@@ -52,13 +52,13 @@ scripts that maintain AI context.
 - `scripts/lib/LlmHarness.psm1` owns frontmatter parsing, path helpers, and
   staging-artifact discovery (`Get-LlmStagingArtifacts` for tracked / non-
   ignored; `Get-LlmStrayWorkingTreeArtifacts` for the gitignored blind
-  spot). `Get-LlmDefaultStrayPatterns` is the canonical junk-pattern list
-  used by both helpers. Both `generate-llm-index.ps1` and `lint-llm.ps1`
-  import it; never reintroduce a local `Read-Frontmatter` in either script
-  (the self-tests enforce this).
+  spot). It also owns generated-index and lint implementations so fast hook
+  modes do not spawn child `pwsh` for generator or linter work.
 - `scripts/run-llm-hooks.ps1` is the single source of truth for the
-  pre-commit / CI flow: it runs preflight first, then regenerates the
-  index, runs the linter, and runs the harness self-tests.
+  pre-commit / CI flow. Use `-Mode PreCommit` for the installed hook,
+  `-Mode AgentFast` for non-mutating local checks, `-Mode Full` for all
+  structural and behavioral tests, and `-Mode CI` for loud generated diff
+  verification.
 - `scripts/preflight.ps1` parse-checks itself first, then every tracked
   `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers a corrupt source by
   `git checkout HEAD -- <path>`. It is the first line of defense against
@@ -72,7 +72,20 @@ scripts that maintain AI context.
   reference templates only; they are not the live hook and editing them
   alone has no effect until the installer is re-run. The installer clears
   legacy `core.hooksPath` values only after normalizing trailing separators
-  and relative path variants; foreign hook paths require `-Force`.
+  and relative path variants; foreign hook paths require `-Force`. The
+  emitted sh shim starts one `pwsh` bootstrap that parse-checks and invokes
+  `run-llm-hooks.ps1` in the same process.
+
+## Hook Performance Contract
+
+- `PreCommit` and `AgentFast` must stay under a 5s median on ordinary no-op
+  or non-harness commits.
+- Do not add child `pwsh` processes to fast-mode generator, linter, or test
+  stages; put shared logic in `scripts/lib/LlmHarness.psm1`.
+- Do not repeatedly reread all Markdown files in fast paths; reuse the shared
+  inventory helpers.
+- Do not add broad ignored-file or whole-repo Git scans to pre-commit without
+  a measured budget and a CI performance guard update.
 
 ## Automated Guardrails
 

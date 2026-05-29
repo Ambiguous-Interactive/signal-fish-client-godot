@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Post-create lifecycle: install Python tooling, pre-commit hooks, and verify
+# Post-create lifecycle: install repo git hooks, Codex, and verify
 # that the toolchain matches the repo's expectations.
 set -euo pipefail
 
@@ -32,22 +32,9 @@ ensure_writable_dir() {
 
 echo "==> Preparing writable mounted directories"
 ensure_writable_dir "/commandhistory" || true
-ensure_writable_dir "${HOME}/.cache/pre-commit" || true
 
-# pre-commit is installed system-wide by the image (see Dockerfile). Fall back
-# to a per-user pipx install if the image was customized to remove it.
-if ! command -v pre-commit >/dev/null 2>&1; then
-    echo "==> Installing pre-commit via pipx (fallback)"
-    pipx ensurepath >/dev/null 2>&1 || true
-    pipx install pre-commit
-fi
-
-if [ -f ".pre-commit-config.yaml" ]; then
-    echo "==> Installing pre-commit git hooks"
-    pre-commit install --install-hooks || {
-        echo "WARN: pre-commit install failed; continuing." >&2
-    }
-fi
+echo "==> Installing direct git hooks"
+pwsh -NoProfile -File scripts/install-git-hooks.ps1 -Force
 
 echo "==> Installing Codex CLI"
 "${DEVCONTAINER_DIR}/install-codex.sh"
@@ -87,7 +74,7 @@ echo "==> Toolchain summary"
     printf '  gh      : %s\n' "$(gh --version 2>/dev/null | head -n1 || echo 'NOT FOUND')"
     printf '  godot   : %s\n' "$(godot --version 2>/dev/null || echo 'NOT FOUND')"
     printf '  codex   : %s\n' "${CODEX_VERSION_OUTPUT}"
-    printf '  precmt  : %s\n' "$(pre-commit --version 2>/dev/null || echo 'NOT FOUND')"
+    printf '  precmt (optional): %s\n' "$(pre-commit --version 2>/dev/null || echo 'NOT FOUND')"
 } | tee /tmp/sf-toolchain.txt
 
 echo "==> Dev container ready."
