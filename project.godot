@@ -1,0 +1,6 @@
+config_version=5
+
+[application]
+config/name="Signal Fish Client Godot"
+config/features=PackedStringArray("4.3")
+

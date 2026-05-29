@@ -1,0 +1,15 @@
+# Signal Fish v2 client message fixtures
+# Source: signal-fish-server@4f766b7856bead1e1cc07d4e7a1057831a045749 src/protocol/messages.rs
+# Source: signal-fish-client-rust@da4c0bdf0657370ec340321363f3b5850e06b0b0 src/protocol.rs src/client.rs
+# Format: one canonical JSON envelope per non-comment line; unit variants omit data.
+{"type":"Authenticate","data":{"app_id":"mb_app_fixture","sdk_version":"0.1.0-godot","platform":"godot","game_data_format":"json"}}
+{"type":"JoinRoom","data":{"game_name":"reef-rally","room_code":"ABC123","player_name":"Alice","max_players":4,"supports_authority":true,"relay_transport":"websocket"}}
+{"type":"LeaveRoom"}
+{"type":"GameData","data":{"data":{"action":"move","x":10,"y":20,"buttons":["jump"]}}}
+{"type":"AuthorityRequest","data":{"become_authority":true}}
+{"type":"PlayerReady"}
+{"type":"ProvideConnectionInfo","data":{"connection_info":{"type":"direct","host":"127.0.0.1","port":7777}}}
+{"type":"Ping"}
+{"type":"Reconnect","data":{"player_id":"10000000-0000-0000-0000-000000000001","room_id":"20000000-0000-0000-0000-000000000001","auth_token":"test-reconnect-token-not-secret"}}
+{"type":"JoinAsSpectator","data":{"game_name":"reef-rally","room_code":"ABC123","spectator_name":"Observer"}}
+{"type":"LeaveSpectator"}
