@@ -3,23 +3,32 @@
 # survives container rebuilds. The mount target is configured in
 # devcontainer.json (`/commandhistory`).
 
-if (Get-Module -ListAvailable PSReadLine) {
-    Import-Module PSReadLine -ErrorAction SilentlyContinue
+$psReadLineModule = Get-Module PSReadLine -ErrorAction SilentlyContinue
+if (-not $psReadLineModule) {
+    try {
+        Import-Module PSReadLine -ErrorAction Stop
+        $psReadLineModule = Get-Module PSReadLine -ErrorAction SilentlyContinue
+    } catch {
+        $psReadLineModule = $null
+    }
+}
+
+if ($psReadLineModule) {
 
     $historyDir = '/commandhistory'
     if (Test-Path $historyDir) {
         $historyFile = Join-Path $historyDir 'pwsh_history.txt'
-        Set-PSReadLineOption -HistorySavePath $historyFile
-        Set-PSReadLineOption -HistorySaveStyle SaveIncrementally
-        Set-PSReadLineOption -MaximumHistoryCount 10000
+        Set-PSReadLineOption -HistorySavePath $historyFile -ErrorAction SilentlyContinue
+        Set-PSReadLineOption -HistorySaveStyle SaveIncrementally -ErrorAction SilentlyContinue
+        Set-PSReadLineOption -MaximumHistoryCount 10000 -ErrorAction SilentlyContinue
         Set-PSReadLineOption -PredictionSource HistoryAndPlugin -ErrorAction SilentlyContinue
         Set-PSReadLineOption -PredictionViewStyle ListView -ErrorAction SilentlyContinue
     }
 
-    Set-PSReadLineOption -EditMode Emacs
-    Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete
-    Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward
-    Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
+    Set-PSReadLineOption -EditMode Emacs -ErrorAction SilentlyContinue
+    Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete -ErrorAction SilentlyContinue
+    Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward -ErrorAction SilentlyContinue
+    Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward -ErrorAction SilentlyContinue
 }
 
 # Friendly prompt: short cwd + git branch if available.

@@ -382,6 +382,114 @@ Assert-Test 'all committed PowerShell sources parse cleanly' {
     }
 }
 
+# --- Dev container guardrails ---------------------------------------------
+
+Assert-Test 'devcontainer Codex installer is pinned, parseable, and validated' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $installer = Join-Path $repoRoot '.devcontainer/install-codex.sh'
+    if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+        throw 'Missing .devcontainer/install-codex.sh'
+    }
+    $content = Get-Content -LiteralPath $installer -Raw
+    if ($content -notmatch 'CODEX_CLI_VERSION="\$\{CODEX_CLI_VERSION:-[0-9]+\.[0-9]+\.[0-9]+\}"') {
+        throw 'install-codex.sh must pin CODEX_CLI_VERSION to a concrete semver default.'
+    }
+    if ($content -notmatch 'CODEX_NPM_PACKAGE="@openai/codex"') {
+        throw 'install-codex.sh must identify @openai/codex as the package to install.'
+    }
+    if ($content -notmatch 'npm install --global' -or $content -notmatch '\$\{CODEX_NPM_PACKAGE\}@\$\{CODEX_CLI_VERSION\}') {
+        throw 'install-codex.sh must install the official @openai/codex package at the pinned version.'
+    }
+    if ($content -notmatch 'command -v codex' -or $content -notmatch 'codex --version') {
+        throw 'install-codex.sh must verify codex is on PATH and report its version.'
+    }
+    if ($content -notmatch 'npm config get prefix' -or $content -notmatch 'npm_bin_dir=' -or $content -notmatch 'export PATH="\$\{npm_bin_dir\}:\$\{PATH\}"') {
+        throw 'install-codex.sh must derive npm global bin directory and prepend it to PATH.'
+    }
+    if ($content -notmatch 'could not parse npm package metadata' -or $content -notmatch 'npm list returned no package metadata') {
+        throw 'install-codex.sh must log npm metadata lookup failures before reinstalling.'
+    }
+    if (Get-Command bash -ErrorAction SilentlyContinue) {
+        & bash -n $installer
+        if ($LASTEXITCODE -ne 0) {
+            throw 'install-codex.sh failed bash -n syntax validation.'
+        }
+    }
+}
+
+Assert-Test 'devcontainer post-create installs Codex and reports it in the summary' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $postCreate = Join-Path $repoRoot '.devcontainer/post-create.sh'
+    if (-not (Test-Path -LiteralPath $postCreate -PathType Leaf)) {
+        throw 'Missing .devcontainer/post-create.sh'
+    }
+    $content = Get-Content -LiteralPath $postCreate -Raw
+    if ($content -notmatch 'install-codex\.sh') {
+        throw 'post-create.sh must invoke .devcontainer/install-codex.sh.'
+    }
+    if ($content -notmatch 'codex --version') {
+        throw 'post-create.sh must include codex --version in the toolchain summary.'
+    }
+    if ($content -notmatch 'CODEX_VERSION_OUTPUT=' -or $content -notmatch 'Codex CLI is missing after post-create install') {
+        throw 'post-create.sh must fail loudly if Codex is missing after install-codex.sh runs.'
+    }
+    if ($content -notmatch 'Failed to install PowerShell profile') {
+        throw 'post-create.sh must fail loudly if PowerShell profile installation fails.'
+    }
+    if ($content -notmatch 'ensure_writable_dir' -or $content -notmatch '\$\{HOME\}/\.cache/pre-commit' -or $content -notmatch 'sudo chown -R') {
+        throw 'post-create.sh must repair root-owned mounted tool cache directories before installing hooks.'
+    }
+    if (Get-Command bash -ErrorAction SilentlyContinue) {
+        & bash -n $postCreate
+        if ($LASTEXITCODE -ne 0) {
+            throw 'post-create.sh failed bash -n syntax validation.'
+        }
+    }
+}
+
+Assert-Test 'devcontainer PowerShell profile tolerates PSReadLine assembly preload conflicts' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $profilePath = Join-Path $repoRoot '.devcontainer/pwsh-profile.ps1'
+    if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) {
+        throw 'Missing .devcontainer/pwsh-profile.ps1'
+    }
+    $content = Get-Content -LiteralPath $profilePath -Raw
+    if ($content -match 'Get-Module\s+-ListAvailable\s+PSReadLine') {
+        throw 'pwsh-profile.ps1 must not use Get-Module -ListAvailable as the PSReadLine loaded-state guard.'
+    }
+    if ($content -match 'Import-Module\s+PSReadLine\s+-ErrorAction\s+SilentlyContinue') {
+        throw 'pwsh-profile.ps1 must catch PSReadLine import failures instead of relying on SilentlyContinue.'
+    }
+
+    $tempScript = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "llm-pwsh-profile-test-$([Guid]::NewGuid()).ps1")
+    $profileLiteral = $profilePath.Replace("'", "''")
+    $testScript = @"
+`$ErrorActionPreference = 'Stop'
+function Import-Module {
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromRemainingArguments = `$true)]
+        [object[]]`$RemainingArgs
+    )
+    throw [System.IO.FileLoadException]::new("Could not load file or assembly 'Microsoft.PowerShell.PSReadLine, Version=2.4.5.0, Culture=neutral, PublicKeyToken=null'. Assembly with same name is already loaded")
+}
+. '$profileLiteral'
+'profile-ok'
+"@
+    try {
+        [System.IO.File]::WriteAllText($tempScript, $testScript, [System.Text.UTF8Encoding]::new($false))
+        $output = @(& pwsh -NoProfile -File $tempScript 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "profile load failed with exit $LASTEXITCODE`: $($output -join '; ')"
+        }
+        if ($output -notcontains 'profile-ok') {
+            throw "profile load did not reach completion. Output: $($output -join '; ')"
+        }
+    } finally {
+        Remove-Item -LiteralPath $tempScript -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # --- install-git-hooks.ps1 only references defined variables ---------------
 
 Assert-Test 'install-git-hooks.ps1 has no undefined variable references' {

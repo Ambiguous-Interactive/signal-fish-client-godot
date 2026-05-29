@@ -180,6 +180,8 @@ Do not edit the section below manually. Regenerate it with
   Triggers: agent harness, llm, context, skills, index, hooks, ci, automation
 - [Architectural Planning](skills/architectural-planning.md) (`Planning`) - Use when planning runtime architecture, protocol boundaries, state machines, or multi-file features.
   Triggers: planning, architecture, design doc, state machine, data flow, feature plan, technical plan
+- [Dev Container Tooling](skills/devcontainer-tooling.md) (`Tooling`) - Use when changing the VS Code dev container, installed tools, shell profiles, or post-create setup.
+  Triggers: devcontainer, container, codex, cli, post-create, postcreate, powershell profile, pwsh profile, PSReadLine, toolchain
 - [Godot GDScript Bindings](skills/godot-gdscript.md) (`Godot`) - Use when writing or reviewing Godot addon code, GDScript APIs, scenes, resources, or exports.
   Triggers: godot, gdscript, addon, plugin, scene, resource, export, api
 - [Godot Transport Adapters](skills/godot-transport.md) (`Godot`) - Use when implementing or reviewing Godot transport adapters for WebSocket, WebRTC, polling, reconnect, or multiplayer APIs.

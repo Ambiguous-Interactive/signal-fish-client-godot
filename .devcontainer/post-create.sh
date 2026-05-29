@@ -5,11 +5,34 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${REPO_ROOT}"
+DEVCONTAINER_DIR="${REPO_ROOT}/.devcontainer"
 
 echo "==> Configuring git safe.directory"
 git config --global --add safe.directory "${REPO_ROOT}" || true
 
 export PATH="/usr/local/bin:${HOME}/.local/bin:${PATH}"
+
+ensure_writable_dir() {
+    local path="$1"
+
+    mkdir -p "${path}" 2>/dev/null || true
+    if [ ! -d "${path}" ] && command -v sudo >/dev/null 2>&1; then
+        sudo mkdir -p "${path}"
+    fi
+
+    if [ -d "${path}" ] && [ ! -w "${path}" ] && command -v sudo >/dev/null 2>&1; then
+        sudo chown -R "$(id -u):$(id -g)" "${path}"
+    fi
+
+    if [ ! -d "${path}" ] || [ ! -w "${path}" ]; then
+        echo "WARN: ${path} is not writable; related tooling may fall back or fail." >&2
+        return 1
+    fi
+}
+
+echo "==> Preparing writable mounted directories"
+ensure_writable_dir "/commandhistory" || true
+ensure_writable_dir "${HOME}/.cache/pre-commit" || true
 
 # pre-commit is installed system-wide by the image (see Dockerfile). Fall back
 # to a per-user pipx install if the image was customized to remove it.
@@ -26,16 +49,30 @@ if [ -f ".pre-commit-config.yaml" ]; then
     }
 fi
 
+echo "==> Installing Codex CLI"
+"${DEVCONTAINER_DIR}/install-codex.sh"
+CODEX_VERSION_OUTPUT="$(codex --version 2>/dev/null || true)"
+if [ -z "${CODEX_VERSION_OUTPUT}" ]; then
+    echo "ERROR: Codex CLI is missing after post-create install." >&2
+    exit 1
+fi
+
 echo "==> Installing PowerShell user profile (persists pwsh history)"
 # PowerShell on Linux reads CurrentUserAllHosts from
 # $HOME/.config/powershell/profile.ps1. Installing here (instead of in the
 # Dockerfile) is required because the PowerShell devcontainer feature lays
 # down pwsh AFTER the image is built.
 PWSH_PROFILE_DIR="${HOME}/.config/powershell"
-PWSH_PROFILE_SRC="${REPO_ROOT}/.devcontainer/pwsh-profile.ps1"
+PWSH_PROFILE_SRC="${DEVCONTAINER_DIR}/pwsh-profile.ps1"
 if command -v pwsh >/dev/null 2>&1 && [ -f "${PWSH_PROFILE_SRC}" ]; then
-    mkdir -p "${PWSH_PROFILE_DIR}"
-    install -m 0644 "${PWSH_PROFILE_SRC}" "${PWSH_PROFILE_DIR}/profile.ps1"
+    ensure_writable_dir "${PWSH_PROFILE_DIR}" || {
+        echo "ERROR: Failed to prepare ${PWSH_PROFILE_DIR}." >&2
+        exit 1
+    }
+    install -m 0644 "${PWSH_PROFILE_SRC}" "${PWSH_PROFILE_DIR}/profile.ps1" || {
+        echo "ERROR: Failed to install PowerShell profile to ${PWSH_PROFILE_DIR}/profile.ps1." >&2
+        exit 1
+    }
 else
     echo "WARN: pwsh or profile source not found; skipping PowerShell profile." >&2
 fi
@@ -49,6 +86,7 @@ echo "==> Toolchain summary"
     printf '  node    : %s\n' "$(node --version 2>/dev/null || echo 'NOT FOUND')"
     printf '  gh      : %s\n' "$(gh --version 2>/dev/null | head -n1 || echo 'NOT FOUND')"
     printf '  godot   : %s\n' "$(godot --version 2>/dev/null || echo 'NOT FOUND')"
+    printf '  codex   : %s\n' "${CODEX_VERSION_OUTPUT}"
     printf '  precmt  : %s\n' "$(pre-commit --version 2>/dev/null || echo 'NOT FOUND')"
 } | tee /tmp/sf-toolchain.txt
 

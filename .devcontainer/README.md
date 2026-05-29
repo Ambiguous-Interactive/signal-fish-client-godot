@@ -25,6 +25,7 @@ pinned Godot release; subsequent starts are fast.
 | PowerShell  | 7.x via `ghcr.io/devcontainers/features/powershell` |
 | Python      | 3.12 via devcontainer feature                       |
 | Node.js     | LTS via devcontainer feature                        |
+| Codex CLI   | Pinned `@openai/codex` npm package via post-create  |
 | GitHub CLI  | Latest via devcontainer feature                     |
 | pre-commit  | Installed via `pipx`, hooks installed automatically |
 
@@ -62,7 +63,8 @@ Only reputable, well-maintained extensions are pre-installed:
 - [`devcontainer.json`](./devcontainer.json) — features, extensions, settings
 - [`Dockerfile`](./Dockerfile) — base image and Godot install
 - [`install-godot.sh`](./install-godot.sh) — deterministic Godot download
-- [`post-create.sh`](./post-create.sh) — pipx + pre-commit + toolchain summary
+- [`install-codex.sh`](./install-codex.sh) — pinned OpenAI Codex CLI install
+- [`post-create.sh`](./post-create.sh) — Codex + pre-commit + toolchain summary
 
 ## Local font tip
 
@@ -76,6 +78,17 @@ Bump `GODOT_VERSION` in [`devcontainer.json`](./devcontainer.json) (and the
 matching arg in [`Dockerfile`](./Dockerfile)). Rebuild the container via
 `Dev Containers: Rebuild Container`.
 
+## Updating Codex CLI
+
+Codex CLI is installed by [`install-codex.sh`](./install-codex.sh) through the
+official npm package, `@openai/codex`. Bump `CODEX_CLI_VERSION` in that script,
+rebuild the container, and confirm the post-create toolchain summary reports the
+new `codex --version` output.
+
+Codex authentication is intentionally not automated. Run `codex` interactively
+inside the container and sign in with ChatGPT or configure an API key according
+to the OpenAI docs.
+
 ## Troubleshooting
 
 - **Pre-commit hooks fail with `pwsh: not found`:** rebuild the container; the
@@ -84,3 +97,11 @@ matching arg in [`Dockerfile`](./Dockerfile)). Rebuild the container via
   `godotTools.editorPath.godot4` points to `/usr/local/bin/godot`.
 - **Permission errors on mounted volumes:** run
   `Dev Containers: Rebuild Without Cache`.
+- **PowerShell terminal reports a PSReadLine assembly already loaded error:**
+  rebuild the container so the guarded profile from `pwsh-profile.ps1` is
+  copied into `$HOME/.config/powershell/profile.ps1`.
+- **`codex` is missing after rebuild:** run `bash .devcontainer/post-create.sh`
+  and check the `==> Installing Codex CLI` section for npm or PATH errors. If
+  npm installs successfully but `codex` is still not found, compare
+  `npm config get prefix` with `$PATH`; the installer prepends the expected
+  npm global `bin` directory during setup.
