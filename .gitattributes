@@ -1,0 +1,48 @@
+# Repository line-ending normalization.
+# Ensures shell scripts always have LF endings even when committed from
+# Windows hosts, so they remain executable inside the Linux dev container.
+
+* text=auto eol=lf
+
+# Shell / config — must be LF
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+Dockerfile  text eol=lf
+*.dockerfile text eol=lf
+
+# PowerShell stays CRLF unless a shebang makes direct Unix execution possible.
+*.ps1       text eol=crlf
+*.psm1      text eol=crlf
+*.psd1      text eol=crlf
+
+# PowerShell files with shebangs must stay LF; otherwise Unix may look for
+# an interpreter named "pwsh\r" when a script is executed directly.
+.claude/hooks/*.ps1 text eol=lf
+.githooks/*.ps1     text eol=lf
+
+# Godot resources are text but stay as-is to match upstream tooling
+*.gd        text eol=lf
+*.tres      text eol=lf
+*.tscn      text eol=lf
+*.gdshader  text eol=lf
+*.import    text eol=lf
+
+# Binary
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.zip       binary
+*.gz        binary
+*.xz        binary
+*.ttf       binary
+*.otf       binary
+*.woff      binary
+*.woff2     binary

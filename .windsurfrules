@@ -1,0 +1,3 @@
+Use `.llm/context.md` as the canonical repository context.
+Keep this file thin; add reusable guidance under `.llm`.
+

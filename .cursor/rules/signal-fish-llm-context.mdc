@@ -1,0 +1,10 @@
+---
+description: Always use the shared Signal Fish LLM context.
+alwaysApply: true
+---
+
+# Signal Fish LLM Context
+
+Read `.llm/context.md` first. Treat vendor-specific files as thin pointers and
+put reusable guidance in `.llm` skills, samples, or research files.
+

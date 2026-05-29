@@ -1,0 +1,17 @@
+# Signal Fish Godot Client
+
+> Godot bindings for the Signal Fish protocol, focused on GDScript support
+> across major Godot versions and Godot 4 web exports.
+
+## Core Context
+
+- [Canonical AI Context](./.llm/context.md): Required starting point for agents.
+- [Generated LLM Index](./.llm/index.md): Inventory of available skills,
+  samples, and research notes.
+
+## Upstream Protocol References
+
+- [Signal Fish Cloud](https://github.com/Ambiguous-Interactive/signal-fish-cloud)
+- [Signal Fish Server](https://github.com/Ambiguous-Interactive/signal-fish-server)
+- [Signal Fish Rust Client](https://github.com/Ambiguous-Interactive/signal-fish-client-rust)
+

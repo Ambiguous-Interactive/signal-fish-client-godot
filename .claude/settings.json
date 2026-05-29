@@ -1,0 +1,45 @@
+{
+    "$schema": "https://json.schemastore.org/claude-code-settings.json",
+    "hooks": {
+        "PostToolUse": [
+            {
+                "matcher": "^(Write|Edit|MultiEdit)$",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "pwsh -NoProfile -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/parse-check-powershell.ps1\"",
+                        "timeout": 15
+                    },
+                    {
+                        "type": "command",
+                        "command": "pwsh -NoProfile -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/validate-llm-context.ps1\"",
+                        "timeout": 15
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "pwsh -NoProfile -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/preflight-stop.ps1\"",
+                        "timeout": 30
+                    }
+                ]
+            }
+        ],
+        "SessionStart": [
+            {
+                "matcher": "startup|resume|clear|compact",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "pwsh -NoProfile -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-reminder.ps1\"",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ]
+    }
+}

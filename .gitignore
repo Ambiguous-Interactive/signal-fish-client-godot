@@ -15,3 +15,23 @@ export_credentials.cfg
 .mono/
 data_*/
 mono_crash.*.json
+
+pr-description.md
+pre-commit.txt
+pre-push.txt
+logs_*.zip
+
+# Common staging / backup artifacts. The canonical harness pattern list lives
+# in `scripts/lib/LlmHarness.psm1` (`Get-LlmDefaultStrayPatterns`). Some editor
+# junk is intentionally left unignored so `git status` surfaces it; `*.tmp` is
+# already ignored by Godot convention, and the harness uses `git ls-files
+# --ignored` to catch that blind spot.
+*.new
+*.bak
+*.orig
+*.old
+*.rej
+
+# Claude Code local permission overrides are machine/user-specific. Keep the
+# shared hook config in .claude/settings.json.
+.claude/settings.local.json
