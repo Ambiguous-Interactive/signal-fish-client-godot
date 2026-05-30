@@ -353,17 +353,17 @@ func _test_malformed_inputs_decode_to_protocol_error() -> void:
 		'{"type":"PlayerJoined","data":{"player":{"id":"p1","name":"Alice"}}}',
 		(
 			'{"type":"LobbyStateChanged","data":{"lobby_state":"unknown",'
-			+ '"ready_players":[],"all_ready":false}}'
+			+'"ready_players":[],"all_ready":false}}'
 		),
 		(
 			'{"type":"GameStarting","data":{"peer_connections":[{"player_id":"p1",'
-			+ '"player_name":"Alice","is_authority":false,"relay_type":"websocket",'
-			+ '"connection_info":"not-an-object"}]}}'
+			+'"player_name":"Alice","is_authority":false,"relay_type":"websocket",'
+			+'"connection_info":"not-an-object"}]}}'
 		),
 		(
 			'{"type":"PlayerJoined","data":{"player":{"id":"p1","name":"Alice",'
-			+ '"is_authority":false,"is_ready":false,"connected_at":"now",'
-			+ '"connection_info":{"type":"direct","port":7777}}}}'
+			+'"is_authority":false,"is_ready":false,"connected_at":"now",'
+			+'"connection_info":{"type":"direct","port":7777}}}}'
 		),
 	]
 	for index: int in inline_cases.size():
@@ -377,7 +377,7 @@ func _test_malformed_inputs_decode_to_protocol_error() -> void:
 func _test_binary_codec_accepts_base64_payload() -> void:
 	var line := (
 		'{"type":"GameDataBinary","data":{"from_player":"p1",'
-		+ '"encoding":"message_pack","payload":"yv4="}}'
+		+'"encoding":"message_pack","payload":"yv4="}}'
 	)
 	var decoded := SFEventsScript.decode_text(line)
 	_assert_equal("game_data_binary_received", String(decoded.signal_name), "base64 binary event")
@@ -403,9 +403,9 @@ func _test_upstream_optional_fields_decode() -> void:
 	var defaulted_player_name_rules := SFEventsScript.decode_text(
 		(
 			'{"type":"ProtocolInfo","data":{"player_name_rules":{'
-			+ '"max_length":32,"min_length":1,"allow_unicode_alphanumeric":true,'
-			+ '"allow_spaces":true,"allow_leading_trailing_whitespace":false,'
-			+ '"additional_allowed_characters":null}}}'
+			+'"max_length":32,"min_length":1,"allow_unicode_alphanumeric":true,'
+			+'"allow_spaces":true,"allow_leading_trailing_whitespace":false,'
+			+'"additional_allowed_characters":null}}}'
 		)
 	)
 	_assert_equal(
@@ -427,8 +427,8 @@ func _test_upstream_optional_fields_decode() -> void:
 	var game_starting := SFEventsScript.decode_text(
 		(
 			'{"type":"GameStarting","data":{"peer_connections":[{'
-			+ '"player_id":"p1","player_name":"Alice","is_authority":false,'
-			+ '"relay_type":"regional-relay"}]}}'
+			+'"player_id":"p1","player_name":"Alice","is_authority":false,'
+			+'"relay_type":"regional-relay"}]}}'
 		)
 	)
 	_assert_equal("game_starting", String(game_starting.signal_name), "optional peer connection")
@@ -439,10 +439,10 @@ func _test_upstream_optional_fields_decode() -> void:
 	var relay_without_transport := SFEventsScript.decode_text(
 		(
 			'{"type":"GameStarting","data":{"peer_connections":[{'
-			+ '"player_id":"p1","player_name":"Alice","is_authority":false,'
-			+ '"relay_type":"regional-relay","connection_info":{"type":"relay",'
-			+ '"host":"relay.example.test","port":9000,"allocation_id":"alloc",'
-			+ '"token":"relay-token"}}]}}'
+			+'"player_id":"p1","player_name":"Alice","is_authority":false,'
+			+'"relay_type":"regional-relay","connection_info":{"type":"relay",'
+			+'"host":"relay.example.test","port":9000,"allocation_id":"alloc",'
+			+'"token":"relay-token"}}]}}'
 		)
 	)
 	_assert_equal(
@@ -456,19 +456,49 @@ func _test_upstream_optional_fields_decode() -> void:
 	var relay_null_transport := SFEventsScript.decode_text(
 		(
 			'{"type":"GameStarting","data":{"peer_connections":[{'
-			+ '"player_id":"p1","player_name":"Alice","is_authority":false,'
-			+ '"relay_type":"regional-relay","connection_info":{"type":"relay",'
-			+ '"host":"relay.example.test","port":9000,"transport":null,'
-			+ '"allocation_id":"alloc","token":"relay-token"}}]}}'
+			+'"player_id":"p1","player_name":"Alice","is_authority":false,'
+			+'"relay_type":"regional-relay","connection_info":{"type":"relay",'
+			+'"host":"relay.example.test","port":9000,"transport":null,'
+			+'"allocation_id":"alloc","token":"relay-token"}}]}}'
 		)
 	)
 	_assert_equal("game_starting", String(relay_null_transport.signal_name), "relay null transport")
 
+	var spectator_joined_without_reason := SFEventsScript.decode_envelope(
+		{"type": "SpectatorJoined", "data": _minimal_spectator_joined_data()}
+	)
+	_assert_equal(
+		"spectator_joined",
+		String(spectator_joined_without_reason.signal_name),
+		"spectator joined absent reason"
+	)
+	_assert_equal(
+		SFTypesScript.SpectatorReason.UNKNOWN,
+		spectator_joined_without_reason.args[0].reason,
+		"spectator joined absent reason value"
+	)
+
+	var spectator_joined_null_data := _minimal_spectator_joined_data()
+	spectator_joined_null_data["reason"] = null
+	var spectator_joined_null_reason := SFEventsScript.decode_envelope(
+		{"type": "SpectatorJoined", "data": spectator_joined_null_data}
+	)
+	_assert_equal(
+		"spectator_joined",
+		String(spectator_joined_null_reason.signal_name),
+		"spectator joined null reason"
+	)
+	_assert_equal(
+		SFTypesScript.SpectatorReason.UNKNOWN,
+		spectator_joined_null_reason.args[0].reason,
+		"spectator joined null reason value"
+	)
+
 	var webrtc_null_sdp := SFEventsScript.decode_text(
 		(
 			'{"type":"PlayerJoined","data":{"player":{"id":"p1","name":"Alice",'
-			+ '"is_authority":false,"is_ready":false,"connected_at":"now",'
-			+ '"connection_info":{"type":"webrtc","sdp":null,"ice_candidates":[]}}}}'
+			+'"is_authority":false,"is_ready":false,"connected_at":"now",'
+			+'"connection_info":{"type":"webrtc","sdp":null,"ice_candidates":[]}}}}'
 		)
 	)
 	_assert_equal("player_joined", String(webrtc_null_sdp.signal_name), "webrtc null sdp")
@@ -480,16 +510,47 @@ func _test_upstream_optional_fields_decode() -> void:
 	_assert_equal(SFTypesScript.SpectatorReason.UNKNOWN, spectator_left.args[2], "minimal reason")
 	_assert_equal(0, spectator_left.args[3].size(), "minimal spectator list")
 
+	var spectator_left_null_reason := SFEventsScript.decode_text(
+		'{"type":"SpectatorLeft","data":{"reason":null}}'
+	)
+	_assert_equal(
+		"spectator_left",
+		String(spectator_left_null_reason.signal_name),
+		"spectator left null reason"
+	)
+	_assert_equal(
+		SFTypesScript.SpectatorReason.UNKNOWN,
+		spectator_left_null_reason.args[2],
+		"spectator left null reason value"
+	)
+
 	var new_spectator := SFEventsScript.decode_text(
 		(
 			'{"type":"NewSpectatorJoined","data":{"spectator":{'
-			+ '"id":"s1","name":"Watcher","connected_at":"now"}}}'
+			+'"id":"s1","name":"Watcher","connected_at":"now"}}}'
 		)
 	)
 	_assert_equal(
 		"new_spectator_joined", String(new_spectator.signal_name), "minimal new spectator"
 	)
 	_assert_equal(SFTypesScript.SpectatorReason.UNKNOWN, new_spectator.args[2], "new reason")
+
+	var new_spectator_null_reason := SFEventsScript.decode_text(
+		(
+			'{"type":"NewSpectatorJoined","data":{"spectator":{'
+			+'"id":"s1","name":"Watcher","connected_at":"now"},"reason":null}}'
+		)
+	)
+	_assert_equal(
+		"new_spectator_joined",
+		String(new_spectator_null_reason.signal_name),
+		"new spectator null reason"
+	)
+	_assert_equal(
+		SFTypesScript.SpectatorReason.UNKNOWN,
+		new_spectator_null_reason.args[2],
+		"new spectator null reason value"
+	)
 
 	var disconnected := SFEventsScript.decode_text(
 		'{"type":"SpectatorDisconnected","data":{"spectator_id":"s1"}}'
@@ -499,12 +560,26 @@ func _test_upstream_optional_fields_decode() -> void:
 	)
 	_assert_equal(SFTypesScript.SpectatorReason.UNKNOWN, disconnected.args[1], "disconnect reason")
 
+	var disconnected_null_reason := SFEventsScript.decode_text(
+		'{"type":"SpectatorDisconnected","data":{"spectator_id":"s1","reason":null}}'
+	)
+	_assert_equal(
+		"spectator_disconnected",
+		String(disconnected_null_reason.signal_name),
+		"spectator disconnected null reason"
+	)
+	_assert_equal(
+		SFTypesScript.SpectatorReason.UNKNOWN,
+		disconnected_null_reason.args[1],
+		"spectator disconnected null reason value"
+	)
+
 
 func _test_strict_protocol_validation() -> void:
 	var required_unknown_error_code := SFEventsScript.decode_text(
 		(
 			'{"type":"AuthenticationError","data":{"error":"bad app",'
-			+ '"error_code":"NOT_A_REAL_CODE"}}'
+			+'"error_code":"NOT_A_REAL_CODE"}}'
 		)
 	)
 	_assert_equal(
@@ -530,39 +605,98 @@ func _test_strict_protocol_validation() -> void:
 	)
 	_assert_equal(SFErrorCodesScript.Code.NONE, optional_null_error_code.args[1], "null code")
 
+	var spectator_joined_unknown_data := _minimal_spectator_joined_data()
+	spectator_joined_unknown_data["reason"] = "not_a_reason"
+	var spectator_joined_number_data := _minimal_spectator_joined_data()
+	spectator_joined_number_data["reason"] = 3
+	var invalid_spectator_reason_cases := [
+		[
+			{"type": "SpectatorJoined", "data": spectator_joined_unknown_data},
+			"spectator joined unknown reason"
+		],
+		[
+			{"type": "SpectatorJoined", "data": spectator_joined_number_data},
+			"spectator joined numeric reason"
+		],
+		[
+			{"type": "SpectatorLeft", "data": {"reason": "not_a_reason"}},
+			"spectator left unknown reason"
+		],
+		[
+			{"type": "SpectatorLeft", "data": {"reason": 3}},
+			"spectator left numeric reason"
+		],
+		[
+			{
+				"type": "NewSpectatorJoined",
+				"data": {
+					"spectator": {"id": "s1", "name": "Watcher", "connected_at": "now"},
+					"reason": "not_a_reason"
+				}
+			},
+			"new spectator unknown reason"
+		],
+		[
+			{
+				"type": "NewSpectatorJoined",
+				"data": {
+					"spectator": {"id": "s1", "name": "Watcher", "connected_at": "now"},
+					"reason": 3
+				}
+			},
+			"new spectator numeric reason"
+		],
+		[
+			{
+				"type": "SpectatorDisconnected",
+				"data": {"spectator_id": "s1", "reason": "not_a_reason"}
+			},
+			"spectator disconnected unknown reason"
+		],
+		[
+			{"type": "SpectatorDisconnected", "data": {"spectator_id": "s1", "reason": 3}},
+			"spectator disconnected numeric reason"
+		],
+	]
+	for invalid_case: Array in invalid_spectator_reason_cases:
+		var spectator_reason_decoded := SFEventsScript.decode_envelope(invalid_case[0])
+		_assert_equal(
+			"protocol_error", String(spectator_reason_decoded.signal_name), invalid_case[1]
+		)
+
 	var invalid_numeric_cases := [
 		[
 			(
 				'{"type":"RoomJoined","data":{"room_id":"r1","room_code":"ABC123",'
-				+ '"player_id":"p1","game_name":"game","max_players":4.5,'
-				+ '"supports_authority":false,"current_players":[],"is_authority":false,'
-				+ '"lobby_state":"waiting","ready_players":[],"relay_type":"websocket"}}'
+				+'"player_id":"p1","game_name":"game","max_players":4.5,'
+				+'"supports_authority":false,"current_players":[],"is_authority":false,'
+				+'"lobby_state":"waiting","ready_players":[],"relay_type":"websocket"}}'
 			),
 			"float max_players"
 		],
 		[
 			(
 				'{"type":"Authenticated","data":{"app_name":"game","rate_limits":{'
-				+ '"per_minute":-1,"per_hour":0,"per_day":0}}}'
+				+'"per_minute":-1,"per_hour":0,"per_day":0}}}'
 			),
 			"negative rate limit"
 		],
 		[
 			(
 				'{"type":"PlayerJoined","data":{"player":{"id":"p1","name":"Alice",'
-				+ '"is_authority":false,"is_ready":false,"connected_at":"now",'
-				+ '"connection_info":{"type":"direct","host":"127.0.0.1",'
-				+ '"port":65536}}}}'
+				+'"is_authority":false,"is_ready":false,"connected_at":"now",'
+				+'"connection_info":{"type":"direct","host":"127.0.0.1",'
+				+'"port":65536}}}}'
 			),
 			"port above u16"
 		],
 		[
 			(
 				'{"type":"PlayerJoined","data":{"player":{"id":"p1","name":"Alice",'
-				+ '"is_authority":false,"is_ready":false,"connected_at":"now",'
-				+ '"connection_info":{"type":"relay","host":"relay.example.test",'
-				+ '"port":9000,"allocation_id":"alloc","token":"relay-token",'
-				+ '"client_id":1.5}}}}'
+				+'"is_authority":false,"is_ready":false,"connected_at":"now",'
+				+'"connection_info":{"type":"relay","host":"relay.example.test",'
+				+'"port":9000,"allocation_id":"alloc","token":"relay-token",'
+				+'"client_id":1.5}}}}'
 			),
 			"float client id"
 		],
@@ -573,6 +707,26 @@ func _test_strict_protocol_validation() -> void:
 
 
 func _test_error_code_table() -> void:
+	_assert_equal(
+		SFTypesScript.GameDataEncoding.UNKNOWN,
+		SFTypesScript.game_data_encoding_from_string(null),
+		"null game data encoding"
+	)
+	_assert_equal(
+		SFTypesScript.LobbyState.UNKNOWN,
+		SFTypesScript.lobby_state_from_string(null),
+		"null lobby state"
+	)
+	_assert_equal(
+		SFTypesScript.RelayTransport.UNKNOWN,
+		SFTypesScript.relay_transport_from_string(null),
+		"null relay transport"
+	)
+	_assert_equal(
+		SFTypesScript.SpectatorReason.UNKNOWN,
+		SFTypesScript.spectator_reason_from_string(null),
+		"null spectator reason"
+	)
 	_assert_equal(
 		SFErrorCodesScript.Code.INVALID_APP_ID,
 		SFErrorCodesScript.from_string("INVALID_APP_ID"),
@@ -596,6 +750,18 @@ func _test_error_code_table() -> void:
 		SFErrorCodesScript.category(SFErrorCodesScript.Code.RECONNECTION_EXPIRED),
 		"reconnection category"
 	)
+
+
+func _minimal_spectator_joined_data() -> Dictionary:
+	return {
+		"room_id": "r1",
+		"room_code": "ABC123",
+		"spectator_id": "s1",
+		"game_name": "reef-rally",
+		"current_players": [],
+		"current_spectators": [],
+		"lobby_state": "waiting"
+	}
 
 
 func _read_fixture_lines(path: String) -> PackedStringArray:

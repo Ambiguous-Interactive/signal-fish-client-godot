@@ -197,21 +197,11 @@ static func decode_envelope(envelope: Dictionary) -> RefCounted:
 				and typeof(data["room_code"]) != TYPE_STRING
 			):
 				return _protocol_error("SpectatorLeft room_code must be a string", envelope)
-			if (
-				data.has("reason")
-				and data["reason"] != null
-				and typeof(data["reason"]) != TYPE_STRING
-			):
-				return _protocol_error("SpectatorLeft reason must be a string", envelope)
-			if (
-				data.has("reason")
-				and data["reason"] != null
-				and (
-					SFTypesScript.spectator_reason_from_string(data["reason"])
-					== SFTypesScript.SpectatorReason.UNKNOWN
-				)
-			):
-				return _protocol_error("SpectatorLeft reason is unknown", envelope)
+			var spectator_left_reason_error := SFTypesScript.validate_optional_spectator_reason(
+				data, "reason", "SpectatorLeft"
+			)
+			if not spectator_left_reason_error.is_empty():
+				return _protocol_error(spectator_left_reason_error, envelope)
 			var spectator_left_error := SFTypesScript.validate_spectators_array(
 				data.get("current_spectators", [])
 			)
@@ -233,24 +223,14 @@ static func decode_envelope(envelope: Dictionary) -> RefCounted:
 		"NewSpectatorJoined":
 			if not _has_dict(data, "spectator"):
 				return _protocol_error("NewSpectatorJoined requires spectator", envelope)
-			if (
-				data.has("reason")
-				and data["reason"] != null
-				and typeof(data["reason"]) != TYPE_STRING
-			):
-				return _protocol_error("NewSpectatorJoined reason must be a string", envelope)
+			var new_spectator_reason_error := SFTypesScript.validate_optional_spectator_reason(
+				data, "reason", "NewSpectatorJoined"
+			)
+			if not new_spectator_reason_error.is_empty():
+				return _protocol_error(new_spectator_reason_error, envelope)
 			var new_spectator_error := SFTypesScript.validate_spectator_info(data["spectator"])
 			if not new_spectator_error.is_empty():
 				return _protocol_error(new_spectator_error, envelope)
-			if (
-				data.has("reason")
-				and data["reason"] != null
-				and (
-					SFTypesScript.spectator_reason_from_string(data["reason"])
-					== SFTypesScript.SpectatorReason.UNKNOWN
-				)
-			):
-				return _protocol_error("NewSpectatorJoined reason is unknown", envelope)
 			var new_current_spectators_error := SFTypesScript.validate_spectators_array(
 				data.get("current_spectators", [])
 			)
@@ -272,21 +252,11 @@ static func decode_envelope(envelope: Dictionary) -> RefCounted:
 		"SpectatorDisconnected":
 			if not _has_string(data, "spectator_id"):
 				return _protocol_error("SpectatorDisconnected requires spectator_id", envelope)
-			if (
-				data.has("reason")
-				and data["reason"] != null
-				and typeof(data["reason"]) != TYPE_STRING
-			):
-				return _protocol_error("SpectatorDisconnected reason must be a string", envelope)
-			if (
-				data.has("reason")
-				and data["reason"] != null
-				and (
-					SFTypesScript.spectator_reason_from_string(data["reason"])
-					== SFTypesScript.SpectatorReason.UNKNOWN
-				)
-			):
-				return _protocol_error("SpectatorDisconnected reason is unknown", envelope)
+			var disconnected_reason_error := SFTypesScript.validate_optional_spectator_reason(
+				data, "reason", "SpectatorDisconnected"
+			)
+			if not disconnected_reason_error.is_empty():
+				return _protocol_error(disconnected_reason_error, envelope)
 			var disconnected_spectators_error := SFTypesScript.validate_spectators_array(
 				data.get("current_spectators", [])
 			)

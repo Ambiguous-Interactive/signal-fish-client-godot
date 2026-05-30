@@ -362,6 +362,8 @@ class RoomJoinedInfo:
 		return result
 
 	func _coerce_lobby_state(value: Variant) -> int:
+		if value == null:
+			return LobbyState.UNKNOWN
 		match String(value):
 			"waiting":
 				return LobbyState.WAITING
@@ -418,6 +420,8 @@ class SpectatorJoinedInfo:
 		return result
 
 	func _coerce_lobby_state(value: Variant) -> int:
+		if value == null:
+			return LobbyState.UNKNOWN
 		match String(value):
 			"waiting":
 				return LobbyState.WAITING
@@ -429,19 +433,9 @@ class SpectatorJoinedInfo:
 				return LobbyState.UNKNOWN
 
 	func _coerce_spectator_reason(value: Variant) -> int:
-		match String(value):
-			"joined":
-				return SpectatorReason.JOINED
-			"voluntary_leave":
-				return SpectatorReason.VOLUNTARY_LEAVE
-			"disconnected":
-				return SpectatorReason.DISCONNECTED
-			"removed":
-				return SpectatorReason.REMOVED
-			"room_closed":
-				return SpectatorReason.ROOM_CLOSED
-			_:
-				return SpectatorReason.UNKNOWN
+		if value == null:
+			return SpectatorReason.UNKNOWN
+		return int(SPECTATOR_REASON_FROM_STRING.get(String(value), SpectatorReason.UNKNOWN))
 
 
 class DecodedEvent:
@@ -464,6 +458,8 @@ class DecodedEvent:
 
 
 static func game_data_encoding_from_string(value: Variant) -> int:
+	if value == null:
+		return GameDataEncoding.UNKNOWN
 	return int(GAME_DATA_ENCODING_FROM_STRING.get(String(value), GameDataEncoding.UNKNOWN))
 
 
@@ -472,6 +468,8 @@ static func game_data_encoding_to_string(value: int) -> String:
 
 
 static func lobby_state_from_string(value: Variant) -> int:
+	if value == null:
+		return LobbyState.UNKNOWN
 	return int(LOBBY_STATE_FROM_STRING.get(String(value), LobbyState.UNKNOWN))
 
 
@@ -480,6 +478,8 @@ static func lobby_state_to_string(value: int) -> String:
 
 
 static func relay_transport_from_string(value: Variant) -> int:
+	if value == null:
+		return RelayTransport.UNKNOWN
 	return int(RELAY_TRANSPORT_FROM_STRING.get(String(value), RelayTransport.UNKNOWN))
 
 
@@ -488,6 +488,8 @@ static func relay_transport_to_string(value: int) -> String:
 
 
 static func spectator_reason_from_string(value: Variant) -> int:
+	if value == null:
+		return SpectatorReason.UNKNOWN
 	return int(SPECTATOR_REASON_FROM_STRING.get(String(value), SpectatorReason.UNKNOWN))
 
 
@@ -497,6 +499,18 @@ static func spectator_reason_to_string(value: int) -> String:
 
 static func error_code_from_variant(value: Variant) -> int:
 	return SFErrorCodesScript.from_string(value)
+
+
+static func validate_optional_spectator_reason(
+	data: Dictionary, key: String, context: String
+) -> String:
+	if not data.has(key) or data[key] == null:
+		return ""
+	if typeof(data[key]) != TYPE_STRING:
+		return "%s %s must be a string" % [context, key]
+	if spectator_reason_from_string(data[key]) == SpectatorReason.UNKNOWN:
+		return "%s %s is unknown" % [context, key]
+	return ""
 
 
 static func validate_rate_limit_info(data: Variant) -> String:
@@ -644,8 +658,9 @@ static func validate_spectator_joined_info(data: Variant) -> String:
 		return "SpectatorJoinedInfo current_spectators: %s" % spectators_error
 	if not _has_known_lobby_state(dict, "lobby_state"):
 		return "SpectatorJoinedInfo lobby_state is unknown"
-	if dict.has("reason") and not _has_known_spectator_reason(dict, "reason"):
-		return "SpectatorJoinedInfo reason is unknown"
+	var reason_error := validate_optional_spectator_reason(dict, "reason", "SpectatorJoinedInfo")
+	if not reason_error.is_empty():
+		return reason_error
 	return ""
 
 
@@ -859,13 +874,6 @@ static func _has_string_array(data: Dictionary, key: String) -> bool:
 
 static func _has_known_lobby_state(data: Dictionary, key: String) -> bool:
 	return _has_string(data, key) and lobby_state_from_string(data[key]) != LobbyState.UNKNOWN
-
-
-static func _has_known_spectator_reason(data: Dictionary, key: String) -> bool:
-	return (
-		_has_string(data, key)
-		and spectator_reason_from_string(data[key]) != SpectatorReason.UNKNOWN
-	)
 
 
 static func _is_integer_value_at_least(value: Variant, min_value: int) -> bool:

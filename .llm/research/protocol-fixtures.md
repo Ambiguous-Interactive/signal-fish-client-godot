@@ -21,7 +21,7 @@ These commits were read from the public `main` branch on 2026-05-29.
 ## Source Paths
 
 | Concern | Repo | Path |
-|---|---|---|
+| --- | --- | --- |
 | Client and server envelopes | server | `src/protocol/messages.rs`, `docs/protocol.md` |
 | Core value types and enum wire names | server | `src/protocol/types.rs` |
 | Lobby state names and room transitions | server | `src/protocol/room_state.rs`, `docs/concepts/rooms-and-lobbies.md` |
@@ -60,6 +60,10 @@ blank lines and lines beginning with `#`.
 - Enums use upstream serde rename rules: error codes are
   `SCREAMING_SNAKE_CASE`, lobby/game-data/spectator reasons are `snake_case`,
   and relay transport values are lowercase.
+- Spectator state-change `reason` fields are upstream `Option` values. The
+  Godot decoder accepts omitted or JSON `null` reasons as
+  `SpectatorReason.UNKNOWN` and rejects non-null non-string or unknown string
+  values at the event boundary.
 - `SignalFishConfig::new()` in the Rust client sets `sdk_version` to the crate
   version, leaves `platform` unset, and leaves `game_data_format` unset.
 - `JoinRoomParams::new(game_name, player_name)` only sets the two required
