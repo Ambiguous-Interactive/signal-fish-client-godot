@@ -1,6 +1,8 @@
 # Godot 4+ specific ignores
 .godot/
 .nomedia
+.venv-ci/
+__pycache__/
 
 # Godot-specific ignores
 .import/

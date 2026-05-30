@@ -7,6 +7,7 @@ enum RelayTransport { UNKNOWN = -1, TCP, UDP, WEBSOCKET, AUTO }
 enum SpectatorReason { UNKNOWN = -1, JOINED, VOLUNTARY_LEAVE, DISCONNECTED, REMOVED, ROOM_CLOSED }
 
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
+const TypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 
 const U8_MAX := 255
 const U16_MAX := 65535
@@ -212,7 +213,9 @@ class ConnectionInfo:
 		if type == "relay" and (not input.has("transport") or input["transport"] == null):
 			transport = RelayTransport.AUTO
 		else:
-			transport = SFTypes.relay_transport_from_string(input.get("transport", ""))
+			transport = TypeUtils.enum_value(
+				RELAY_TRANSPORT_FROM_STRING, input.get("transport", ""), RelayTransport.UNKNOWN
+			)
 		allocation_id = _string_or_empty(input.get("allocation_id"))
 		connection_data = _string_or_empty(input.get("connection_data"))
 		key = _string_or_empty(input.get("key"))
@@ -278,10 +281,13 @@ class ConnectionInfo:
 			if result.has(key) and result[key] == null:
 				result.erase(key)
 		if result.has("transport"):
-			if SFTypes.relay_transport_from_string(result["transport"]) == RelayTransport.UNKNOWN:
+			var transport_value := TypeUtils.enum_value(
+				RELAY_TRANSPORT_FROM_STRING, result["transport"], RelayTransport.UNKNOWN
+			)
+			if transport_value == RelayTransport.UNKNOWN:
 				result.erase("transport")
 		for key: String in ["port", "client_id"]:
-			if result.has(key) and SFTypes._is_integral_number(result[key]):
+			if result.has(key) and TypeUtils.is_integral_number(result[key]):
 				result[key] = int(result[key])
 
 	func _string_or_empty(value: Variant) -> String:
@@ -392,9 +398,9 @@ class RoomJoinedInfo:
 
 	func to_dict() -> Dictionary:
 		var result := raw.duplicate(true)
-		result["current_players"] = SFTypes.objects_to_dicts(current_players)
+		result["current_players"] = TypeUtils.objects_to_dicts(current_players)
 		if current_spectators.size() > 0 or raw.has("current_spectators"):
-			result["current_spectators"] = SFTypes.objects_to_dicts(current_spectators)
+			result["current_spectators"] = TypeUtils.objects_to_dicts(current_spectators)
 		return result
 
 	func _coerce_players(values: Variant) -> Array:
@@ -462,8 +468,8 @@ class SpectatorJoinedInfo:
 
 	func to_dict() -> Dictionary:
 		var result := raw.duplicate(true)
-		result["current_players"] = SFTypes.objects_to_dicts(current_players)
-		result["current_spectators"] = SFTypes.objects_to_dicts(current_spectators)
+		result["current_players"] = TypeUtils.objects_to_dicts(current_players)
+		result["current_spectators"] = TypeUtils.objects_to_dicts(current_spectators)
 		return result
 
 	func _coerce_players(values: Variant) -> Array:
@@ -927,11 +933,7 @@ static func peer_connections_from_array(values: Variant) -> Array:
 
 
 static func objects_to_dicts(values: Array) -> Array:
-	var result: Array = []
-	for value: Variant in values:
-		if typeof(value) == TYPE_OBJECT and value.has_method("to_dict"):
-			result.append(value.to_dict())
-	return result
+	return TypeUtils.objects_to_dicts(values)
 
 
 static func game_data_encodings_from_array(values: Variant) -> Array:

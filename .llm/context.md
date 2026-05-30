@@ -107,8 +107,15 @@ Definition of done for the first usable client:
   It invokes `run-llm-hooks.ps1 -Mode AgentFast -SkipStagedCheck -NoAutoFix`
   in the same PowerShell process; pass `-Full` for exhaustive behavioral tests.
 - `scripts/check-gdscript-private-helpers.py`: gdtoolkit-parser static guard
-  for unreachable private GDScript helper chains; runtime CI runs it with
-  `--self-test` before protocol fixtures.
+  for unreachable private GDScript helper chains and cold-cache-fragile
+  self-`class_name` references; runtime CI runs it with `--self-test` before
+  protocol fixtures.
+- `scripts/run-runtime-checks.sh`: shared runtime validation entry point used
+  by CI and local checks. It sets a deterministic writable `HOME` for
+  tool caches, activates `.venv-ci` when present, and runs Godot from a
+  temporary project copy that excludes `.godot` so local runs exercise the same
+  cold-cache path as CI. Subcommands are `all`, `private-helpers`, `format`,
+  `lint`, and `godot`.
 - `scripts/preflight.ps1`: self-healing bootstrap. Parse-checks itself
   first, then every tracked `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers
   corrupted sources via the index/staged copy first, falling back to
@@ -177,10 +184,7 @@ pwsh -NoProfile -File scripts/generate-llm-index.ps1 -Check
 Runtime protocol checks are separate from the LLM harness:
 
 ```bash
-python3 scripts/check-gdscript-private-helpers.py --self-test addons/signal_fish tests
-HOME=/tmp PYTHONPATH=/home/vscode/.local/lib/python3.12/site-packages gdformat --check addons/signal_fish/protocol tests/protocol
-HOME=/tmp PYTHONPATH=/home/vscode/.local/lib/python3.12/site-packages gdlint addons/signal_fish/protocol tests/protocol
-godot --headless --path . --script tests/protocol/run_protocol_tests.gd
+bash scripts/run-runtime-checks.sh all
 ```
 
 ## Generated LLM Index

@@ -110,9 +110,10 @@ func _test_server_decoders_match_fixtures() -> void:
 	for index: int in lines.size():
 		var decoded := SFEventsScript.decode_text(lines[index])
 		decoded_events.append(decoded)
-		_assert_decoded_signal(
+		if not _assert_decoded_signal(
 			expected_signals[index], decoded, "%s line %d" % [SERVER_FIXTURE, index + 1]
-		)
+		):
+			continue
 		_assert_equal(
 			expected_arg_counts[index],
 			decoded.args.size(),
@@ -894,6 +895,9 @@ func _assert_fixture_count(expected: int, lines: PackedStringArray, path: String
 
 
 func _assert_decoded_signal(expected: String, decoded: RefCounted, label: String) -> bool:
+	if decoded == null:
+		_failures.append("%s: expected signal %s, got <null decoded event>" % [label, expected])
+		return false
 	if String(decoded.signal_name) == expected:
 		return true
 	_failures.append(
@@ -962,7 +966,12 @@ func _assert_string_contains(actual: String, expected_substring: String, label: 
 
 
 func _decoded_summary(decoded: RefCounted) -> String:
+	if decoded == null:
+		return "<null decoded event>"
+	var signal_text := "<missing>"
+	if decoded.get("signal_name") != null:
+		signal_text = String(decoded.signal_name)
 	var args_text := "<missing>"
 	if decoded.get("args") != null:
 		args_text = var_to_str(decoded.args)
-	return "%s args=%s" % [String(decoded.signal_name), args_text]
+	return "%s args=%s" % [signal_text, args_text]

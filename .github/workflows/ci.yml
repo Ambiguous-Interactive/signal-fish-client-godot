@@ -49,22 +49,16 @@ jobs:
           python -m pip install gdtoolkit==4.5.0
 
       - name: Check private helper reachability
-        run: |
-          . .venv-ci/bin/activate
-          python scripts/check-gdscript-private-helpers.py --self-test addons/signal_fish tests
+        run: bash scripts/run-runtime-checks.sh private-helpers
 
       - name: Check GDScript formatting
-        run: |
-          . .venv-ci/bin/activate
-          gdformat --diff --check addons/signal_fish/protocol tests/protocol
+        run: bash scripts/run-runtime-checks.sh format
 
       - name: Lint GDScript
-        run: |
-          . .venv-ci/bin/activate
-          gdlint addons/signal_fish/protocol tests/protocol
+        run: bash scripts/run-runtime-checks.sh lint
 
       - name: Install Godot
         run: sudo bash .devcontainer/install-godot.sh "${GODOT_VERSION}"
 
       - name: Run protocol fixture tests
-        run: godot --headless --path . --script tests/protocol/run_protocol_tests.gd
+        run: bash scripts/run-runtime-checks.sh godot

@@ -29,11 +29,12 @@ static func invalid_message_error(envelope: Dictionary) -> String:
 	return String(envelope.get(INVALID_MESSAGE_ERROR_KEY, ""))
 
 
-static func encode(envelope: Dictionary) -> String:
+static func encode(envelope: Dictionary, report_error: bool = true) -> String:
 	if is_invalid_message(envelope):
-		push_error(
-			"cannot encode invalid Signal Fish message: %s" % invalid_message_error(envelope)
-		)
+		if report_error:
+			push_error(
+				"cannot encode invalid Signal Fish message: %s" % invalid_message_error(envelope)
+			)
 		return ""
 	return JSON.stringify(envelope, "", false)
 

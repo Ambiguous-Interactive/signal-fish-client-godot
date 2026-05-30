@@ -238,7 +238,7 @@ func _test_client_message_validation() -> void:
 	for test_case: Dictionary in invalid_messages:
 		_assert_invalid_message(test_case["envelope"], test_case["error"], test_case["label"])
 	_assert_equal(
-		"", SFEnvelopeScript.encode(invalid_messages[0]["envelope"]), "invalid encode guard"
+		"", SFEnvelopeScript.encode(invalid_messages[0]["envelope"], false), "invalid encode guard"
 	)
 
 
@@ -765,6 +765,9 @@ func _assert_protocol_error_envelope(envelope: Dictionary, label: String) -> Ref
 
 
 func _assert_protocol_error(decoded: RefCounted, label: String) -> bool:
+	if decoded == null:
+		_failures.append("%s: expected protocol_error, got <null decoded event>" % label)
+		return false
 	if not _assert_equal("protocol_error", String(decoded.signal_name), label):
 		return false
 	if not _assert_equal(1, decoded.args.size(), "%s protocol_error args" % label):

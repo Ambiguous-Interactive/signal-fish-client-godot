@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Fail on unreachable private GDScript helpers.
+"""Fail on GDScript helpers and references that are fragile in CI.
 
 The check uses gdtoolkit's GDScript parser, then treats public methods,
 Godot lifecycle callbacks, signal-style `_on_*` handlers, and constructors as
 reachability roots. Private methods that cannot be reached from those roots in
 their own script or nested class scope are reported as likely dead scaffolding.
+
+It also rejects references to a script's own `class_name` through `ClassName.`
+because those depend on Godot's ignored global class cache and can compile in a
+warm local checkout while failing from a fresh CI clone.
 
 Intentional reflection-only helpers can be suppressed by placing this comment
 on the helper definition line or the immediately preceding line:
@@ -198,10 +202,16 @@ class Problem:
     line: int
     scope: str
     name: str
+    kind: str = "private-helper"
 
     def format(self) -> str:
         if self.scope == "<parse>":
             return f"{self.path}:{self.line}: {self.name}"
+        if self.kind == "self-class-reference":
+            return (
+                f"{self.path}:{self.line}: self class reference {self.name} depends on "
+                "Godot's global class cache; use local helpers/constants or a preload alias"
+            )
         return f"{self.path}:{self.line}: private helper {self.scope}.{self.name} is unreachable"
 
 
@@ -235,10 +245,13 @@ def main(argv: list[str]) -> int:
         print(problem.format(), file=sys.stderr)
     if problems:
         parse_count = sum(1 for problem in problems if problem.scope == "<parse>")
-        helper_count = len(problems) - parse_count
+        self_class_count = sum(1 for problem in problems if problem.kind == "self-class-reference")
+        helper_count = len(problems) - parse_count - self_class_count
         summaries: list[str] = []
         if parse_count:
             summaries.append(f"{parse_count} GDScript parse failure(s)")
+        if self_class_count:
+            summaries.append(f"{self_class_count} cold-cache GDScript self-reference(s)")
         if helper_count:
             summaries.append(f"{helper_count} unreachable private GDScript helper(s)")
         print(f"error: found {' and '.join(summaries)}", file=sys.stderr)
@@ -300,7 +313,9 @@ def analyze_source(source: str, path: str) -> list[Problem]:
 
     allowlisted = collect_allowlisted_lines(source)
     root_scope = build_scope(path, tree)
-    return analyze_scope(root_scope, path, allowlisted)
+    problems = self_class_reference_problems(tree, path)
+    problems.extend(analyze_scope(root_scope, path, allowlisted))
+    return problems
 
 
 def parse_error_line(exc: Exception) -> int:
@@ -315,6 +330,44 @@ def collect_allowlisted_lines(source: str) -> dict[int, set[str]]:
         if match:
             names_by_line.setdefault(line_number, set()).add(match.group(1))
     return names_by_line
+
+
+def self_class_reference_problems(tree: Tree, path: str) -> list[Problem]:
+    class_name = script_class_name(tree)
+    if not class_name:
+        return []
+    problems: list[Problem] = []
+    for node in walk_tree_nodes(tree):
+        if node.data != "getattr":
+            continue
+        names = [str(child) for child in node.children if is_name_token(child)]
+        if len(names) < 2 or names[0] != class_name:
+            continue
+        problems.append(
+            Problem(
+                path=path,
+                line=getattr(node.meta, "line", 1),
+                scope="<cold-cache>",
+                name=f"{class_name}.{names[1]}",
+                kind="self-class-reference",
+            )
+        )
+    return problems
+
+
+def script_class_name(tree: Tree) -> str:
+    for child in tree_children(tree):
+        if child.data == "classname_stmt":
+            return first_token_value(child)
+    return ""
+
+
+def walk_tree_nodes(node: Tree | Token) -> Iterable[Tree]:
+    if isinstance(node, Token):
+        return
+    yield node
+    for child in tree_children(node):
+        yield from walk_tree_nodes(child)
 
 
 def build_scope(name: str, node: Tree) -> Scope:
@@ -900,6 +953,25 @@ def run_self_tests() -> None:
     if parse_problems[0].line != 3:
         raise SystemExit(
             "self-test failed: parse error line should be 3, got %d" % parse_problems[0].line
+        )
+
+    self_class_problems = analyze_source(
+        (
+            "class_name LocalScript\n"
+            "const OtherScript = preload(\"res://other.gd\")\n"
+            "func public():\n"
+            "\tLocalScript.make_value()\n"
+            "\tOtherScript.make_value()\n"
+        ),
+        "<self-test self class reference>",
+    )
+    self_class_refs = [
+        problem for problem in self_class_problems if problem.kind == "self-class-reference"
+    ]
+    if len(self_class_refs) != 1 or self_class_refs[0].name != "LocalScript.make_value":
+        raise SystemExit(
+            "self-test failed: self class references should be reported once, got %s"
+            % [problem.name for problem in self_class_refs]
         )
 
     with tempfile.TemporaryDirectory() as temp_dir:
