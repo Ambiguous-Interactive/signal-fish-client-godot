@@ -12,6 +12,19 @@ const U8_MAX := 255
 const U16_MAX := 65535
 const U32_MAX := 4294967295
 
+const CONNECTION_INFO_OUTBOUND_NULL_FIELDS := [
+	"host",
+	"port",
+	"transport",
+	"allocation_id",
+	"connection_data",
+	"key",
+	"token",
+	"client_id",
+	"sdp",
+	"ice_candidates",
+]
+
 const GAME_DATA_ENCODING_TO_STRING: Dictionary = {
 	GameDataEncoding.JSON: "json",
 	GameDataEncoding.MESSAGE_PACK: "message_pack",
@@ -560,7 +573,7 @@ static func validate_player_name_rules(data: Variant) -> String:
 	]:
 		if not _has_bool(dict, key):
 			return "player_name_rules requires bool %s" % key
-	if dict.has("allowed_symbols") and dict["allowed_symbols"] != null:
+	if dict.has("allowed_symbols"):
 		if not _is_string_array_value(dict["allowed_symbols"]):
 			return "player_name_rules allowed_symbols must be a string array"
 	if (
@@ -582,7 +595,7 @@ static func validate_player_info(data: Variant) -> String:
 	for key: String in ["is_authority", "is_ready"]:
 		if not _has_bool(dict, key):
 			return "PlayerInfo requires bool %s" % key
-	if dict.has("connection_info"):
+	if dict.has("connection_info") and dict["connection_info"] != null:
 		var error := validate_connection_info(dict["connection_info"])
 		if not error.is_empty():
 			return "PlayerInfo connection_info: %s" % error
@@ -706,20 +719,21 @@ static func validate_connection_info(data: Variant, allow_unknown_strings: bool 
 		return "connection_info requires string type"
 	match String(dict["type"]):
 		"direct":
-			if not _has_string(dict, "host"):
-				return "direct connection_info requires host"
-			if not _has_integer_in_range(dict, "port", 0, U16_MAX):
-				return "direct connection_info requires u16 port"
+			var direct_error := _require_connection_info_fields(dict, "direct", ["host", "port"])
+			if not direct_error.is_empty():
+				return direct_error
 		"unity_relay":
-			for key: String in ["allocation_id", "connection_data", "key"]:
-				if not _has_string(dict, key):
-					return "unity_relay connection_info requires %s" % key
+			var unity_relay_error := _require_connection_info_fields(
+				dict, "unity_relay", ["allocation_id", "connection_data", "key"]
+			)
+			if not unity_relay_error.is_empty():
+				return unity_relay_error
 		"relay":
-			for key: String in ["host", "allocation_id", "token"]:
-				if not _has_string(dict, key):
-					return "relay connection_info requires %s" % key
-			if not _has_integer_in_range(dict, "port", 0, U16_MAX):
-				return "relay connection_info requires u16 port"
+			var relay_error := _require_connection_info_fields(
+				dict, "relay", ["host", "port", "allocation_id", "token"]
+			)
+			if not relay_error.is_empty():
+				return relay_error
 			if (
 				dict.has("transport")
 				and dict["transport"] != null
@@ -741,8 +755,9 @@ static func validate_connection_info(data: Variant, allow_unknown_strings: bool 
 		"webrtc":
 			if dict.has("sdp") and dict["sdp"] != null and typeof(dict["sdp"]) != TYPE_STRING:
 				return "webrtc connection_info sdp must be a string"
-			if not _has_string_array(dict, "ice_candidates"):
-				return "webrtc connection_info requires ice_candidates"
+			var webrtc_error := _require_connection_info_fields(dict, "webrtc", ["ice_candidates"])
+			if not webrtc_error.is_empty():
+				return webrtc_error
 		"custom":
 			if not dict.has("data"):
 				return "custom connection_info requires data"
@@ -757,18 +772,7 @@ static func validate_outbound_connection_info(data: Variant) -> String:
 	if not error.is_empty():
 		return error
 	var dict: Dictionary = data
-	for key: String in [
-		"host",
-		"port",
-		"transport",
-		"allocation_id",
-		"connection_data",
-		"key",
-		"token",
-		"client_id",
-		"sdp",
-		"ice_candidates"
-	]:
+	for key: String in CONNECTION_INFO_OUTBOUND_NULL_FIELDS:
 		if dict.has(key) and dict[key] == null:
 			return "connection_info %s must not be null" % key
 	for key: String in ["port", "client_id"]:
@@ -813,6 +817,15 @@ static func _validate_common_connection_info_fields(
 		return "connection_info sdp must be a string"
 	if dict.has("ice_candidates") and not _is_string_array_value(dict["ice_candidates"]):
 		return "connection_info ice_candidates must be a string array"
+	return ""
+
+
+static func _require_connection_info_fields(
+	dict: Dictionary, type_name: String, required_keys: Array
+) -> String:
+	for key: String in required_keys:
+		if not dict.has(key) or dict[key] == null:
+			return "%s connection_info requires %s" % [type_name, key]
 	return ""
 
 

@@ -82,6 +82,12 @@ blank lines and lines beginning with `#`.
 - `GameData.data` is a JSON value in upstream structs; JSON `null` is a valid
   game payload and should be surfaced as a `Variant` null instead of treated as
   a malformed message.
+- `ConnectionInfo::Custom.data` is a JSON value in upstream structs. A missing
+  `data` field is malformed, but a present JSON `null` is a valid custom
+  payload and should be preserved as a `Variant` null.
+- `PlayerNameRules.allowed_symbols` may be omitted and defaults to an empty
+  list locally, but a present value must be an array; JSON `null` is not used
+  as the default sentinel.
 - The fixture `GameDataBinary` line is a serde-compatible text representation
   for codec coverage. Transport tests must separately verify binary frames.
 - Relay `ConnectionInfo.transport` defaults to `auto` upstream when omitted or

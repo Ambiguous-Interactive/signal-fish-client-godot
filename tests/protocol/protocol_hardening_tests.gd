@@ -16,6 +16,7 @@ static func run() -> Array:
 
 func run_all() -> void:
 	_test_client_message_validation()
+	_test_inbound_strict_null_validation()
 	_test_binary_codec_hardening()
 	_test_forward_compatible_inbound_strings()
 	_test_reconnected_missed_events_nonfatal()
@@ -70,6 +71,10 @@ func _test_client_message_validation() -> void:
 			"envelope":
 			SFMessagesScript.provide_connection_info({"type": "custom", "data": {"x": 1}})
 		},
+		{
+			"label": "provide custom null payload",
+			"envelope": SFMessagesScript.provide_connection_info({"type": "custom", "data": null})
+		},
 	]
 	for test_case: Dictionary in valid_messages:
 		_assert_valid_message(test_case["envelope"], test_case["label"])
@@ -108,6 +113,14 @@ func _test_client_message_validation() -> void:
 		{
 			"label": "provide direct missing host",
 			"envelope": SFMessagesScript.provide_connection_info({"type": "direct", "port": 7777}),
+			"error": "host"
+		},
+		{
+			"label": "provide direct null host",
+			"envelope":
+			SFMessagesScript.provide_connection_info(
+				{"type": "direct", "host": null, "port": 7777}
+			),
 			"error": "host"
 		},
 		{
@@ -157,6 +170,20 @@ func _test_client_message_validation() -> void:
 			"error": "transport"
 		},
 		{
+			"label": "provide relay null required field",
+			"envelope":
+			SFMessagesScript.provide_connection_info(
+				{
+					"type": "relay",
+					"host": "relay.example.test",
+					"port": 9000,
+					"allocation_id": null,
+					"token": "t"
+				}
+			),
+			"error": "allocation_id"
+		},
+		{
 			"label": "provide relay float client id",
 			"envelope":
 			SFMessagesScript.provide_connection_info(
@@ -183,6 +210,14 @@ func _test_client_message_validation() -> void:
 			"error": "ice_candidates"
 		},
 		{
+			"label": "provide webrtc null ice",
+			"envelope":
+			SFMessagesScript.provide_connection_info(
+				{"type": "webrtc", "sdp": "offer", "ice_candidates": null}
+			),
+			"error": "ice_candidates"
+		},
+		{
 			"label": "provide custom missing data",
 			"envelope": SFMessagesScript.provide_connection_info({"type": "custom"}),
 			"error": "data"
@@ -193,6 +228,61 @@ func _test_client_message_validation() -> void:
 	_assert_equal(
 		"", SFEnvelopeScript.encode(invalid_messages[0]["envelope"]), "invalid encode guard"
 	)
+
+
+func _test_inbound_strict_null_validation() -> void:
+	var custom_null_player := _minimal_player_data()
+	custom_null_player["connection_info"] = {"type": "custom", "data": null}
+	var invalid_envelopes := [
+		{
+			"label": "ProtocolInfo null allowed symbols",
+			"envelope":
+			{
+				"type": "ProtocolInfo",
+				"data":
+				{
+					"player_name_rules":
+					{
+						"max_length": 32,
+						"min_length": 1,
+						"allow_unicode_alphanumeric": true,
+						"allow_spaces": true,
+						"allow_leading_trailing_whitespace": false,
+						"allowed_symbols": null
+					}
+				}
+			}
+		},
+	]
+	for test_case: Dictionary in invalid_envelopes:
+		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
+
+	var pong_null_data := SFEventsScript.decode_envelope({"type": "Pong", "data": null})
+	_assert_equal("pong", String(pong_null_data.signal_name), "pong null data")
+
+	var player_custom_null := SFEventsScript.decode_envelope(
+		{"type": "PlayerJoined", "data": {"player": custom_null_player}}
+	)
+	_assert_equal("player_joined", String(player_custom_null.signal_name), "custom null player")
+	_assert_equal(null, player_custom_null.args[0].connection_info.data, "custom null player data")
+
+	var peer_custom_null := SFEventsScript.decode_envelope(
+		_game_starting_envelope(
+			[_peer_connection({"connection_info": {"type": "custom", "data": null}})]
+		)
+	)
+	_assert_equal("game_starting", String(peer_custom_null.signal_name), "custom null peer")
+	_assert_equal(null, peer_custom_null.args[0][0].connection_info.data, "custom null peer data")
+
+	var null_connection_player := _minimal_player_data()
+	null_connection_player["connection_info"] = null
+	var player_null_connection := SFEventsScript.decode_envelope(
+		{"type": "PlayerJoined", "data": {"player": null_connection_player}}
+	)
+	_assert_equal(
+		"player_joined", String(player_null_connection.signal_name), "player null connection"
+	)
+	_assert_equal(null, player_null_connection.args[0].connection_info, "null player connection")
 
 
 func _test_binary_codec_hardening() -> void:
