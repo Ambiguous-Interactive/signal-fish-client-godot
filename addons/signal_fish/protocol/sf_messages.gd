@@ -147,7 +147,7 @@ static func _add_optional_game_data_encoding(
 		return "%s must be a string or enum value" % key
 	var string_value := String(value)
 	if string_value.is_empty():
-		return ""
+		return "%s must not be empty" % key
 	if (
 		SFTypesScript.game_data_encoding_from_string(string_value)
 		== SFTypesScript.GameDataEncoding.UNKNOWN
@@ -170,7 +170,7 @@ static func _add_optional_relay_transport(data: Dictionary, key: String, value: 
 		return "%s must be a string or enum value" % key
 	var string_value := String(value)
 	if string_value.is_empty():
-		return ""
+		return "%s must not be empty" % key
 	if (
 		SFTypesScript.relay_transport_from_string(string_value)
 		== SFTypesScript.RelayTransport.UNKNOWN

@@ -16,9 +16,11 @@ static func run() -> Array:
 
 func run_all() -> void:
 	_test_client_message_validation()
+	_test_connection_info_to_dict_resend_canonicalization()
 	_test_inbound_strict_null_validation()
 	_test_binary_codec_hardening()
 	_test_forward_compatible_inbound_strings()
+	_test_non_empty_wire_strings()
 	_test_reconnected_missed_events_nonfatal()
 
 
@@ -106,8 +108,18 @@ func _test_client_message_validation() -> void:
 			"error": "relay_transport"
 		},
 		{
+			"label": "join_room empty relay",
+			"envelope": SFMessagesScript.join_room("reef-rally", "Alice", null, null, null, ""),
+			"error": "relay_transport"
+		},
+		{
 			"label": "authenticate format typo",
 			"envelope": SFMessagesScript.authenticate("mb_app_fixture", null, null, "message-pack"),
+			"error": "game_data_format"
+		},
+		{
+			"label": "authenticate empty format",
+			"envelope": SFMessagesScript.authenticate("mb_app_fixture", null, null, ""),
 			"error": "game_data_format"
 		},
 		{
@@ -227,6 +239,110 @@ func _test_client_message_validation() -> void:
 		_assert_invalid_message(test_case["envelope"], test_case["error"], test_case["label"])
 	_assert_equal(
 		"", SFEnvelopeScript.encode(invalid_messages[0]["envelope"]), "invalid encode guard"
+	)
+
+
+func _test_connection_info_to_dict_resend_canonicalization() -> void:
+	var direct_info := SFTypesScript.ConnectionInfo.new(
+		{"type": "direct", "host": "127.0.0.1", "port": 7777.0}
+	)
+	var direct_dict := direct_info.to_dict()
+	_assert_equal(TYPE_INT, typeof(direct_dict["port"]), "direct to_dict port type")
+	_assert_valid_message(
+		SFMessagesScript.provide_connection_info(direct_dict), "resend direct to_dict"
+	)
+
+	var direct_extra_fields_info := SFTypesScript.ConnectionInfo.new(
+		{
+			"type": "direct",
+			"host": "127.0.0.1",
+			"port": 7777.0,
+			"token": "wrong-variant",
+			"transport": "tcp"
+		}
+	)
+	var direct_extra_fields_dict := direct_extra_fields_info.to_dict()
+	_assert(not direct_extra_fields_dict.has("transport"), "direct transport metadata omitted")
+	_assert(not direct_extra_fields_dict.has("token"), "direct cross-variant token omitted")
+	_assert_valid_message(
+		SFMessagesScript.provide_connection_info(direct_extra_fields_dict),
+		"resend direct extra fields to_dict"
+	)
+
+	var relay_raw := _relay_connection_info({"port": 9000.0, "transport": null, "client_id": null})
+	var relay_info := SFTypesScript.ConnectionInfo.new(relay_raw)
+	var relay_dict := relay_info.to_dict()
+	_assert_equal(-1, relay_info.client_id, "relay null client_id stays absent")
+	_assert_equal(TYPE_INT, typeof(relay_dict["port"]), "relay to_dict port type")
+	_assert_equal("auto", relay_dict["transport"], "relay null transport to auto")
+	_assert(not relay_dict.has("client_id"), "relay null client_id omitted")
+	_assert_valid_message(
+		SFMessagesScript.provide_connection_info(relay_dict), "resend relay to_dict"
+	)
+
+	var future_transport_info := SFTypesScript.ConnectionInfo.new(
+		_relay_connection_info({"transport": "future_transport"})
+	)
+	var future_transport_dict := future_transport_info.to_dict()
+	_assert(not future_transport_dict.has("transport"), "future relay transport omitted")
+	_assert_valid_message(
+		SFMessagesScript.provide_connection_info(future_transport_dict),
+		"resend future relay transport to_dict"
+	)
+
+	var webrtc_info := SFTypesScript.ConnectionInfo.new(
+		{"type": "webrtc", "sdp": null, "ice_candidates": ["candidate:1"]}
+	)
+	var webrtc_dict := webrtc_info.to_dict()
+	_assert(not webrtc_dict.has("sdp"), "webrtc null sdp omitted")
+	_assert_valid_message(
+		SFMessagesScript.provide_connection_info(webrtc_dict), "resend webrtc to_dict"
+	)
+
+	var player_info := SFTypesScript.PlayerInfo.new(
+		_with_overrides(_minimal_player_data(), {"connection_info": relay_raw})
+	)
+	var player_dict := player_info.to_dict()
+	_assert_equal(
+		TYPE_INT,
+		typeof(player_dict["connection_info"]["port"]),
+		"player to_dict connection port type"
+	)
+	_assert_equal(
+		"auto", player_dict["connection_info"]["transport"], "player to_dict connection transport"
+	)
+
+	var peer_info := SFTypesScript.PeerConnectionInfo.new(
+		_peer_connection({"connection_info": relay_raw})
+	)
+	var peer_dict := peer_info.to_dict()
+	_assert_equal(
+		TYPE_INT, typeof(peer_dict["connection_info"]["port"]), "peer to_dict connection port type"
+	)
+	_assert_equal(
+		"auto", peer_dict["connection_info"]["transport"], "peer to_dict connection transport"
+	)
+
+	var nested_player := _minimal_player_data()
+	nested_player["connection_info"] = relay_raw
+	var room_info := SFTypesScript.RoomJoinedInfo.new(
+		_with_overrides(_minimal_room_joined_data(), {"current_players": [nested_player]})
+	)
+	var room_dict := room_info.to_dict()
+	_assert_equal(
+		TYPE_INT,
+		typeof(room_dict["current_players"][0]["connection_info"]["port"]),
+		"room to_dict connection port type"
+	)
+
+	var spectator_joined_info := SFTypesScript.SpectatorJoinedInfo.new(
+		_with_overrides(_minimal_spectator_joined_data(), {"current_players": [nested_player]})
+	)
+	var spectator_joined_dict := spectator_joined_info.to_dict()
+	_assert_equal(
+		TYPE_INT,
+		typeof(spectator_joined_dict["current_players"][0]["connection_info"]["port"]),
+		"spectator joined to_dict connection port type"
 	)
 
 
@@ -441,6 +557,95 @@ func _test_forward_compatible_inbound_strings() -> void:
 	)
 	_assert_equal("game_data_received", String(null_game_data.signal_name), "null game data")
 	_assert_equal(null, null_game_data.args[1], "null game data value")
+
+
+func _test_non_empty_wire_strings() -> void:
+	_assert_protocol_error_envelope(
+		{"type": "ProtocolInfo", "data": {"game_data_formats": [""]}},
+		"empty protocol game data format"
+	)
+	_assert_protocol_error_envelope(
+		{"type": "GameDataBinary", "data": {"from_player": "p1", "encoding": "", "payload": "yv4"}},
+		"empty binary encoding"
+	)
+
+	var empty_type_player := _minimal_player_data()
+	empty_type_player["connection_info"] = {"type": "", "data": {"x": 1}}
+	_assert_protocol_error_envelope(
+		{"type": "PlayerJoined", "data": {"player": empty_type_player}},
+		"empty connection_info type"
+	)
+
+	var empty_transport := _relay_connection_info({"transport": ""})
+	_assert_protocol_error_envelope(
+		_game_starting_envelope([_peer_connection({"connection_info": empty_transport})]),
+		"empty relay transport"
+	)
+
+	var required_error_code_cases := [
+		{
+			"label": "auth empty error code",
+			"envelope":
+			{"type": "AuthenticationError", "data": {"error": "bad app", "error_code": ""}}
+		},
+		{
+			"label": "reconnection empty error code",
+			"envelope":
+			{"type": "ReconnectionFailed", "data": {"reason": "bad token", "error_code": ""}}
+		},
+	]
+	for test_case: Dictionary in required_error_code_cases:
+		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
+
+	var optional_error_code_cases := [
+		{
+			"label": "room join empty error code",
+			"envelope": {"type": "RoomJoinFailed", "data": {"reason": "bad room", "error_code": ""}}
+		},
+		{
+			"label": "authority empty error code",
+			"envelope": {"type": "AuthorityResponse", "data": {"granted": false, "error_code": ""}}
+		},
+		{
+			"label": "spectator join empty error code",
+			"envelope":
+			{"type": "SpectatorJoinFailed", "data": {"reason": "bad spectator", "error_code": ""}}
+		},
+		{
+			"label": "server error empty error code",
+			"envelope": {"type": "Error", "data": {"message": "bad", "error_code": ""}}
+		},
+	]
+	for test_case: Dictionary in optional_error_code_cases:
+		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
+
+	var spectator_joined_data := _minimal_spectator_joined_data()
+	spectator_joined_data["reason"] = ""
+	var spectator_reason_cases := [
+		{
+			"label": "spectator joined empty reason",
+			"envelope": {"type": "SpectatorJoined", "data": spectator_joined_data}
+		},
+		{
+			"label": "spectator left empty reason",
+			"envelope": {"type": "SpectatorLeft", "data": {"reason": ""}}
+		},
+		{
+			"label": "new spectator empty reason",
+			"envelope":
+			{
+				"type": "NewSpectatorJoined",
+				"data": {"spectator": _minimal_spectator_data(), "reason": ""}
+			}
+		},
+		{
+			"label": "spectator disconnected empty reason",
+			"envelope":
+			{"type": "SpectatorDisconnected", "data": {"spectator_id": "s1", "reason": ""}}
+		},
+	]
+	for test_case: Dictionary in spectator_reason_cases:
+		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
 
 
 func _test_reconnected_missed_events_nonfatal() -> void:

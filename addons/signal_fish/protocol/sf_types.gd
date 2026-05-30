@@ -212,33 +212,58 @@ class ConnectionInfo:
 		if type == "relay" and (not input.has("transport") or input["transport"] == null):
 			transport = RelayTransport.AUTO
 		else:
-			transport = _coerce_relay_transport(input.get("transport", ""))
+			transport = SFTypes.relay_transport_from_string(input.get("transport", ""))
 		allocation_id = _string_or_empty(input.get("allocation_id"))
 		connection_data = _string_or_empty(input.get("connection_data"))
 		key = _string_or_empty(input.get("key"))
 		token = _string_or_empty(input.get("token"))
-		client_id = int(input.get("client_id", -1))
+		if input.has("client_id") and input["client_id"] != null:
+			client_id = int(input["client_id"])
+		else:
+			client_id = -1
 		sdp = _string_or_empty(input.get("sdp"))
 		ice_candidates = _coerce_strings(input.get("ice_candidates", []))
 		data = input.get("data")
 
 	func to_dict() -> Dictionary:
-		return raw.duplicate(true)
-
-	func _coerce_relay_transport(value: Variant) -> int:
-		if value == null:
-			return RelayTransport.UNKNOWN
-		match String(value):
-			"tcp":
-				return RelayTransport.TCP
-			"udp":
-				return RelayTransport.UDP
-			"websocket":
-				return RelayTransport.WEBSOCKET
-			"auto":
-				return RelayTransport.AUTO
+		if type.is_empty():
+			return raw.duplicate(true)
+		var result: Dictionary = {"type": type}
+		match type:
+			"direct":
+				result["host"] = host
+				result["port"] = port
+			"unity_relay":
+				result["allocation_id"] = allocation_id
+				result["connection_data"] = connection_data
+				result["key"] = key
+			"relay":
+				result["host"] = host
+				result["port"] = port
+				result["allocation_id"] = allocation_id
+				result["token"] = token
+				if transport == RelayTransport.UNKNOWN:
+					result.erase("transport")
+				else:
+					result["transport"] = String(
+						RELAY_TRANSPORT_TO_STRING.get(transport, "unknown")
+					)
+				if client_id >= 0:
+					result["client_id"] = client_id
+				else:
+					result.erase("client_id")
+			"webrtc":
+				result["ice_candidates"] = Array(ice_candidates)
+				if sdp.is_empty() and (not raw.has("sdp") or raw["sdp"] == null):
+					result.erase("sdp")
+				else:
+					result["sdp"] = sdp
+			"custom":
+				result["data"] = data
 			_:
-				return RelayTransport.UNKNOWN
+				return raw.duplicate(true)
+		_normalize_common_wire_fields(result)
+		return result
 
 	func _coerce_strings(values: Variant) -> PackedStringArray:
 		var result := PackedStringArray()
@@ -247,6 +272,17 @@ class ConnectionInfo:
 		for value: Variant in values:
 			result.append(String(value))
 		return result
+
+	func _normalize_common_wire_fields(result: Dictionary) -> void:
+		for key: String in CONNECTION_INFO_OUTBOUND_NULL_FIELDS:
+			if result.has(key) and result[key] == null:
+				result.erase(key)
+		if result.has("transport"):
+			if SFTypes.relay_transport_from_string(result["transport"]) == RelayTransport.UNKNOWN:
+				result.erase("transport")
+		for key: String in ["port", "client_id"]:
+			if result.has(key) and SFTypes._is_integral_number(result[key]):
+				result[key] = int(result[key])
 
 	func _string_or_empty(value: Variant) -> String:
 		if value == null:
@@ -275,7 +311,10 @@ class PlayerInfo:
 			connection_info = ConnectionInfo.new(data["connection_info"])
 
 	func to_dict() -> Dictionary:
-		return raw.duplicate(true)
+		var result := raw.duplicate(true)
+		if connection_info != null:
+			result["connection_info"] = connection_info.to_dict()
+		return result
 
 
 class SpectatorInfo:
@@ -314,7 +353,10 @@ class PeerConnectionInfo:
 			connection_info = ConnectionInfo.new(data["connection_info"])
 
 	func to_dict() -> Dictionary:
-		return raw.duplicate(true)
+		var result := raw.duplicate(true)
+		if connection_info != null:
+			result["connection_info"] = connection_info.to_dict()
+		return result
 
 
 class RoomJoinedInfo:
@@ -349,7 +391,11 @@ class RoomJoinedInfo:
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
 
 	func to_dict() -> Dictionary:
-		return raw.duplicate(true)
+		var result := raw.duplicate(true)
+		result["current_players"] = SFTypes.objects_to_dicts(current_players)
+		if current_spectators.size() > 0 or raw.has("current_spectators"):
+			result["current_spectators"] = SFTypes.objects_to_dicts(current_spectators)
+		return result
 
 	func _coerce_players(values: Variant) -> Array:
 		var result: Array = []
@@ -415,7 +461,10 @@ class SpectatorJoinedInfo:
 		reason = _coerce_spectator_reason(data.get("reason", ""))
 
 	func to_dict() -> Dictionary:
-		return raw.duplicate(true)
+		var result := raw.duplicate(true)
+		result["current_players"] = SFTypes.objects_to_dicts(current_players)
+		result["current_spectators"] = SFTypes.objects_to_dicts(current_spectators)
+		return result
 
 	func _coerce_players(values: Variant) -> Array:
 		var result: Array = []
@@ -524,6 +573,8 @@ static func validate_optional_spectator_reason(
 		return ""
 	if typeof(data[key]) != TYPE_STRING:
 		return "%s %s must be a string" % [context, key]
+	if String(data[key]).is_empty():
+		return "%s %s must not be empty" % [context, key]
 	return ""
 
 
@@ -554,6 +605,8 @@ static func validate_protocol_info(data: Variant) -> String:
 		for value: Variant in dict["game_data_formats"]:
 			if typeof(value) != TYPE_STRING:
 				return "ProtocolInfo game_data_formats must contain strings"
+			if String(value).is_empty():
+				return "ProtocolInfo game_data_formats must not contain empty strings"
 	if dict.has("player_name_rules") and dict["player_name_rules"] != null:
 		var error := validate_player_name_rules(dict["player_name_rules"])
 		if not error.is_empty():
@@ -717,6 +770,8 @@ static func validate_connection_info(data: Variant, allow_unknown_strings: bool 
 	var dict: Dictionary = data
 	if not _has_string(dict, "type"):
 		return "connection_info requires string type"
+	if String(dict["type"]).is_empty():
+		return "connection_info type must not be empty"
 	match String(dict["type"]):
 		"direct":
 			var direct_error := _require_connection_info_fields(dict, "direct", ["host", "port"])
@@ -734,24 +789,6 @@ static func validate_connection_info(data: Variant, allow_unknown_strings: bool 
 			)
 			if not relay_error.is_empty():
 				return relay_error
-			if (
-				dict.has("transport")
-				and dict["transport"] != null
-				and (
-					typeof(dict["transport"]) != TYPE_STRING
-					or (
-						not allow_unknown_strings
-						and relay_transport_from_string(dict["transport"]) == RelayTransport.UNKNOWN
-					)
-				)
-			):
-				return "relay connection_info transport is unknown"
-			if (
-				dict.has("client_id")
-				and dict["client_id"] != null
-				and not _is_integer_value_in_range(dict["client_id"], 0, U16_MAX)
-			):
-				return "relay connection_info client_id must be u16"
 		"webrtc":
 			if dict.has("sdp") and dict["sdp"] != null and typeof(dict["sdp"]) != TYPE_STRING:
 				return "webrtc connection_info sdp must be a string"
@@ -795,13 +832,13 @@ static func _validate_common_connection_info_fields(
 	if dict.has("transport"):
 		if (
 			dict["transport"] != null
-			and (
-				typeof(dict["transport"]) != TYPE_STRING
-				or (
-					not allow_unknown_strings
-					and relay_transport_from_string(dict["transport"]) == RelayTransport.UNKNOWN
-				)
-			)
+			and (typeof(dict["transport"]) != TYPE_STRING or String(dict["transport"]).is_empty())
+		):
+			return "connection_info transport must be a non-empty string"
+		if (
+			dict["transport"] != null
+			and not allow_unknown_strings
+			and relay_transport_from_string(dict["transport"]) == RelayTransport.UNKNOWN
 		):
 			return "connection_info transport is unknown"
 	for key: String in ["allocation_id", "connection_data", "key", "token"]:
@@ -886,6 +923,14 @@ static func peer_connections_from_array(values: Variant) -> Array:
 	for value: Variant in values:
 		if typeof(value) == TYPE_DICTIONARY:
 			result.append(PeerConnectionInfo.new(value))
+	return result
+
+
+static func objects_to_dicts(values: Array) -> Array:
+	var result: Array = []
+	for value: Variant in values:
+		if typeof(value) == TYPE_OBJECT and value.has_method("to_dict"):
+			result.append(value.to_dict())
 	return result
 
 

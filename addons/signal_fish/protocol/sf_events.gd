@@ -347,6 +347,8 @@ static func _decode_game_data_binary(
 		return _protocol_error(
 			"GameDataBinary requires from_player, encoding, and payload", envelope
 		)
+	if String(data["encoding"]).is_empty():
+		return _protocol_error("GameDataBinary encoding must not be empty", envelope)
 	var payload_result := SFBinaryCodecScript.decode_payload(data["payload"])
 	if not payload_result["ok"]:
 		return _protocol_error(payload_result["error"], envelope)
@@ -474,6 +476,8 @@ static func _has_dict(data: Dictionary, key: String) -> bool:
 static func _validate_required_error_code(data: Dictionary, event_name: String) -> String:
 	if not data.has("error_code") or typeof(data["error_code"]) != TYPE_STRING:
 		return "%s requires string error_code" % event_name
+	if String(data["error_code"]).is_empty():
+		return "%s error_code must not be empty" % event_name
 	return ""
 
 
@@ -482,6 +486,8 @@ static func _validate_optional_error_code(data: Dictionary, event_name: String) 
 		return ""
 	if typeof(data["error_code"]) != TYPE_STRING:
 		return "%s error_code must be a string" % event_name
+	if String(data["error_code"]).is_empty():
+		return "%s error_code must not be empty" % event_name
 	return ""
 
 

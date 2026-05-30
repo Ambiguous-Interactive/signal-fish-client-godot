@@ -93,6 +93,16 @@ blank lines and lines beginning with `#`.
 - Relay `ConnectionInfo.transport` defaults to `auto` upstream when omitted or
   null. Outbound builders should reject typo strings, while inbound decoding
   should map unknown future transport strings to `RelayTransport.UNKNOWN`.
+- Present enum-like wire strings must be non-empty. Optional fields use
+  omission or JSON `null` to mean "no value"; an empty `error_code`, spectator
+  reason, binary encoding, connection info type/transport, or protocol game
+  data format is malformed.
+- `ConnectionInfo.to_dict()` returns a canonical dictionary for known
+  connection types, normalizing accepted inbound integral JSON numbers to Godot
+  `int` values and omitting optional JSON `null` fields so decoded connection
+  info can be safely re-sent through `ProvideConnectionInfo`. Unknown future
+  relay transports decode as `RelayTransport.UNKNOWN` and are omitted from the
+  canonical outbound form instead of re-emitting an unsupported string.
 - Reconnect uses `player_id`, `room_id`, and `auth_token`; fixtures use fake
   placeholder tokens only.
 
