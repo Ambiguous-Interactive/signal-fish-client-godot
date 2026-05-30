@@ -106,6 +106,9 @@ Definition of done for the first usable client:
 - `scripts/agent-check.ps1`: fast post-edit validator for agents and humans.
   It invokes `run-llm-hooks.ps1 -Mode AgentFast -SkipStagedCheck -NoAutoFix`
   in the same PowerShell process; pass `-Full` for exhaustive behavioral tests.
+- `scripts/check-gdscript-private-helpers.py`: gdtoolkit-parser static guard
+  for unreachable private GDScript helper chains; runtime CI runs it with
+  `--self-test` before protocol fixtures.
 - `scripts/preflight.ps1`: self-healing bootstrap. Parse-checks itself
   first, then every tracked `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers
   corrupted sources via the index/staged copy first, falling back to
@@ -169,6 +172,15 @@ Use `-Check` in CI to validate generated files without modifying them:
 
 ```powershell
 pwsh -NoProfile -File scripts/generate-llm-index.ps1 -Check
+```
+
+Runtime protocol checks are separate from the LLM harness:
+
+```bash
+python3 scripts/check-gdscript-private-helpers.py --self-test addons/signal_fish tests
+HOME=/tmp PYTHONPATH=/home/vscode/.local/lib/python3.12/site-packages gdformat --check addons/signal_fish/protocol tests/protocol
+HOME=/tmp PYTHONPATH=/home/vscode/.local/lib/python3.12/site-packages gdlint addons/signal_fish/protocol tests/protocol
+godot --headless --path . --script tests/protocol/run_protocol_tests.gd
 ```
 
 ## Generated LLM Index

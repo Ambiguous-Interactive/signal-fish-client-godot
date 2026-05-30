@@ -79,6 +79,32 @@ These checks enforce:
   not at commit time. The `Stop` hook re-runs preflight as a final
   defense.
 
+## Current Runtime Checks
+
+Runtime protocol code is validated separately from the LLM harness:
+
+```bash
+python3 scripts/check-gdscript-private-helpers.py --self-test addons/signal_fish tests
+godot --headless --path . --script tests/protocol/run_protocol_tests.gd
+HOME=/tmp PYTHONPATH=/home/vscode/.local/lib/python3.12/site-packages gdformat --check addons/signal_fish/protocol tests/protocol
+HOME=/tmp PYTHONPATH=/home/vscode/.local/lib/python3.12/site-packages gdlint addons/signal_fish/protocol tests/protocol
+```
+
+`.github/workflows/ci.yml` is the runtime workflow. Keep Godot/protocol steps
+there rather than in `llm-harness.yml` so the LLM fast-path budget remains
+isolated.
+
+`scripts/check-gdscript-private-helpers.py` uses gdtoolkit's parser and treats
+public methods, constructors, Godot callbacks, and `_on_*` handlers as
+reachability roots. It catches dead private helper chains such as leftover
+wrapper scaffolding while keeping public addon APIs out of repo-local
+dead-code pruning. Suppress an intentional reflection-only private helper only
+with a local `# gdscript-private-helper: allow _helper_name` comment on the
+helper definition line or immediately above it. The check does not treat
+`call_group`/`call_group_flags` as local reachability because group membership
+is runtime state; use the local allow comment for intentional group-only
+private handlers.
+
 ## Performance Guardrails
 
 - CI measures the non-mutating fast path and fails if median runtime exceeds

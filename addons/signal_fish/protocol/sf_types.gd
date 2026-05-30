@@ -835,53 +835,12 @@ static func game_data_encodings_from_array(values: Variant) -> Array:
 	return result
 
 
-static func _strings_from_array(values: Variant) -> PackedStringArray:
-	var result := PackedStringArray()
-	if typeof(values) != TYPE_ARRAY:
-		return result
-	for value: Variant in values:
-		result.append(String(value))
-	return result
-
-
-static func _local_strings_from_array(values: Variant) -> PackedStringArray:
-	return _strings_from_array(values)
-
-
-static func _local_game_data_encodings_from_array(values: Variant) -> Array:
-	return game_data_encodings_from_array(values)
-
-
-static func _local_relay_transport_from_string(value: Variant) -> int:
-	return relay_transport_from_string(value)
-
-
-static func _local_lobby_state_from_string(value: Variant) -> int:
-	return lobby_state_from_string(value)
-
-
-static func _local_spectator_reason_from_string(value: Variant) -> int:
-	return spectator_reason_from_string(value)
-
-
-static func _local_players_from_array(values: Variant) -> Array:
-	return players_from_array(values)
-
-
-static func _local_spectators_from_array(values: Variant) -> Array:
-	return spectators_from_array(values)
-
-
 static func _has_string(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_STRING
 
 
 static func _has_bool(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_BOOL
-
-
-static func _has_number(data: Dictionary, key: String) -> bool:
-	return data.has(key) and _is_number(data[key])
 
 
 static func _has_nonnegative_integer(data: Dictionary, key: String) -> bool:
@@ -907,10 +866,6 @@ static func _has_known_spectator_reason(data: Dictionary, key: String) -> bool:
 		_has_string(data, key)
 		and spectator_reason_from_string(data[key]) != SpectatorReason.UNKNOWN
 	)
-
-
-static func _is_number(value: Variant) -> bool:
-	return typeof(value) == TYPE_INT or typeof(value) == TYPE_FLOAT
 
 
 static func _is_integer_value_at_least(value: Variant, min_value: int) -> bool:
