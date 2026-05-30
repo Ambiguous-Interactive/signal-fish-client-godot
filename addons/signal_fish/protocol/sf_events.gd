@@ -351,8 +351,6 @@ static func _decode_game_data_binary(
 	if not payload_result["ok"]:
 		return _protocol_error(payload_result["error"], envelope)
 	var encoding: int = SFTypesScript.game_data_encoding_from_string(data["encoding"])
-	if encoding == SFTypesScript.GameDataEncoding.UNKNOWN:
-		return _protocol_error("GameDataBinary encoding is unknown", envelope)
 	return _event(
 		type_name,
 		&"game_data_binary_received",
@@ -404,14 +402,18 @@ static func _decode_reconnected(
 	for index: int in data["missed_events"].size():
 		var missed: Variant = data["missed_events"][index]
 		if typeof(missed) != TYPE_DICTIONARY:
-			return _protocol_error(
-				"Reconnected missed_events[%d] must be an object" % index, envelope
+			missed_events.append(
+				_protocol_error("Reconnected missed_events[%d] must be an object" % index)
 			)
+			continue
 		var decoded_missed := decode_envelope(missed)
 		if decoded_missed.signal_name == &"protocol_error":
-			return _protocol_error(
-				"Reconnected missed_events[%d]: %s" % [index, decoded_missed.args[0]], envelope
+			missed_events.append(
+				_protocol_error(
+					"Reconnected missed_events[%d]: %s" % [index, decoded_missed.args[0]], missed
+				)
 			)
+			continue
 		missed_events.append(decoded_missed)
 	return _event(
 		type_name,
@@ -472,8 +474,6 @@ static func _has_dict(data: Dictionary, key: String) -> bool:
 static func _validate_required_error_code(data: Dictionary, event_name: String) -> String:
 	if not data.has("error_code") or typeof(data["error_code"]) != TYPE_STRING:
 		return "%s requires string error_code" % event_name
-	if not SFErrorCodesScript.is_known(data["error_code"]):
-		return "%s error_code is unknown" % event_name
 	return ""
 
 
@@ -482,8 +482,6 @@ static func _validate_optional_error_code(data: Dictionary, event_name: String) 
 		return ""
 	if typeof(data["error_code"]) != TYPE_STRING:
 		return "%s error_code must be a string" % event_name
-	if not SFErrorCodesScript.is_known(data["error_code"]):
-		return "%s error_code is unknown" % event_name
 	return ""
 
 

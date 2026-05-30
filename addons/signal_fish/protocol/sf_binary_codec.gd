@@ -57,27 +57,47 @@ static func _decode_byte_array(values: Array) -> Dictionary:
 static func _decode_base64(value: String) -> Dictionary:
 	if value.is_empty():
 		return {"ok": true, "bytes": PackedByteArray(), "error": ""}
-	if value.length() % 4 != 0:
-		return {
-			"ok": false, "bytes": PackedByteArray(), "error": "payload base64 length is invalid"
-		}
+	var normalized_result := _normalize_base64(value)
+	if not normalized_result["ok"]:
+		return {"ok": false, "bytes": PackedByteArray(), "error": normalized_result["error"]}
+	var normalized := String(normalized_result["value"])
+	var bytes := Marshalls.base64_to_raw(normalized)
+	if Marshalls.raw_to_base64(bytes) != normalized:
+		return {"ok": false, "bytes": PackedByteArray(), "error": "payload base64 is invalid"}
+	return {"ok": true, "bytes": bytes, "error": ""}
+
+
+static func _normalize_base64(value: String) -> Dictionary:
+	var first_padding_index := -1
+	var padding_count := 0
 	for index: int in value.length():
 		var code := value.unicode_at(index)
+		if code == 61:
+			if first_padding_index == -1:
+				first_padding_index = index
+			padding_count += 1
+			continue
+		if first_padding_index != -1:
+			return {"ok": false, "value": "", "error": "payload base64 padding is invalid"}
 		var is_base64_char := (
 			(code >= 65 and code <= 90)
 			or (code >= 97 and code <= 122)
 			or (code >= 48 and code <= 57)
 			or code == 43
 			or code == 47
-			or code == 61
 		)
 		if not is_base64_char:
-			return {
-				"ok": false,
-				"bytes": PackedByteArray(),
-				"error": "payload base64 contains invalid characters"
-			}
-	var bytes := Marshalls.base64_to_raw(value)
-	if Marshalls.raw_to_base64(bytes) != value:
-		return {"ok": false, "bytes": PackedByteArray(), "error": "payload base64 is not canonical"}
-	return {"ok": true, "bytes": bytes, "error": ""}
+			return {"ok": false, "value": "", "error": "payload base64 contains invalid characters"}
+	if padding_count > 2:
+		return {"ok": false, "value": "", "error": "payload base64 padding is invalid"}
+	if first_padding_index != -1:
+		if value.length() % 4 != 0:
+			return {"ok": false, "value": "", "error": "payload base64 length is invalid"}
+		return {"ok": true, "value": value, "error": ""}
+	var remainder := value.length() % 4
+	if remainder == 0:
+		return {"ok": true, "value": value, "error": ""}
+	if remainder == 1:
+		return {"ok": false, "value": "", "error": "payload base64 length is invalid"}
+	var padding := "==" if remainder == 2 else "="
+	return {"ok": true, "value": value + padding, "error": ""}

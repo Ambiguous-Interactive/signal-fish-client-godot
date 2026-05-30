@@ -5,6 +5,7 @@ const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const ProtocolHardeningTestsScript = preload("res://tests/protocol/protocol_hardening_tests.gd")
 
 const CLIENT_FIXTURE := "res://tests/fixtures/v2_client_messages.jsonl"
 const SERVER_FIXTURE := "res://tests/fixtures/v2_server_messages.jsonl"
@@ -34,6 +35,7 @@ func _run() -> void:
 	_test_strict_protocol_validation()
 	_test_protocol_error_diagnostics()
 	_test_error_code_table()
+	_failures.append_array(ProtocolHardeningTestsScript.run())
 
 
 func _test_client_encoders_match_fixtures() -> void:
@@ -409,14 +411,14 @@ func _test_malformed_inputs_decode_to_protocol_error() -> void:
 
 
 func _test_binary_codec_accepts_base64_payload() -> void:
-	var decoded := SFEventsScript.decode_envelope(
+	var padded := SFEventsScript.decode_envelope(
 		{
 			"type": "GameDataBinary",
 			"data": {"from_player": "p1", "encoding": "message_pack", "payload": "yv4="}
 		}
 	)
-	_assert_equal("game_data_binary_received", String(decoded.signal_name), "base64 binary event")
-	_assert_equal(PackedByteArray([202, 254]), decoded.args[2], "base64 binary payload")
+	_assert_equal("game_data_binary_received", String(padded.signal_name), "base64 binary event")
+	_assert_equal(PackedByteArray([202, 254]), padded.args[2], "base64 binary payload")
 
 
 func _test_upstream_optional_fields_decode() -> void:
@@ -483,7 +485,7 @@ func _test_upstream_optional_fields_decode() -> void:
 		"game_starting", String(relay_without_transport.signal_name), "relay transport defaulted"
 	)
 	_assert_equal(
-		SFTypesScript.RelayTransport.UNKNOWN,
+		SFTypesScript.RelayTransport.AUTO,
 		relay_without_transport.args[0][0].connection_info.transport,
 		"defaulted relay transport"
 	)
@@ -493,6 +495,11 @@ func _test_upstream_optional_fields_decode() -> void:
 		_game_starting_envelope([_peer_connection({"connection_info": relay_null_transport_data})])
 	)
 	_assert_equal("game_starting", String(relay_null_transport.signal_name), "relay null transport")
+	_assert_equal(
+		SFTypesScript.RelayTransport.AUTO,
+		relay_null_transport.args[0][0].connection_info.transport,
+		"null relay transport defaults to auto"
+	)
 
 	var spectator_joined_without_reason := SFEventsScript.decode_envelope(
 		{"type": "SpectatorJoined", "data": _minimal_spectator_joined_data()}
@@ -608,18 +615,46 @@ func _test_strict_protocol_validation() -> void:
 		}
 	)
 	_assert_equal(
-		"protocol_error",
+		"authentication_error",
 		String(required_unknown_error_code.signal_name),
 		"required unknown error code"
+	)
+	_assert_equal(
+		SFErrorCodesScript.Code.UNKNOWN,
+		required_unknown_error_code.args[1],
+		"required unknown error code value"
 	)
 
 	var optional_unknown_error_code := SFEventsScript.decode_envelope(
 		{"type": "RoomJoinFailed", "data": {"reason": "bad room", "error_code": "NOT_A_REAL_CODE"}}
 	)
 	_assert_equal(
-		"protocol_error",
+		"room_join_failed",
 		String(optional_unknown_error_code.signal_name),
 		"optional unknown error code"
+	)
+	_assert_equal(
+		SFErrorCodesScript.Code.UNKNOWN,
+		optional_unknown_error_code.args[1],
+		"optional unknown error code value"
+	)
+
+	var required_numeric_error_code := SFEventsScript.decode_envelope(
+		{"type": "AuthenticationError", "data": {"error": "bad app", "error_code": 12}}
+	)
+	_assert_equal(
+		"protocol_error",
+		String(required_numeric_error_code.signal_name),
+		"required numeric error code"
+	)
+
+	var optional_numeric_error_code := SFEventsScript.decode_envelope(
+		{"type": "RoomJoinFailed", "data": {"reason": "bad room", "error_code": 12}}
+	)
+	_assert_equal(
+		"protocol_error",
+		String(optional_numeric_error_code.signal_name),
+		"optional numeric error code"
 	)
 
 	var optional_null_error_code := SFEventsScript.decode_envelope(
@@ -630,34 +665,16 @@ func _test_strict_protocol_validation() -> void:
 	)
 	_assert_equal(SFErrorCodesScript.Code.NONE, optional_null_error_code.args[1], "null code")
 
-	var spectator_joined_unknown_data := _minimal_spectator_joined_data()
-	spectator_joined_unknown_data["reason"] = "not_a_reason"
 	var spectator_joined_number_data := _minimal_spectator_joined_data()
 	spectator_joined_number_data["reason"] = 3
 	var invalid_spectator_reason_cases := [
-		{
-			"label": "spectator joined unknown reason",
-			"envelope": {"type": "SpectatorJoined", "data": spectator_joined_unknown_data}
-		},
 		{
 			"label": "spectator joined numeric reason",
 			"envelope": {"type": "SpectatorJoined", "data": spectator_joined_number_data}
 		},
 		{
-			"label": "spectator left unknown reason",
-			"envelope": {"type": "SpectatorLeft", "data": {"reason": "not_a_reason"}}
-		},
-		{
 			"label": "spectator left numeric reason",
 			"envelope": {"type": "SpectatorLeft", "data": {"reason": 3}}
-		},
-		{
-			"label": "new spectator unknown reason",
-			"envelope":
-			{
-				"type": "NewSpectatorJoined",
-				"data": {"spectator": _minimal_spectator_data(), "reason": "not_a_reason"}
-			}
 		},
 		{
 			"label": "new spectator numeric reason",
@@ -665,14 +682,6 @@ func _test_strict_protocol_validation() -> void:
 			{
 				"type": "NewSpectatorJoined",
 				"data": {"spectator": _minimal_spectator_data(), "reason": 3}
-			}
-		},
-		{
-			"label": "spectator disconnected unknown reason",
-			"envelope":
-			{
-				"type": "SpectatorDisconnected",
-				"data": {"spectator_id": "s1", "reason": "not_a_reason"}
 			}
 		},
 		{
@@ -741,10 +750,14 @@ func _test_protocol_error_diagnostics() -> void:
 
 	var bad_missed_event_data := _minimal_room_joined_data()
 	bad_missed_event_data["missed_events"] = [{"type": "PlayerLeft", "data": {}}]
-	var bad_missed_event := _assert_protocol_error_envelope(
-		{"type": "Reconnected", "data": bad_missed_event_data}, "missed event diagnostics"
+	var bad_missed_event := SFEventsScript.decode_envelope(
+		{"type": "Reconnected", "data": bad_missed_event_data}
 	)
-	_assert_protocol_error_contains(bad_missed_event, "missed_events[0]", "missed event index")
+	_assert_equal("reconnected", String(bad_missed_event.signal_name), "missed event diagnostics")
+	_assert_equal(1, bad_missed_event.args[1].size(), "bad missed event count")
+	_assert_protocol_error_contains(
+		bad_missed_event.args[1][0], "missed_events[0]", "missed event index"
+	)
 
 
 func _test_error_code_table() -> void:

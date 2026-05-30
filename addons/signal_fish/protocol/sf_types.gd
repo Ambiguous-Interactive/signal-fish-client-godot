@@ -196,7 +196,10 @@ class ConnectionInfo:
 		type = _string_or_empty(input.get("type"))
 		host = _string_or_empty(input.get("host"))
 		port = int(input.get("port", 0))
-		transport = _coerce_relay_transport(input.get("transport", ""))
+		if type == "relay" and (not input.has("transport") or input["transport"] == null):
+			transport = RelayTransport.AUTO
+		else:
+			transport = _coerce_relay_transport(input.get("transport", ""))
 		allocation_id = _string_or_empty(input.get("allocation_id"))
 		connection_data = _string_or_empty(input.get("connection_data"))
 		key = _string_or_empty(input.get("key"))
@@ -508,8 +511,6 @@ static func validate_optional_spectator_reason(
 		return ""
 	if typeof(data[key]) != TYPE_STRING:
 		return "%s %s must be a string" % [context, key]
-	if spectator_reason_from_string(data[key]) == SpectatorReason.UNKNOWN:
-		return "%s %s is unknown" % [context, key]
 	return ""
 
 
@@ -538,11 +539,8 @@ static func validate_protocol_info(data: Variant) -> String:
 		if typeof(dict["game_data_formats"]) != TYPE_ARRAY:
 			return "ProtocolInfo game_data_formats must be an array"
 		for value: Variant in dict["game_data_formats"]:
-			if (
-				typeof(value) != TYPE_STRING
-				or game_data_encoding_from_string(value) == GameDataEncoding.UNKNOWN
-			):
-				return "ProtocolInfo game_data_formats contains unknown encoding"
+			if typeof(value) != TYPE_STRING:
+				return "ProtocolInfo game_data_formats must contain strings"
 	if dict.has("player_name_rules") and dict["player_name_rules"] != null:
 		var error := validate_player_name_rules(dict["player_name_rules"])
 		if not error.is_empty():
@@ -700,7 +698,7 @@ static func validate_peer_connections_array(values: Variant) -> String:
 	return ""
 
 
-static func validate_connection_info(data: Variant) -> String:
+static func validate_connection_info(data: Variant, allow_unknown_strings: bool = true) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "connection_info must be an object"
 	var dict: Dictionary = data
@@ -727,7 +725,10 @@ static func validate_connection_info(data: Variant) -> String:
 				and dict["transport"] != null
 				and (
 					typeof(dict["transport"]) != TYPE_STRING
-					or relay_transport_from_string(dict["transport"]) == RelayTransport.UNKNOWN
+					or (
+						not allow_unknown_strings
+						and relay_transport_from_string(dict["transport"]) == RelayTransport.UNKNOWN
+					)
 				)
 			):
 				return "relay connection_info transport is unknown"
@@ -746,11 +747,39 @@ static func validate_connection_info(data: Variant) -> String:
 			if not dict.has("data"):
 				return "custom connection_info requires data"
 		_:
-			return "connection_info type is unknown"
-	return _validate_common_connection_info_fields(dict)
+			if not allow_unknown_strings:
+				return "connection_info type is unknown"
+	return _validate_common_connection_info_fields(dict, allow_unknown_strings)
 
 
-static func _validate_common_connection_info_fields(dict: Dictionary) -> String:
+static func validate_outbound_connection_info(data: Variant) -> String:
+	var error := validate_connection_info(data, false)
+	if not error.is_empty():
+		return error
+	var dict: Dictionary = data
+	for key: String in [
+		"host",
+		"port",
+		"transport",
+		"allocation_id",
+		"connection_data",
+		"key",
+		"token",
+		"client_id",
+		"sdp",
+		"ice_candidates"
+	]:
+		if dict.has(key) and dict[key] == null:
+			return "connection_info %s must not be null" % key
+	for key: String in ["port", "client_id"]:
+		if dict.has(key) and typeof(dict[key]) != TYPE_INT:
+			return "connection_info %s must be an integer" % key
+	return ""
+
+
+static func _validate_common_connection_info_fields(
+	dict: Dictionary, allow_unknown_strings: bool
+) -> String:
 	if dict.has("host") and dict["host"] != null and typeof(dict["host"]) != TYPE_STRING:
 		return "connection_info host must be a string"
 	if (
@@ -764,7 +793,10 @@ static func _validate_common_connection_info_fields(dict: Dictionary) -> String:
 			dict["transport"] != null
 			and (
 				typeof(dict["transport"]) != TYPE_STRING
-				or relay_transport_from_string(dict["transport"]) == RelayTransport.UNKNOWN
+				or (
+					not allow_unknown_strings
+					and relay_transport_from_string(dict["transport"]) == RelayTransport.UNKNOWN
+				)
 			)
 		):
 			return "connection_info transport is unknown"

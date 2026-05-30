@@ -62,8 +62,9 @@ blank lines and lines beginning with `#`.
   and relay transport values are lowercase.
 - Spectator state-change `reason` fields are upstream `Option` values. The
   Godot decoder accepts omitted or JSON `null` reasons as
-  `SpectatorReason.UNKNOWN` and rejects non-null non-string or unknown string
-  values at the event boundary.
+  `SpectatorReason.UNKNOWN`; non-null strings unknown to this client also map
+  to `UNKNOWN` for forward compatibility. Non-string reason values are still
+  malformed at the event boundary.
 - `SignalFishConfig::new()` in the Rust client sets `sdk_version` to the crate
   version, leaves `platform` unset, and leaves `game_data_format` unset.
 - `JoinRoomParams::new(game_name, player_name)` only sets the two required
@@ -78,8 +79,14 @@ blank lines and lines beginning with `#`.
   MessagePack and Rkyv game data use WebSocket binary frames when negotiated.
   JSON fallback from binary data becomes a `GameData` text message, not a
   `GameDataBinary` text message.
+- `GameData.data` is a JSON value in upstream structs; JSON `null` is a valid
+  game payload and should be surfaced as a `Variant` null instead of treated as
+  a malformed message.
 - The fixture `GameDataBinary` line is a serde-compatible text representation
   for codec coverage. Transport tests must separately verify binary frames.
+- Relay `ConnectionInfo.transport` defaults to `auto` upstream when omitted or
+  null. Outbound builders should reject typo strings, while inbound decoding
+  should map unknown future transport strings to `RelayTransport.UNKNOWN`.
 - Reconnect uses `player_id`, `room_id`, and `auth_token`; fixtures use fake
   placeholder tokens only.
 

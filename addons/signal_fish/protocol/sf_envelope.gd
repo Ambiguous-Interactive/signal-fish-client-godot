@@ -1,6 +1,10 @@
 class_name SFEnvelope
 extends RefCounted
 
+const INVALID_MESSAGE_ERROR_KEY := "_signal_fish_invalid_message_error"
+const INVALID_MESSAGE_ORIGINAL_TYPE_KEY := "_signal_fish_original_message_type"
+const INVALID_MESSAGE_TYPE := "__InvalidSignalFishMessage"
+
 
 static func message(type_name: String, data: Variant = null) -> Dictionary:
 	var envelope: Dictionary = {}
@@ -10,7 +14,27 @@ static func message(type_name: String, data: Variant = null) -> Dictionary:
 	return envelope
 
 
+static func invalid_message(type_name: String, error: String, data: Variant = null) -> Dictionary:
+	var envelope := message(INVALID_MESSAGE_TYPE, data)
+	envelope[INVALID_MESSAGE_ERROR_KEY] = error
+	envelope[INVALID_MESSAGE_ORIGINAL_TYPE_KEY] = type_name
+	return envelope
+
+
+static func is_invalid_message(envelope: Dictionary) -> bool:
+	return envelope.has(INVALID_MESSAGE_ERROR_KEY)
+
+
+static func invalid_message_error(envelope: Dictionary) -> String:
+	return String(envelope.get(INVALID_MESSAGE_ERROR_KEY, ""))
+
+
 static func encode(envelope: Dictionary) -> String:
+	if is_invalid_message(envelope):
+		push_error(
+			"cannot encode invalid Signal Fish message: %s" % invalid_message_error(envelope)
+		)
+		return ""
 	return JSON.stringify(envelope, "", false)
 
 
