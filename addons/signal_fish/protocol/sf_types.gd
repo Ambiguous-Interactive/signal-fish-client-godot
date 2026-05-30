@@ -587,7 +587,7 @@ static func validate_player_info(data: Variant) -> String:
 	if dict.has("connection_info"):
 		var error := validate_connection_info(dict["connection_info"])
 		if not error.is_empty():
-			return error
+			return "PlayerInfo connection_info: %s" % error
 	return ""
 
 
@@ -613,7 +613,7 @@ static func validate_peer_connection_info(data: Variant) -> String:
 	if dict.has("connection_info") and dict["connection_info"] != null:
 		var error := validate_connection_info(dict["connection_info"])
 		if not error.is_empty():
-			return error
+			return "PeerConnectionInfo connection_info: %s" % error
 	return ""
 
 
@@ -668,10 +668,11 @@ static func validate_players_array(values: Variant) -> String:
 	if typeof(values) != TYPE_ARRAY:
 		return "must be an array"
 	var array: Array = values
-	for value: Variant in array:
+	for index: int in array.size():
+		var value: Variant = array[index]
 		var error := validate_player_info(value)
 		if not error.is_empty():
-			return error
+			return "[%d] %s" % [index, error]
 	return ""
 
 
@@ -679,10 +680,11 @@ static func validate_spectators_array(values: Variant) -> String:
 	if typeof(values) != TYPE_ARRAY:
 		return "must be an array"
 	var array: Array = values
-	for value: Variant in array:
+	for index: int in array.size():
+		var value: Variant = array[index]
 		var error := validate_spectator_info(value)
 		if not error.is_empty():
-			return error
+			return "[%d] %s" % [index, error]
 	return ""
 
 
@@ -690,10 +692,11 @@ static func validate_peer_connections_array(values: Variant) -> String:
 	if typeof(values) != TYPE_ARRAY:
 		return "must be an array"
 	var array: Array = values
-	for value: Variant in array:
+	for index: int in array.size():
+		var value: Variant = array[index]
 		var error := validate_peer_connection_info(value)
 		if not error.is_empty():
-			return error
+			return "[%d] %s" % [index, error]
 	return ""
 
 

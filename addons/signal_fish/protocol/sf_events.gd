@@ -401,12 +401,17 @@ static func _decode_reconnected(
 	if room_event.signal_name == &"protocol_error":
 		return room_event
 	var missed_events: Array = []
-	for missed: Variant in data["missed_events"]:
+	for index: int in data["missed_events"].size():
+		var missed: Variant = data["missed_events"][index]
 		if typeof(missed) != TYPE_DICTIONARY:
-			return _protocol_error("Reconnected missed_events entries must be objects", envelope)
+			return _protocol_error(
+				"Reconnected missed_events[%d] must be an object" % index, envelope
+			)
 		var decoded_missed := decode_envelope(missed)
 		if decoded_missed.signal_name == &"protocol_error":
-			return _protocol_error("Reconnected contains malformed missed event", envelope)
+			return _protocol_error(
+				"Reconnected missed_events[%d]: %s" % [index, decoded_missed.args[0]], envelope
+			)
 		missed_events.append(decoded_missed)
 	return _event(
 		type_name,

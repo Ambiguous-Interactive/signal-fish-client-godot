@@ -18,7 +18,15 @@ static func decode_text(text: String) -> Dictionary:
 	var json := JSON.new()
 	var parse_error := json.parse(text)
 	if parse_error != OK:
-		return {"ok": false, "error": "message must be valid JSON", "envelope": {}}
+		return {
+			"ok": false,
+			"error":
+			(
+				"message must be valid JSON at line %d: %s"
+				% [json.get_error_line(), json.get_error_message()]
+			),
+			"envelope": {}
+		}
 	var parsed: Variant = json.data
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return {"ok": false, "error": "message must be a JSON object", "envelope": {}}

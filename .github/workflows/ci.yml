@@ -56,7 +56,7 @@ jobs:
       - name: Check GDScript formatting
         run: |
           . .venv-ci/bin/activate
-          gdformat --check addons/signal_fish/protocol tests/protocol
+          gdformat --diff --check addons/signal_fish/protocol tests/protocol
 
       - name: Lint GDScript
         run: |

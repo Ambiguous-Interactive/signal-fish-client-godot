@@ -29,20 +29,26 @@ static func encode_payload_as_base64(bytes: PackedByteArray) -> String:
 
 static func _decode_byte_array(values: Array) -> Dictionary:
 	var bytes := PackedByteArray()
-	for value: Variant in values:
+	for index: int in values.size():
+		var value: Variant = values[index]
 		var value_type := typeof(value)
 		if value_type != TYPE_INT and value_type != TYPE_FLOAT:
 			return {
 				"ok": false,
 				"bytes": PackedByteArray(),
-				"error": "payload byte array contains a non-number"
+				"error":
+				"payload byte array[%d] contains a non-number: %s" % [index, var_to_str(value)]
 			}
 		var int_value := int(value)
 		if float(int_value) != float(value) or int_value < 0 or int_value > 255:
 			return {
 				"ok": false,
 				"bytes": PackedByteArray(),
-				"error": "payload byte array contains a value outside 0..255"
+				"error":
+				(
+					"payload byte array[%d] contains a value outside 0..255: %s"
+					% [index, var_to_str(value)]
+				)
 			}
 		bytes.append(int_value)
 	return {"ok": true, "bytes": bytes, "error": ""}

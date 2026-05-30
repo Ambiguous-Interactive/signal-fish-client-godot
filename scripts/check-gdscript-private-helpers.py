@@ -122,7 +122,6 @@ GODOT_PRIVATE_ROOTS = {
     "_property_can_revert",
     "_property_get_revert",
     "_ready",
-    "_run",
     "_set",
     "_shortcut_input",
     "_structured_text_parser",
@@ -201,6 +200,8 @@ class Problem:
     name: str
 
     def format(self) -> str:
+        if self.scope == "<parse>":
+            return f"{self.path}:{self.line}: {self.name}"
         return f"{self.path}:{self.line}: private helper {self.scope}.{self.name} is unreachable"
 
 
@@ -212,17 +213,35 @@ def main(argv: list[str]) -> int:
         run_self_tests()
 
     paths = [Path(path) for path in (args.paths or DEFAULT_PATHS)]
+    missing_paths = [path for path in paths if not path.exists()]
+    if missing_paths:
+        for path in missing_paths:
+            print(f"error: path does not exist: {path}", file=sys.stderr)
+        return 2
+
+    files_by_path = {path: gdscript_files_for_path(path) for path in paths}
+    empty_paths = [path for path, files in files_by_path.items() if not files]
+    if empty_paths:
+        for path in empty_paths:
+            print(f"error: no GDScript files found under: {path.as_posix()}", file=sys.stderr)
+        return 2
+
+    gdscript_files = sorted({file for files in files_by_path.values() for file in files})
     problems: list[Problem] = []
-    for path in iter_gdscript_files(paths):
+    for path in gdscript_files:
         problems.extend(analyze_file(path))
 
     for problem in problems:
         print(problem.format(), file=sys.stderr)
     if problems:
-        print(
-            f"error: found {len(problems)} unreachable private GDScript helper(s)",
-            file=sys.stderr,
-        )
+        parse_count = sum(1 for problem in problems if problem.scope == "<parse>")
+        helper_count = len(problems) - parse_count
+        summaries: list[str] = []
+        if parse_count:
+            summaries.append(f"{parse_count} GDScript parse failure(s)")
+        if helper_count:
+            summaries.append(f"{helper_count} unreachable private GDScript helper(s)")
+        print(f"error: found {' and '.join(summaries)}", file=sys.stderr)
         return 1
     return 0
 
@@ -250,17 +269,19 @@ def configure_gdtoolkit_cache() -> None:
 
 
 def iter_gdscript_files(paths: Iterable[Path]) -> list[Path]:
-    files: list[Path] = []
-    for path in paths:
-        if path.is_file() and path.suffix == ".gd" and not is_excluded(path):
-            files.append(path)
-        elif path.is_dir():
-            files.extend(
-                child
-                for child in path.rglob("*.gd")
-                if child.is_file() and not is_excluded(child)
-            )
-    return sorted(files)
+    return sorted({file for path in paths for file in gdscript_files_for_path(path)})
+
+
+def gdscript_files_for_path(path: Path) -> list[Path]:
+    if path.is_file():
+        if path.suffix == ".gd" and not is_excluded(path):
+            return [path]
+        return []
+    if path.is_dir():
+        return sorted(
+            child for child in path.rglob("*.gd") if child.is_file() and not is_excluded(child)
+        )
+    return []
 
 
 def is_excluded(path: Path) -> bool:
@@ -275,11 +296,16 @@ def analyze_source(source: str, path: str) -> list[Problem]:
     try:
         tree = gd_parser.parse(source, gather_metadata=True)
     except Exception as exc:  # pragma: no cover - depends on parser internals.
-        return [Problem(path, 1, "<parse>", f"parse failed: {exc}")]
+        return [Problem(path, parse_error_line(exc), "<parse>", f"parse failed: {exc}")]
 
     allowlisted = collect_allowlisted_lines(source)
     root_scope = build_scope(path, tree)
     return analyze_scope(root_scope, path, allowlisted)
+
+
+def parse_error_line(exc: Exception) -> int:
+    line = getattr(exc, "line", 1)
+    return line if isinstance(line, int) and line > 0 else 1
 
 
 def collect_allowlisted_lines(source: str) -> dict[int, set[str]]:
@@ -608,6 +634,11 @@ def run_self_tests() -> None:
             set(),
         ),
         (
+            "custom _run is not a root",
+            "func public():\n\tpass\n\nfunc _run():\n\tpass\n",
+            {"_run"},
+        ),
+        (
             "dynamic call edge",
             "func _ready():\n\tcall(\"_late\")\n\nfunc _late():\n\tpass\n",
             set(),
@@ -862,6 +893,25 @@ def run_self_tests() -> None:
                 "self-test failed: %s: expected %s (%d problems), got %s (%d problems)"
                 % (name, sorted(expected), expected_count, sorted(actual), len(problems))
             )
+
+    parse_problems = analyze_source("func ok():\n\tpass\nfunc broken(\n", "<self-test parse>")
+    if len(parse_problems) != 1 or parse_problems[0].scope != "<parse>":
+        raise SystemExit("self-test failed: parse error must be reported as one parse problem")
+    if parse_problems[0].line != 3:
+        raise SystemExit(
+            "self-test failed: parse error line should be 3, got %d" % parse_problems[0].line
+        )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        script_path = temp_path / "ok.gd"
+        script_path.write_text("func public():\n\tpass\n", encoding="utf-8")
+        nested_path = temp_path / "nested"
+        nested_path.mkdir()
+        if gdscript_files_for_path(script_path) != [script_path]:
+            raise SystemExit("self-test failed: single .gd file path was not detected")
+        if gdscript_files_for_path(nested_path):
+            raise SystemExit("self-test failed: empty path should not report GDScript files")
 
 
 if __name__ == "__main__":
