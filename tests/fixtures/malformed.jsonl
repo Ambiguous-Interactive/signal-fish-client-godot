@@ -1,0 +1,11 @@
+# Signal Fish v2 malformed protocol fixtures
+# Source: decoder hardening cases derived from signal-fish-server@4f766b7856bead1e1cc07d4e7a1057831a045749 src/protocol/messages.rs
+# Format: one malformed input per non-comment line; readers must not assume each line is valid JSON.
+not-json
+[]
+{"data":{}}
+{"type":123,"data":{}}
+{"type":"UnknownEvent","data":{}}
+{"type":"Authenticated","data":"not-an-object"}
+{"type":"AuthenticationError","data":{"error":"missing code"}}
+{"type":"GameDataBinary","data":{"from_player":"10000000-0000-0000-0000-000000000002","encoding":"message_pack","payload":"not-base64-or-byte-array"}}

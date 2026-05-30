@@ -2,7 +2,8 @@
 
 A reproducible, batteries-included VS Code dev environment for working on the
 Signal Fish Godot client. Built on Ubuntu 24.04 with Godot 4 (headless),
-PowerShell 7, Python, Node LTS, and a curated set of reputable extensions.
+PowerShell 7, Python, Node LTS, and a curated set of reputable extensions and
+themes.
 
 ## Quick start
 
@@ -53,8 +54,33 @@ Only reputable, well-maintained extensions are pre-installed:
 - **AI assistants (require a subscription or account; install will succeed
   but the assistant features are gated by sign-in):**
   `github.copilot-chat`, `openai.chatgpt`, `anthropic.claude-code`
-- **Theme:** `github.github-vscode-theme` (GitHub Dark Default)
-- **Icons:** `pkief.material-icon-theme`, `oderwat.indent-rainbow`
+- **Theme library:** default `(Modern) Godot Theme VSCode Breeze Dark` from
+  `javier-garrido-galdon.godot-theme-vscode`, plus Godot-specific and
+  general-purpose alternatives listed below
+- **Icons:** `pkief.material-icon-theme`, `vscode-icons-team.vscode-icons`,
+  `miguelsolorio.fluent-icons`
+- **Visual polish:** `oderwat.indent-rainbow`
+
+### Theme options
+
+The default theme is intentionally Godot-centric and a little underdog:
+`(Modern) Godot Theme VSCode Breeze Dark` from
+`javier-garrido-galdon.godot-theme-vscode`. Its Marketplace package is MIT
+licensed, recently maintained, and tuned for GDScript when paired with Godot
+Tools.
+
+The container also installs a broad theme library so contributors can switch
+without waiting on extension installs:
+
+| Group | Extensions |
+| ----- | ---------- |
+| Godot-focused | `javier-garrido-galdon.godot-theme-vscode`, `MrPogofu.true-godot`, `ryanabx.godot-vscode-theme` |
+| Core dark staples | `github.github-vscode-theme`, `dracula-theme.theme-dracula`, `Catppuccin.catppuccin-vsc`, `enkia.tokyo-night`, `zhuangtongfa.Material-theme`, `akamud.vscode-theme-onedark`, `sdras.night-owl`, `arcticicestudio.nord-visual-studio-code` |
+| Distinctive palettes | `BeardedBear.beardedtheme`, `johnpapa.winteriscoming`, `jdinhlife.gruvbox`, `teabyii.ayu`, `wesbos.theme-cobalt2`, `fisheva.eva-theme`, `miguelsolorio.min-theme`, `DaltonMenezes.aura-theme`, `rocketseat.theme-omni`, `PawelBorkar.jellyfish` |
+| Dark/light options | `uloco.theme-bluloco-dark`, `uloco.theme-bluloco-light`, plus light variants bundled by GitHub Theme and Catppuccin |
+| Icon/product icon themes | `pkief.material-icon-theme`, `vscode-icons-team.vscode-icons`, `miguelsolorio.fluent-icons` |
+
+Switch color themes with the `Preferences: Color Theme` command.
 
 ## Forwarded ports
 

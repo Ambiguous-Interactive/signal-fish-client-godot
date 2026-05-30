@@ -106,6 +106,16 @@ Definition of done for the first usable client:
 - `scripts/agent-check.ps1`: fast post-edit validator for agents and humans.
   It invokes `run-llm-hooks.ps1 -Mode AgentFast -SkipStagedCheck -NoAutoFix`
   in the same PowerShell process; pass `-Full` for exhaustive behavioral tests.
+- `scripts/check-gdscript-private-helpers.py`: gdtoolkit-parser static guard
+  for unreachable private GDScript helper chains and cold-cache-fragile
+  self-`class_name` references; runtime CI runs it with `--self-test` before
+  protocol fixtures.
+- `scripts/run-runtime-checks.sh`: shared runtime validation entry point used
+  by CI and local checks. It sets a deterministic writable `HOME` for
+  tool caches, activates `.venv-ci` when present, and runs Godot from a
+  temporary project copy that excludes `.godot` so local runs exercise the same
+  cold-cache path as CI. Subcommands are `all`, `private-helpers`, `format`,
+  `lint`, and `godot`.
 - `scripts/preflight.ps1`: self-healing bootstrap. Parse-checks itself
   first, then every tracked `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers
   corrupted sources via the index/staged copy first, falling back to
@@ -171,6 +181,12 @@ Use `-Check` in CI to validate generated files without modifying them:
 pwsh -NoProfile -File scripts/generate-llm-index.ps1 -Check
 ```
 
+Runtime protocol checks are separate from the LLM harness:
+
+```bash
+bash scripts/run-runtime-checks.sh all
+```
+
 ## Generated LLM Index
 
 Do not edit the section below manually. Regenerate it with
@@ -209,5 +225,6 @@ Do not edit the section below manually. Regenerate it with
 - [Godot Networking And Web Notes](research/godot-networking-web.md) - Source-backed notes for Godot WebSocket, WebRTC, browser export, and cross-platform networking decisions.
 - [Godot Target Notes](research/godot-targets.md) - Compatibility notes for targeting major Godot versions from a GDScript Signal Fish addon.
 - [GStack Adaptation Notes](research/gstack-adaptations.md) - Practical gstack practices adapted for this repo's lightweight LLM harness.
+- [Signal Fish Protocol Fixtures](research/protocol-fixtures.md) - Pinned upstream sources used to build Signal Fish v2 protocol fixtures for the Godot client.
 - [Signal Fish Upstream References](research/protocol-links.md) - Curated upstream references for Signal Fish protocol and client compatibility work.
 <!-- LLM-INDEX:END -->

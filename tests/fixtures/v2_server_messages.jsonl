@@ -1,0 +1,28 @@
+# Signal Fish v2 server message fixtures
+# Source: signal-fish-server@4f766b7856bead1e1cc07d4e7a1057831a045749 src/protocol/messages.rs src/protocol/types.rs src/protocol/error_codes.rs
+# Source: signal-fish-client-rust@da4c0bdf0657370ec340321363f3b5850e06b0b0 src/protocol.rs src/event.rs
+# Format: one canonical JSON envelope per non-comment line; unit variants omit data.
+{"type":"Authenticated","data":{"app_name":"Reef Rally","organization":"Ambiguous Interactive","rate_limits":{"per_minute":60,"per_hour":3600,"per_day":86400}}}
+{"type":"ProtocolInfo","data":{"platform":"godot","sdk_version":"0.1.0-godot","minimum_version":"0.1.0","recommended_version":"0.1.0","capabilities":["authority","reconnection","spectators"],"notes":"fixture protocol info","game_data_formats":["json","message_pack","rkyv"],"player_name_rules":{"max_length":32,"min_length":1,"allow_unicode_alphanumeric":true,"allow_spaces":true,"allow_leading_trailing_whitespace":false,"allowed_symbols":["_","-"],"additional_allowed_characters":"."}}}
+{"type":"AuthenticationError","data":{"error":"invalid app id","error_code":"INVALID_APP_ID"}}
+{"type":"RoomJoined","data":{"room_id":"20000000-0000-0000-0000-000000000001","room_code":"ABC123","player_id":"10000000-0000-0000-0000-000000000001","game_name":"reef-rally","max_players":4,"supports_authority":true,"current_players":[{"id":"10000000-0000-0000-0000-000000000001","name":"Alice","is_authority":true,"is_ready":false,"connected_at":"2026-05-29T00:00:00Z","connection_info":{"type":"direct","host":"127.0.0.1","port":7777}}],"is_authority":true,"lobby_state":"waiting","ready_players":[],"relay_type":"websocket","current_spectators":[{"id":"30000000-0000-0000-0000-000000000001","name":"Observer","connected_at":"2026-05-29T00:00:01Z"}]}}
+{"type":"RoomJoinFailed","data":{"reason":"room is full","error_code":"ROOM_FULL"}}
+{"type":"RoomLeft"}
+{"type":"PlayerJoined","data":{"player":{"id":"10000000-0000-0000-0000-000000000002","name":"Bob","is_authority":false,"is_ready":false,"connected_at":"2026-05-29T00:00:02Z","connection_info":{"type":"webrtc","sdp":"fixture-sdp","ice_candidates":["candidate:fixture"]}}}}
+{"type":"PlayerLeft","data":{"player_id":"10000000-0000-0000-0000-000000000002"}}
+{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000002","data":{"action":"move","x":30,"y":40}}}
+{"type":"GameDataBinary","data":{"from_player":"10000000-0000-0000-0000-000000000002","encoding":"message_pack","payload":[202,254]}}
+{"type":"AuthorityChanged","data":{"authority_player":null,"you_are_authority":false}}
+{"type":"AuthorityResponse","data":{"granted":false,"reason":"authority conflict","error_code":"AUTHORITY_CONFLICT"}}
+{"type":"LobbyStateChanged","data":{"lobby_state":"lobby","ready_players":["10000000-0000-0000-0000-000000000001"],"all_ready":false}}
+{"type":"GameStarting","data":{"peer_connections":[{"player_id":"10000000-0000-0000-0000-000000000001","player_name":"Alice","is_authority":true,"relay_type":"websocket","connection_info":{"type":"direct","host":"127.0.0.1","port":7777}},{"player_id":"10000000-0000-0000-0000-000000000002","player_name":"Bob","is_authority":false,"relay_type":"websocket","connection_info":{"type":"custom","data":{"transport":"fixture"}}}]}}
+{"type":"Pong"}
+{"type":"Reconnected","data":{"room_id":"20000000-0000-0000-0000-000000000001","room_code":"ABC123","player_id":"10000000-0000-0000-0000-000000000001","game_name":"reef-rally","max_players":4,"supports_authority":true,"current_players":[{"id":"10000000-0000-0000-0000-000000000001","name":"Alice","is_authority":true,"is_ready":true,"connected_at":"2026-05-29T00:00:00Z","connection_info":{"type":"direct","host":"127.0.0.1","port":7777}}],"is_authority":true,"lobby_state":"finalized","ready_players":["10000000-0000-0000-0000-000000000001"],"relay_type":"websocket","current_spectators":[],"missed_events":[{"type":"Pong"},{"type":"PlayerLeft","data":{"player_id":"10000000-0000-0000-0000-000000000002"}}]}}
+{"type":"ReconnectionFailed","data":{"reason":"token expired","error_code":"RECONNECTION_EXPIRED"}}
+{"type":"PlayerReconnected","data":{"player_id":"10000000-0000-0000-0000-000000000002"}}
+{"type":"SpectatorJoined","data":{"room_id":"20000000-0000-0000-0000-000000000001","room_code":"ABC123","spectator_id":"30000000-0000-0000-0000-000000000001","game_name":"reef-rally","current_players":[{"id":"10000000-0000-0000-0000-000000000001","name":"Alice","is_authority":true,"is_ready":false,"connected_at":"2026-05-29T00:00:00Z"}],"current_spectators":[{"id":"30000000-0000-0000-0000-000000000001","name":"Observer","connected_at":"2026-05-29T00:00:01Z"}],"lobby_state":"waiting","reason":"joined"}}
+{"type":"SpectatorJoinFailed","data":{"reason":"spectator mode disabled","error_code":"SPECTATOR_NOT_ALLOWED"}}
+{"type":"SpectatorLeft","data":{"room_id":"20000000-0000-0000-0000-000000000001","room_code":"ABC123","reason":"voluntary_leave","current_spectators":[]}}
+{"type":"NewSpectatorJoined","data":{"spectator":{"id":"30000000-0000-0000-0000-000000000002","name":"Watcher","connected_at":"2026-05-29T00:00:03Z"},"current_spectators":[{"id":"30000000-0000-0000-0000-000000000002","name":"Watcher","connected_at":"2026-05-29T00:00:03Z"}],"reason":"joined"}}
+{"type":"SpectatorDisconnected","data":{"spectator_id":"30000000-0000-0000-0000-000000000002","reason":"disconnected","current_spectators":[]}}
+{"type":"Error","data":{"message":"message too large","error_code":"MESSAGE_TOO_LARGE"}}
