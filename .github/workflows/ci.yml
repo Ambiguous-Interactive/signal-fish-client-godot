@@ -1,64 +1,64 @@
 name: Runtime CI
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+    pull_request:
+    push:
+        branches:
+            - main
 
 permissions:
-  contents: read
+    contents: read
 
 jobs:
-  protocol:
-    name: Protocol checks
-    runs-on: ubuntu-24.04
-    env:
-      GODOT_VERSION: 4.3-stable
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
+    protocol:
+        name: Protocol checks
+        runs-on: ubuntu-24.04
+        env:
+            GODOT_VERSION: 4.3-stable
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v6
 
-      - name: Install Godot runtime dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ca-certificates \
-            curl \
-            unzip \
-            libfontconfig1 \
-            libfreetype6 \
-            libx11-6 \
-            libxcursor1 \
-            libxext6 \
-            libxi6 \
-            libxinerama1 \
-            libxrandr2 \
-            libgl1 \
-            libglu1-mesa \
-            libasound2t64 \
-            libpulse0 \
-            libdbus-1-3 \
-            libudev1
+            - name: Install Godot runtime dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends \
+                    ca-certificates \
+                    curl \
+                    unzip \
+                    libfontconfig1 \
+                    libfreetype6 \
+                    libx11-6 \
+                    libxcursor1 \
+                    libxext6 \
+                    libxi6 \
+                    libxinerama1 \
+                    libxrandr2 \
+                    libgl1 \
+                    libglu1-mesa \
+                    libasound2t64 \
+                    libpulse0 \
+                    libdbus-1-3 \
+                    libudev1
 
-      - name: Install GDScript tooling
-        run: |
-          python3 -m venv .venv-ci
-          . .venv-ci/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install gdtoolkit==4.5.0
+            - name: Install GDScript tooling
+              run: |
+                  python3 -m venv .venv-ci
+                  . .venv-ci/bin/activate
+                  python -m pip install --upgrade pip
+                  python -m pip install -r requirements-ci.txt
 
-      - name: Check private helper reachability
-        run: bash scripts/run-runtime-checks.sh private-helpers
+            - name: Check private helper reachability
+              run: bash scripts/run-runtime-checks.sh private-helpers
 
-      - name: Check GDScript formatting
-        run: bash scripts/run-runtime-checks.sh format
+            - name: Check GDScript formatting
+              run: bash scripts/run-runtime-checks.sh format
 
-      - name: Lint GDScript
-        run: bash scripts/run-runtime-checks.sh lint
+            - name: Lint GDScript
+              run: bash scripts/run-runtime-checks.sh lint
 
-      - name: Install Godot
-        run: sudo bash .devcontainer/install-godot.sh "${GODOT_VERSION}"
+            - name: Install Godot
+              run: sudo bash .devcontainer/install-godot.sh "${GODOT_VERSION}"
 
-      - name: Run protocol fixture tests
-        run: bash scripts/run-runtime-checks.sh godot
+            - name: Run protocol fixture tests
+              run: bash scripts/run-runtime-checks.sh godot

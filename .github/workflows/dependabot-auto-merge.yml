@@ -1,0 +1,40 @@
+name: Dependabot Auto Merge
+
+on:
+    workflow_run:
+        workflows:
+            - Runtime CI
+            - LLM Harness
+        types:
+            - completed
+
+permissions:
+    contents: read
+
+concurrency:
+    group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha }}
+    cancel-in-progress: false
+
+jobs:
+    merge:
+        name: Merge after CI passes
+        if: github.event.workflow_run.conclusion == 'success'
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        permissions:
+            actions: read
+            checks: read
+            contents: write
+            pull-requests: write
+        env:
+            GH_TOKEN: ${{ github.token }}
+            HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+            HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+            REQUIRED_WORKFLOWS: Runtime CI|LLM Harness
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v6
+
+            - name: Merge Dependabot PR after required checks pass
+              shell: bash
+              run: bash scripts/dependabot-auto-merge.sh

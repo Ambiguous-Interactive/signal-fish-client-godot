@@ -116,6 +116,12 @@ Definition of done for the first usable client:
   temporary project copy that excludes `.godot` so local runs exercise the same
   cold-cache path as CI. Subcommands are `all`, `private-helpers`, `format`,
   `lint`, and `godot`.
+- `scripts/validate-github-config.py`: deterministic local validator for
+  GitHub workflows and Dependabot config. It rejects duplicate YAML keys,
+  `gh api --slurp` combined with `--jq`, unsafe workflow triggers or
+  permissions, drift between required auto-merge workflows and actual
+  workflow names, CRLF shebangs in the auto-merge script, and grouped
+  `devcontainers` Dependabot updates.
 - `scripts/preflight.ps1`: self-healing bootstrap. Parse-checks itself
   first, then every tracked `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers
   corrupted sources via the index/staged copy first, falling back to
@@ -137,9 +143,9 @@ Definition of done for the first usable client:
   `PostToolUse` parse-checks every `.ps1`/`.psm1`/`.psd1` write/edit and
   runs a fast per-file `.llm` structural validator after `.llm/**` edits;
   `Stop` runs preflight; `SessionStart` emits a one-shot reminder.
-  PowerShell hook/reference scripts with shebangs are forced to LF by
-  `.gitattributes` and by a byte-level self-test so direct Unix execution
-  cannot resolve `pwsh\r`.
+  Tracked scripts with shebangs are forced to LF by `.gitattributes` and
+  by a byte-level self-test so direct Unix execution cannot resolve an
+  interpreter name ending in `\r`.
   `.claude/settings.local.json` is intentionally gitignored for local Claude
   Code permission overrides.
 
@@ -148,7 +154,8 @@ Definition of done for the first usable client:
 Prerequisite: PowerShell 7+ (`pwsh`) on PATH. Windows users should
 install from <https://aka.ms/powershell>. The pre-commit shim, hooks,
 and CI all hard-require `pwsh`; bare `powershell.exe` is not supported
-(the shim detects it only to emit a clear error).
+(the shim detects it only to emit a clear error). GitHub config validation
+also needs Python 3 with `requirements-automation.txt` installed.
 
 Primary entry point (invoked by the installed git hooks-path pre-commit shim
 and CI):
@@ -173,6 +180,9 @@ pwsh -NoProfile -File scripts/generate-llm-index.ps1
 pwsh -NoProfile -File scripts/lint-llm.ps1
 pwsh -NoProfile -File scripts/test-llm-harness.ps1
 pwsh -NoProfile -File scripts/agent-check.ps1
+python -m pip install -r requirements-automation.txt
+python scripts/validate-github-config.py --self-test
+python scripts/validate-github-config.py --repo-root .
 ```
 
 Use `-Check` in CI to validate generated files without modifying them:
