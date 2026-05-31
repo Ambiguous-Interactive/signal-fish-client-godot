@@ -165,6 +165,62 @@ function Assert-TextDoesNotMatch {
     throw "$Subject must $Requirement. Forbidden pattern: $Pattern$details"
 }
 
+function ConvertTo-TestLfNewlines {
+    param([AllowNull()][AllowEmptyString()][string]$Content)
+    if ($null -eq $Content) { return '' }
+    return $Content.Replace("`r`n", "`n").Replace("`r", "`n")
+}
+
+function Write-TestUtf8NoBomFile {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [AllowNull()][AllowEmptyString()][string]$Content,
+        [switch]$LfNewlines
+    )
+
+    $text = if ($LfNewlines) { ConvertTo-TestLfNewlines $Content } else { $Content }
+    [System.IO.File]::WriteAllText($Path, $text, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Assert-TestShebangLineUsesLf {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$Name = $Path
+    )
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -ge 5 -and
+        $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191 -and
+        $bytes[3] -eq 35 -and $bytes[4] -eq 33) {
+        throw "$Name has a UTF-8 BOM before its shebang; direct Unix execution requires #! as the first two bytes."
+    }
+    if ($bytes.Length -lt 2 -or $bytes[0] -ne 35 -or $bytes[1] -ne 33) {
+        throw "$Name must start with a shebang for this assertion."
+    }
+    $newlineIndex = [Array]::IndexOf($bytes, [byte]10)
+    if ($newlineIndex -lt 0) {
+        throw "$Name has a shebang but no LF newline after it."
+    }
+    if ($newlineIndex -gt 0 -and $bytes[$newlineIndex - 1] -eq 13) {
+        $firstLineBytes = $bytes[0..($newlineIndex - 1)]
+        $firstLine = [System.Text.Encoding]::UTF8.GetString($firstLineBytes)
+        throw "$Name has a CRLF shebang line '$firstLine'; direct Unix execution may look for an interpreter name ending in \\r."
+    }
+}
+
+function Assert-TestFileHasNoCarriageReturns {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$Name = $Path
+    )
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $crIndex = [Array]::IndexOf($bytes, [byte]13)
+    if ($crIndex -ge 0) {
+        throw "$Name must not contain CR bytes after LF normalization; first CR byte offset: $crIndex."
+    }
+}
+
 function Assert-DirectPosixShimBootstrap {
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -763,20 +819,23 @@ fi
 echo "unexpected fake gh invocation: $*" >&2
 exit 99
 '@
-    [System.IO.File]::WriteAllText($fakeGh, $fakeGhContent, [System.Text.UTF8Encoding]::new($false))
-    & chmod +x -- $fakeGh 2>&1 | Out-Null
-
-    $snapshots = @(
-        (Save-EnvVar -Name 'PATH')
-        (Save-EnvVar -Name 'GH_TOKEN')
-        (Save-EnvVar -Name 'GITHUB_REPOSITORY')
-        (Save-EnvVar -Name 'HEAD_SHA')
-        (Save-EnvVar -Name 'HEAD_BRANCH')
-        (Save-EnvVar -Name 'REQUIRED_WORKFLOWS')
-        (Save-EnvVar -Name 'FAKE_GH_LOG')
-        (Save-EnvVar -Name 'FAKE_GH_SCENARIO')
-    )
+    $snapshots = @()
     try {
+        Write-TestUtf8NoBomFile -Path $fakeGh -Content $fakeGhContent -LfNewlines
+        Assert-TestShebangLineUsesLf -Path $fakeGh -Name 'fake gh fixture'
+        Assert-TestFileHasNoCarriageReturns -Path $fakeGh -Name 'fake gh fixture'
+        & chmod +x -- $fakeGh 2>&1 | Out-Null
+
+        $snapshots = @(
+            (Save-EnvVar -Name 'PATH')
+            (Save-EnvVar -Name 'GH_TOKEN')
+            (Save-EnvVar -Name 'GITHUB_REPOSITORY')
+            (Save-EnvVar -Name 'HEAD_SHA')
+            (Save-EnvVar -Name 'HEAD_BRANCH')
+            (Save-EnvVar -Name 'REQUIRED_WORKFLOWS')
+            (Save-EnvVar -Name 'FAKE_GH_LOG')
+            (Save-EnvVar -Name 'FAKE_GH_SCENARIO')
+        )
         $env:PATH = "$fakeBin$([System.IO.Path]::PathSeparator)$env:PATH"
         $env:GH_TOKEN = 'fake-token'
         $env:GITHUB_REPOSITORY = 'owner/repo'
@@ -798,7 +857,7 @@ exit 99
             $exitCode = $LASTEXITCODE
             $combined = ($output | Out-String)
             if ($exitCode -ne 0) {
-                throw "Auto-merge scenario '$($case.Scenario)' should exit 0; got $exitCode. Output: $combined"
+                throw "Auto-merge scenario '$($case.Scenario)' should exit 0; got $exitCode. fake gh path: $fakeGh. Output: $combined"
             }
             if ($combined -notmatch $case.Pattern -and
                 -not ((Test-Path -LiteralPath $env:FAKE_GH_LOG -PathType Leaf) -and
@@ -1062,7 +1121,7 @@ Assert-Test 'tracked shebang scripts use LF attributes and bytes' {
     }
     Push-Location $repoRoot
     try {
-        $files = @(& git ls-files -- '*.ps1' '*.psm1' '*.psd1' '.githooks/*' '.claude/hooks/*' 2>&1)
+        $files = @(& git ls-files 2>&1)
         if ($LASTEXITCODE -ne 0) {
             throw "git ls-files (shebang candidates) failed with exit $LASTEXITCODE`: $($files -join '; ')"
         }
@@ -1081,11 +1140,10 @@ Assert-Test 'tracked shebang scripts use LF attributes and bytes' {
             continue
         }
         $checked++
-        $newlineIndex = [Array]::IndexOf($bytes, [byte]10)
-        if ($newlineIndex -lt 0) {
-            $failed.Add("$rel has a shebang but no LF newline after it.")
-        } elseif ($newlineIndex -gt 0 -and $bytes[$newlineIndex - 1] -eq 13) {
-            $failed.Add("$rel has a CRLF shebang line; direct Unix execution may look for pwsh\\r.")
+        try {
+            Assert-TestShebangLineUsesLf -Path $full -Name $rel
+        } catch {
+            $failed.Add($_.Exception.Message)
         }
         Push-Location $repoRoot
         try {
@@ -1107,6 +1165,22 @@ Assert-Test 'tracked shebang scripts use LF attributes and bytes' {
     }
     if ($failed.Count -gt 0) {
         throw "Shebang line-ending failures:`n  - " + ($failed -join "`n  - ")
+    }
+}
+
+Assert-Test 'generated executable test fixtures normalize shebang newlines' {
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-generated-executable-$([Guid]::NewGuid())")
+    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+    $fixture = Join-Path $tempRoot 'fake-tool'
+    try {
+        Write-TestUtf8NoBomFile `
+            -Path $fixture `
+            -Content "#!/usr/bin/env bash`r`necho ok`r`n" `
+            -LfNewlines
+        Assert-TestShebangLineUsesLf -Path $fixture -Name 'generated fake executable'
+        Assert-TestFileHasNoCarriageReturns -Path $fixture -Name 'generated fake executable'
+    } finally {
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -2935,10 +3009,12 @@ Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without 
 
         $fakeLog = Join-Path $sandbox 'fake-pwsh.log'
         $fakePwsh = Join-Path $fakeBin 'pwsh'
-        [System.IO.File]::WriteAllText(
-            $fakePwsh,
-            "#!/usr/bin/env sh`necho child-pwsh >> `"$fakeLog`"`nexit 97`n",
-            [System.Text.UTF8Encoding]::new($false))
+        Write-TestUtf8NoBomFile `
+            -Path $fakePwsh `
+            -Content "#!/usr/bin/env sh`necho child-pwsh >> `"$fakeLog`"`nexit 97`n" `
+            -LfNewlines
+        Assert-TestShebangLineUsesLf -Path $fakePwsh -Name 'fake pwsh fixture'
+        Assert-TestFileHasNoCarriageReturns -Path $fakePwsh -Name 'fake pwsh fixture'
         & chmod +x -- $fakePwsh 2>&1 | Out-Null
 
         $pathBackup = $env:PATH

@@ -120,7 +120,8 @@ Definition of done for the first usable client:
   GitHub workflows and Dependabot config. It rejects duplicate YAML keys,
   `gh api --slurp` combined with `--jq`, unsafe workflow triggers or
   permissions, drift between required auto-merge workflows and actual
-  workflow names, and grouped `devcontainers` Dependabot updates.
+  workflow names, CRLF shebangs in the auto-merge script, and grouped
+  `devcontainers` Dependabot updates.
 - `scripts/preflight.ps1`: self-healing bootstrap. Parse-checks itself
   first, then every tracked `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers
   corrupted sources via the index/staged copy first, falling back to
@@ -142,9 +143,9 @@ Definition of done for the first usable client:
   `PostToolUse` parse-checks every `.ps1`/`.psm1`/`.psd1` write/edit and
   runs a fast per-file `.llm` structural validator after `.llm/**` edits;
   `Stop` runs preflight; `SessionStart` emits a one-shot reminder.
-  PowerShell hook/reference scripts with shebangs are forced to LF by
-  `.gitattributes` and by a byte-level self-test so direct Unix execution
-  cannot resolve `pwsh\r`.
+  Tracked scripts with shebangs are forced to LF by `.gitattributes` and
+  by a byte-level self-test so direct Unix execution cannot resolve an
+  interpreter name ending in `\r`.
   `.claude/settings.local.json` is intentionally gitignored for local Claude
   Code permission overrides.
 

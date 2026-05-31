@@ -163,6 +163,27 @@ def find_gh_api_slurp_jq(script: str) -> list[str]:
     return offenders
 
 
+def shebang_lf_error(path: Path, *, require_shebang: bool = False) -> str | None:
+    data = path.read_bytes()
+    if data.startswith(b"\xef\xbb\xbf#!"):
+        return f"{path}: shebang must be the first bytes; UTF-8 BOM found before #!"
+    if not data.startswith(b"#!"):
+        if require_shebang:
+            return f"{path}: executable script must start with a shebang"
+        return None
+    newline_index = data.find(b"\n")
+    if newline_index < 0:
+        return f"{path}: shebang line must end with LF"
+    if newline_index > 0 and data[newline_index - 1] == 13:
+        first_line = data[: newline_index + 1]
+        hex_bytes = " ".join(f"{byte:02x}" for byte in first_line[:80])
+        return (
+            f"{path}: shebang line must use LF, not CRLF; "
+            f"first-line bytes: {hex_bytes}"
+        )
+    return None
+
+
 def has_trigger(data: Any, trigger_name: str) -> bool:
     on_value = as_dict(data).get("on")
     if isinstance(on_value, str):
@@ -277,6 +298,10 @@ def validate_auto_merge(repo_root: Path, workflows: dict[str, tuple[Path, dict[s
     run_steps = [run.strip() for run in iter_workflow_runs(data)]
     if "bash scripts/dependabot-auto-merge.sh" not in run_steps:
         reporter.error(f"{path}: workflow must delegate to scripts/dependabot-auto-merge.sh")
+
+    shebang_error = shebang_lf_error(script_path, require_shebang=True)
+    if shebang_error:
+        reporter.error(shebang_error)
 
     script = script_path.read_text(encoding="utf-8")
     for offender in find_gh_api_slurp_jq(script):
@@ -528,6 +553,27 @@ updates:
         result = subprocess.run(["bash", "-n", str(script)], check=False)
         if result.returncode != 0:
             reporter.error("self-test: bash -n smoke check failed")
+
+        shebang_cases = [
+            ("lf", b"#!/usr/bin/env bash\nexit 0\n", None),
+            ("bom", b"\xef\xbb\xbf#!/usr/bin/env bash\nexit 0\n", "UTF-8 BOM"),
+            ("crlf", b"#!/usr/bin/env bash\r\nexit 0\n", "CRLF"),
+            ("missing", b"echo no shebang\n", "must start with a shebang"),
+            ("unterminated", b"#!/usr/bin/env bash", "must end with LF"),
+        ]
+        for name, content, expected_error in shebang_cases:
+            candidate = Path(temp) / f"{name}.sh"
+            candidate.write_bytes(content)
+            error = shebang_lf_error(candidate, require_shebang=True)
+            if expected_error is None and error is not None:
+                reporter.error(f"self-test: LF shebang was rejected: {error}")
+            elif expected_error is not None and (
+                error is None or expected_error not in error
+            ):
+                reporter.error(
+                    f"self-test: shebang case {name!r} did not report "
+                    f"{expected_error!r}; got {error!r}"
+                )
 
     if reporter.errors:
         for error in reporter.errors:

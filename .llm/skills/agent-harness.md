@@ -104,9 +104,9 @@ The linter, preflight, and self-tests enforce repo-wide invariants beyond
   `Get-LlmStrayWorkingTreeArtifacts` covers gitignored blind spots like
   `*.tmp`. The hook runner's `-AutoFix` deletes scoped matches. `.gitignore`
   blocks common backups as a second layer.
-- PowerShell hook/reference scripts with shebangs must stay LF-normalized.
-  `.gitattributes` overrides `.claude/hooks/*.ps1` and `.githooks/*.ps1`,
-  and the self-tests check both git attributes and first-newline bytes.
+- Tracked scripts with shebangs must stay LF-normalized. `.gitattributes`
+  forces LF for script-like files, and the self-tests check both git
+  attributes and first-newline bytes across all tracked shebang scripts.
 - `install-git-hooks.ps1` must have no undefined variable references and
   exposes `Get-InstallPathComparison`, `ConvertTo-NormalizedHooksPath`,
   `Test-LegacyHooksPath` so trailing-separator and relative-path

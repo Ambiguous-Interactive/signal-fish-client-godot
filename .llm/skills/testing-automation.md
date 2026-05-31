@@ -82,11 +82,12 @@ These checks enforce:
   and `.github/dependabot.yml` without network calls. It self-tests duplicate
   YAML-key rejection, preserves GitHub's `on:` key, rejects
   `gh api --slurp` with `--jq`, runs `bash -n` for the Dependabot auto-merge
-  script, checks workflow-name/required-check drift, and rejects `groups` or
-  `multi-ecosystem-group` under the `devcontainers` Dependabot updater because
-  grouped scans have been unreliable for that ecosystem. In `PreCommit`,
-  `run-llm-hooks.ps1` validates a staged-index snapshot so unstaged worktree
-  fixes cannot mask bad staged GitHub config.
+  script, rejects CRLF shebangs there, checks workflow-name/required-check
+  drift, and rejects `groups` or `multi-ecosystem-group` under the
+  `devcontainers` Dependabot updater because grouped scans have been
+  unreliable for that ecosystem. In `PreCommit`, `run-llm-hooks.ps1` validates
+  a staged-index snapshot so unstaged worktree fixes cannot mask bad staged
+  GitHub config.
 
 ## Current Runtime Checks
 
