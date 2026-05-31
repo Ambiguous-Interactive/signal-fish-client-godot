@@ -3,7 +3,7 @@
 #
 # Base: Microsoft devcontainers base on Ubuntu 24.04 (Noble).
 # Pinned by digest is preferred long-term; we pin by tag here for readability
-# and let Renovate / manual review bump it. See:
+# and let Dependabot / manual review bump it. See:
 #   https://github.com/devcontainers/images/tree/main/src/base-ubuntu
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
