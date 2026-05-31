@@ -668,6 +668,52 @@ Assert-Test 'run-llm-hooks.ps1 treats GitHub config as tooling' {
     }
 }
 
+Assert-Test 'run-llm-hooks.ps1 skips Windows Store Python aliases' {
+    $entry = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
+    $content = Get-Content -LiteralPath $entry -Raw
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput(
+        $content, [ref]$tokens, [ref]$parseErrors)
+    if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {
+        throw "run-llm-hooks.ps1 has parse errors: $($parseErrors | ForEach-Object { $_.Message } | Out-String)"
+    }
+
+    $func = @($ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Test-HookPythonCommandPath'
+            }, $false))
+    if ($func.Count -ne 1) {
+        throw "Expected exactly one Test-HookPythonCommandPath definition; got $($func.Count)."
+    }
+    foreach ($needle in @(
+            "'py'",
+            'Test-HookPythonCommandPath',
+            'Test-HookPythonCanImportYaml')) {
+        if ($content -notmatch [regex]::Escape($needle)) {
+            throw "run-llm-hooks.ps1 must include Python resolver guard token '$needle'."
+        }
+    }
+
+    . ([scriptblock]::Create($func[0].Extent.Text))
+
+    $storePython = 'C:\Users\me\AppData\Local\Microsoft\WindowsApps\python.exe'
+    $storePython3 = 'C:\Users\me\AppData\Local\Microsoft\WindowsApps\python3.exe'
+    if (Test-HookPythonCommandPath -Path $storePython -TreatAsWindows $true) {
+        throw 'Windows Store python.exe app alias must be skipped to avoid opening GUI prompts during commits.'
+    }
+    if (Test-HookPythonCommandPath -Path $storePython3 -TreatAsWindows $true) {
+        throw 'Windows Store python3.exe app alias must be skipped to avoid opening GUI prompts during commits.'
+    }
+    if (-not (Test-HookPythonCommandPath -Path 'C:\Python312\python.exe' -TreatAsWindows $true)) {
+        throw 'Real Windows Python installs must remain acceptable.'
+    }
+    if (-not (Test-HookPythonCommandPath -Path '/usr/bin/python3' -TreatAsWindows $false)) {
+        throw 'Non-Windows Python paths must remain acceptable.'
+    }
+}
+
 Assert-Test 'GitHub config validator is deterministic and self-tested' {
     $validator = Join-Path $ScriptsDir 'validate-github-config.py'
     if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {

@@ -464,13 +464,14 @@ function Get-HookPythonCommand {
     $candidates = @(
         (Join-Path $RepoRoot '.venv-ci/bin/python'),
         (Join-Path $RepoRoot '.venv-ci/Scripts/python.exe'),
+        'py',
         'python3',
         'python'
     )
     foreach ($candidate in $candidates) {
         if ([System.IO.Path]::IsPathRooted($candidate) -or $candidate.Contains('/') -or $candidate.Contains('\')) {
             if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-                if (Test-HookPythonCanImportYaml -Python $candidate) {
+                if ((Test-HookPythonCommandPath -Path $candidate) -and (Test-HookPythonCanImportYaml -Python $candidate)) {
                     return $candidate
                 }
             }
@@ -478,12 +479,29 @@ function Get-HookPythonCommand {
         }
         $command = Get-Command $candidate -ErrorAction SilentlyContinue
         if ($null -ne $command) {
-            if (Test-HookPythonCanImportYaml -Python $command.Source) {
+            if ((Test-HookPythonCommandPath -Path $command.Source) -and (Test-HookPythonCanImportYaml -Python $command.Source)) {
                 return $command.Source
             }
         }
     }
     return $null
+}
+
+function Test-HookPythonCommandPath {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [bool]$TreatAsWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+            [System.Runtime.InteropServices.OSPlatform]::Windows)
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if (-not $TreatAsWindows) { return $true }
+
+    $leaf = Split-Path -Leaf $Path
+    if ($leaf -notin @('python.exe', 'python3.exe')) { return $true }
+
+    $normalized = $Path -replace '/', '\'
+    return $normalized -notmatch '\\Microsoft\\WindowsApps\\python3?\.exe$'
 }
 
 function Test-HookPythonCanImportYaml {
@@ -522,7 +540,7 @@ function Invoke-GitHubConfigCheck {
     $python = Get-HookPythonCommand
     if ([string]::IsNullOrWhiteSpace($python)) {
         Write-HookLine 'python3 with PyYAML is required to validate GitHub and Dependabot config.' 'Red'
-        Write-HookLine 'Install it with: python -m pip install -r requirements-automation.txt' 'Yellow'
+        Write-HookLine 'Install it with: python -m pip install -r requirements-automation.txt (or py -m pip on Windows).' 'Yellow'
         exit 1
     }
     Write-HookLine 'Validating GitHub workflow and Dependabot config...'
