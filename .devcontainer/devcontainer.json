@@ -36,7 +36,7 @@
       "version": "3.12",
       "installTools": false
     },
-    "ghcr.io/devcontainers/features/node:1": {
+    "ghcr.io/devcontainers/features/node:": {
       "version": "lts",
       "nodeGypDependencies": false
     }
