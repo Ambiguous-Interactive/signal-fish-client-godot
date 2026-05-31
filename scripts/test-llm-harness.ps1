@@ -259,12 +259,18 @@ function New-HookBehaviorSandbox {
         '.github/copilot-instructions.md', '.cursor/rules/signal-fish-llm-context.mdc',
         '.githooks/pre-commit',
         '.devcontainer/post-create.sh',
+        '.github/dependabot.yml',
+        '.github/workflows/ci.yml',
+        '.github/workflows/dependabot-auto-merge.yml',
         '.github/workflows/llm-harness.yml',
         '.pre-commit-config.yaml',
+        'requirements-automation.txt',
         '.llm/context.md', '.llm/index.md', '.llm/README.md',
         'scripts/run-llm-hooks.ps1',
+        'scripts/dependabot-auto-merge.sh',
         'scripts/generate-llm-index.ps1',
         'scripts/test-llm-harness.ps1',
+        'scripts/validate-github-config.py',
         'scripts/preflight.ps1',
         'scripts/lint-llm.ps1',
         'scripts/install-git-hooks.ps1',
@@ -579,6 +585,241 @@ Assert-Test 'run-llm-hooks.ps1 generated status parser separates index and workt
         Expect-Equal $parsed.NeedsWorktreeStaging $case.Needs "NeedsWorktreeStaging for '$($case.Line)'"
     }
 }
+
+Assert-Test 'run-llm-hooks.ps1 treats GitHub config as tooling' {
+    $entry = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
+    $content = Get-Content -LiteralPath $entry -Raw
+    foreach ($needle in @(
+            'Test-GitHubConfigPathTouched',
+            '.github/dependabot.yml',
+            '.github/dependabot.yaml',
+            'scripts/dependabot-auto-merge.sh',
+            'scripts/validate-github-config.py',
+            'requirements-automation.txt',
+            "Invoke-HookStage 'github-config'")) {
+        if ($content -notmatch [regex]::Escape($needle)) {
+            throw "run-llm-hooks.ps1 must include GitHub config guardrail token '$needle'."
+        }
+    }
+    foreach ($needle in @(
+            'Test-HookPythonCanImportYaml',
+            'New-GitHubConfigIndexSnapshot',
+            'git checkout-index',
+            'Using staged index snapshot for PreCommit GitHub config validation')) {
+        if ($content -notmatch [regex]::Escape($needle)) {
+            throw "run-llm-hooks.ps1 must include staged GitHub config validation token '$needle'."
+        }
+    }
+}
+
+Assert-Test 'GitHub config validator is deterministic and self-tested' {
+    $validator = Join-Path $ScriptsDir 'validate-github-config.py'
+    if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {
+        throw 'Missing scripts/validate-github-config.py.'
+    }
+    $content = Get-Content -LiteralPath $validator -Raw
+    foreach ($needle in @(
+            'UniqueKeyLoader',
+            'duplicate YAML key',
+            'find_gh_api_slurp_jq',
+            'devcontainers updater must not use group-related keys',
+            '--self-test',
+            'bash", "-n"')) {
+        if ($content -notmatch [regex]::Escape($needle)) {
+            throw "validate-github-config.py must include '$needle'."
+        }
+    }
+    foreach ($forbidden in @(
+            'import requests',
+            'import urllib',
+            'from urllib',
+            'http.client',
+            'urlopen')) {
+        if ($content -match [regex]::Escape($forbidden)) {
+            throw "validate-github-config.py must stay local-only; forbidden token '$forbidden' found."
+        }
+    }
+    $ghRunPattern = 'subprocess\.run\(\s*\[\s*["' + "']gh[" + "']"
+    if ($content -match $ghRunPattern) {
+        throw 'validate-github-config.py must not invoke gh; it should inspect local files only.'
+    }
+}
+
+Assert-Test 'GitHub config PreCommit validates staged index instead of worktree' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-github-config-index'
+    try {
+        $workflowRel = '.github/workflows/dependabot-auto-merge.yml'
+        $workflow = Join-Path $sandbox $workflowRel
+        $fixedWorkflow = [System.IO.File]::ReadAllText($workflow)
+        $badRun = 'run: |' + "`n" +
+            '                  gh api --paginate --slurp "/repos/owner/repo/actions/runs" --jq ".[0]"'
+        $badWorkflow = $fixedWorkflow.Replace('run: bash scripts/dependabot-auto-merge.sh', $badRun)
+        if ($badWorkflow -eq $fixedWorkflow) {
+            throw 'Test setup failed: could not inject old gh api --slurp --jq pattern into auto-merge workflow.'
+        }
+
+        [System.IO.File]::WriteAllText($workflow, $badWorkflow, [System.Text.UTF8Encoding]::new($false))
+        Push-Location $sandbox
+        try {
+            & git add -- $workflowRel 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
+        [System.IO.File]::WriteAllText($workflow, $fixedWorkflow, [System.Text.UTF8Encoding]::new($false))
+
+        $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
+        Push-Location $sandbox
+        try {
+            $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -NoAutoFix 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+        $combined = ($output | Out-String)
+        if ($exitCode -eq 0) {
+            throw "PreCommit must fail when the staged workflow contains gh api --slurp --jq even if the worktree is fixed. Output: $combined"
+        }
+        if ($combined -notmatch 'Using staged index snapshot' -or
+            $combined -notmatch 'gh api must not combine --slurp and --jq') {
+            throw "PreCommit output must show staged snapshot validation and the gh api policy failure. Output: $combined"
+        }
+    } finally {
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'Dependabot auto-merge script handles workflow and check states with fake gh' {
+    if (-not (Get-Command bash -ErrorAction SilentlyContinue)) { return }
+    if (-not (Get-Command jq -ErrorAction SilentlyContinue)) { return }
+    if (-not (Get-Command chmod -ErrorAction SilentlyContinue)) { return }
+
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $script = Join-Path $repoRoot 'scripts/dependabot-auto-merge.sh'
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-auto-merge-gh-$([Guid]::NewGuid())")
+    $fakeBin = Join-Path $sandbox 'bin'
+    New-Item -ItemType Directory -Path $fakeBin -Force | Out-Null
+    $fakeGh = Join-Path $fakeBin 'gh'
+    $fakeGhContent = @'
+#!/usr/bin/env bash
+set -euo pipefail
+
+scenario="${FAKE_GH_SCENARIO:-success}"
+log="${FAKE_GH_LOG:?}"
+
+if [[ "${1:-}" == "api" ]]; then
+  args=("$@")
+  endpoint="${args[$((${#args[@]} - 1))]}"
+  if [[ "${endpoint}" == *"/commits/"*"/pulls" ]]; then
+    cat <<JSON
+[{"state":"open","user":{"login":"dependabot[bot]"},"base":{"ref":"main"},"head":{"repo":{"full_name":"${GITHUB_REPOSITORY}"},"sha":"${HEAD_SHA}"},"number":12}]
+JSON
+    exit 0
+  fi
+  if [[ "${endpoint}" == *"/actions/runs?"* ]]; then
+    case "${scenario}" in
+      missing_workflow)
+        cat <<JSON
+[{"workflow_runs":[{"name":"Runtime CI","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"}]}]
+JSON
+        ;;
+      failed_workflow)
+        cat <<JSON
+[{"workflow_runs":[{"name":"Runtime CI","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"},{"name":"LLM Harness","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:01:00Z","status":"completed","conclusion":"failure"}]}]
+JSON
+        ;;
+      *)
+        cat <<JSON
+[{"workflow_runs":[{"name":"Runtime CI","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"},{"name":"LLM Harness","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:01:00Z","status":"completed","conclusion":"success"}]}]
+JSON
+        ;;
+    esac
+    exit 0
+  fi
+fi
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
+  cat <<JSON
+{"state":"OPEN","baseRefName":"main","isDraft":false,"headRefOid":"${HEAD_SHA}"}
+JSON
+  exit 0
+fi
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "checks" ]]; then
+  if [[ "${scenario}" == "pending_checks" ]]; then
+    exit 8
+  fi
+  cat <<'JSON'
+[{"bucket":"pass","name":"Runtime CI","state":"SUCCESS","workflow":"Runtime CI"},{"bucket":"pass","name":"LLM Harness","state":"SUCCESS","workflow":"LLM Harness"}]
+JSON
+  exit 0
+fi
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "merge" ]]; then
+  printf '%s\n' "$*" >> "${log}"
+  exit 0
+fi
+
+echo "unexpected fake gh invocation: $*" >&2
+exit 99
+'@
+    [System.IO.File]::WriteAllText($fakeGh, $fakeGhContent, [System.Text.UTF8Encoding]::new($false))
+    & chmod +x -- $fakeGh 2>&1 | Out-Null
+
+    $snapshots = @(
+        (Save-EnvVar -Name 'PATH')
+        (Save-EnvVar -Name 'GH_TOKEN')
+        (Save-EnvVar -Name 'GITHUB_REPOSITORY')
+        (Save-EnvVar -Name 'HEAD_SHA')
+        (Save-EnvVar -Name 'HEAD_BRANCH')
+        (Save-EnvVar -Name 'REQUIRED_WORKFLOWS')
+        (Save-EnvVar -Name 'FAKE_GH_LOG')
+        (Save-EnvVar -Name 'FAKE_GH_SCENARIO')
+    )
+    try {
+        $env:PATH = "$fakeBin$([System.IO.Path]::PathSeparator)$env:PATH"
+        $env:GH_TOKEN = 'fake-token'
+        $env:GITHUB_REPOSITORY = 'owner/repo'
+        $env:HEAD_SHA = 'abc123'
+        $env:HEAD_BRANCH = 'dependabot/fake'
+        $env:REQUIRED_WORKFLOWS = 'Runtime CI|LLM Harness'
+        $env:FAKE_GH_LOG = Join-Path $sandbox 'merge.log'
+
+        $cases = @(
+            [pscustomobject]@{ Scenario = 'success'; ExpectMerge = $true; Pattern = '--match-head-commit abc123' },
+            [pscustomobject]@{ Scenario = 'missing_workflow'; ExpectMerge = $false; Pattern = 'LLM Harness is missing' },
+            [pscustomobject]@{ Scenario = 'failed_workflow'; ExpectMerge = $false; Pattern = 'LLM Harness concluded failure' },
+            [pscustomobject]@{ Scenario = 'pending_checks'; ExpectMerge = $false; Pattern = 'pending checks' }
+        )
+        foreach ($case in $cases) {
+            Remove-Item -LiteralPath $env:FAKE_GH_LOG -Force -ErrorAction SilentlyContinue
+            $env:FAKE_GH_SCENARIO = $case.Scenario
+            $output = & bash $script 2>&1
+            $exitCode = $LASTEXITCODE
+            $combined = ($output | Out-String)
+            if ($exitCode -ne 0) {
+                throw "Auto-merge scenario '$($case.Scenario)' should exit 0; got $exitCode. Output: $combined"
+            }
+            if ($combined -notmatch $case.Pattern -and
+                -not ((Test-Path -LiteralPath $env:FAKE_GH_LOG -PathType Leaf) -and
+                    ([System.IO.File]::ReadAllText($env:FAKE_GH_LOG) -match $case.Pattern))) {
+                throw "Auto-merge scenario '$($case.Scenario)' did not match expected pattern '$($case.Pattern)'. Output: $combined"
+            }
+            $mergeLogExists = Test-Path -LiteralPath $env:FAKE_GH_LOG -PathType Leaf
+            if ($case.ExpectMerge -and -not $mergeLogExists) {
+                throw "Auto-merge scenario '$($case.Scenario)' should merge but no merge log was written. Output: $combined"
+            }
+            if (-not $case.ExpectMerge -and $mergeLogExists) {
+                throw "Auto-merge scenario '$($case.Scenario)' should not merge. Log: $([System.IO.File]::ReadAllText($env:FAKE_GH_LOG)) Output: $combined"
+            }
+        }
+    } finally {
+        foreach ($snapshot in $snapshots) {
+            Restore-EnvVar -Snapshot $snapshot
+        }
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
 
 Assert-Test 'local pre-commit entry points pass -AutoFix; CI passes -NoAutoFix' {
     $repoRoot = Split-Path -Parent $ScriptsDir
@@ -2670,6 +2911,7 @@ Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without 
                 'scripts/preflight.ps1',
                 'scripts/lint-llm.ps1',
                 'scripts/test-llm-harness.ps1',
+                'scripts/validate-github-config.py',
                 'scripts/lib/LlmHarness.psm1',
                 '.devcontainer/post-create.sh'
             )) {
@@ -3970,9 +4212,16 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
         New-Item -ItemType Directory -Path $sandboxLib -Force | Out-Null
         # Copy the toolkit files we need.
         foreach ($f in @(
+                '.github/dependabot.yml',
+                '.github/workflows/ci.yml',
+                '.github/workflows/dependabot-auto-merge.yml',
+                '.github/workflows/llm-harness.yml',
+                'requirements-automation.txt',
+                'scripts/dependabot-auto-merge.sh',
                 'scripts/run-llm-hooks.ps1', 'scripts/preflight.ps1',
                 'scripts/generate-llm-index.ps1', 'scripts/lint-llm.ps1',
-                'scripts/test-llm-harness.ps1', 'scripts/lib/LlmHarness.psm1'
+                'scripts/test-llm-harness.ps1', 'scripts/validate-github-config.py',
+                'scripts/lib/LlmHarness.psm1'
             )) {
             $src = Join-Path $repoRoot $f
             $dst = Join-Path $sandbox $f

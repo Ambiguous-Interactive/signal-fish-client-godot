@@ -12,10 +12,18 @@ permissions:
 jobs:
     validate:
         name: Validate LLM context
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-24.04
         steps:
             - name: Check out repository
               uses: actions/checkout@v6
+
+            - name: Install automation validation dependencies
+              shell: bash
+              run: |
+                  python3 -m venv .venv-ci
+                  . .venv-ci/bin/activate
+                  python -m pip install --upgrade pip
+                  python -m pip install -r requirements-automation.txt
 
             - name: Preflight (parse-check toolkit sources)
               # MUST run before the main harness step. If any toolkit script

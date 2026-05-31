@@ -78,17 +78,9 @@ updates:
       include: "scope"
     cooldown:
       default-days: 3
-    groups:
-      devcontainer-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
-      devcontainer-security:
-        applies-to: "security-updates"
-        patterns:
-          - "*"
+    # Do not add `groups` or `multi-ecosystem-group` here. The devcontainers
+    # updater has been fragile with grouped updates; keep feature updates
+    # ungrouped so scans keep producing PRs reliably.
 
   - package-ecosystem: "docker"
     directory: "/.devcontainer"

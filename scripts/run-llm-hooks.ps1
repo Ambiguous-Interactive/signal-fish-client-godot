@@ -25,6 +25,7 @@ $RepoRoot = Split-Path -Parent $ScriptsDir
 $ModulePath = Join-Path $ScriptsDir 'lib/LlmHarness.psm1'
 $SelfTests = Join-Path $ScriptsDir 'test-llm-harness.ps1'
 $Preflight = Join-Path $ScriptsDir 'preflight.ps1'
+$GithubConfigValidator = Join-Path $ScriptsDir 'validate-github-config.py'
 $GeneratedFiles = @('.llm/index.md', '.llm/context.md')
 $PointerFiles = @(
     'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'CHATGPT.md', 'CODEX.md',
@@ -131,7 +132,31 @@ function Test-ToolingPathTouched {
             $path.StartsWith('.github/workflows/') -or
             $path.StartsWith('.devcontainer/') -or
             $path.StartsWith('.claude/') -or
-            $path -in @('.pre-commit-config.yaml', '.gitattributes', '.gitignore')) {
+            $path -in @(
+                '.pre-commit-config.yaml',
+                '.gitattributes',
+                '.gitignore',
+                '.github/dependabot.yml',
+                '.github/dependabot.yaml',
+                'requirements-automation.txt'
+            )) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-GitHubConfigPathTouched {
+    param([string[]]$Paths)
+    foreach ($path in $Paths) {
+        if ($path.StartsWith('.github/workflows/') -or
+            $path -in @(
+                '.github/dependabot.yml',
+                '.github/dependabot.yaml',
+                'scripts/dependabot-auto-merge.sh',
+                'scripts/validate-github-config.py',
+                'requirements-automation.txt'
+            )) {
             return $true
         }
     }
@@ -433,6 +458,109 @@ function Resolve-HookGitPath {
     }
 
     return [System.IO.Path]::GetFullPath((Join-Path (Join-Path $RepoRoot '.git') $GitPath))
+}
+
+function Get-HookPythonCommand {
+    $candidates = @(
+        (Join-Path $RepoRoot '.venv-ci/bin/python'),
+        (Join-Path $RepoRoot '.venv-ci/Scripts/python.exe'),
+        'python3',
+        'python'
+    )
+    foreach ($candidate in $candidates) {
+        if ([System.IO.Path]::IsPathRooted($candidate) -or $candidate.Contains('/') -or $candidate.Contains('\')) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                if (Test-HookPythonCanImportYaml -Python $candidate) {
+                    return $candidate
+                }
+            }
+            continue
+        }
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($null -ne $command) {
+            if (Test-HookPythonCanImportYaml -Python $command.Source) {
+                return $command.Source
+            }
+        }
+    }
+    return $null
+}
+
+function Test-HookPythonCanImportYaml {
+    param([Parameter(Mandatory)][string]$Python)
+
+    $output = @(& $Python -c 'import yaml' 2>&1)
+    return $LASTEXITCODE -eq 0
+}
+
+function New-GitHubConfigIndexSnapshot {
+    $snapshot = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-github-config-index-$([Guid]::NewGuid())")
+    New-Item -ItemType Directory -Path $snapshot -Force | Out-Null
+    $prefix = [System.IO.Path]::GetFullPath($snapshot)
+    if (-not $prefix.EndsWith([System.IO.Path]::DirectorySeparatorChar) -and
+        -not $prefix.EndsWith([System.IO.Path]::AltDirectorySeparatorChar)) {
+        $prefix = "$prefix$([System.IO.Path]::DirectorySeparatorChar)"
+    }
+
+    Push-Location $RepoRoot
+    try {
+        $output = @(& git checkout-index -a -f "--prefix=$prefix" 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "git checkout-index failed with exit $LASTEXITCODE`: $($output -join '; ')"
+        }
+    } finally {
+        Pop-Location
+    }
+    return $snapshot
+}
+
+function Invoke-GitHubConfigCheck {
+    if (-not (Test-Path -LiteralPath $GithubConfigValidator -PathType Leaf)) {
+        Write-HookLine "Missing GitHub config validator: $GithubConfigValidator" 'Red'
+        exit 1
+    }
+    $python = Get-HookPythonCommand
+    if ([string]::IsNullOrWhiteSpace($python)) {
+        Write-HookLine 'python3 with PyYAML is required to validate GitHub and Dependabot config.' 'Red'
+        Write-HookLine 'Install it with: python -m pip install -r requirements-automation.txt' 'Yellow'
+        exit 1
+    }
+    Write-HookLine 'Validating GitHub workflow and Dependabot config...'
+    $validationRoot = $RepoRoot
+    $validator = $GithubConfigValidator
+    $snapshot = $null
+    if ($Mode -eq 'PreCommit' -and -not $SkipStagedCheck) {
+        try {
+            $snapshot = New-GitHubConfigIndexSnapshot
+        } catch {
+            Write-HookLine "Failed to materialize staged GitHub config snapshot: $($_.Exception.Message)" 'Red'
+            exit 1
+        }
+        $validationRoot = $snapshot
+        $validator = Join-Path $snapshot 'scripts/validate-github-config.py'
+        if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {
+            Write-HookLine 'Staged GitHub config validator is missing. Stage scripts/validate-github-config.py with related config changes.' 'Red'
+            Remove-Item -LiteralPath $snapshot -Recurse -Force -ErrorAction SilentlyContinue
+            exit 1
+        }
+        Write-HookLine 'Using staged index snapshot for PreCommit GitHub config validation.'
+    }
+    try {
+        & $python $validator --self-test
+        if ($LASTEXITCODE -ne 0) {
+            Write-HookLine "GitHub config validator self-tests failed (exit $LASTEXITCODE)." 'Red'
+            exit $LASTEXITCODE
+        }
+        & $python $validator --repo-root $validationRoot
+        if ($LASTEXITCODE -ne 0) {
+            Write-HookLine "GitHub config validation failed (exit $LASTEXITCODE)." 'Red'
+            exit $LASTEXITCODE
+        }
+    } finally {
+        if ($null -ne $snapshot) {
+            Remove-Item -LiteralPath $snapshot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Invoke-FastPowerShellParseCheck {
@@ -993,7 +1121,7 @@ function Invoke-CIGeneratedDiffCheck {
     }
 }
 
-foreach ($required in @($ModulePath, $SelfTests, $Preflight)) {
+foreach ($required in @($ModulePath, $SelfTests, $Preflight, $GithubConfigValidator)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         Write-HookLine "Missing required harness file: $required" 'Red'
         exit 1
@@ -1007,6 +1135,7 @@ if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
 $changedPaths = @(Get-ChangedPaths)
 $llmTouched = Test-LlmPathTouched -Paths $changedPaths
 $toolingTouched = Test-ToolingPathTouched -Paths $changedPaths
+$githubConfigTouched = Test-GitHubConfigPathTouched -Paths $changedPaths
 $relevantFastChange = $llmTouched -or $toolingTouched
 $generatedStatusRelevant = ($Mode -in @('Full', 'CI') -or $llmTouched)
 
@@ -1038,6 +1167,12 @@ try {
     if ($Mode -in @('PreCommit', 'AgentFast')) {
         Invoke-HookStage 'untracked-llm-inputs' {
             Invoke-UntrackedLlmMarkdownInputCheck
+        }
+    }
+
+    if ($Mode -in @('Full', 'CI') -or $githubConfigTouched) {
+        Invoke-HookStage 'github-config' {
+            Invoke-GitHubConfigCheck
         }
     }
 

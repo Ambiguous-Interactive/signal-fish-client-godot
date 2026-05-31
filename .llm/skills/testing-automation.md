@@ -78,6 +78,15 @@ These checks enforce:
   in the agent's tool_result on the next turn (exit 2 + JSON reason),
   not at commit time. The `Stop` hook re-runs preflight as a final
   defense.
+- `scripts/validate-github-config.py` validates `.github/workflows/*.yml`
+  and `.github/dependabot.yml` without network calls. It self-tests duplicate
+  YAML-key rejection, preserves GitHub's `on:` key, rejects
+  `gh api --slurp` with `--jq`, runs `bash -n` for the Dependabot auto-merge
+  script, checks workflow-name/required-check drift, and rejects `groups` or
+  `multi-ecosystem-group` under the `devcontainers` Dependabot updater because
+  grouped scans have been unreliable for that ecosystem. In `PreCommit`,
+  `run-llm-hooks.ps1` validates a staged-index snapshot so unstaged worktree
+  fixes cannot mask bad staged GitHub config.
 
 ## Current Runtime Checks
 
@@ -85,6 +94,16 @@ Runtime protocol code is validated separately from the LLM harness:
 
 ```bash
 bash scripts/run-runtime-checks.sh all
+```
+
+GitHub workflow and Dependabot policy checks are part of the LLM harness.
+After editing `.github/**`, `scripts/dependabot-auto-merge.sh`, or
+`scripts/validate-github-config.py`, run:
+
+```bash
+python -m pip install -r requirements-automation.txt
+python scripts/validate-github-config.py --self-test
+python scripts/validate-github-config.py --repo-root .
 ```
 
 `.github/workflows/ci.yml` is the runtime workflow. Keep Godot/protocol steps
