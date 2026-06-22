@@ -33,7 +33,7 @@ jobs:
             REQUIRED_WORKFLOWS: Runtime CI|LLM Harness
         steps:
             - name: Check out repository
-              uses: actions/checkout@v6
+              uses: actions/checkout@v7
 
             - name: Merge Dependabot PR after required checks pass
               shell: bash
