@@ -1,7 +1,7 @@
 # Signal Fish — Godot 4 GDScript Client Bindings · Implementation Plan
 
-> **Status:** P0 complete. Protocol source pins, fixtures, pure codec, and deterministic headless Godot
-> fixture tests are in place; transport and runtime client work start in P1.
+> **Status:** P0 complete. P1 optional-value policy, transport seam, fake transport, WebSocket transport,
+> and deterministic headless transport tests are in place; core client/config/state-machine work remains.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -11,28 +11,47 @@
 
 ## Table of contents
 
-1. [Context & goals](#1-context--goals)
-2. [Locked decisions](#2-locked-decisions)
-3. [Protocol reference & upstream source-of-truth](#3-protocol-reference--upstream-source-of-truth)
-4. [Architecture](#4-architecture)
-5. [Prioritized roadmap (P0–P7)](#5-prioritized-roadmap-p0p7)
-6. [Adversarial sub-agent execution model](#6-adversarial-sub-agent-execution-model)
-7. [Existing harness integration rules](#7-existing-harness-integration-rules)
-8. [Testing strategy & matrix](#8-testing-strategy--matrix)
-9. [CI/CD design](#9-cicd-design)
-10. [Godot Asset Library publishing](#10-godot-asset-library-publishing)
-11. [Risk register](#11-risk-register)
-12. [Security & privacy checklist](#12-security--privacy-checklist)
-13. [Open items to verify against upstream](#13-open-items-to-verify-against-upstream)
-14. [Definition of done (v1)](#14-definition-of-done-v1)
+- [Table of contents](#table-of-contents)
+- [1. Context \& goals](#1-context--goals)
+- [2. Locked decisions](#2-locked-decisions)
+- [3. Protocol reference \& upstream source-of-truth](#3-protocol-reference--upstream-source-of-truth)
+  - [Pin these files (record repo + path + commit SHA in `.llm/research/protocol-fixtures.md`)](#pin-these-files-record-repo--path--commit-sha-in-llmresearchprotocol-fixturesmd)
+  - [Confirmed facts](#confirmed-facts)
+- [4. Architecture](#4-architecture)
+  - [4.1 File layout](#41-file-layout)
+  - [4.2 Public `SignalFishClient` API](#42-public-signalfishclient-api)
+  - [4.3 Data representation rulings](#43-data-representation-rulings)
+  - [4.4 State machines](#44-state-machines)
+  - [4.5 Transport abstraction (`sf_transport.gd`)](#45-transport-abstraction-sf_transportgd)
+  - [4.6 Protocol codec](#46-protocol-codec)
+  - [4.7 Performance \& reliability (web-safe)](#47-performance--reliability-web-safe)
+- [5. Prioritized roadmap (P0–P7)](#5-prioritized-roadmap-p0p7)
+  - [P0 — Protocol ground-truth + codec  *(foundational; blocks all)*](#p0--protocol-ground-truth--codec--foundational-blocks-all)
+  - [P1 — Transport seam + core client + state machines  *(usable for early adopters)*](#p1--transport-seam--core-client--state-machines--usable-for-early-adopters)
+  - [P2 — Full protocol depth](#p2--full-protocol-depth)
+  - [P3 — WebRTC P2P helper (optional layer)](#p3--webrtc-p2p-helper-optional-layer)
+  - [P4 — Demo + web-export smoke + docs  *(→ context.md "first usable client" DoD met)*](#p4--demo--web-export-smoke--docs---contextmd-first-usable-client-dod-met)
+  - [P5 — CI/CD  *(separate from llm-harness.yml)*](#p5--cicd--separate-from-llm-harnessyml)
+  - [P6 — Asset Library release + first publish](#p6--asset-library-release--first-publish)
+  - [P7 — Post-v1 (deferred, each gated)](#p7--post-v1-deferred-each-gated)
+- [6. Adversarial sub-agent execution model](#6-adversarial-sub-agent-execution-model)
+- [7. Existing harness integration rules](#7-existing-harness-integration-rules)
+- [8. Testing strategy \& matrix](#8-testing-strategy--matrix)
+- [9. CI/CD design](#9-cicd-design)
+- [10. Godot Asset Library publishing](#10-godot-asset-library-publishing)
+- [11. Risk register](#11-risk-register)
+- [12. Security \& privacy checklist](#12-security--privacy-checklist)
+- [13. Open items to verify against upstream](#13-open-items-to-verify-against-upstream)
+- [14. Definition of done (v1)](#14-definition-of-done-v1)
 
 ---
 
 ## 1. Context & goals
 
-This repo currently contains **zero runtime code** — only a polished `.llm/` AI-context system and a
-PowerShell validation harness (generator, linter, hooks, CI in `.github/workflows/llm-harness.yml`).
-This plan turns it into a complete Godot 4 client addon.
+This repo now contains the pure-GDScript protocol codec, deterministic protocol fixtures/tests, and the
+P1 transport seam/adapters. It also contains the polished `.llm/` AI-context system and PowerShell
+validation harness (generator, linter, hooks, CI in `.github/workflows/llm-harness.yml`). This plan
+continues that foundation into a complete Godot 4 client addon.
 
 **Why pure GDScript (not a Rust GDExtension binding):** GDScript + `WebSocketPeer` runs everywhere
 Godot runs — including web exports — with **zero compilation**, drag-drop install, and trivial Asset
@@ -253,6 +272,15 @@ signal server_error(message: String, error_code: SFErrorCodes.Code)
 - **Optional `error_code` absent → `Code.NONE` (0)** sentinel; unknown server code string → `Code.UNKNOWN`
   (forward-compat). Enum ints are **internal only** — never serialized to the wire (wire uses strings).
 - **Config = `Resource`** (`SignalFishConfig`) — authored/reused/inspected in the editor.
+- **Optional upstream values exposed through the public Godot API use stable decoded sentinels.**
+  `null`/missing optional strings become `""` (`organization`, `authority_player` when no authority);
+  `null`/missing optional arrays become empty `Array`/`PackedStringArray`; optional enum-like values become
+  the owning `UNKNOWN` enum (`SpectatorReason.UNKNOWN`, future relay/game-data/lobby values); optional
+  error codes become `SFErrorCodes.Code.NONE`, while unknown non-empty error-code strings become
+  `SFErrorCodes.Code.UNKNOWN`. Typed payload objects keep a `raw` dictionary for callers that need exact
+  wire absence/null details. Intentional open JSON payloads (`GameData.data`, `ConnectionInfo.custom.data`)
+  preserve JSON `null` as Godot `null`. Outbound optional fields are omitted when unset instead of emitting
+  JSON `null`, matching server acceptance and keeping wire messages compact.
 
 ### 4.4 State machines
 
@@ -362,16 +390,19 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 
 ### P1 — Transport seam + core client + state machines  *(usable for early adopters)*
 **Goal:** A real connect→auth→join→send/recv→leave→close client over WebSocket.
-- [ ] Freeze public runtime API handling for optional upstream values that currently flatten to
+- [x] Freeze public runtime API handling for optional upstream values that currently flatten to
       Godot-friendly decoded sentinels (`""`, `UNKNOWN`, empty arrays), including `organization`,
       `authority_player`, and spectator reasons.
-- [ ] `sf_transport.gd` interface — **freeze = decision gate** before parallel work.
-- [ ] `sf_fake_transport.gd` + `sf_websocket_transport.gd`.
+- [x] `sf_transport.gd` interface — **freeze = decision gate** before parallel work.
+- [x] `sf_fake_transport.gd` + `sf_websocket_transport.gd`.
+- [x] Transport adapter tests: fake connect, receive, send, close, error, buffered amount, close
+      code/reason, failed-open terminal ordering, WebSocket invalid URL/send failures, and cold-project
+      runtime-check cleanup.
 - [ ] `signal_fish_config.gd`; `signal_fish_client.gd` with both state machines, core API
       (configure/connect/auto-authenticate/join/leave/`send_game_data`(JSON)/ping/close + state
       accessors), `_process`/`poll` driver, backpressure + cleanup.
-- [ ] Fake-transport tests: connect, receive, send, close, error, backpressure; close code/reason
-      surfaced; pre-auth guard.
+- [ ] Client fake-transport tests: auto-authenticate, decoded receive path, send methods, close/error,
+      backpressure enforcement, cleanup, close code/reason surfacing, and pre-auth guard.
 - **DoD:** all the above green; matches `.llm/code-samples/gdscript-client-shape.md` contract.
 - **Fan-out (after seam freeze):** WS impl ‖ client/state-machine tests.
 
@@ -655,8 +686,8 @@ Resolve each by reading the cited upstream file at a specific commit during impl
    before any dedup/replay logic.
 3. **`SignalFishConfig` / `JoinRoomParams` exact fields + defaults** — client `client.rs`
    (`game_data_format` defaults unset/client negotiates JSON unless requested, `relay_transport` is
-   optional/reserved, whether `sdk_version`/`platform` auto-filled). Decide Godot's null-vs-omitted
-   canonical form for unset `JoinRoom` options; Rust serde emits `null`, docs omit.
+   optional/reserved, whether `sdk_version`/`platform` auto-filled). Godot outbound messages omit unset
+   optional fields per §4.3; still verify field defaults before the public config/resource lands.
 4. **Unit-variant serialization** — confirm server accepts both `{"type":"Ping"}` and
    `{"type":"Ping","data":null}` (decoder tolerates both regardless).
 5. **`RoomJoinedPayload` / `ReconnectedPayload` / `SpectatorJoinedPayload`** full field lists +

@@ -41,17 +41,20 @@ run_private_helpers() {
 }
 
 run_format() {
-	gdformat --diff --check addons/signal_fish/protocol tests/protocol
+	gdformat --diff --check addons/signal_fish tests
 }
 
 run_lint() {
-	gdlint addons/signal_fish/protocol tests/protocol
+	gdlint addons/signal_fish tests
+}
+
+make_cold_parent() {
+	local cold_parent_template="${RUNNER_TEMP:-/tmp}/signal-fish-godot-cold.XXXXXX"
+	mktemp -d "${cold_parent_template}"
 }
 
 copy_cold_project() {
-	local cold_parent="${RUNNER_TEMP:-/tmp}/signal-fish-godot-cold.XXXXXX"
-	cold_parent="$(mktemp -d "${cold_parent}")"
-	cleanup_paths+=("${cold_parent}")
+	local cold_parent="$1"
 	local cold_project="${cold_parent}/project"
 	mkdir -p "${cold_project}"
 
@@ -77,9 +80,13 @@ copy_cold_project() {
 }
 
 run_godot() {
-	local cold_project
-	cold_project="$(copy_cold_project)"
+	local cold_parent cold_project
+	cold_parent="$(make_cold_parent)"
+	# Register cleanup in this shell; copy_cold_project returns the project path via stdout.
+	cleanup_paths+=("${cold_parent}")
+	cold_project="$(copy_cold_project "${cold_parent}")"
 	godot --headless --path "${cold_project}" --script tests/protocol/run_protocol_tests.gd
+	godot --headless --path "${cold_project}" --script tests/transport/run_transport_tests.gd
 }
 
 case "${target}" in
