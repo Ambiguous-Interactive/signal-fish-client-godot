@@ -64,6 +64,30 @@ warn_or_fail() {
     return 1
 }
 
+# --- Dangling bin-link hygiene ------------------------------------------------
+
+# npm's global reify is transactional for package directories but not for bin
+# symlinks: when a global install fails (for example a package postinstall
+# that exits nonzero), npm rolls back every extracted package yet leaves the
+# freshly created bin symlinks in place. Those dangling links then shadow
+# PATH with commands that fail exec with "No such file or directory" instead
+# of an honest "command not found" -- the exact symptom that made a broken
+# toolchain look like a missing one. Sweep them so a failed install degrades
+# to "absent" (which the probe below reinstalls) instead of "poisoned".
+sweep_dangling_bins() {
+    local binary link
+    for binary in "${BINARIES[@]}"; do
+        link="${npm_bin_dir}/${binary}"
+        if [ -L "$link" ] && [ ! -e "$link" ]; then
+            if rm -f "$link"; then
+                printf 'agent-tools: removed dangling bin link: %s\n' "$link"
+            else
+                warn_or_fail "could not remove dangling bin link: ${link}" || true
+            fi
+        fi
+    done
+}
+
 # --- Node toolchain guard ----------------------------------------------------
 
 node_major="$(node --version 2>/dev/null | sed -nE 's/^v([0-9]+).*/\1/p' || true)"
@@ -104,6 +128,10 @@ elif [ ! -w "$npm_prefix" ]; then
     warn_or_fail "npm global prefix is not writable: ${npm_prefix}; rebuild the container instead of repairing with elevated npm" || exit 1
     exit 0
 fi
+
+# A prior failed run may have left bin links whose targets were rolled back;
+# clean them before probing so PATH never holds commands that cannot exec.
+sweep_dangling_bins
 
 # --- Registry probe (parallel) -----------------------------------------------
 
@@ -180,29 +208,47 @@ done
 
 # --- Install ------------------------------------------------------------------
 
+# Each package is installed by its own `npm install --global` invocation.
+# npm treats one multi-package command as a single transaction: if ANY
+# postinstall fails (opencode-ai's did, when a root-owned ~/.cache crashed its
+# verify step), npm rolls back EVERY package in the command while leaving
+# their bin symlinks behind -- so one broken package used to destroy the
+# whole toolchain. Per-package installs bound the blast radius to that
+# package alone; the remaining CLIs still land.
 if [ "${#install_specs[@]}" -gt 0 ]; then
     printf 'agent-tools: installing %d package(s) into %s\n' "${#install_specs[@]}" "$npm_prefix"
-    attempts=3
-    [ "$MODE" = "--update" ] && attempts=1
+    failed_specs=()
+    for spec in "${install_specs[@]}"; do
+        attempts=3
+        [ "$MODE" = "--update" ] && attempts=1
 
-    install_ok=0
-    attempt=1
-    while [ "$attempt" -le "$attempts" ]; do
-        if npm install --global --no-audit --no-fund \
-            "${npm_allow_scripts_args[@]}" \
-            "${install_specs[@]}"; then
-            install_ok=1
-            break
+        spec_ok=0
+        attempt=1
+        while [ "$attempt" -le "$attempts" ]; do
+            if npm install --global --no-audit --no-fund \
+                "${npm_allow_scripts_args[@]}" \
+                "$spec"; then
+                spec_ok=1
+                break
+            fi
+            # A failed attempt rolls back package directories but may leave
+            # dangling bin links; sweep so the next attempt (or the version
+            # probe) sees the true state.
+            sweep_dangling_bins
+            if [ "$attempt" -lt "$attempts" ]; then
+                printf 'agent-tools: npm install of %s failed (attempt %d/%d); retrying\n' "$spec" "$attempt" "$attempts" >&2
+                sleep 2
+            fi
+            attempt=$((attempt + 1))
+        done
+
+        if [ "$spec_ok" != 1 ]; then
+            failed_specs+=("$spec")
         fi
-        if [ "$attempt" -lt "$attempts" ]; then
-            printf 'agent-tools: npm install attempt %d/%d failed; retrying\n' "$attempt" "$attempts" >&2
-            sleep 2
-        fi
-        attempt=$((attempt + 1))
     done
 
-    if [ "$install_ok" != 1 ]; then
-        warn_or_fail "npm could not install: ${install_specs[*]}" || exit 1
+    if [ "${#failed_specs[@]}" -gt 0 ]; then
+        warn_or_fail "npm could not install: ${failed_specs[*]}" || exit 1
         exit 0
     fi
 else
@@ -221,9 +267,12 @@ for index in "${!BINARIES[@]}"; do
         continue
     fi
 
+    # Capture stderr too: when a binary exists but dies on startup (for
+    # example EACCES under a root-owned ~/.cache), the first error line is
+    # far more actionable than reporting the CLI as silently missing.
     # `|| true` guards against pipefail aborting on SIGPIPE if a chatty
     # --version output ever exceeds the pipe buffer after head exits.
-    version="$( ("$binary" --version 2>/dev/null || true) | head -n 1 || true )"
+    version="$( ("$binary" --version 2>&1 || true) | head -n 1 || true )"
     if [ -z "$version" ]; then
         missing+=("$binary")
         continue

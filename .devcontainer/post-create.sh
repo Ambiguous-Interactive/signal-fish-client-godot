@@ -32,6 +32,14 @@ ensure_writable_dir() {
 
 echo "==> Preparing writable mounted directories"
 ensure_writable_dir "/commandhistory" || true
+# Docker creates parent directories of volume mount points as root. The
+# pre-commit cache volume targets ~/.cache/pre-commit, so every freshly
+# created container starts with a root-owned ~/.cache. Anything that lazily
+# mkdirs under ~/.cache then dies with EACCES: opencode's postinstall verify
+# step crashes there (which fails the whole agent CLI install and leaves
+# dangling npm bin symlinks behind), and so does VS Code's agent host
+# (mkdir ~/.cache/Microsoft). Repair before anything runs.
+ensure_writable_dir "${HOME}/.cache" || true
 
 echo "==> Installing direct git hooks"
 pwsh -NoProfile -File scripts/install-git-hooks.ps1 -Force

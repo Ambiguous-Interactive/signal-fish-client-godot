@@ -41,6 +41,15 @@ PowerShell profile behavior, or post-create/post-start setup.
   probes the registry in parallel and reinstalls only outdated or missing
   CLIs. `--update` is warn-only: a registry outage degrades to the installed
   toolchain and never blocks attaching.
+- The installer installs each package with its own `npm install --global`
+  (npm treats one multi-package command as a single transaction, so one
+  failing postinstall used to roll back every package while leaving their
+  `bin` symlinks behind) and sweeps dangling `bin` links before probing and
+  after failed attempts, so a broken install degrades to "missing" (which the
+  next run reinstalls) instead of leaving PATH poisoned with commands that
+  fail exec with "No such file or directory". Verification surfaces the first
+  stderr line of a silent binary, which is how the `~/.cache` EACCES class of
+  failure is diagnosed.
 - The installer derives npm's global prefix, prepends its `bin` directory to
   PATH, and passes npm 11's `--allow-scripts` (npm blocks lifecycle scripts on
   global installs by default; `opencode-ai` needs its postinstall to select
@@ -50,9 +59,11 @@ PowerShell profile behavior, or post-create/post-start setup.
   and `CLAUDE_NPM_SPEC`; `AGENT_TOOLS_NPM_FETCH_TIMEOUT_MS` (default 5000)
   bounds only the registry version probe, not the install itself.
 - `post-create.sh` repairs root-owned mounted directories such as
-  `/commandhistory`, installs the direct git hooks-path pre-commit shim via
-  `scripts/install-git-hooks.ps1 -Force`, and does not install the slower
-  pre-commit framework hook.
+  `/commandhistory` and `~/.cache` (Docker creates volume-mount parents as
+  root; a root-owned `~/.cache` crashed opencode's postinstall verify step and
+  VS Code's agent host with EACCES), installs the direct git hooks-path
+  pre-commit shim via `scripts/install-git-hooks.ps1 -Force`, and does not
+  install the slower pre-commit framework hook.
 - npm cache lives under the container user's home directory and is not mounted
   as a named volume by this repo, so cache ownership repair is not part of the
   devcontainer contract.
