@@ -1,6 +1,8 @@
 class_name SFWebSocketTransport
 extends "res://addons/signal_fish/transport/sf_transport.gd"
 
+# Typed via preloaded script instead of the global `class_name`: global class
+# registration is cold-cache-fragile (see check-gdscript-private-helpers.py).
 const SFWebSocketPeerAdapterScript = preload(
 	"res://addons/signal_fish/transport/sf_websocket_peer_adapter.gd"
 )
@@ -81,7 +83,7 @@ func close(code := 1000, reason := "") -> void:
 	if state == WebSocketPeer.STATE_OPEN:
 		_emit_opened_once()
 	elif not _opened_emitted:
-		_fail_current_session(_closed_error_message())
+		_fail_current_session(_preopen_close_message(code, reason), true, code, reason)
 		return
 	_peer.close(code, reason)
 
@@ -166,14 +168,16 @@ func _emit_closed_once() -> void:
 	closed.emit(close_code, close_reason)
 
 
-func _fail_current_session(error: String, close_peer := true) -> void:
+func _fail_current_session(
+	error: String, close_peer := true, close_code := 1000, close_reason := ""
+) -> void:
 	if _failed_emitted or _closed_emitted:
 		return
 	var peer = _peer
 	_peer = null
 	_failed_emitted = true
 	if close_peer and peer != null and peer.get_ready_state() != WebSocketPeer.STATE_CLOSED:
-		peer.close()
+		peer.close(close_code, close_reason)
 	failed.emit(error)
 
 
@@ -194,3 +198,14 @@ func _closed_error_message() -> String:
 	if not reason.is_empty():
 		return "WebSocket connection failed: %s" % reason
 	return "WebSocket connection failed"
+
+
+func _preopen_close_message(code: int, reason: String) -> String:
+	var detail := ""
+	if not reason.is_empty():
+		detail = reason
+	elif code != 1000:
+		detail = "close code %d" % code
+	if detail.is_empty():
+		return "WebSocket connection failed before open"
+	return "WebSocket connection failed before open: %s" % detail

@@ -15,6 +15,8 @@ var _connected_url := ""
 
 func connect_to_url(url: String) -> Error:
 	_connected_url = url
+	sent_text = []
+	sent_binary = []
 	_reset_session_flags()
 	if fail_on_connect:
 		_ready_state = WebSocketPeer.STATE_CLOSED

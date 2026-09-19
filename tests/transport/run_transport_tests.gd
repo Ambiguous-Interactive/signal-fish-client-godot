@@ -31,11 +31,13 @@ func _run() -> void:
 	_test_fake_inject_failure_close_does_not_emit_closed()
 	_test_fake_connecting_close_fails_without_closed()
 	_test_fake_terminal_sessions_do_not_reopen_or_emit_packets()
+	_test_fake_reconnect_clears_sent_history()
 	_test_websocket_invalid_scheme_and_send_error_without_network()
 	_test_websocket_never_opened_closed_emits_failed_without_closed()
 	_test_websocket_case_insensitive_scheme_validation()
 	_test_websocket_connect_resets_close_active_peer()
 	_test_websocket_connecting_close_fails_without_closed()
+	_test_websocket_connecting_close_surfaces_caller_reason()
 	_test_websocket_read_error_is_terminal_once()
 
 
@@ -179,7 +181,12 @@ func _test_fake_inject_failure_close_does_not_emit_closed() -> void:
 func _test_fake_connecting_close_fails_without_closed() -> void:
 	var transport = SFFakeTransportScript.new()
 	var terminal_events: Array = []
-	transport.failed.connect(func(_error: String) -> void: terminal_events.append("failed"))
+	var failures: Array = []
+	transport.failed.connect(
+		func(error: String) -> void:
+			terminal_events.append("failed")
+			failures.append(error)
+	)
 	transport.closed.connect(
 		func(_code: int, _reason: String) -> void: terminal_events.append("closed")
 	)
@@ -190,9 +197,24 @@ func _test_fake_connecting_close_fails_without_closed() -> void:
 	transport.close(1000, "abort")
 
 	_assert_equal(["failed"], terminal_events, "fake connecting close terminal ordering")
+	_assert_string_contains(failures[0], "abort", "fake connecting close surfaces caller reason")
 	_assert_equal(
 		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "fake connecting close state"
 	)
+
+
+func _test_fake_reconnect_clears_sent_history() -> void:
+	var transport = SFFakeTransportScript.new()
+	_assert_equal(OK, transport.connect_to_url("ws://example.test/one"), "fake first connect")
+	transport.inject_open()
+	transport.send_text("first session")
+	transport.send_binary(PackedByteArray([9]))
+	_assert_equal(1, transport.sent_text.size(), "fake first session sent text")
+	_assert_equal(1, transport.sent_binary.size(), "fake first session sent binary")
+
+	_assert_equal(OK, transport.connect_to_url("ws://example.test/two"), "fake second connect")
+	_assert_equal([], transport.sent_text, "fake reconnect clears sent text")
+	_assert_equal([], transport.sent_binary, "fake reconnect clears sent binary")
 
 
 func _test_fake_terminal_sessions_do_not_reopen_or_emit_packets() -> void:
@@ -341,7 +363,12 @@ func _test_websocket_connecting_close_fails_without_closed() -> void:
 	peer.ready_state = WebSocketPeer.STATE_CONNECTING
 	transport._peer = peer
 	var terminal_events: Array = []
-	transport.failed.connect(func(_error: String) -> void: terminal_events.append("failed"))
+	var failures: Array = []
+	transport.failed.connect(
+		func(error: String) -> void:
+			terminal_events.append("failed")
+			failures.append(error)
+	)
 	transport.closed.connect(
 		func(_code: int, _reason: String) -> void: terminal_events.append("closed")
 	)
@@ -350,10 +377,26 @@ func _test_websocket_connecting_close_fails_without_closed() -> void:
 	transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
 
 	_assert_equal(["failed"], terminal_events, "websocket connecting close terminal ordering")
-	_assert_equal([[1000, ""]], peer.close_calls, "websocket connecting close closes peer")
+	_assert_string_contains(failures[0], "abort", "websocket connecting close surfaces reason")
+	_assert_equal([[1000, "abort"]], peer.close_calls, "websocket connecting close closes peer")
 	_assert_equal(
 		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "websocket connecting close state"
 	)
+
+
+func _test_websocket_connecting_close_surfaces_caller_reason() -> void:
+	var transport = SFWebSocketTransportScript.new()
+	var peer = TestWebSocketPeerAdapterScript.new()
+	peer.ready_state = WebSocketPeer.STATE_CONNECTING
+	transport._peer = peer
+	var failures: Array = []
+	transport.failed.connect(func(error: String) -> void: failures.append(error))
+
+	transport.close(4321, "custom abort")
+
+	_assert_equal(1, failures.size(), "websocket custom abort failure count")
+	_assert_string_contains(failures[0], "custom abort", "websocket custom abort reason")
+	_assert_equal([[4321, "custom abort"]], peer.close_calls, "websocket custom abort close args")
 
 
 func _test_websocket_read_error_is_terminal_once() -> void:

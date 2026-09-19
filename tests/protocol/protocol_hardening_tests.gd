@@ -22,6 +22,7 @@ func run_all() -> void:
 	_test_forward_compatible_inbound_strings()
 	_test_non_empty_wire_strings()
 	_test_reconnected_missed_events_nonfatal()
+	_test_reconnected_missed_events_depth_hardening()
 
 
 func _test_client_message_validation() -> void:
@@ -671,6 +672,27 @@ func _test_reconnected_missed_events_nonfatal() -> void:
 	_assert_protocol_error_contains(
 		future_missed_event.args[1][2], "missed_events[2]", "non-object missed event"
 	)
+
+
+func _test_reconnected_missed_events_depth_hardening() -> void:
+	var nested_entry_data := _minimal_room_joined_data()
+	nested_entry_data["missed_events"] = []
+	var nested_data := _minimal_room_joined_data()
+	nested_data["missed_events"] = [{"type": "Reconnected", "data": nested_entry_data}]
+	var nested_reconnected := SFEventsScript.decode_envelope(
+		{"type": "Reconnected", "data": nested_data}
+	)
+	_assert_equal("reconnected", String(nested_reconnected.signal_name), "nested entry outer")
+	_assert_protocol_error_contains(
+		nested_reconnected.args[1][0],
+		"not replayable inside missed_events",
+		"nested reconnected rejected"
+	)
+
+	var over_depth := SFEventsScript.decode_envelope(
+		{"type": "Pong"}, SFEventsScript.MAX_MESSAGE_DEPTH + 1
+	)
+	_assert_protocol_error_contains(over_depth, "nesting exceeds depth", "depth cap enforced")
 
 
 func _minimal_room_joined_data() -> Dictionary:

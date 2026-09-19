@@ -9,3 +9,4 @@ not-json
 {"type":"Authenticated","data":"not-an-object"}
 {"type":"AuthenticationError","data":{"error":"missing code"}}
 {"type":"GameDataBinary","data":{"from_player":"10000000-0000-0000-0000-000000000002","encoding":"message_pack","payload":"not-base64-or-byte-array"}}
+{"type":"Reconnected","data":{"missed_events":"not-an-array"}}

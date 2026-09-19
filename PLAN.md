@@ -341,6 +341,9 @@ func close(code := 1000, reason := "") -> void
   logged not fatal); per-variant builder reads `data` (default `{}`), builds typed payload via
   `from_dict` with `dict.get(key, default)` coercion. Returns `SFDecodedEvent{signal_name: StringName,
   args: Array}`; the client updates cache then `emit_signal(...)`. Same decoder processes `missed_events`.
+  **Decode recursion is depth-bounded** (`MAX_MESSAGE_DEPTH`), and nested `Reconnected` entries inside
+  `missed_events` are rejected as non-replayable (matching the Rust client) — a hostile server cannot
+  overflow the script stack.
 - **Error codes (`sf_error_codes.gd`):** single source — `enum Code`, `STRING_TO_CODE`/`CODE_TO_STRING`,
   `to_code()`/`to_string()`/`category()` (auth/validation/room/authority/ratelimit/reconnect/spectator/server).
 - **MessagePack (`sf_msgpack.gd`):** opt-in (`config.decode_msgpack_payloads`). Default behavior =
@@ -398,7 +401,9 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 - [x] Transport adapter tests: fake connect, receive, send, close, error, buffered amount, close
       code/reason, failed-open terminal ordering, WebSocket invalid URL/send failures, and cold-project
       runtime-check cleanup.
-- [ ] `signal_fish_config.gd`; `signal_fish_client.gd` with both state machines, core API
+- [ ] `signal_fish_config.gd` (includes a reserved `credential` slot for the upstream secret-key
+      decision — carried as a value, never stitched into URLs, never logged/serialized; see §12) ;
+      `signal_fish_client.gd` with both state machines, core API
       (configure/connect/auto-authenticate/join/leave/`send_game_data`(JSON)/ping/close + state
       accessors), `_process`/`poll` driver, backpressure + cleanup.
 - [ ] Client fake-transport tests: auto-authenticate, decoded receive path, send methods, close/error,
@@ -660,6 +665,9 @@ P6 release gate.
 
 - [ ] `app_id` / reconnection `auth_token` **never logged** at default level; `sf_log.gd` redacts them on
       all paths; debug (full payloads) opt-in + clearly local-only.
+- [ ] Config reserves an explicit `credential` slot for the upstream secret-key (`sfk_*`) decision:
+      values only (never globals), never stitched into URLs, absent from `to_string()`/debug output and
+      redacted by the logger; revisit after the upstream server/cloud decision lands.
 - [ ] Tokens **never in fixtures** (use fake placeholders); reviewer checks every committed fixture.
 - [ ] Tokens not surfaced in error messages or signal payloads.
 - [ ] Treat browser `localStorage`/query strings as **user-visible**; prefer in-memory tokens; persist
