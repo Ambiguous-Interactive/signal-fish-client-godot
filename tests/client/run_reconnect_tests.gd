@@ -33,6 +33,10 @@ const DELAY_BOUNDS := {
 }
 
 var _failures: Array = []
+## Protocol-error trackers for every client built by `_make_client` /
+## `_make_reconnect_client`; reconnection flows must stay error-free, so
+## tests end with `_assert_no_protocol_errors()` checking them all.
+var _error_trackers: Array = []
 
 
 func _init() -> void:
@@ -55,7 +59,12 @@ func _run() -> void:
 	_test_spectator_baseline_clears_context()
 	_test_auto_reconnect_backoff_growth_bounds()
 	_test_auto_reconnect_stops_on_terminal_codes()
+	_test_auto_reconnect_retries_after_transport_failure()
+	_test_user_close_mid_dial_stops_retrying()
+	_test_close_cancels_pending_retry_timer()
+	_test_close_from_disconnected_handler_wins_over_retry()
 	_test_auto_reconnect_exhaustion_emits_connection_failed()
+	_test_failure_driven_exhaustion_and_budget_recovery()
 	_test_reconnect_tokens_are_redacted()
 
 
@@ -154,6 +163,7 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 		"baseline restores session state"
 	)
 	_assert_equal(ROOM_ID, client.get_room_id(), "baseline restores room")
+	_assert_equal(0, client._auto_reconnect_attempts, "budget untouched pre-retry")
 	# A fresh baseline replaces the retained context; later auto-reconnects
 	# must use the rotated token, and the dial credentials are consumed.
 	client.transport.inject_close(4999, "dropped")
@@ -162,6 +172,16 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	_assert_equal(OK, _wait_open(client), "auto dial after baseline")
 	var expected := SFMessagesScript.encode(SFMessagesScript.reconnect(PLAYER_A, ROOM_ID, TOKEN_V2))
 	_assert_equal([expected], client.transport.sent_text, "auto dial uses rotated token")
+
+	# The next successful baseline resets the retry budget.
+	client.transport.inject_server_message({"type": "Reconnected", "data": data})
+	_assert_equal(0, client._auto_reconnect_attempts, "budget resets after baseline")
+	client.transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 1.0)
+	_assert_equal(OK, _wait_open(client), "post-reset dial")
+	_assert_equal(1, client._auto_reconnect_attempts, "budget restarts at 1 after reset")
+	_assert_no_protocol_errors()
 	client.free()
 
 
@@ -277,24 +297,89 @@ func _test_auto_reconnect_stops_on_terminal_codes() -> void:
 		client.transport = SFFakeTransportScript.new()
 		_step(client, 30.0)
 		_assert_equal(OK, _wait_open(client), "%s: dial" % case[0])
-		(
-			client
-			. transport
-			. inject_server_message(
-				{
-					"type": "ReconnectionFailed",
-					"data": {"reason": "test", "error_code": case[1]},
-				}
-			)
+		var disconnects: Array = []
+		client.disconnected.connect(
+			func(code: int, _reason: String) -> void: disconnects.append(code)
 		)
-		client.transport.inject_close(4999, "dropped")
+		client.transport.inject_server_message(
+			{"type": "ReconnectionFailed", "data": {"reason": "test", "error_code": case[1]}}
+		)
+		# A rejected rejoin brings the link down like a close frame would.
+		_assert_equal([-1], disconnects, "%s: link torn down" % case[0])
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.CLOSED,
+			client.get_connection_state(),
+			"%s: closed after rejection" % case[0]
+		)
 		client.transport = SFFakeTransportScript.new()
 		_step(client, 30.0)
 		var dialed := (
 			client.get_connection_state() == SignalFishClientScript.ConnectionState.CONNECTING
 		)
 		_assert_equal(not case[2], dialed, "%s: retry decision" % case[0])
+		_assert_no_protocol_errors()
 		client.free()
+
+
+func _test_auto_reconnect_retries_after_transport_failure() -> void:
+	var client := _make_client(true, "token")
+	client.transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 30.0)
+	client.transport.inject_failure("connection refused")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"failed dial surfaces FAILED"
+	)
+	_assert_equal(2, client._auto_reconnect_attempts, "failed dial schedules next attempt")
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 30.0)
+	_assert_equal(OK, _wait_open(client), "retry after failed dial")
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_user_close_mid_dial_stops_retrying() -> void:
+	var client := _make_client(true, "token")
+	client.transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 30.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTING,
+		client.get_connection_state(),
+		"retry dial in flight"
+	)
+	client.close()
+	# Close while connecting is a failed open; the user's intent must win.
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"failed open surfaces FAILED"
+	)
+	_step(client, 30.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"user abort: no retry"
+	)
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_close_cancels_pending_retry_timer() -> void:
+	var client := _make_client(true, "token")
+	client.transport.inject_close(4999, "dropped")
+	_assert(client._reconnect_timer_running, "retry timer armed")
+	_assert_equal(OK, client.close(), "clean close while timer pending")
+	_step(client, 30.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSED,
+		client.get_connection_state(),
+		"cancelled timer never dials"
+	)
+	_assert_no_protocol_errors()
+	client.free()
 
 
 func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:
@@ -318,6 +403,56 @@ func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:
 		"exhaustion: no further dial"
 	)
 	_assert_equal(2, client._auto_reconnect_attempts, "attempts stop at budget")
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_close_from_disconnected_handler_wins_over_retry() -> void:
+	var client := _make_client(true, "token")
+	client.disconnected.connect(func(_code: int, _reason: String) -> void: client.close())
+	client.transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 30.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSED,
+		client.get_connection_state(),
+		"consumer clean close from handler stops auto-reconnect"
+	)
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_failure_driven_exhaustion_and_budget_recovery() -> void:
+	var client := _make_client(true, "token")
+	client._config.reconnect_max_attempts = 2
+	var failures: Array = []
+	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	# Episode: abnormal drop -> arm(1) -> dial fails -> arm(2) -> dial fails
+	# -> exhausted.
+	client.transport.inject_close(4999, "dropped")
+	for dial: int in [1, 2]:
+		client.transport = SFFakeTransportScript.new()
+		_step(client, 30.0)
+		client.transport.inject_failure("connection refused %d" % dial)
+	# Two dial failures plus the exhaustion notice.
+	_assert_equal(3, failures.size(), "failure-driven exhaustion emits the final notice")
+	_assert_string_contains(failures[2], "exhausted", "final notice reports exhaustion")
+	_assert_equal(2, client._auto_reconnect_attempts, "attempts stop at budget")
+	_assert_no_protocol_errors()
+	client.free()
+
+	# Recovery: a fresh authoritative baseline restarts the spent budget.
+	client = _make_client(true, "none")
+	client._auto_reconnect_attempts = 2
+	var data := _room_joined_data()
+	data["reconnection_token"] = TOKEN_V1
+	client.transport.inject_server_message({"type": "RoomJoined", "data": data})
+	_assert_equal(0, client._auto_reconnect_attempts, "fresh baseline restarts the budget")
+	client.transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 30.0)
+	_assert_equal(OK, _wait_open(client), "recovery after fresh baseline dials")
+	_assert_no_protocol_errors()
 	client.free()
 
 
@@ -330,6 +465,7 @@ func _test_reconnect_tokens_are_redacted() -> void:
 	_assert_string_not_contains(
 		SFLogScript.redact(line, reconnector._secrets), TOKEN_V2, "token redacted"
 	)
+	_assert_no_protocol_errors()
 	reconnector.free()
 	client.free()
 
@@ -341,6 +477,7 @@ func _make_config() -> SignalFishConfigScript:
 	var config := SignalFishConfigScript.new()
 	config.app_id = "test-app"
 	config.endpoint_url = "ws://example.test/socket"
+	config.auto_poll = false
 	return config
 
 
@@ -348,7 +485,7 @@ func _make_config() -> SignalFishConfigScript:
 ## received after connect: "none", "tokenless", or "token" (TOKEN_V1).
 func _make_client(auto_reconnect: bool, baseline_mode: String) -> SignalFishClientScript:
 	var client := SignalFishClientScript.new()
-	_track_protocol_errors(client)
+	_error_trackers.append(_track_protocol_errors(client))
 	_assert_equal(OK, client.configure(_make_config()), "configure")
 	client.set_auto_reconnect(auto_reconnect)
 	client.transport = SFFakeTransportScript.new()
@@ -368,7 +505,7 @@ func _make_client(auto_reconnect: bool, baseline_mode: String) -> SignalFishClie
 
 func _make_reconnect_client(token: String) -> SignalFishClientScript:
 	var client := SignalFishClientScript.new()
-	_track_protocol_errors(client)
+	_error_trackers.append(_track_protocol_errors(client))
 	_assert_equal(OK, client.configure(_make_config()), "configure")
 	client.transport = SFFakeTransportScript.new()
 	_assert_equal(OK, client.reconnect(PLAYER_A, ROOM_ID, token), "reconnect dial")
@@ -380,6 +517,11 @@ func _track_protocol_errors(client: SignalFishClientScript) -> Array:
 	var errors: Array = []
 	client.protocol_error.connect(func(error: String) -> void: errors.append(error))
 	return errors
+
+
+func _assert_no_protocol_errors() -> void:
+	for tracker: Array in _error_trackers:
+		_assert_equal([], tracker, "no spurious protocol_error")
 
 
 ## Advances the injected clock; auto_poll is off in configs built here, so
@@ -452,6 +594,18 @@ func _assert_between(actual: float, minimum: float, maximum: float, label: Strin
 	if actual < minimum or actual > maximum:
 		_failures.append(
 			"%s: expected delay in [%s, %s], got %s" % [label, minimum, maximum, actual]
+		)
+		return false
+	return true
+
+
+func _assert_string_contains(actual: String, expected_substring: String, label: String) -> bool:
+	if actual.find(expected_substring) == -1:
+		_failures.append(
+			(
+				"%s: expected %s to contain %s"
+				% [label, var_to_str(actual), var_to_str(expected_substring)]
+			)
 		)
 		return false
 	return true

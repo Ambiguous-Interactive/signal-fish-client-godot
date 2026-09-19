@@ -90,6 +90,60 @@ Date: 2026-09-19
   niceties; close-code conventions (PLAN §13.8) before code-based retry
   decisions — recorded in the new skill doc's Open items.
 
+## Adversarial review round
+
+A zero-knowledge red-team review returned 0 P1 / 4 P2 / 8 P3. Dispositions:
+
+- **P2 fixed — dead-dial liveness hole:** transport `failed` now schedules
+  budgeted retries like a server-initiated close (a briefly-unreachable
+  endpoint no longer kills the loop on the first retry); a user close during
+  CONNECTING surfaces `failed` but consumes the user-close flag, so an abort
+  mid-dial never retries. PLAN §4.7 wording updated to "abnormal termination".
+- **P2 fixed — burned-attempt race:** `_schedule_auto_reconnect` refuses to
+  arm unless the client is CLOSED/FAILED, and `_open_transport` cancels any
+  armed timer, so a consumer dialing from a `disconnected` handler can no
+  longer burn a budgeted attempt.
+- **P2 fixed — stranded after ReconnectionFailed:** the client now tears the
+  link down itself after a rejected rejoin (`disconnected(-1, "reconnection
+  failed")`), giving consumers a terminal disconnect and retryable
+  auto-reconnects a clean scheduling point; terminal codes clear the context
+  first so their schedule is a no-op.
+- **P2 fixed — test gaps:** new tests for failed-dial retry, user abort
+  mid-dial, `close()` cancelling a pending timer, budget reset after a
+  successful baseline, plus a no-spurious-`protocol_error` sweep across the
+  suite.
+- **P3 fixed:** skill-doc PLAN checkbox ticked; "would   drop" typo; false
+  `auto_poll` comment (config now sets `auto_poll = false`); reconnect doc
+  documents `connected` firing for reconnect dials + scene-tree requirement;
+  `set_auto_reconnect` doc documents exhaustion ordering; skill doc notes
+  tokens ride in consumer-visible `raw`/`to_dict()` payloads.
+- **Accepted/deferred:** white-box private-member access in tests (repo test
+  style; the suite asserts behavior elsewhere); `_secrets` grows across token
+  rotations (bounded by token issuance frequency; memory cost trivial).
+
+## Adversarial re-review round (fix delta)
+
+Re-review of the fix diff verified all four round-1 fixes and returned
+0 P1 / 1 P2 / 3 P3. Dispositions:
+
+- **P2 fixed — close-from-handler overridden:** a consumer `close()` from a
+  `disconnected`/`connection_failed` handler ran after the user-close flag
+  was snapshotted, so the scheduler armed a retry moments later. The
+  scheduler now consults and consumes the flag first; pinned by
+  `_test_close_from_disconnected_handler_wins_over_retry`.
+- **P3 fixed — exhaustion docstring overclaim:** failure-driven exhaustion
+  emits per-dial `connection_failed`s plus one final "exhausted" notice;
+  docstrings/skill doc reworded and the failure-driven path is now pinned by
+  `_test_failure_driven_exhaustion_and_budget_recovery` (3 emissions,
+  final says "exhausted").
+- **P3 fixed — budget poisoning across episodes:** the retry budget now
+  resets on an authoritative baseline (`RoomJoined`/`Reconnected`), not on
+  dial. The first attempt (reset in `_open_transport`) would have defeated
+  exhaustion entirely — caught by the new test, root-caused, and fixed to
+  reset only on baselines; recovery-from-exhaustion is pinned.
+- **P3 fixed — protocol_error sweep scope:** trackers now accumulate per
+  client (`_error_trackers`) so multi-client tests check every client.
+
 ## Verification
 
 - `bash scripts/run-runtime-checks.sh all`: green (private-helpers, gdformat,

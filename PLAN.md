@@ -366,8 +366,11 @@ func close(code := 1000, reason := "") -> void
   `_process` (no timer thread); `pong_timeout_sec` → treat as dead link.
 - **Auto-reconnect:** OFF by default. When on: exponential backoff + jitter (`base 0.5s`, `factor 2`,
   `cap 15s`, `max_attempts` default 5) via accumulated `_process` delta (**no `OS.delay`/threads**); only
-  on abnormal close; stop on clean `close()` or terminal codes (`RECONNECTION_TOKEN_INVALID`,
-  `RECONNECTION_EXPIRED`).
+  on abnormal termination (a non-user-initiated close or transport failure — a dead dial must
+  consume budget too, or a briefly-unreachable endpoint kills the loop on the first retry); stop
+  on clean `close()` or terminal codes (`RECONNECTION_TOKEN_INVALID`,
+  `RECONNECTION_EXPIRED`); after a `ReconnectionFailed` the client tears the link down itself so
+  consumers always observe a terminal disconnect.
 - **Cleanup:** on close/failure disconnect transport signals, null the transport (RefCounted freed),
   clear roster/spectators/ids/lobby state, reset `SessionState=UNAUTHENTICATED`; `_exit_tree()` calls
   `close()`.
@@ -419,7 +422,7 @@ loop and exits only on its consensus criteria. Fan-out points noted.
   (binary game-data decode is P2). `sf_log.gd` (redacting logger) landed with the client (issue #15),
   and `ws://` from secure web pages is a loud `ERR_INVALID_PARAMETER` (issue #15, R2). Until P2,
   `game_data_format` accepts only `json`/empty so the server cannot negotiate formats whose binary
-  frames the client would   drop. `reconnect()`/`set_auto_reconnect()` landed with the P2 reconnection work;
+  frames the client would drop. `reconnect()`/`set_auto_reconnect()` landed with the P2 reconnection work;
   `send_game_data_binary()` ships with the P2 binary game-data milestone. The `credential`
   slot is a plain (non-exported) var so the Resource pipeline can never persist it.
 
@@ -430,10 +433,13 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 - [x] **Reconnection + replay** (lands last — perturbs state most): `reconnect()`, `Reconnected` w/
       `missed_events`, `ReconnectionFailed`, bounded retry + backoff (**injected clock** in tests).
       Notes: `reconnect()` sends `Reconnect` on open instead of `Authenticate`;
-      `set_auto_reconnect()` retries only non-user-initiated closes with exponential backoff
+      `set_auto_reconnect()` retries only non-user-initiated abnormal terminations (closes and
+      transport failures) with exponential backoff
       (base 0.5s, factor 2, cap 15s, jitter 0.25) and a `reconnect_max_attempts` budget
       (default 5, exhaustion → `connection_failed`); terminal codes
-      (`RECONNECTION_TOKEN_INVALID`/`RECONNECTION_EXPIRED`) stop retrying. The server-issued
+      (`RECONNECTION_TOKEN_INVALID`/`RECONNECTION_EXPIRED`) stop retrying, and any
+      `ReconnectionFailed` tears the link down (`disconnected(-1)`) so consumers observe a
+      terminal disconnect. The server-issued
       `reconnection_token` (server `messages.rs` `RoomJoinedPayload`/`ReconnectedPayload`)
       is parsed on every baseline: player baselines with a token retain the auto-reconnect
       context; tokenless and spectator baselines clear it (upstream `client_core.rs`
@@ -441,7 +447,7 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       `tests/client/run_reconnect_tests.gd`; skill doc: `.llm/skills/reconnection-replay.md`.
 - [ ] Full ~40 error-code surface mapped through `sf_error_codes.gd`.
 - [ ] **MessagePack** `sf_msgpack.gd` (opt-in) + raw-bytes pass-through; Rkyv pass-through documented.
-- [ ] Add `.llm/skills/reconnection-replay.md` (regenerate index + `agent-check.ps1`).
+- [x] Add `.llm/skills/reconnection-replay.md` (regenerate index + `agent-check.ps1`).
 - **DoD:** every feature has deterministic fake-transport tests; all green.
 - **Fan-out:** authority ‖ spectators ‖ reconnection (merge reconnection last).
 

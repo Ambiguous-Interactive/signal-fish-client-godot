@@ -156,7 +156,9 @@ func connect_to_server(url := "") -> Error:
 ## handshake (player_id + room_id + the server-issued auth_token) instead of
 ## [code]Authenticate[/code]. On [code]Reconnected[/code] the full room state is
 ## restored and [signal reconnected] fires with the decoded
-## [code]missed_events[/code] for the consumer to replay.
+## [code]missed_events[/code] for the consumer to replay. [signal connected]
+## also fires for reconnect dials (the transport opened). Backoff-driven
+## retries need the client in the scene tree so [code]_process[/code] runs.
 func reconnect(player_id: String, room_id: String, auth_token: String) -> Error:
 	if _config == null:
 		_emit_protocol_error("reconnect requires configure() first")
@@ -180,9 +182,12 @@ func reconnect(player_id: String, room_id: String, auth_token: String) -> Error:
 	return _open_transport(_config.endpoint_url)
 
 
-## Enables opt-in automatic reconnection after an abnormal disconnect. Uses the
-## last server-issued reconnection token; a clean [method close] or a terminal
-## reconnection error stops it. Off by default.
+## Enables opt-in automatic reconnection after an abnormal disconnect: any
+## non-user-initiated close or transport failure. Uses the last server-issued
+## reconnection token; a clean [method close] or a terminal reconnection error
+## stops it. When the retry budget is exhausted, a final [signal
+## connection_failed] ("auto-reconnect exhausted") is emitted and retrying
+## stops. Off by default.
 func set_auto_reconnect(enabled: bool) -> void:
 	_auto_reconnect_enabled = enabled
 	if not enabled:
@@ -390,6 +395,10 @@ func _open_transport(target: String) -> Error:
 		_emit_protocol_error(scheme_error)
 		return ERR_INVALID_PARAMETER
 	_user_close_requested = false
+	# A fresh dial supersedes any armed retry timer. The retry budget is NOT
+	# reset here: it resets only when a session actually re-establishes (a
+	# RoomJoined/Reconnected baseline), so exhaustion can terminate.
+	_reconnect_timer_running = false
 	_reset_session()
 	_connection_state = ConnectionState.CONNECTING
 	if transport == null:
@@ -481,11 +490,18 @@ func _on_transport_closed(code: int, reason: String) -> void:
 
 
 func _on_transport_failed(error: String) -> void:
+	var user_close := _user_close_requested
+	_user_close_requested = false
 	_connection_state = ConnectionState.FAILED
 	_reset_session()
 	_teardown_transport()
 	SFLogScript.info("transport failed: %s" % error, _secrets)
 	connection_failed.emit(error)
+	# A dead dial or dropped link is an abnormal termination, same as a
+	# server-initiated close: budget-limited retries keep auto-reconnect
+	# useful when the endpoint is briefly unreachable.
+	if _auto_reconnect_enabled and not user_close:
+		_schedule_auto_reconnect()
 
 
 func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
@@ -503,6 +519,8 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"room_joined":
 			_apply_room_info(event.args[0])
 			_session_state = _session_state_for_lobby(_lobby_state)
+			# A fresh authoritative session restarts the retry budget.
+			_auto_reconnect_attempts = 0
 			room_joined.emit(event.args[0])
 		&"room_join_failed":
 			room_join_failed.emit(event.args[0], event.args[1])
@@ -559,6 +577,10 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 				# Terminal reconnection errors: retrying can never succeed.
 				_cancel_auto_reconnect()
 			reconnection_failed.emit(event.args[0], event.args[1])
+			# The server rejected the rejoin; nothing is left to do on this
+			# connection. Bring the link down so `disconnected` fires and
+			# retryable auto-reconnects continue from a clean state.
+			_terminate_reconnection_attempt()
 		&"spectator_joined":
 			_apply_spectator_info(event.args[0])
 			_session_state = SessionState.SPECTATING
@@ -710,6 +732,22 @@ func _capture_reconnect_context(player_id: String, room_id: String, auth_token: 
 
 
 func _schedule_auto_reconnect() -> void:
+	if _user_close_requested:
+		# A consumer closed from a disconnect/failure handler after the flag
+		# was snapshotted: their clean close wins over arming a retry.
+		_user_close_requested = false
+		return
+	if (
+		_connection_state
+		in [
+			ConnectionState.CONNECTING,
+			ConnectionState.CONNECTED,
+			ConnectionState.CLOSING,
+		]
+	):
+		# A consumer dialed or closed from a disconnect handler; never arm a
+		# timer that would burn a budgeted attempt against a live dial.
+		return
 	if _context_auth_token.is_empty():
 		# Nothing to reconnect with (never joined a room, spectator session,
 		# or a terminal reconnection error already cleared the context).
@@ -752,6 +790,23 @@ func _cancel_auto_reconnect() -> void:
 	_context_player_id = ""
 	_context_room_id = ""
 	_context_auth_token = ""
+
+
+## After a `ReconnectionFailed` the server rejected the rejoin: tear the
+## connection down exactly like a close frame so consumers observe
+## `disconnected`, and give retryable auto-reconnects a fresh scheduling
+## point. Terminal codes cleared the context above, so their schedule is a
+## no-op.
+func _terminate_reconnection_attempt() -> void:
+	if _connection_state != ConnectionState.CONNECTED:
+		# A consumer handler already closed (CLOSING) or the link dropped.
+		return
+	_connection_state = ConnectionState.CLOSED
+	_reset_session()
+	_teardown_transport()
+	disconnected.emit(-1, "reconnection failed")
+	if _auto_reconnect_enabled:
+		_schedule_auto_reconnect()
 
 
 func _remember_secret(secret: String) -> void:
