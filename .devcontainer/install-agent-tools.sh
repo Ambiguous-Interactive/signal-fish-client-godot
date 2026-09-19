@@ -82,7 +82,7 @@ sweep_dangling_bins() {
             if rm -f "$link"; then
                 printf 'agent-tools: removed dangling bin link: %s\n' "$link"
             else
-                warn_or_fail "could not remove dangling bin link: ${link}" || true
+                warn_or_fail "could not remove dangling bin link: ${link}" || exit 1
             fi
         fi
     done

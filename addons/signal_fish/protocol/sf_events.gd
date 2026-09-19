@@ -1,10 +1,17 @@
 class_name SFEvents
 extends RefCounted
 
-## Maximum nesting depth for decoded envelopes. Bounds recursion through
-## Reconnected.missed_events so a hostile server cannot overflow the script
-## stack (the GDScript analogue of serde's 128-level recursion cap).
+## Maximum nesting depth for decoded envelopes. Wire-reachable inputs are
+## already bounded (the engine's JSON parser rejects overly deep documents,
+## and nested Reconnected entries are rejected as non-replayable below); this
+## cap is defense in depth for any future recursive message variant, matching
+## the spirit of serde's 128-level recursion cap in the Rust client.
 const MAX_MESSAGE_DEPTH := 16
+
+## Maximum number of Reconnected.missed_events entries decoded per envelope.
+## Bounds per-message memory/CPU (each entry is deep-copied into the decoded
+## event) against a hostile or misbehaving server.
+const MAX_MISSED_EVENTS := 256
 
 const SFBinaryCodecScript = preload("res://addons/signal_fish/protocol/sf_binary_codec.gd")
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
@@ -408,11 +415,14 @@ static func _decode_reconnected(
 	if room_event.signal_name == &"protocol_error":
 		return room_event
 	var missed_events: Array = []
-	for index: int in data["missed_events"].size():
+	var missed_count: int = data["missed_events"].size()
+	if missed_count > MAX_MISSED_EVENTS:
+		missed_count = MAX_MISSED_EVENTS
+	for index: int in missed_count:
 		var missed: Variant = data["missed_events"][index]
 		if typeof(missed) != TYPE_DICTIONARY:
 			missed_events.append(
-				_protocol_error("Reconnected missed_events[%d] must be an object" % index)
+				_protocol_error("Reconnected missed_events[%d] must be an object" % index, missed)
 			)
 			continue
 		if _is_reconnected_envelope(missed):
@@ -438,6 +448,16 @@ static func _decode_reconnected(
 			)
 			continue
 		missed_events.append(decoded_missed)
+	if data["missed_events"].size() > MAX_MISSED_EVENTS:
+		missed_events.append(
+			_protocol_error(
+				(
+					"Reconnected missed_events exceeds %d entries; dropped %d"
+					% [MAX_MISSED_EVENTS, data["missed_events"].size() - MAX_MISSED_EVENTS]
+				),
+				envelope
+			)
+		)
 	return _event(
 		type_name,
 		&"reconnected",

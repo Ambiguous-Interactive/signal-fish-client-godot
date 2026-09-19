@@ -216,6 +216,13 @@ func _test_fake_reconnect_clears_sent_history() -> void:
 	_assert_equal([], transport.sent_text, "fake reconnect clears sent text")
 	_assert_equal([], transport.sent_binary, "fake reconnect clears sent binary")
 
+	transport.fail_on_connect = true
+	_assert_equal(
+		ERR_CANT_CONNECT, transport.connect_to_url("ws://example.test/three"), "fake fail"
+	)
+	transport.fail_on_connect = false
+	_assert_equal([], transport.sent_text, "fake failed connect clears sent text")
+
 
 func _test_fake_terminal_sessions_do_not_reopen_or_emit_packets() -> void:
 	var failed_transport = SFFakeTransportScript.new()
@@ -397,6 +404,14 @@ func _test_websocket_connecting_close_surfaces_caller_reason() -> void:
 	_assert_equal(1, failures.size(), "websocket custom abort failure count")
 	_assert_string_contains(failures[0], "custom abort", "websocket custom abort reason")
 	_assert_equal([[4321, "custom abort"]], peer.close_calls, "websocket custom abort close args")
+
+	_assert_equal(OK, transport.connect_to_url("ws://example.test/retry"), "websocket reconnect")
+	var retry_peer = TestWebSocketPeerAdapterScript.new()
+	retry_peer.ready_state = WebSocketPeer.STATE_CONNECTING
+	transport._peer = retry_peer
+	transport.close(4321)
+	_assert_string_contains(failures[1], "close code 4321", "websocket abort code-only message")
+	_assert_equal([[4321, ""]], retry_peer.close_calls, "websocket code-only close args")
 
 
 func _test_websocket_read_error_is_terminal_once() -> void:

@@ -694,6 +694,24 @@ func _test_reconnected_missed_events_depth_hardening() -> void:
 	)
 	_assert_protocol_error_contains(over_depth, "nesting exceeds depth", "depth cap enforced")
 
+	var oversized_data := _minimal_room_joined_data()
+	var oversized_missed_events: Array = []
+	for _index: int in SFEventsScript.MAX_MISSED_EVENTS + 1:
+		oversized_missed_events.append({"type": "Pong"})
+	oversized_data["missed_events"] = oversized_missed_events
+	var oversized := SFEventsScript.decode_envelope({"type": "Reconnected", "data": oversized_data})
+	_assert_equal("reconnected", String(oversized.signal_name), "oversized missed events outer")
+	_assert_equal(
+		SFEventsScript.MAX_MISSED_EVENTS + 1,
+		oversized.args[1].size(),
+		"oversized missed events decoded entries"
+	)
+	_assert_protocol_error_contains(
+		oversized.args[1][SFEventsScript.MAX_MISSED_EVENTS],
+		"exceeds %d entries" % SFEventsScript.MAX_MISSED_EVENTS,
+		"oversized missed events truncated"
+	)
+
 
 func _minimal_room_joined_data() -> Dictionary:
 	return {

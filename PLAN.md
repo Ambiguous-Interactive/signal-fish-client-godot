@@ -402,7 +402,7 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       code/reason, failed-open terminal ordering, WebSocket invalid URL/send failures, and cold-project
       runtime-check cleanup.
 - [ ] `signal_fish_config.gd` (includes a reserved `credential` slot for the upstream secret-key
-      decision — carried as a value, never stitched into URLs, never logged/serialized; see §12) ;
+      decision — carried as a value, never stitched into URLs, never logged/serialized; see §12);
       `signal_fish_client.gd` with both state machines, core API
       (configure/connect/auto-authenticate/join/leave/`send_game_data`(JSON)/ping/close + state
       accessors), `_process`/`poll` driver, backpressure + cleanup.

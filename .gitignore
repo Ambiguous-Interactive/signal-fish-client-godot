@@ -38,4 +38,5 @@ logs_*.zip
 # shared hook config in .claude/settings.json.
 .claude/settings.local.json
 .env*
+!.env.example
 GOAL.md
