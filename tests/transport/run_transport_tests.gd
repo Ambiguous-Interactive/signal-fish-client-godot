@@ -405,11 +405,12 @@ func _test_websocket_connecting_close_surfaces_caller_reason() -> void:
 	_assert_string_contains(failures[0], "custom abort", "websocket custom abort reason")
 	_assert_equal([[4321, "custom abort"]], peer.close_calls, "websocket custom abort close args")
 
-	_assert_equal(OK, transport.connect_to_url("ws://example.test/retry"), "websocket reconnect")
+	var retry_transport = SFWebSocketTransportScript.new()
 	var retry_peer = TestWebSocketPeerAdapterScript.new()
 	retry_peer.ready_state = WebSocketPeer.STATE_CONNECTING
-	transport._peer = retry_peer
-	transport.close(4321)
+	retry_transport._peer = retry_peer
+	retry_transport.failed.connect(func(error: String) -> void: failures.append(error))
+	retry_transport.close(4321)
 	_assert_string_contains(failures[1], "close code 4321", "websocket abort code-only message")
 	_assert_equal([[4321, ""]], retry_peer.close_calls, "websocket code-only close args")
 

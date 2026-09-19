@@ -9,8 +9,9 @@ extends RefCounted
 const MAX_MESSAGE_DEPTH := 16
 
 ## Maximum number of Reconnected.missed_events entries decoded per envelope.
-## Bounds per-message memory/CPU (each entry is deep-copied into the decoded
-## event) against a hostile or misbehaving server.
+## Bounds decode work and the number of per-entry decoded objects against a
+## hostile or misbehaving server; excess entries are dropped with a single
+## protocol_error entry.
 const MAX_MISSED_EVENTS := 256
 
 const SFBinaryCodecScript = preload("res://addons/signal_fish/protocol/sf_binary_codec.gd")
