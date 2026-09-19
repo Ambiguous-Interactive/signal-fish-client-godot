@@ -1,0 +1,8 @@
+# GDLint config (gdtoolkit 4.5.0). Unlisted checks use gdlint defaults;
+# see `gdlint -d` for the full dump.
+#
+# max-public-methods: the SignalFishClient public API is plan-mandated
+# (PLAN.md §4.2): 15 lifecycle/state accessors plus 9 protocol send methods
+# (the 10th, send_game_data_binary, ships with P2) intentionally exceed the
+# default of 20.
+max-public-methods: 30
