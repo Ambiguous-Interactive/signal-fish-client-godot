@@ -78,6 +78,10 @@ Date: 2026-09-19
 
 ## Deliberately deferred (next rounds)
 
+- Double-nested handler cascade edge (round-4 reviewer note): a close from
+  the `connection_failed` handler of a redial made inside a `disconnected`
+  handler can still arm one retry — pre-existing, exotic, simple flavors are
+  pinned by tests; revisit only if a real consumer hits it.
 - `send_game_data_binary()` + `sf_msgpack.gd` (opt-in MessagePack) + binary
   frame handling — the other P2 half; needs a binary-frame pass at the
   transport boundary and decode policy (`decode_msgpack_payloads`).
@@ -143,6 +147,36 @@ Re-review of the fix diff verified all four round-1 fixes and returned
   reset only on baselines; recovery-from-exhaustion is pinned.
 - **P3 fixed — protocol_error sweep scope:** trackers now accumulate per
   client (`_error_trackers`) so multi-client tests check every client.
+
+## Adversarial re-review round 3 (fix delta)
+
+Re-review of round 2's diff returned 0 P1 / 1 P2 / 2 P3. Dispositions:
+
+- **P2 fixed — nested redial double-burn:** a consumer redial from a
+  disconnect handler that fails synchronously scheduled inside the handler;
+  the deferred outer schedule then armed a second attempt and overwrote the
+  backoff delay. `_schedule_auto_reconnect` is now idempotent per cascade
+  (early-out while the timer is armed); pinned by
+  `_test_handler_redial_failure_burns_one_attempt`.
+- **P3 fixed — exhaustion double-emit at the budget boundary:** the
+  exhaustion branch now also drops the retained context, so no later event
+  can re-enter scheduling; exhaustion terminates the episode cleanly and the
+  budget restarts on the next fresh baseline (docstrings/skill doc updated).
+- **P3 fixed — doc/behavior mismatch:** `set_auto_reconnect` docstring now
+  states that failed dials — including consumer-initiated ones — are
+  retryable while armed, and that exhaustion drops the token.
+- **P3 fixed — test twins:** `_test_close_from_connection_failed_handler_
+  wins_over_retry` pins the FAILED-handler close flavor.
+
+## Adversarial re-review round 4 (fix delta)
+
+Final verification pass of round 3's diff: **0 P1 / 0 P2 / 0 P3 — clean.**
+All four fixes verified correct (idempotent scheduling invariant, exhaustion
+termination with context cleared, doc accuracy, deterministic tests that
+genuinely pin the fixes). One pre-existing double-nested-cascade edge (a
+close from the `connection_failed` handler of a redial made inside a
+`disconnected` handler can still arm; inner schedule consumes the flag) is
+unchanged from before this session and deferred as out of scope.
 
 ## Verification
 

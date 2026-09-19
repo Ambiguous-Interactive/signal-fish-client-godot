@@ -63,6 +63,8 @@ func _run() -> void:
 	_test_user_close_mid_dial_stops_retrying()
 	_test_close_cancels_pending_retry_timer()
 	_test_close_from_disconnected_handler_wins_over_retry()
+	_test_handler_redial_failure_burns_one_attempt()
+	_test_close_from_connection_failed_handler_wins_over_retry()
 	_test_auto_reconnect_exhaustion_emits_connection_failed()
 	_test_failure_driven_exhaustion_and_budget_recovery()
 	_test_reconnect_tokens_are_redacted()
@@ -377,6 +379,45 @@ func _test_close_cancels_pending_retry_timer() -> void:
 		SignalFishClientScript.ConnectionState.CLOSED,
 		client.get_connection_state(),
 		"cancelled timer never dials"
+	)
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_handler_redial_failure_burns_one_attempt() -> void:
+	# A consumer redial from a `disconnected` handler that fails synchronously
+	# schedules inside the handler; the deferred schedule must not arm a
+	# second attempt for the same cascade.
+	var client := _make_client(true, "token")
+	var failures: Array = []
+	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	client.disconnected.connect(
+		func(_code: int, _reason: String) -> void:
+			var dial = SFFakeTransportScript.new()
+			dial.fail_on_connect = true
+			client.transport = dial
+			client.connect_to_server("ws://example.test/socket")
+	)
+	client.transport.inject_close(4999, "dropped")
+	_assert_equal(1, client._auto_reconnect_attempts, "one cascade arms exactly one attempt")
+	_assert(client._reconnect_timer_running, "backoff armed once")
+	_assert_equal(1, failures.size(), "inner dial failure surfaced once")
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_close_from_connection_failed_handler_wins_over_retry() -> void:
+	var client := _make_client(true, "token")
+	client.transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 30.0)
+	client.connection_failed.connect(func(_error: String) -> void: client.close())
+	client.transport.inject_failure("link died")
+	_step(client, 30.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"consumer close from failure handler stops auto-reconnect"
 	)
 	_assert_no_protocol_errors()
 	client.free()

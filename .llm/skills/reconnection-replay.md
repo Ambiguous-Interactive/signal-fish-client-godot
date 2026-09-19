@@ -58,9 +58,10 @@ any test that simulates disconnect/retry timing.
   fraction 0.25, budget `config.reconnect_max_attempts` (default 5). A failed
   dial emits `connection_failed` (the transport failure) and then arms the
   next attempt; when the budget is exhausted, a final "auto-reconnect
-  exhausted" `connection_failed` follows the last attempt's failure and
-  retrying stops. A successful baseline resets the budget; so does any fresh
-  dial (`connect_to_server`/`reconnect`).
+  exhausted" `connection_failed` follows the last attempt's failure, the
+  retained token is dropped, and retrying stops. The budget resets only when
+  an authoritative baseline (`RoomJoined`/`Reconnected`) re-establishes a
+  session.
 - Terminal `ReconnectionFailed` codes (`RECONNECTION_TOKEN_INVALID`,
   `RECONNECTION_EXPIRED`) clear the context and stop retrying;
   `RECONNECTION_FAILED` and other codes stay retryable. After any

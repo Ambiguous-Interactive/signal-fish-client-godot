@@ -182,12 +182,14 @@ func reconnect(player_id: String, room_id: String, auth_token: String) -> Error:
 	return _open_transport(_config.endpoint_url)
 
 
-## Enables opt-in automatic reconnection after an abnormal disconnect: any
-## non-user-initiated close or transport failure. Uses the last server-issued
-## reconnection token; a clean [method close] or a terminal reconnection error
-## stops it. When the retry budget is exhausted, a final [signal
-## connection_failed] ("auto-reconnect exhausted") is emitted and retrying
-## stops. Off by default.
+## Enables opt-in automatic reconnection after an abnormal termination: a
+## non-user-initiated close, or a transport failure (including failed dials,
+## even ones you initiate). Uses the last server-issued reconnection token; a
+## clean [method close] or a terminal reconnection error stops it. When the
+## retry budget is exhausted, a final [signal connection_failed]
+## ("auto-reconnect exhausted") is emitted, the retained token is dropped,
+## and retrying stops until a fresh baseline re-establishes a session. Off by
+## default.
 func set_auto_reconnect(enabled: bool) -> void:
 	_auto_reconnect_enabled = enabled
 	if not enabled:
@@ -732,6 +734,10 @@ func _capture_reconnect_context(player_id: String, room_id: String, auth_token: 
 
 
 func _schedule_auto_reconnect() -> void:
+	if _reconnect_timer_running:
+		# Already armed (e.g. a consumer's handler redial failed and
+		# scheduled first): one termination cascade arms exactly one retry.
+		return
 	if _user_close_requested:
 		# A consumer closed from a disconnect/failure handler after the flag
 		# was snapshotted: their clean close wins over arming a retry.
@@ -756,6 +762,11 @@ func _schedule_auto_reconnect() -> void:
 		connection_failed.emit(
 			"auto-reconnect exhausted after %d attempt(s)" % _auto_reconnect_attempts
 		)
+		# The episode is over: drop the retained identity so no later event
+		# can re-enter scheduling (retries restart on a fresh baseline).
+		_context_player_id = ""
+		_context_room_id = ""
+		_context_auth_token = ""
 		return
 	_auto_reconnect_attempts += 1
 	var raw_delay: float = (
