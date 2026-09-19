@@ -267,12 +267,29 @@ for index in "${!BINARIES[@]}"; do
         continue
     fi
 
-    # Capture stderr too: when a binary exists but dies on startup (for
-    # example EACCES under a root-owned ~/.cache), the first error line is
-    # far more actionable than reporting the CLI as silently missing.
-    # `|| true` guards against pipefail aborting on SIGPIPE if a chatty
-    # --version output ever exceeds the pipe buffer after head exits.
-    version="$( ("$binary" --version 2>&1 || true) | head -n 1 || true )"
+    # Verdict on exit status, with stdout/stderr captured separately: a
+    # binary that exists but dies on startup (for example EACCES under a
+    # root-owned ~/.cache) exits nonzero and prints an error line. Merging
+    # the streams and treating any output as a version would mark broken
+    # CLIs as ready; an error line is a diagnostic, not a version.
+    version_status=0
+    "$binary" --version >"${probe_dir}/${binary}.out" 2>"${probe_dir}/${binary}.err" || version_status=$?
+    if [ "$version_status" -ne 0 ]; then
+        missing+=("$binary")
+        diagnostic="$(head -n 1 "${probe_dir}/${binary}.err")"
+        if [ -z "$diagnostic" ]; then
+            diagnostic="$(head -n 1 "${probe_dir}/${binary}.out")"
+        fi
+        if [ -n "$diagnostic" ]; then
+            printf 'agent-tools: %s --version exited %d: %s\n' "$binary" "$version_status" "$diagnostic" >&2
+        fi
+        continue
+    fi
+    version="$(head -n 1 "${probe_dir}/${binary}.out")"
+    if [ -z "$version" ]; then
+        # Exit 0 with empty stdout: the CLI reports its version on stderr.
+        version="$(head -n 1 "${probe_dir}/${binary}.err")"
+    fi
     if [ -z "$version" ]; then
         missing+=("$binary")
         continue

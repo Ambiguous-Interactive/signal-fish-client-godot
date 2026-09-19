@@ -47,9 +47,16 @@ PowerShell profile behavior, or post-create/post-start setup.
   `bin` symlinks behind) and sweeps dangling `bin` links before probing and
   after failed attempts, so a broken install degrades to "missing" (which the
   next run reinstalls) instead of leaving PATH poisoned with commands that
-  fail exec with "No such file or directory". Verification surfaces the first
-  stderr line of a silent binary, which is how the `~/.cache` EACCES class of
-  failure is diagnosed.
+  fail exec with "No such file or directory".
+- Health checks verdict on exit status, never on captured-output presence.
+  The installer's verification runs each `--version` with stdout and stderr
+  redirected to separate files: nonzero exit means broken (the first error
+  line is reported as the diagnostic — how the `~/.cache` EACCES class of
+  failure is diagnosed), exit 0 with no output means missing, and only exit
+  0 with output counts as ready (stderr is consulted when stdout is empty,
+  because some CLIs print their version there). Merging the streams and
+  treating any non-empty line as a version once marked dying binaries as
+  ready; the harness self-tests now reject that pattern.
 - The installer derives npm's global prefix, prepends its `bin` directory to
   PATH, and passes npm 11's `--allow-scripts` (npm blocks lifecycle scripts on
   global installs by default; `opencode-ai` needs its postinstall to select

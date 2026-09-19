@@ -52,6 +52,26 @@ Date: 2026-09-19
 - Restored `CHATGPT.md`/`CODEX.md`/`GEMINI.md`: the harness linter
   hard-requires these pointer files (deleting them reds the lint).
 
+## Follow-up round: Bugbot "failing CLIs marked ready" (new bot review)
+
+- Bugbot correctly flagged that the new verifier treated any non-empty
+  merged `--version` output as a version — a CLI dying on startup printed an
+  error line and was marked ready (the exact failure mode the diagnostics
+  were added for).
+- Sweep for the class across `.devcontainer/*.sh` + `scripts/*.sh`: all other
+  merged-stream uses are exit-code-gated (`if ! cmd`) or display-only; this
+  was the one instance.
+- Fix: verdict on exit status with stdout/stderr redirected to separate
+  files — nonzero exit = broken (first error line reported as diagnostic),
+  exit 0 with no output = missing, exit 0 with output = ready (stderr
+  consulted when stdout is empty, since some CLIs print versions there).
+  Verified all four paths with stub binaries; harness self-tests extended to
+  reject the merged-stream pattern (red first), 113/113 green.
+- Guidance: `.llm/skills/devcontainer-tooling.md` documents the exit-status
+  verification contract; `.llm/skills/review-debugging.md` gains a
+  "Health-Check Hygiene" section (non-empty output is not a success signal;
+  sweep every `$(cmd 2>&1)` whose content gates success).
+
 ## Verification
 
 - `bash scripts/run-runtime-checks.sh all`: green (private-helpers, format,
