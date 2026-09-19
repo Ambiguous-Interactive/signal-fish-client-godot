@@ -88,6 +88,7 @@ run_godot() {
 	godot --headless --path "${cold_project}" --script tests/protocol/run_protocol_tests.gd
 	godot --headless --path "${cold_project}" --script tests/transport/run_transport_tests.gd
 	godot --headless --path "${cold_project}" --script tests/client/run_client_tests.gd
+	godot --headless --path "${cold_project}" --script tests/client/run_reconnect_tests.gd
 }
 
 case "${target}" in

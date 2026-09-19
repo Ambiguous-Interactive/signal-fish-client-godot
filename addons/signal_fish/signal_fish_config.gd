@@ -46,6 +46,11 @@ const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 ## is picked up on the next poll.
 @export var max_inbound_packets_per_poll: int = 64
 
+## Budget of automatic reconnection attempts per lost session
+## ([method SignalFishClient.set_auto_reconnect]). Manual
+## [method SignalFishClient.reconnect] calls ignore this.
+@export var reconnect_max_attempts: int = 5
+
 ## Reserved slot for a secret credential (e.g. an [code]sfk_*[/code] app key)
 ## should upstream move to secret-based authentication. Empty = unset.
 ## Deliberately NOT an [code]@export[/code]: secrets must be set in code only,
@@ -72,12 +77,14 @@ func validation_error() -> String:
 		var format_error := _game_data_format_error()
 		if not format_error.is_empty():
 			return format_error
-	if max_inbound_frame_bytes <= 0:
-		return "max_inbound_frame_bytes must be positive"
-	if max_buffered_bytes <= 0:
-		return "max_buffered_bytes must be positive"
-	if max_inbound_packets_per_poll <= 0:
-		return "max_inbound_packets_per_poll must be positive"
+	for cap: Array in [
+		["max_inbound_frame_bytes", max_inbound_frame_bytes],
+		["max_buffered_bytes", max_buffered_bytes],
+		["max_inbound_packets_per_poll", max_inbound_packets_per_poll],
+		["reconnect_max_attempts", reconnect_max_attempts],
+	]:
+		if cap[1] <= 0:
+			return "%s must be positive" % cap[0]
 	return ""
 
 

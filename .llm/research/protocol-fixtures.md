@@ -119,8 +119,13 @@ blank lines and lines beginning with `#`.
 - Server and Rust client expose `STORAGE_ERROR`; cloud exposes
   `DATABASE_ERROR`. Include a compatibility policy before locking the final
   error-code table.
-- The exact client storage path for reconnection tokens is not exposed in
-  `RoomJoinedPayload` or `ReconnectedPayload`. Auto-reconnect remains blocked
-  until token issuance is pinned to source.
+- Reconnection token origin (resolved 2026-09-19): the server issues
+  `reconnection_token: Option<String>` inside every `RoomJoinedPayload` and
+  `ReconnectedPayload` (server `src/protocol/messages.rs` @ `eaae1ca3`); the
+  Rust client retains it for opt-in auto-reconnect (`src/client_core.rs`
+  `AutoReconnectContext` @ `fdab2e83`). See
+  `.llm/skills/reconnection-replay.md`. The vendored fixtures pre-date the
+  field, so the decoder tolerates absence/null; re-pinning fixtures to current
+  upstream is tracked by issue #12.
 - Upstream close-code conventions were not found in the protocol files listed
   above. Treat close-code mapping as a later transport-phase decision gate.

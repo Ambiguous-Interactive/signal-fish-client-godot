@@ -1,7 +1,9 @@
 # Signal Fish — Godot 4 GDScript Client Bindings · Implementation Plan
 
 > **Status:** P0 complete. P1 complete (transport seam + adapters + core client/config/state
-> machines + fake-transport client tests); next: P2 full protocol depth.
+> machines + fake-transport client tests). P2 in progress: reconnection + replay landed
+> (manual `reconnect()`, opt-in auto-reconnect with backoff, `reconnection_token`
+> capture); next: authority/spectator matrix depth, MessagePack, binary game data.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -297,9 +299,14 @@ enum SessionState   { UNAUTHENTICATED, AUTHENTICATING, AUTHENTICATED,
   **server-driven** (from `RoomJoined`/`LobbyStateChanged`/`Reconnected`); the client never
   self-promotes. `GameStarting` does not change session state (stays FINALIZED) — it's a one-shot
   instruction event.
-- **Reconnect:** open a fresh transport; on open send `Reconnect` instead of `Authenticate`; on
-  `Reconnected`, restore cached state from the payload, decode `missed_events` via the same decoder,
-  emit `reconnected(info, missed_events)` and let the consumer replay (no hidden re-emit).
+- **Reconnect:** open a fresh transport; authenticate, then send
+  `Reconnect{player_id, room_id, auth_token}` once `Authenticated` arrives
+  (upstream parity: enforcing servers reject any pre-auth message with
+  `MissingAppId`; rust client `client_core.rs` re-authenticates every
+  reconnection round). On `Reconnected`, restore cached state from the
+  payload, decode `missed_events` via the same decoder, emit
+  `reconnected(info, missed_events)` and let the consumer replay (no hidden
+  re-emit).
 
 ### 4.5 Transport abstraction (`sf_transport.gd`)
 
@@ -364,8 +371,11 @@ func close(code := 1000, reason := "") -> void
   `_process` (no timer thread); `pong_timeout_sec` → treat as dead link.
 - **Auto-reconnect:** OFF by default. When on: exponential backoff + jitter (`base 0.5s`, `factor 2`,
   `cap 15s`, `max_attempts` default 5) via accumulated `_process` delta (**no `OS.delay`/threads**); only
-  on abnormal close; stop on clean `close()` or terminal codes (`RECONNECTION_TOKEN_INVALID`,
-  `RECONNECTION_EXPIRED`).
+  on abnormal termination (a non-user-initiated close or transport failure — a dead dial must
+  consume budget too, or a briefly-unreachable endpoint kills the loop on the first retry); stop
+  on clean `close()` or terminal codes (`RECONNECTION_TOKEN_INVALID`,
+  `RECONNECTION_EXPIRED`); after a `ReconnectionFailed` the client tears the link down itself so
+  consumers always observe a terminal disconnect.
 - **Cleanup:** on close/failure disconnect transport signals, null the transport (RefCounted freed),
   clear roster/spectators/ids/lobby state, reset `SessionState=UNAUTHENTICATED`; `_exit_tree()` calls
   `close()`.
@@ -417,19 +427,34 @@ loop and exits only on its consensus criteria. Fan-out points noted.
   (binary game-data decode is P2). `sf_log.gd` (redacting logger) landed with the client (issue #15),
   and `ws://` from secure web pages is a loud `ERR_INVALID_PARAMETER` (issue #15, R2). Until P2,
   `game_data_format` accepts only `json`/empty so the server cannot negotiate formats whose binary
-  frames the client would drop. `reconnect()`/`set_auto_reconnect()`/`send_game_data_binary()` ship
-  with the P2 reconnection and binary game-data work. The `credential` slot is a plain (non-exported)
-  var so the Resource pipeline can never persist it.
+  frames the client would drop. `reconnect()`/`set_auto_reconnect()` landed with the P2 reconnection work;
+  `send_game_data_binary()` ships with the P2 binary game-data milestone. The `credential`
+  slot is a plain (non-exported) var so the Resource pipeline can never persist it.
 
 ### P2 — Full protocol depth
 **Goal:** Complete the protocol surface.
 - [ ] **Authority:** `request_authority`, `authority_changed`, `authority_response` + tests.
 - [ ] **Spectators:** `join_as_spectator`/`leave_spectator` + 5 spectator events + `SPECTATING` state + tests.
-- [ ] **Reconnection + replay** (lands last — perturbs state most): `reconnect()`, `Reconnected` w/
+- [x] **Reconnection + replay** (lands last — perturbs state most): `reconnect()`, `Reconnected` w/
       `missed_events`, `ReconnectionFailed`, bounded retry + backoff (**injected clock** in tests).
+      Notes: `reconnect()` authenticates first and sends `Reconnect` once
+      `Authenticated` arrives (§4.4; enforcing servers reject pre-auth
+      messages);
+      `set_auto_reconnect()` retries only non-user-initiated abnormal terminations (closes and
+      transport failures) with exponential backoff
+      (base 0.5s, factor 2, cap 15s, jitter 0.25) and a `reconnect_max_attempts` budget
+      (default 5, exhaustion → `connection_failed`); terminal codes
+      (`RECONNECTION_TOKEN_INVALID`/`RECONNECTION_EXPIRED`) stop retrying, and any
+      `ReconnectionFailed` tears the link down (`disconnected(-1)`) so consumers observe a
+      terminal disconnect. The server-issued
+      `reconnection_token` (server `messages.rs` `RoomJoinedPayload`/`ReconnectedPayload`)
+      is parsed on every baseline: player baselines with a token retain the auto-reconnect
+      context; tokenless and spectator baselines clear it (upstream `client_core.rs`
+      `AutoReconnectContext`). Tokens feed the redacting logger. Suite:
+      `tests/client/run_reconnect_tests.gd`; skill doc: `.llm/skills/reconnection-replay.md`.
 - [ ] Full ~40 error-code surface mapped through `sf_error_codes.gd`.
 - [ ] **MessagePack** `sf_msgpack.gd` (opt-in) + raw-bytes pass-through; Rkyv pass-through documented.
-- [ ] Add `.llm/skills/reconnection-replay.md` (regenerate index + `agent-check.ps1`).
+- [x] Add `.llm/skills/reconnection-replay.md` (regenerate index + `agent-check.ps1`).
 - **DoD:** every feature has deterministic fake-transport tests; all green.
 - **Fan-out:** authority ‖ spectators ‖ reconnection (merge reconnection last).
 
@@ -697,9 +722,10 @@ P6 release gate.
 
 Resolve each by reading the cited upstream file at a specific commit during implementation (mostly P0/P2):
 
-1. **Reconnect `auth_token` origin** — where the client obtains the token (likely in
-   `RoomJoined`/`Reconnected` payload or `Connected`). Pin to client `polling_client.rs` + server
-   `types.rs`. Gates auto-reconnect; manual `reconnect()` works regardless.
+1. ~~**Reconnect `auth_token` origin**~~ **Resolved (2026-09-19):** the token is
+   server-issued as `reconnection_token` inside `RoomJoined`/`Reconnected` baselines (server
+   `messages.rs`; Rust `client_core.rs`). Parsed into `RoomJoinedInfo.reconnection_token`;
+   gates auto-reconnect via the retained context. See `.llm/skills/reconnection-replay.md`.
 2. **`missed_events` ordering / sequence numbers** — confirm guarantees in server reconnection module
    before any dedup/replay logic.
 3. **`SignalFishConfig` / `JoinRoomParams` exact fields + defaults** — client `client.rs`
