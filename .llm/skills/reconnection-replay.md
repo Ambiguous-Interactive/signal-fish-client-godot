@@ -58,7 +58,12 @@ any test that simulates disconnect/retry timing.
   override wins over `endpoint_url`); reconfiguring does not retarget a
   retained reconnection identity because tokens are endpoint-bound. Guards:
   unconfigured, active connection, empty args, no dial target (no prior
-  `connect_to_server` URL and empty `endpoint_url`).
+  `connect_to_server` URL and empty `endpoint_url`). On dials the
+  `authenticated` signal stays consumer-silent (re-authentication is
+  internal): the visible flow is `connected` -> `reconnected` /
+  `reconnection_failed`, and a join-on-auth handler cannot race the
+  handshake with a fresh `JoinRoom`. Inbound events are ignored entirely
+  while `CLOSING` (late packets must not resurrect a cleared identity).
 - On `Reconnected`, restore state from the baseline, hand the decoded
   `missed_events` array to the consumer, consume the dial credentials, and
   reset the retry budget. Replay is the consumer's job (no hidden re-emit).

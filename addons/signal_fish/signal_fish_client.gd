@@ -11,6 +11,9 @@ signal connected
 signal disconnected(code: int, reason: String)
 signal connection_failed(error: String)
 signal protocol_error(error: String)
+## Server accepted the app authentication. Not emitted on reconnect dials:
+## those re-authenticate internally and the consumer observes
+## [signal reconnected] (or [signal reconnection_failed]) instead.
 signal authenticated(app_name: String, organization: String, rate_limits)
 signal protocol_info(info)
 signal authentication_error(error: String, error_code: int)
@@ -172,9 +175,10 @@ func connect_to_server(url := "") -> Error:
 ## retained reconnection identity because tokens are endpoint-bound. On
 ## [code]Reconnected[/code] the full room state is restored and
 ## [signal reconnected] fires with the decoded [code]missed_events[/code] for
-## the consumer to replay. [signal connected] and [signal authenticated] also
-## fire on reconnect dials. Backoff-driven retries need the client in the
-## scene tree so [code]_process[/code] runs.
+## the consumer to replay. [signal connected] fires on reconnect dials;
+## [signal authenticated] does not (re-authentication is internal, so a
+## join-on-auth handler cannot race the handshake). Backoff-driven retries
+## need the client in the scene tree so [code]_process[/code] runs.
 func reconnect(player_id: String, room_id: String, auth_token: String) -> Error:
 	if _config == null:
 		_emit_protocol_error("reconnect requires configure() first")
@@ -533,23 +537,28 @@ func _on_transport_failed(error: String) -> void:
 
 
 func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
+	if _connection_state != ConnectionState.CONNECTED:
+		# While CLOSING the client keeps polling to read the close frame, so
+		# late packets can still arrive. Applying them is moot and dangerous:
+		# a late baseline would resurrect the room state (and re-capture the
+		# reconnection identity) that the user's close just cleared.
+		return
 	match event.signal_name:
 		&"protocol_error":
 			_emit_protocol_error(event.args[0])
 		&"authenticated":
 			_session_state = SessionState.AUTHENTICATED
-			if (
-				not _reconnect_auth_token.is_empty()
-				and _connection_state == ConnectionState.CONNECTED
-			):
+			if _reconnect_auth_token.is_empty():
+				authenticated.emit(event.args[0], event.args[1], event.args[2])
+			elif _connection_state == ConnectionState.CONNECTED:
 				# Reconnect dial: the fresh connection is authenticated, so
-				# the directed handshake may go out (upstream
-				# `take_auto_reconnect_operation` fires only post-auth). It
-				# is sent BEFORE consumers observe `authenticated` so their
-				# sends cannot interleave ahead of it; the state check skips
-				# cleanly when a `connected` handler already closed us.
+				# the directed handshake goes out now (upstream
+				# `take_auto_reconnect_operation` fires only post-auth).
+				# `authenticated` stays consumer-silent on dials: emitting it
+				# would invite a join-on-auth handler to race the handshake
+				# with a fresh JoinRoom. Consumers observe `reconnected`
+				# (or `reconnection_failed`) next.
 				_send_reconnect()
-			authenticated.emit(event.args[0], event.args[1], event.args[2])
 		&"protocol_info":
 			protocol_info.emit(event.args[0])
 		&"authentication_error":

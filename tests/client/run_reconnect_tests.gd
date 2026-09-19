@@ -62,6 +62,7 @@ func _run() -> void:
 	_test_clean_close_clears_reconnect_context()
 	_test_failed_auto_dial_does_not_stall_episode()
 	_test_timer_dial_sync_refusal_arms_next_attempt_once()
+	_test_late_baseline_while_closing_is_ignored()
 	_test_auto_reconnect_backoff_growth_bounds()
 	_test_auto_reconnect_stops_on_terminal_codes()
 	_test_auto_reconnect_retries_after_transport_failure()
@@ -133,8 +134,14 @@ func _test_manual_reconnect_guards_and_wire_bytes() -> void:
 
 	# Happy path: on transport open the first wire bytes are Authenticate
 	# (upstream parity: every dial re-authenticates), and the directed
-	# Reconnect handshake follows once Authenticated arrives.
+	# Reconnect handshake follows once Authenticated arrives. The
+	# `authenticated` signal stays consumer-silent on dials so a
+	# join-on-auth handler cannot race the handshake with a fresh JoinRoom.
 	var reconnector := _make_reconnect_client(TOKEN_V1)
+	var auth_events: Array = []
+	reconnector.authenticated.connect(
+		func(_app: String, _org: String, _limits) -> void: auth_events.append(1)
+	)
 	_assert_equal(
 		SignalFishClientScript.SessionState.AUTHENTICATING,
 		reconnector.get_session_state(),
@@ -145,6 +152,7 @@ func _test_manual_reconnect_guards_and_wire_bytes() -> void:
 	reconnector.transport.inject_server_message(
 		{"type": "Authenticated", "data": _authenticated_data()}
 	)
+	_assert_equal([], auth_events, "reconnect dials do not emit authenticated")
 	var expected := SFMessagesScript.encode(SFMessagesScript.reconnect(PLAYER_A, ROOM_ID, TOKEN_V1))
 	_assert_equal(
 		[auth_bytes, expected],
@@ -402,6 +410,28 @@ func _test_timer_dial_sync_refusal_arms_next_attempt_once() -> void:
 	_step(client, 30.0)
 	_assert_equal(OK, _wait_open(client), "retry after refused dial")
 	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_late_baseline_while_closing_is_ignored() -> void:
+	# While CLOSING the client keeps polling for the close frame, so late
+	# packets can arrive. A late baseline must not resurrect the room state
+	# or re-capture the reconnection identity that the user's close cleared.
+	var client := _make_reconnect_client(TOKEN_V1)
+	client.set_auto_reconnect(true)
+	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	client._connection_state = SignalFishClientScript.ConnectionState.CLOSING
+	var data := _room_joined_data({"lobby_state": "lobby"})
+	data["reconnection_token"] = TOKEN_V2
+	data["missed_events"] = []
+	client.transport.inject_server_message({"type": "Reconnected", "data": data})
+	_assert(client._context_auth_token.is_empty(), "late baseline cannot restore the identity")
+	_assert_equal("", client.get_room_id(), "late baseline cannot restore the room")
+	_assert_equal(
+		SignalFishClientScript.SessionState.AUTHENTICATED,
+		client.get_session_state(),
+		"session state untouched by late baseline"
+	)
 	client.free()
 
 
