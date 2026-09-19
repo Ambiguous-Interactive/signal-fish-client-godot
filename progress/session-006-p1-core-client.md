@@ -93,6 +93,29 @@ DONE/CHANGED-with-note, none NOT-DONE). Findings and dispositions:
 - **Accepted as-is:** log-gate test asserts only no-crash (static logger;
   `redact()` itself is table-tested).
 
+## Bugbot round (PR #18)
+
+Bugbot's 3 findings were all confirmed real and fixed with regression tests:
+
+1. High: `_on_transport_opened` now guards on non-CONNECTING states both
+   before and after `connected.emit()` — a `connected` handler that closes
+   the client synchronously no longer attempts authenticate against a
+   torn-down transport (`_send_envelope` also gained a null-transport guard).
+2. Medium: room/spectator rosters are duplicated in `_apply_room_info`/
+   `_apply_spectator_info`, so emitted `room_joined`/`reconnected`/
+   `spectator_joined` payloads never mutate from later presence updates.
+3. Medium: `lobby_state_changed` keeps `SPECTATING` sessions spectating
+   (spectators receive lobby updates; only players map lobby state onto
+   in-room session states).
+
+While verifying, a GDScript lambda-capture bug surfaced in the new
+payload-stability test (lambdas capture locals by value; a reassigned capture
+variable aborted the test mid-way and leaked its client) — fixed with a
+mutable holder array; the suite now exits with zero leaked instances and zero
+script errors.
+
+CI green on the fix commit (Protocol checks, LLM context, Bugbot).
+
 ## Verification
 
 - `bash scripts/run-runtime-checks.sh all`: green (private-helpers, gdformat,
