@@ -55,8 +55,13 @@ func _run() -> void:
 	_test_reconnection_token_decodes_from_baselines()
 	_test_manual_reconnect_guards_and_wire_bytes()
 	_test_manual_reconnect_completes_and_refreshes_context()
+	_test_reconnect_reuses_last_dialed_url()
 	_test_auto_reconnect_requires_context_and_not_user_close()
 	_test_spectator_baseline_clears_context()
+	_test_leaving_room_clears_reconnect_context()
+	_test_clean_close_clears_reconnect_context()
+	_test_failed_auto_dial_does_not_stall_episode()
+	_test_timer_dial_sync_refusal_arms_next_attempt_once()
 	_test_auto_reconnect_backoff_growth_bounds()
 	_test_auto_reconnect_stops_on_terminal_codes()
 	_test_auto_reconnect_retries_after_transport_failure()
@@ -126,23 +131,32 @@ func _test_manual_reconnect_guards_and_wire_bytes() -> void:
 	_assert_equal(6, errors.size(), "busy reconnect emits protocol_error")
 	client.free()
 
-	# Happy path: on transport open the first wire bytes are the Reconnect
-	# handshake, never Authenticate.
+	# Happy path: on transport open the first wire bytes are Authenticate
+	# (upstream parity: every dial re-authenticates), and the directed
+	# Reconnect handshake follows once Authenticated arrives.
 	var reconnector := _make_reconnect_client(TOKEN_V1)
 	_assert_equal(
 		SignalFishClientScript.SessionState.AUTHENTICATING,
 		reconnector.get_session_state(),
 		"reconnect dials into AUTHENTICATING"
 	)
+	var auth_bytes := SFMessagesScript.encode(SFMessagesScript.authenticate("test-app"))
+	_assert_equal([auth_bytes], reconnector.transport.sent_text, "first wire bytes authenticate")
+	reconnector.transport.inject_server_message(
+		{"type": "Authenticated", "data": _authenticated_data()}
+	)
 	var expected := SFMessagesScript.encode(SFMessagesScript.reconnect(PLAYER_A, ROOM_ID, TOKEN_V1))
 	_assert_equal(
-		[expected], reconnector.transport.sent_text, "first wire bytes are the Reconnect handshake"
+		[auth_bytes, expected],
+		reconnector.transport.sent_text,
+		"Reconnect handshake follows Authenticated"
 	)
 	reconnector.free()
 
 
 func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	var client := _make_reconnect_client(TOKEN_V1)
+	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	client.set_auto_reconnect(true)
 	var reconnected_count := [0]
 	var missed_count := [0]
@@ -173,7 +187,7 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	_step(client, 1.0)
 	_assert_equal(OK, _wait_open(client), "auto dial after baseline")
 	var expected := SFMessagesScript.encode(SFMessagesScript.reconnect(PLAYER_A, ROOM_ID, TOKEN_V2))
-	_assert_equal([expected], client.transport.sent_text, "auto dial uses rotated token")
+	_assert_equal(expected, client.transport.sent_text[-1], "auto dial uses rotated token")
 
 	# The next successful baseline resets the retry budget.
 	client.transport.inject_server_message({"type": "Reconnected", "data": data})
@@ -185,6 +199,39 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	_assert_equal(1, client._auto_reconnect_attempts, "budget restarts at 1 after reset")
 	_assert_no_protocol_errors()
 	client.free()
+
+
+func _test_reconnect_reuses_last_dialed_url() -> void:
+	# A reconnect must rejoin the endpoint the session was established with:
+	# an explicit connect_to_server override wins over config.endpoint_url.
+	# [label, explicit override ("" = none), config endpoint]
+	var cases := [
+		["override wins over config", "ws://override.test/socket", "ws://example.test/socket"],
+		["override with empty config", "ws://override.test/socket", ""],
+		["no override falls back to config", "", "ws://example.test/socket"],
+	]
+	for case: Array in cases:
+		var client := SignalFishClientScript.new()
+		_error_trackers.append(_track_protocol_errors(client))
+		var config := _make_config()
+		config.endpoint_url = case[2]
+		_assert_equal(OK, client.configure(config), "%s: configure" % case[0])
+		client.set_auto_reconnect(true)
+		client.transport = SFFakeTransportScript.new()
+		var override := case[1] as String
+		var connect_url := override if not override.is_empty() else case[2] as String
+		_assert_equal(OK, client.connect_to_server(connect_url), "%s: connect" % case[0])
+		client.transport.inject_open()
+		var data := _room_joined_data()
+		data["reconnection_token"] = TOKEN_V1
+		client.transport.inject_server_message({"type": "RoomJoined", "data": data})
+		client.transport.inject_close(4999, "dropped")
+		client.transport = SFFakeTransportScript.new()
+		_step(client, 30.0)
+		_assert_equal(OK, _wait_open(client), "%s: auto dial" % case[0])
+		_assert_equal(connect_url, client.transport._connected_url, "%s: rejoin target" % case[0])
+		_assert_no_protocol_errors()
+		client.free()
 
 
 func _test_auto_reconnect_requires_context_and_not_user_close() -> void:
@@ -260,6 +307,101 @@ func _test_spectator_baseline_clears_context() -> void:
 		client.get_connection_state(),
 		"spectator baseline: no reconnect (protocol has none)"
 	)
+	client.free()
+
+
+func _test_leaving_room_clears_reconnect_context() -> void:
+	var client := _make_client(true, "token")
+	_assert(not client._context_auth_token.is_empty(), "context captured")
+	client.transport.inject_server_message({"type": "RoomLeft"})
+	_assert(client._context_auth_token.is_empty(), "room_left clears the context")
+	_assert_equal(
+		SignalFishClientScript.SessionState.AUTHENTICATED,
+		client.get_session_state(),
+		"session stays authenticated after leaving"
+	)
+	# A later abnormal drop must not dial into the room the consumer left.
+	client.transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 30.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSED,
+		client.get_connection_state(),
+		"no dial after leaving"
+	)
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_clean_close_clears_reconnect_context() -> void:
+	# A clean close drops the retained identity so a later dropped session
+	# (which never joined a room) cannot rejoin the old room.
+	var client := _make_client(true, "token")
+	_assert_equal(OK, client.close(1000, "bye"), "clean close")
+	_assert(client._context_auth_token.is_empty(), "close clears the context")
+	# New session that never joins a room, then drops abnormally.
+	client.transport = SFFakeTransportScript.new()
+	_assert_equal(OK, client.connect_to_server(), "dial configured endpoint")
+	client.transport.inject_open()
+	client.transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 30.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSED,
+		client.get_connection_state(),
+		"no stale rejoin after clean close"
+	)
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_failed_auto_dial_does_not_stall_episode() -> void:
+	# If a scheduled auto dial is refused synchronously (here: no dial target),
+	# the episode must still reach the exhaustion path instead of stalling.
+	# Runs without the shared error tracker: the refusal protocol_error is
+	# expected and asserted verbatim below.
+	var client := _make_client(true, "token", false)
+	var errors := _track_protocol_errors(client)
+	client._config.reconnect_max_attempts = 1
+	client._last_dial_url = ""
+	client._config.endpoint_url = ""
+	var failures: Array = []
+	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	client.transport.inject_close(4999, "dropped")
+	_step(client, 30.0)
+	_assert_equal(1, client._auto_reconnect_attempts, "attempt consumed by refused dial")
+	_assert_equal(1, failures.size(), "episode terminates with the exhaustion notice")
+	_assert_string_contains(failures[0], "exhausted", "notice reports exhaustion")
+	_assert(client._context_auth_token.is_empty(), "exhaustion drops the identity")
+	_assert_equal(
+		["reconnect requires a configured endpoint_url or a previous connect_to_server url"],
+		errors,
+		"refused dial announces the missing target"
+	)
+	client.free()
+
+
+func _test_timer_dial_sync_refusal_arms_next_attempt_once() -> void:
+	# A scheduled auto dial refused synchronously by the transport re-enters
+	# scheduling exactly once: the `failed` cascade arms the next attempt and
+	# the post-refusal re-entry in `_start_auto_reconnect` must not double-arm.
+	var client := _make_client(true, "token")
+	client._config.reconnect_max_attempts = 3
+	client.transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	client.transport.fail_on_connect = true
+	_step(client, 30.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"refused dial surfaces FAILED"
+	)
+	_assert_equal(2, client._auto_reconnect_attempts, "refusal arms exactly one next attempt")
+	_assert(client._reconnect_timer_running, "next backoff armed once")
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 30.0)
+	_assert_equal(OK, _wait_open(client), "retry after refused dial")
+	_assert_no_protocol_errors()
 	client.free()
 
 
@@ -502,6 +644,16 @@ func _test_reconnect_tokens_are_redacted() -> void:
 	_assert(client._secrets.has(TOKEN_V1), "baseline token registered as secret")
 	var reconnector := _make_reconnect_client(TOKEN_V2)
 	_assert(reconnector._secrets.has(TOKEN_V2), "manual reconnect token registered as secret")
+	# Mid-episode reconfigure rebuilds the redaction list; the retained
+	# identity must stay on it. Dropping abnormally leaves the context intact.
+	client.transport.inject_close(4999, "dropped")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSED,
+		client.get_connection_state(),
+		"dropped link ends CLOSED"
+	)
+	_assert_equal(OK, client.configure(_make_config()), "reconfigure while dropped")
+	_assert(client._secrets.has(TOKEN_V1), "retained token stays redacted after configure")
 	var line := "dropped while holding %s" % TOKEN_V2
 	_assert_string_not_contains(
 		SFLogScript.redact(line, reconnector._secrets), TOKEN_V2, "token redacted"
@@ -523,10 +675,14 @@ func _make_config() -> SignalFishConfigScript:
 
 
 ## Builds a configured client; [param baseline_mode] selects the room baseline
-## received after connect: "none", "tokenless", or "token" (TOKEN_V1).
-func _make_client(auto_reconnect: bool, baseline_mode: String) -> SignalFishClientScript:
+## received after connect: "none", "tokenless", or "token" (TOKEN_V1). Pass
+## [param track_errors] false to manage protocol-error tracking locally.
+func _make_client(
+	auto_reconnect: bool, baseline_mode: String, track_errors := true
+) -> SignalFishClientScript:
 	var client := SignalFishClientScript.new()
-	_error_trackers.append(_track_protocol_errors(client))
+	if track_errors:
+		_error_trackers.append(_track_protocol_errors(client))
 	_assert_equal(OK, client.configure(_make_config()), "configure")
 	client.set_auto_reconnect(auto_reconnect)
 	client.transport = SFFakeTransportScript.new()
@@ -572,17 +728,29 @@ func _step(client: SignalFishClientScript, delta: float) -> void:
 
 
 func _wait_open(client: SignalFishClientScript) -> Error:
-	# The dial is synchronous on the fake transport; open it and confirm the
-	# reconnect handshake went out instead of Authenticate.
+	# The dial is synchronous on the fake transport: open it, complete the
+	# authentication round, and confirm a second wire message follows
+	# Authenticate (the exact reconnect bytes are pinned by the callers).
 	client.transport.inject_open()
+	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	var sent: Array = client.transport.sent_text
-	if sent.is_empty():
-		_failures.append("expected a handshake after open, got none")
+	if sent.size() < 2:
+		_failures.append(
+			"expected Authenticate + handshake after open, got %d message(s)" % sent.size()
+		)
 		return FAILED
-	if sent[0] == SFMessagesScript.encode(SFMessagesScript.authenticate("test-app")):
-		_failures.append("auto dial sent Authenticate instead of Reconnect")
+	if sent[1] == SFMessagesScript.encode(SFMessagesScript.authenticate("test-app")):
+		_failures.append("auto dial sent a second Authenticate instead of Reconnect")
 		return FAILED
 	return OK
+
+
+func _authenticated_data() -> Dictionary:
+	return {
+		"app_name": "Reef Rally",
+		"organization": "",
+		"rate_limits": {"per_minute": 60, "per_hour": 1000, "per_day": 10000},
+	}
 
 
 func _room_joined_data(overrides: Dictionary = {}) -> Dictionary:

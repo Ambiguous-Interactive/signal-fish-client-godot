@@ -299,9 +299,14 @@ enum SessionState   { UNAUTHENTICATED, AUTHENTICATING, AUTHENTICATED,
   **server-driven** (from `RoomJoined`/`LobbyStateChanged`/`Reconnected`); the client never
   self-promotes. `GameStarting` does not change session state (stays FINALIZED) — it's a one-shot
   instruction event.
-- **Reconnect:** open a fresh transport; on open send `Reconnect` instead of `Authenticate`; on
-  `Reconnected`, restore cached state from the payload, decode `missed_events` via the same decoder,
-  emit `reconnected(info, missed_events)` and let the consumer replay (no hidden re-emit).
+- **Reconnect:** open a fresh transport; authenticate, then send
+  `Reconnect{player_id, room_id, auth_token}` once `Authenticated` arrives
+  (upstream parity: enforcing servers reject any pre-auth message with
+  `MissingAppId`; rust client `client_core.rs` re-authenticates every
+  reconnection round). On `Reconnected`, restore cached state from the
+  payload, decode `missed_events` via the same decoder, emit
+  `reconnected(info, missed_events)` and let the consumer replay (no hidden
+  re-emit).
 
 ### 4.5 Transport abstraction (`sf_transport.gd`)
 
@@ -432,7 +437,9 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 - [ ] **Spectators:** `join_as_spectator`/`leave_spectator` + 5 spectator events + `SPECTATING` state + tests.
 - [x] **Reconnection + replay** (lands last — perturbs state most): `reconnect()`, `Reconnected` w/
       `missed_events`, `ReconnectionFailed`, bounded retry + backoff (**injected clock** in tests).
-      Notes: `reconnect()` sends `Reconnect` on open instead of `Authenticate`;
+      Notes: `reconnect()` authenticates first and sends `Reconnect` once
+      `Authenticated` arrives (§4.4; enforcing servers reject pre-auth
+      messages);
       `set_auto_reconnect()` retries only non-user-initiated abnormal terminations (closes and
       transport failures) with exponential backoff
       (base 0.5s, factor 2, cap 15s, jitter 0.25) and a `reconnect_max_attempts` budget
