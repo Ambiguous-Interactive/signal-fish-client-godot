@@ -59,6 +59,7 @@ enum SessionState {
 }
 
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
+const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFTransportScript = preload("res://addons/signal_fish/transport/sf_transport.gd")
@@ -67,6 +68,13 @@ const SFWebSocketTransportScript = preload(
 	"res://addons/signal_fish/transport/sf_websocket_transport.gd"
 )
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
+
+## Auto-reconnect backoff (PLAN §4.7): full jitter is deterministic-hostile in
+## tests, so the RNG stays internal and the jitter fraction small.
+const RECONNECT_BASE_DELAY_SEC := 0.5
+const RECONNECT_BACKOFF_FACTOR := 2.0
+const RECONNECT_MAX_DELAY_SEC := 15.0
+const RECONNECT_JITTER_FRACTION := 0.25
 
 ## Active transport adapter. Tests may inject an [code]SFFakeTransport[/code]
 ## before [method connect_to_server]; production code leaves this null and the
@@ -83,6 +91,23 @@ var _room_code := ""
 var _lobby_state: int = SFTypesScript.LobbyState.UNKNOWN
 var _players: Array = []
 var _spectators: Array = []
+# Credentials for the in-flight reconnect dial (sent on transport open instead
+# of Authenticate). Empty auth_token = the next open authenticates normally.
+var _reconnect_player_id := ""
+var _reconnect_room_id := ""
+var _reconnect_auth_token := ""
+# Retained last-baseline identity for opt-in auto-reconnect (upstream
+# client_core.rs AutoReconnectContext: player baselines store, spectator and
+# tokenless baselines clear). Survives disconnects; never serialized.
+var _context_player_id := ""
+var _context_room_id := ""
+var _context_auth_token := ""
+var _auto_reconnect_enabled := false
+var _auto_reconnect_attempts := 0
+var _reconnect_timer_running := false
+var _reconnect_delay_remaining := 0.0
+var _user_close_requested := false
+var _reconnect_rng := RandomNumberGenerator.new()
 
 
 func configure(config: SignalFishConfigScript) -> Error:
@@ -119,21 +144,49 @@ func connect_to_server(url := "") -> Error:
 	var target := url
 	if target.is_empty():
 		target = _config.endpoint_url
-	var scheme_error := insecure_scheme_error(target, _is_web_platform(), _is_secure_page())
-	if not scheme_error.is_empty():
-		_emit_protocol_error(scheme_error)
-		return ERR_INVALID_PARAMETER
+	# A fresh dial starts a normal Authenticate session, never a stale
+	# reconnect handshake.
+	_reconnect_player_id = ""
+	_reconnect_room_id = ""
+	_reconnect_auth_token = ""
+	return _open_transport(target)
 
-	_reset_session()
-	_connection_state = ConnectionState.CONNECTING
-	if transport == null:
-		transport = _make_transport()
-	_wire_transport_signals()
-	var error: Error = transport.connect_to_url(target)
-	if error != OK:
-		# The transport already emitted `failed` for a synchronous refusal.
-		return error
-	return OK
+
+## Opens a fresh transport and rejoins the room with a [code]Reconnect[/code]
+## handshake (player_id + room_id + the server-issued auth_token) instead of
+## [code]Authenticate[/code]. On [code]Reconnected[/code] the full room state is
+## restored and [signal reconnected] fires with the decoded
+## [code]missed_events[/code] for the consumer to replay.
+func reconnect(player_id: String, room_id: String, auth_token: String) -> Error:
+	if _config == null:
+		_emit_protocol_error("reconnect requires configure() first")
+		return ERR_UNCONFIGURED
+	if (
+		_connection_state
+		in [ConnectionState.CONNECTING, ConnectionState.CONNECTED, ConnectionState.CLOSING]
+	):
+		_emit_protocol_error("reconnect called while a connection is active")
+		return ERR_BUSY
+	if player_id.is_empty() or room_id.is_empty() or auth_token.is_empty():
+		_emit_protocol_error("reconnect requires player_id, room_id, and auth_token")
+		return ERR_INVALID_PARAMETER
+	if _config.endpoint_url.is_empty():
+		_emit_protocol_error("reconnect requires a configured endpoint_url")
+		return ERR_INVALID_PARAMETER
+	_remember_secret(auth_token)
+	_reconnect_player_id = player_id
+	_reconnect_room_id = room_id
+	_reconnect_auth_token = auth_token
+	return _open_transport(_config.endpoint_url)
+
+
+## Enables opt-in automatic reconnection after an abnormal disconnect. Uses the
+## last server-issued reconnection token; a clean [method close] or a terminal
+## reconnection error stops it. Off by default.
+func set_auto_reconnect(enabled: bool) -> void:
+	_auto_reconnect_enabled = enabled
+	if not enabled:
+		_cancel_auto_reconnect()
 
 
 ## Drives the transport. Called from [code]_process[/code] when
@@ -145,6 +198,10 @@ func poll() -> void:
 
 
 func close(code := 1000, reason := "") -> Error:
+	# A deliberate close stops any pending auto-reconnect and marks the
+	# resulting transport close as clean.
+	_reconnect_timer_running = false
+	_user_close_requested = true
 	match _connection_state:
 		ConnectionState.CONNECTING:
 			# Closing while connecting is a failed open: the transport surfaces
@@ -290,6 +347,11 @@ func leave_spectator() -> Error:
 
 
 func _process(_delta: float) -> void:
+	if _reconnect_timer_running:
+		_reconnect_delay_remaining -= _delta
+		if _reconnect_delay_remaining <= 0.0:
+			_reconnect_timer_running = false
+			_start_auto_reconnect()
 	if _config != null and _config.auto_poll:
 		poll()
 
@@ -322,6 +384,24 @@ static func insecure_scheme_error(url: String, is_web_platform: bool, secure_pag
 	return ""
 
 
+func _open_transport(target: String) -> Error:
+	var scheme_error := insecure_scheme_error(target, _is_web_platform(), _is_secure_page())
+	if not scheme_error.is_empty():
+		_emit_protocol_error(scheme_error)
+		return ERR_INVALID_PARAMETER
+	_user_close_requested = false
+	_reset_session()
+	_connection_state = ConnectionState.CONNECTING
+	if transport == null:
+		transport = _make_transport()
+	_wire_transport_signals()
+	var error: Error = transport.connect_to_url(target)
+	if error != OK:
+		# The transport already emitted `failed` for a synchronous refusal.
+		return error
+	return OK
+
+
 func _make_transport():
 	return SFWebSocketTransportScript.new()
 
@@ -348,7 +428,17 @@ func _on_transport_opened() -> void:
 	connected.emit()
 	if _connection_state != ConnectionState.CONNECTED:
 		return
-	_send_authenticate()
+	if _reconnect_auth_token.is_empty():
+		_send_authenticate()
+	else:
+		_send_reconnect()
+
+
+func _send_reconnect() -> Error:
+	var envelope := SFMessagesScript.reconnect(
+		_reconnect_player_id, _reconnect_room_id, _reconnect_auth_token
+	)
+	return _send_envelope(envelope, "reconnect")
 
 
 func _send_authenticate() -> Error:
@@ -379,11 +469,15 @@ func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
 
 
 func _on_transport_closed(code: int, reason: String) -> void:
+	var user_close := _user_close_requested
+	_user_close_requested = false
 	_connection_state = ConnectionState.CLOSED
 	_reset_session()
 	_teardown_transport()
 	SFLogScript.info("transport closed (code %d): %s" % [code, reason], _secrets)
 	disconnected.emit(code, reason)
+	if _auto_reconnect_enabled and not user_close:
+		_schedule_auto_reconnect()
 
 
 func _on_transport_failed(error: String) -> void:
@@ -447,8 +541,23 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"reconnected":
 			_apply_room_info(event.args[0])
 			_session_state = _session_state_for_lobby(_lobby_state)
+			# The reconnection handshake completed: drop the dial credentials
+			# and reset the auto-reconnect budget.
+			_reconnect_player_id = ""
+			_reconnect_room_id = ""
+			_reconnect_auth_token = ""
+			_auto_reconnect_attempts = 0
 			reconnected.emit(event.args[0], event.args[1])
 		&"reconnection_failed":
+			if (
+				event.args[1]
+				in [
+					SFErrorCodesScript.Code.RECONNECTION_TOKEN_INVALID,
+					SFErrorCodesScript.Code.RECONNECTION_EXPIRED,
+				]
+			):
+				# Terminal reconnection errors: retrying can never succeed.
+				_cancel_auto_reconnect()
 			reconnection_failed.emit(event.args[0], event.args[1])
 		&"spectator_joined":
 			_apply_spectator_info(event.args[0])
@@ -516,6 +625,10 @@ func _apply_room_info(info) -> void:
 	# objects already handed to consumers.
 	_players = info.current_players.duplicate()
 	_spectators = info.current_spectators.duplicate()
+	# Retain the freshest reconnection identity for opt-in auto-reconnect.
+	# Every authoritative baseline replaces it; a baseline without a token
+	# clears it (upstream client_core.rs baseline handling).
+	_capture_reconnect_context(info.player_id, info.room_id, info.reconnection_token)
 
 
 func _apply_spectator_info(info) -> void:
@@ -524,6 +637,8 @@ func _apply_spectator_info(info) -> void:
 	_lobby_state = info.lobby_state
 	_players = info.current_players.duplicate()
 	_spectators = info.current_spectators.duplicate()
+	# The protocol has no spectator reconnect: drop any retained identity.
+	_capture_reconnect_context("", "", "")
 
 
 func _clear_room_state() -> void:
@@ -580,6 +695,68 @@ func _session_state_for_lobby(lobby_state: int) -> SessionState:
 func _reset_session() -> void:
 	_session_state = SessionState.UNAUTHENTICATED
 	_clear_room_state()
+
+
+func _capture_reconnect_context(player_id: String, room_id: String, auth_token: String) -> void:
+	if auth_token.is_empty():
+		_context_player_id = ""
+		_context_room_id = ""
+		_context_auth_token = ""
+		return
+	_context_player_id = player_id
+	_context_room_id = room_id
+	_context_auth_token = auth_token
+	_remember_secret(auth_token)
+
+
+func _schedule_auto_reconnect() -> void:
+	if _context_auth_token.is_empty():
+		# Nothing to reconnect with (never joined a room, spectator session,
+		# or a terminal reconnection error already cleared the context).
+		return
+	if _auto_reconnect_attempts >= _config.reconnect_max_attempts:
+		connection_failed.emit(
+			"auto-reconnect exhausted after %d attempt(s)" % _auto_reconnect_attempts
+		)
+		return
+	_auto_reconnect_attempts += 1
+	var raw_delay: float = (
+		RECONNECT_BASE_DELAY_SEC * pow(RECONNECT_BACKOFF_FACTOR, _auto_reconnect_attempts - 1)
+	)
+	_reconnect_delay_remaining = (
+		minf(raw_delay, RECONNECT_MAX_DELAY_SEC)
+		* (1.0 + _reconnect_rng.randf() * RECONNECT_JITTER_FRACTION)
+	)
+	_reconnect_timer_running = true
+	SFLogScript.info(
+		(
+			"auto-reconnect attempt %d/%d in %.2fs"
+			% [_auto_reconnect_attempts, _config.reconnect_max_attempts, _reconnect_delay_remaining]
+		),
+		_secrets
+	)
+
+
+func _start_auto_reconnect() -> void:
+	if _context_auth_token.is_empty():
+		return
+	if _connection_state in [ConnectionState.CONNECTING, ConnectionState.CONNECTED]:
+		return
+	reconnect(_context_player_id, _context_room_id, _context_auth_token)
+
+
+func _cancel_auto_reconnect() -> void:
+	_reconnect_timer_running = false
+	_reconnect_delay_remaining = 0.0
+	_auto_reconnect_attempts = 0
+	_context_player_id = ""
+	_context_room_id = ""
+	_context_auth_token = ""
+
+
+func _remember_secret(secret: String) -> void:
+	if not secret.is_empty() and not _secrets.has(secret):
+		_secrets.append(secret)
 
 
 func _teardown_transport() -> void:

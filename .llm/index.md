@@ -16,6 +16,8 @@ Generated Markdown inventory by `scripts/generate-llm-index.ps1`; do not edit by
   Triggers: godot, gdscript, addon, plugin, scene, resource, export, api
 - [Godot Transport Adapters](skills/godot-transport.md) (`Godot`) - Use when implementing or reviewing Godot transport adapters for WebSocket, WebRTC, polling, reconnect, or multiplayer APIs.
   Triggers: godot transport, client, runtime client, connect, connection, websocketpeer, WebSocketPeer, WebSocketClient, websocketmultiplayerpeer, browser export, Godot 3, Godot 4, webrtc, poll, reconnect, networking, protocol fixture
+- [Reconnection And Replay](skills/reconnection-replay.md) (`Protocol`) - Use when implementing, reviewing, or testing Signal Fish reconnection, replay, reconnection tokens, or auto-reconnect backoff.
+  Triggers: reconnection, reconnect, replay, missed_events, reconnection_token, auth_token, auto-reconnect, backoff, reconnection-replay, retry
 - [Review And Debugging](skills/review-debugging.md) (`Quality`) - Use when reviewing code, investigating bugs, or validating fixes before merge.
   Triggers: review, code review, debug, investigate, root cause, bug, regression, production risk
 - [Security And Privacy](skills/security-privacy.md) (`Protocol`) - Use when handling tokens, user identifiers, logs, persistence, networking, or dependency decisions.

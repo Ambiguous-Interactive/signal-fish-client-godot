@@ -379,6 +379,10 @@ class RoomJoinedInfo:
 	var ready_players: PackedStringArray = PackedStringArray()
 	var relay_type: String = ""
 	var current_spectators: Array = []
+	## Server-issued reconnection token (server messages.rs
+	## `RoomJoinedPayload.reconnection_token` / `ReconnectedPayload.reconnection_token`).
+	## Empty when the server omitted it or sent JSON null. Handle as a secret.
+	var reconnection_token: String = ""
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
@@ -395,6 +399,7 @@ class RoomJoinedInfo:
 		ready_players = _coerce_strings(data.get("ready_players", []))
 		relay_type = String(data.get("relay_type", ""))
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
+		reconnection_token = _string_or_empty(data.get("reconnection_token"))
 
 	func to_dict() -> Dictionary:
 		var result := raw.duplicate(true)
@@ -441,6 +446,11 @@ class RoomJoinedInfo:
 				return LobbyState.FINALIZED
 			_:
 				return LobbyState.UNKNOWN
+
+	func _string_or_empty(value: Variant) -> String:
+		if value == null:
+			return ""
+		return String(value)
 
 
 class SpectatorJoinedInfo:
