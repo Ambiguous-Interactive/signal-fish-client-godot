@@ -7,6 +7,8 @@ signal closed(code: int, reason: String)
 signal failed(error: String)
 
 
+## Contract: any non-OK return must be accompanied by a synchronous `failed`
+## emission, so clients observing only signals never hang in a connecting state.
 func connect_to_url(_url: String) -> Error:
 	push_error("SFTransport.connect_to_url() must be implemented by a transport adapter")
 	return ERR_UNAVAILABLE

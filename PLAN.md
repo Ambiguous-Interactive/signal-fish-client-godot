@@ -1,7 +1,7 @@
 # Signal Fish — Godot 4 GDScript Client Bindings · Implementation Plan
 
-> **Status:** P0 complete. P1 optional-value policy, transport seam, fake transport, WebSocket transport,
-> and deterministic headless transport tests are in place; core client/config/state-machine work remains.
+> **Status:** P0 complete. P1 complete (transport seam + adapters + core client/config/state
+> machines + fake-transport client tests); next: P2 full protocol depth.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -401,15 +401,25 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 - [x] Transport adapter tests: fake connect, receive, send, close, error, buffered amount, close
       code/reason, failed-open terminal ordering, WebSocket invalid URL/send failures, and cold-project
       runtime-check cleanup.
-- [ ] `signal_fish_config.gd` (includes a reserved `credential` slot for the upstream secret-key
+- [x] `signal_fish_config.gd` (includes a reserved `credential` slot for the upstream secret-key
       decision — carried as a value, never stitched into URLs, never logged/serialized; see §12);
       `signal_fish_client.gd` with both state machines, core API
       (configure/connect/auto-authenticate/join/leave/`send_game_data`(JSON)/ping/close + state
       accessors), `_process`/`poll` driver, backpressure + cleanup.
-- [ ] Client fake-transport tests: auto-authenticate, decoded receive path, send methods, close/error,
+- [x] Client fake-transport tests: auto-authenticate, decoded receive path, send methods, close/error,
       backpressure enforcement, cleanup, close code/reason surfacing, and pre-auth guard.
 - **DoD:** all the above green; matches `.llm/code-samples/gdscript-client-shape.md` contract.
 - **Fan-out (after seam freeze):** WS impl ‖ client/state-machine tests.
+- **Notes:** `is_connected()` was renamed `is_connected_to_server()` — Godot 4 `Object.is_connected`
+  takes `(signal, callable)` and cannot be shadowed. `is_connected_to_server()` reports transport
+  CONNECTED. Inbound frames over `max_inbound_frame_bytes` are dropped with `protocol_error` at the
+  client boundary before decode; raw binary frames before format negotiation are dropped the same way
+  (binary game-data decode is P2). `sf_log.gd` (redacting logger) landed with the client (issue #15),
+  and `ws://` from secure web pages is a loud `ERR_INVALID_PARAMETER` (issue #15, R2). Until P2,
+  `game_data_format` accepts only `json`/empty so the server cannot negotiate formats whose binary
+  frames the client would drop. `reconnect()`/`set_auto_reconnect()`/`send_game_data_binary()` ship
+  with the P2 reconnection and binary game-data work. The `credential` slot is a plain (non-exported)
+  var so the Resource pipeline can never persist it.
 
 ### P2 — Full protocol depth
 **Goal:** Complete the protocol surface.
