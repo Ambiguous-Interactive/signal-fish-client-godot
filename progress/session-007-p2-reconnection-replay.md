@@ -184,3 +184,10 @@ unchanged from before this session and deferred as out of scope.
   gdlint, cold-copy protocol + transport + client + reconnect Godot tests).
 - `pwsh -NoProfile -File scripts/generate-llm-index.ps1` +
   `scripts/agent-check.ps1`: green.
+- PR #19: Protocol checks + Validate LLM context green; 4 adversarial review
+  rounds, final round 0 findings.
+
+## Follow-ups filed
+
+- Issue #20: double-nested handler cascade edge (deferred from round 4;
+  pre-existing, exotic, one extra budgeted attempt at worst).
