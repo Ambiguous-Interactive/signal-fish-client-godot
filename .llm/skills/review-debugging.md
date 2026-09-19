@@ -60,6 +60,16 @@ No fixes without root cause investigation first.
 If three hypotheses or fix attempts fail, stop and reassess the architecture,
 scope, or missing observability before continuing.
 
+## Health-Check Hygiene
+
+When adding or reviewing shell health checks, remember that a non-empty
+output stream is not a success signal. A command that dies on startup still
+prints error lines; merging stderr into a captured value and treating any
+content as "works" marks broken tools as healthy. Verdict on the exit status,
+capture stdout and stderr separately, and report the first error line as the
+diagnostic for the failure path. Sweep for this class whenever one instance
+is found: every `$(cmd 2>&1)` whose non-emptiness gates success is suspect.
+
 ## Regression Expectations
 
 Every confirmed bug fix should leave behind at least one guardrail:

@@ -37,3 +37,6 @@ logs_*.zip
 # Claude Code local permission overrides are machine/user-specific. Keep the
 # shared hook config in .claude/settings.json.
 .claude/settings.local.json
+.env*
+!.env.example
+GOAL.md

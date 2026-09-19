@@ -22,6 +22,7 @@ func run_all() -> void:
 	_test_forward_compatible_inbound_strings()
 	_test_non_empty_wire_strings()
 	_test_reconnected_missed_events_nonfatal()
+	_test_reconnected_missed_events_depth_hardening()
 
 
 func _test_client_message_validation() -> void:
@@ -670,6 +671,45 @@ func _test_reconnected_missed_events_nonfatal() -> void:
 	_assert_equal("pong", String(future_missed_event.args[1][1].signal_name), "known missed event")
 	_assert_protocol_error_contains(
 		future_missed_event.args[1][2], "missed_events[2]", "non-object missed event"
+	)
+
+
+func _test_reconnected_missed_events_depth_hardening() -> void:
+	var nested_entry_data := _minimal_room_joined_data()
+	nested_entry_data["missed_events"] = []
+	var nested_data := _minimal_room_joined_data()
+	nested_data["missed_events"] = [{"type": "Reconnected", "data": nested_entry_data}]
+	var nested_reconnected := SFEventsScript.decode_envelope(
+		{"type": "Reconnected", "data": nested_data}
+	)
+	_assert_equal("reconnected", String(nested_reconnected.signal_name), "nested entry outer")
+	_assert_protocol_error_contains(
+		nested_reconnected.args[1][0],
+		"not replayable inside missed_events",
+		"nested reconnected rejected"
+	)
+
+	var over_depth := SFEventsScript.decode_envelope(
+		{"type": "Pong"}, SFEventsScript.MAX_MESSAGE_DEPTH + 1
+	)
+	_assert_protocol_error_contains(over_depth, "nesting exceeds depth", "depth cap enforced")
+
+	var oversized_data := _minimal_room_joined_data()
+	var oversized_missed_events: Array = []
+	for _index: int in SFEventsScript.MAX_MISSED_EVENTS + 1:
+		oversized_missed_events.append({"type": "Pong"})
+	oversized_data["missed_events"] = oversized_missed_events
+	var oversized := SFEventsScript.decode_envelope({"type": "Reconnected", "data": oversized_data})
+	_assert_equal("reconnected", String(oversized.signal_name), "oversized missed events outer")
+	_assert_equal(
+		SFEventsScript.MAX_MISSED_EVENTS + 1,
+		oversized.args[1].size(),
+		"oversized missed events decoded entries"
+	)
+	_assert_protocol_error_contains(
+		oversized.args[1][SFEventsScript.MAX_MISSED_EVENTS],
+		"exceeds %d entries" % SFEventsScript.MAX_MISSED_EVENTS,
+		"oversized missed events truncated"
 	)
 
 

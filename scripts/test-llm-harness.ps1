@@ -1295,6 +1295,31 @@ Assert-Test 'devcontainer agent CLI installer is complete, parseable, and valida
     if ($content -notmatch 'command -v "\$binary"' -or $content -notmatch '"\$binary" --version') {
         throw 'install-agent-tools.sh must verify each binary is on PATH and reports a version.'
     }
+    # Health checks must verdict on exit status, never on merged-stream
+    # non-emptiness: a binary that dies on startup prints an error line, and
+    # treating any output as a version marks broken CLIs as ready.
+    if ($content -match '"\$binary"\s+--version[^\n]*2>&1') {
+        throw 'install-agent-tools.sh must not merge --version stderr into the captured version string; stderr output is a failure diagnostic, not a version.'
+    }
+    foreach ($verifierRequirement in @(
+            [pscustomobject]@{
+                Pattern     = '"\$binary"\s+--version\s*>[^>\n]*\s2>'
+                Requirement = 'capture --version stdout and stderr separately so exit status and stream content stay distinguishable'
+                Diagnostic  = 'version|--version'
+            },
+            [pscustomobject]@{
+                Pattern     = 'version_status'
+                Requirement = 'classify a failing --version by its exit status'
+                Diagnostic  = 'version_status|exited'
+            }
+        )) {
+        Assert-TextMatches `
+            -Subject '.devcontainer/install-agent-tools.sh' `
+            -Content $content `
+            -Pattern $verifierRequirement.Pattern `
+            -Requirement $verifierRequirement.Requirement `
+            -DiagnosticPattern $verifierRequirement.Diagnostic
+    }
 
     foreach ($requirement in @(
             [pscustomobject]@{

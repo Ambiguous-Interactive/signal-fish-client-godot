@@ -31,6 +31,13 @@ Godot networking APIs.
 - Model states explicitly: disconnected, connecting, connected, closing, closed,
   failed. Treat failed as a client abstraction unless upstream defines a wire
   state with that name.
+- Treat `opened`, `closed`, and `failed` as per-session lifecycle signals.
+  Reset emission guards only when a fresh `connect_to_url` starts, suppress
+  packets and later terminal signals after `closed` or `failed`, and keep fake
+  transports behaviorally aligned with the real adapter. Closing while still
+  connecting is a failed open, not a normal close.
+- Close any active native peer before replacing or clearing it during reconnect
+  or reset paths; never drop a live socket reference without closing it.
 - Continue polling during close so close codes and reasons are observed.
 - Inspect outbound buffered bytes before unbounded sends and expose
   backpressure to the caller.

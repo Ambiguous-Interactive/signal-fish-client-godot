@@ -1,6 +1,19 @@
 class_name SFEvents
 extends RefCounted
 
+## Maximum nesting depth for decoded envelopes. Wire-reachable inputs are
+## already bounded (the engine's JSON parser rejects overly deep documents,
+## and nested Reconnected entries are rejected as non-replayable below); this
+## cap is defense in depth for any future recursive message variant, matching
+## the spirit of serde's 128-level recursion cap in the Rust client.
+const MAX_MESSAGE_DEPTH := 16
+
+## Maximum number of Reconnected.missed_events entries decoded per envelope.
+## Bounds decode work and the number of per-entry decoded objects against a
+## hostile or misbehaving server; excess entries are dropped with a single
+## protocol_error entry.
+const MAX_MISSED_EVENTS := 256
+
 const SFBinaryCodecScript = preload("res://addons/signal_fish/protocol/sf_binary_codec.gd")
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
@@ -14,7 +27,9 @@ static func decode_text(text: String) -> RefCounted:
 	return decode_envelope(decoded["envelope"])
 
 
-static func decode_envelope(envelope: Dictionary) -> RefCounted:
+static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
+	if depth > MAX_MESSAGE_DEPTH:
+		return _protocol_error("message nesting exceeds depth %d" % MAX_MESSAGE_DEPTH, envelope)
 	var decoded := SFEnvelopeScript.decode_envelope(envelope)
 	if not decoded["ok"]:
 		return _protocol_error(decoded["error"], envelope)
@@ -149,7 +164,7 @@ static func decode_envelope(envelope: Dictionary) -> RefCounted:
 		"Pong":
 			return _event(type_name, &"pong", [], envelope)
 		"Reconnected":
-			return _decode_reconnected(type_name, data, envelope)
+			return _decode_reconnected(type_name, data, envelope, depth)
 		"ReconnectionFailed":
 			if not _has_string(data, "reason"):
 				return _protocol_error("ReconnectionFailed requires reason", envelope)
@@ -393,7 +408,7 @@ static func _decode_lobby_state_changed(
 
 
 static func _decode_reconnected(
-	type_name: String, data: Dictionary, envelope: Dictionary
+	type_name: String, data: Dictionary, envelope: Dictionary, depth := 0
 ) -> RefCounted:
 	if not data.has("missed_events") or typeof(data["missed_events"]) != TYPE_ARRAY:
 		return _protocol_error("Reconnected requires missed_events", envelope)
@@ -401,14 +416,31 @@ static func _decode_reconnected(
 	if room_event.signal_name == &"protocol_error":
 		return room_event
 	var missed_events: Array = []
-	for index: int in data["missed_events"].size():
+	var missed_count: int = data["missed_events"].size()
+	if missed_count > MAX_MISSED_EVENTS:
+		missed_count = MAX_MISSED_EVENTS
+	for index: int in missed_count:
 		var missed: Variant = data["missed_events"][index]
 		if typeof(missed) != TYPE_DICTIONARY:
 			missed_events.append(
-				_protocol_error("Reconnected missed_events[%d] must be an object" % index)
+				_protocol_error("Reconnected missed_events[%d] must be an object" % index, missed)
 			)
 			continue
-		var decoded_missed := decode_envelope(missed)
+		if _is_reconnected_envelope(missed):
+			missed_events.append(
+				_protocol_error(
+					(
+						(
+							"Reconnected missed_events[%d]: Reconnected is not replayable inside"
+							+ " missed_events"
+						)
+						% index
+					),
+					missed
+				)
+			)
+			continue
+		var decoded_missed := decode_envelope(missed, depth + 1)
 		if decoded_missed.signal_name == &"protocol_error":
 			missed_events.append(
 				_protocol_error(
@@ -417,12 +449,27 @@ static func _decode_reconnected(
 			)
 			continue
 		missed_events.append(decoded_missed)
+	if data["missed_events"].size() > MAX_MISSED_EVENTS:
+		missed_events.append(
+			_protocol_error(
+				(
+					"Reconnected missed_events exceeds %d entries; dropped %d"
+					% [MAX_MISSED_EVENTS, data["missed_events"].size() - MAX_MISSED_EVENTS]
+				),
+				envelope
+			)
+		)
 	return _event(
 		type_name,
 		&"reconnected",
 		[SFTypesScript.make_room_joined_info(data), missed_events],
 		envelope
 	)
+
+
+static func _is_reconnected_envelope(envelope: Dictionary) -> bool:
+	var type_value: Variant = envelope.get("type", null)
+	return typeof(type_value) == TYPE_STRING and String(type_value) == "Reconnected"
 
 
 static func _decode_spectator_joined(

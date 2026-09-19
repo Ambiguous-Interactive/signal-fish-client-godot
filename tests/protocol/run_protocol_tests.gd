@@ -362,7 +362,7 @@ func _test_server_decoders_match_fixtures() -> void:
 
 func _test_malformed_inputs_decode_to_protocol_error() -> void:
 	var lines := _read_fixture_lines(MALFORMED_FIXTURE)
-	if not _assert_fixture_count(8, lines, MALFORMED_FIXTURE):
+	if not _assert_fixture_count(9, lines, MALFORMED_FIXTURE):
 		return
 	for index: int in lines.size():
 		_assert_protocol_error_text(lines[index], "%s line %d" % [MALFORMED_FIXTURE, index + 1])
