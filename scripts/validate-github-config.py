@@ -328,15 +328,26 @@ def validate_auto_merge(repo_root: Path, workflows: dict[str, tuple[Path, dict[s
     if "--jq" in script:
         reporter.error(f"{script_path}: use external jq instead of GitHub CLI --jq")
 
+    ok, stderr = bash_syntax_check(script_path)
+    if not ok:
+        reporter.error(f"{script_path}: bash -n failed: {stderr}")
+
+
+def bash_syntax_check(script_path: Path) -> tuple[bool, str]:
+    """Run `bash -n` on a script without breaking WSL bash on Windows.
+
+    WSL's bash.exe cannot open Windows-style absolute paths, so run bash with
+    the script's directory as the working directory and pass the bare file
+    name. This behaves identically under Git Bash, WSL, and native Linux.
+    """
     result = subprocess.run(
-        ["bash", "-n", str(script_path)],
-        cwd=repo_root,
+        ["bash", "-n", script_path.name],
+        cwd=str(script_path.parent),
         text=True,
         capture_output=True,
         check=False,
     )
-    if result.returncode != 0:
-        reporter.error(f"{script_path}: bash -n failed: {result.stderr.strip()}")
+    return result.returncode == 0, result.stderr.strip()
 
 
 def find_keys(value: Any, keys: set[str], path: str = "") -> list[str]:
@@ -550,8 +561,8 @@ updates:
     with tempfile.TemporaryDirectory(prefix="github-config-self-test-") as temp:
         script = Path(temp) / "ok.sh"
         script.write_text("#!/usr/bin/env bash\nset -euo pipefail\necho ok\n", encoding="utf-8")
-        result = subprocess.run(["bash", "-n", str(script)], check=False)
-        if result.returncode != 0:
+        ok, _ = bash_syntax_check(script)
+        if not ok:
             reporter.error("self-test: bash -n smoke check failed")
 
         shebang_cases = [

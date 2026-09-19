@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Post-create lifecycle: install repo git hooks, Codex, and verify
+# Post-create lifecycle: install repo git hooks, the agent CLIs, and verify
 # that the toolchain matches the repo's expectations.
 set -euo pipefail
 
@@ -36,13 +36,16 @@ ensure_writable_dir "/commandhistory" || true
 echo "==> Installing direct git hooks"
 pwsh -NoProfile -File scripts/install-git-hooks.ps1 -Force
 
-echo "==> Installing Codex CLI"
-"${DEVCONTAINER_DIR}/install-codex.sh"
-CODEX_VERSION_OUTPUT="$(codex --version 2>/dev/null || true)"
-if [ -z "${CODEX_VERSION_OUTPUT}" ]; then
-    echo "ERROR: Codex CLI is missing after post-create install." >&2
-    exit 1
-fi
+echo "==> Installing agent CLIs (codex, opencode, nanocoder, claude)"
+# Invoke via bash: repo scripts are committed non-executable (Windows-authored,
+# core.filemode=false), so direct execution fails on Linux-native checkouts.
+bash "${DEVCONTAINER_DIR}/install-agent-tools.sh"
+for cli in codex opencode nanocoder claude; do
+    if ! command -v "${cli}" >/dev/null 2>&1; then
+        echo "ERROR: agent CLI '${cli}' is missing after post-create install." >&2
+        exit 1
+    fi
+done
 
 echo "==> Installing PowerShell user profile (persists pwsh history)"
 # PowerShell on Linux reads CurrentUserAllHosts from
@@ -74,7 +77,10 @@ TOOLCHAIN_SUMMARY="$(mktemp "${TMPDIR:-/tmp}/sf-toolchain.XXXXXX")"
     printf '  node    : %s\n' "$(node --version 2>/dev/null || echo 'NOT FOUND')"
     printf '  gh      : %s\n' "$(gh --version 2>/dev/null | head -n1 || echo 'NOT FOUND')"
     printf '  godot   : %s\n' "$(godot --version 2>/dev/null || echo 'NOT FOUND')"
-    printf '  codex   : %s\n' "${CODEX_VERSION_OUTPUT}"
+    printf '  codex   : %s\n' "$(codex --version 2>/dev/null | head -n 1 || echo 'NOT FOUND')"
+    printf '  opencode: %s\n' "$(opencode --version 2>/dev/null | head -n 1 || echo 'NOT FOUND')"
+    printf '  nanocoder: %s\n' "$(nanocoder --version 2>/dev/null | head -n 1 || echo 'NOT FOUND')"
+    printf '  claude  : %s\n' "$(claude --version 2>/dev/null | head -n 1 || echo 'NOT FOUND')"
     printf '  pre-commit (optional): %s\n' "$(pre-commit --version 2>/dev/null || echo 'NOT FOUND')"
 } | tee "${TOOLCHAIN_SUMMARY}"
 echo "==> Toolchain summary saved to ${TOOLCHAIN_SUMMARY}"

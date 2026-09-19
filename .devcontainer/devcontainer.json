@@ -29,14 +29,14 @@
     "ghcr.io/devcontainers/features/github-cli:1": {
       "version": "latest"
     },
-    "ghcr.io/devcontainers/features/powershell:1": {
+    "ghcr.io/devcontainers/features/powershell:": {
       "version": "latest"
     },
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.12",
       "installTools": false
     },
-    "ghcr.io/devcontainers/features/node:1": {
+    "ghcr.io/devcontainers/features/node:": {
       "version": "lts",
       "nodeGypDependencies": false
     }
@@ -84,7 +84,7 @@
     "PIP_DISABLE_PIP_VERSION_CHECK": "1"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
-  "postStartCommand": "git config --global --add safe.directory ${containerWorkspaceFolder}",
+  "postStartCommand": "bash .devcontainer/post-start.sh",
   "customizations": {
     "vscode": {
       "extensions": [
