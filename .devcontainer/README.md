@@ -30,8 +30,8 @@ tooling for manual `.pre-commit-config.yaml` runs.
 | Godot       | `4.3-stable` editor binary (run headless via `--headless`) |
 | PowerShell  | 7.x via `ghcr.io/devcontainers/features/powershell` |
 | Python      | 3.12 via devcontainer feature                       |
-| Node.js     | LTS via devcontainer feature                        |
-| Codex CLI   | Pinned `@openai/codex` npm package via post-create  |
+| Node.js     | LTS via devcontainer feature (>= 22 required)       |
+| Agent CLIs  | `codex`, `opencode`, `nanocoder`, `claude` at `@latest` via post-create; refreshed at start |
 | GitHub CLI  | Latest via devcontainer feature                     |
 | Git hooks   | Direct `git rev-parse --git-path hooks` shim via post-create |
 | pre-commit  | Optional compatibility CLI; no framework hook install |
@@ -95,8 +95,9 @@ Switch color themes with the `Preferences: Color Theme` command.
 - [`devcontainer.json`](./devcontainer.json) — features, extensions, settings
 - [`Dockerfile`](./Dockerfile) — base image and Godot install
 - [`install-godot.sh`](./install-godot.sh) — deterministic Godot download
-- [`install-codex.sh`](./install-codex.sh) — pinned OpenAI Codex CLI install
-- [`post-create.sh`](./post-create.sh) — git hooks + Codex + toolchain summary
+- [`install-agent-tools.sh`](./install-agent-tools.sh) — agent CLI install/refresh
+- [`post-create.sh`](./post-create.sh) — git hooks + agent CLIs + toolchain summary
+- [`post-start.sh`](./post-start.sh) — git trust + best-effort agent CLI refresh
 
 ## Local font tip
 
@@ -110,16 +111,24 @@ Bump `GODOT_VERSION` in [`devcontainer.json`](./devcontainer.json) (and the
 matching arg in [`Dockerfile`](./Dockerfile)). Rebuild the container via
 `Dev Containers: Rebuild Container`.
 
-## Updating Codex CLI
+## Agent CLIs (codex, opencode, nanocoder, claude)
 
-Codex CLI is installed by [`install-codex.sh`](./install-codex.sh) through the
-official npm package, `@openai/codex`. Bump `CODEX_CLI_VERSION` in that script,
-rebuild the container, and confirm the post-create toolchain summary reports the
-new `codex --version` output.
+The four terminal agent CLIs are installed by
+[`install-agent-tools.sh`](./install-agent-tools.sh) through their official
+npm packages at `@latest`. Each CLI's spec is overridable, e.g.
+`CODEX_NPM_SPEC="@openai/codex@0.135.0"`, but the defaults track `@latest`
+because these CLIs publish several times a day. The registry version probe
+is bounded by `AGENT_TOOLS_NPM_FETCH_TIMEOUT_MS` (default 5000) so an
+offline start fails fast; the package install itself uses npm's defaults.
 
-Codex authentication is intentionally not automated. Run `codex` interactively
-inside the container and sign in with ChatGPT or configure an API key according
-to the OpenAI docs.
+- **post-create** installs (or refreshes) all four and fails loudly on any
+  error; the toolchain summary then reports every version.
+- **post-start** re-checks versions on every container start and reinstalls
+  only what is outdated or missing. This refresh is warn-only: a registry
+  outage leaves the installed toolchain in place and never blocks attaching.
+
+Authentication is intentionally not automated. Run each CLI interactively
+inside the container and sign in according to its vendor's docs.
 
 ## Troubleshooting
 
@@ -132,8 +141,10 @@ to the OpenAI docs.
 - **PowerShell terminal reports a PSReadLine assembly already loaded error:**
   rebuild the container so the guarded profile from `pwsh-profile.ps1` is
   copied into `$HOME/.config/powershell/profile.ps1`.
-- **`codex` is missing after rebuild:** run `bash .devcontainer/post-create.sh`
-  and check the `==> Installing Codex CLI` section for npm or PATH errors. If
-  npm installs successfully but `codex` is still not found, compare
-  `npm config get prefix` with `$PATH`; the installer prepends the expected
-  npm global `bin` directory during setup.
+- **An agent CLI (`codex`/`opencode`/`nanocoder`/`claude`) is missing after
+  rebuild:** run `bash .devcontainer/post-create.sh` and check the
+  `==> Installing agent CLIs` section for npm or PATH errors. The installer
+  requires Node.js >= 22 and a writable npm global prefix; if npm installs
+  successfully but a CLI is still not found, compare `npm config get prefix`
+  with `$PATH` — the installer prepends the expected npm global `bin`
+  directory during setup.

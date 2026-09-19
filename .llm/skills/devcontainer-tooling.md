@@ -1,6 +1,6 @@
 ---
-description: Use when changing the VS Code dev container, installed tools, shell profiles, or post-create setup.
-triggers: devcontainer, container, codex, cli, post-create, postcreate, powershell profile, pwsh profile, PSReadLine, toolchain
+description: Use when changing the VS Code dev container, installed tools, shell profiles, or post-create/post-start setup.
+triggers: devcontainer, container, codex, opencode, nanocoder, claude, agent cli, cli, post-create, postcreate, post-start, poststart, powershell profile, pwsh profile, PSReadLine, toolchain
 category: Tooling
 ---
 
@@ -9,7 +9,7 @@ category: Tooling
 ## Trigger
 
 Use this skill when changing `.devcontainer/**`, installed command-line tools,
-PowerShell profile behavior, or post-create setup.
+PowerShell profile behavior, or post-create/post-start setup.
 
 ## Placement Rules
 
@@ -19,23 +19,40 @@ PowerShell profile behavior, or post-create setup.
   dependency itself.
 - Keep command-line tool installs idempotent and pinned by default. Allow an
   environment override only when the default remains a concrete version.
+  Documented exception: the agent CLIs below install at `@latest` (each spec
+  still env-overridable) because they publish several times a day; freshness is
+  kept by a registry-probe fast path instead of version pins, matching the
+  sibling Signal Fish devcontainers.
 - Never automate interactive authentication. Install the CLI and verify a
   non-interactive command such as `--version`; let users sign in later.
 
 ## Current Guarantees
 
-- OpenAI Codex CLI is installed by `.devcontainer/install-codex.sh` using the
-  official npm package `@openai/codex` and the pinned `CODEX_CLI_VERSION`.
-- `post-create.sh` invokes the Codex installer after the Node feature has made
-  `node` and `npm` available, then includes `codex --version` in the toolchain
-  summary.
+- The four terminal agent CLIs — OpenAI Codex (`@openai/codex`), OpenCode
+  (`opencode-ai`), Nanocoder (`@nanocollective/nanocoder`), and Claude Code
+  (`@anthropic-ai/claude-code`) — are installed by
+  `.devcontainer/install-agent-tools.sh` into npm's global prefix.
+- `post-create.sh` invokes the installer strictly after the Node feature has
+  made `node` (>= 22) and `npm` available, then verifies each of the four
+  binaries is on PATH and includes all four versions in the toolchain summary.
+  Any install or verification failure fails post-create.
+- `post-start.sh` runs on every container start/attach: it re-applies the git
+  `safe.directory` trust and re-runs the installer with `--update`, which
+  probes the registry in parallel and reinstalls only outdated or missing
+  CLIs. `--update` is warn-only: a registry outage degrades to the installed
+  toolchain and never blocks attaching.
+- The installer derives npm's global prefix, prepends its `bin` directory to
+  PATH, and passes npm 11's `--allow-scripts` (npm blocks lifecycle scripts on
+  global installs by default; `opencode-ai` needs its postinstall to select
+  the platform binary). The flag is only passed on npm >= 11; npm 10 (bundled
+  with Node 22) predates the policy and runs scripts as before. Specs are
+  overridable via `CODEX_NPM_SPEC`, `OPENCODE_NPM_SPEC`, `NANOCODER_NPM_SPEC`,
+  and `CLAUDE_NPM_SPEC`; `AGENT_TOOLS_NPM_FETCH_TIMEOUT_MS` (default 5000)
+  bounds only the registry version probe, not the install itself.
 - `post-create.sh` repairs root-owned mounted directories such as
   `/commandhistory`, installs the direct git hooks-path pre-commit shim via
   `scripts/install-git-hooks.ps1 -Force`, and does not install the slower
   pre-commit framework hook.
-- The Codex installer derives npm's global prefix, prepends its `bin` directory
-  to `PATH`, and fails loudly if `codex --version` does not report the pinned
-  version. npm registry failures are setup failures, not silent warnings.
 - npm cache lives under the container user's home directory and is not mounted
   as a named volume by this repo, so cache ownership repair is not part of the
   devcontainer contract.
@@ -57,6 +74,7 @@ When feasible, also run:
 bash .devcontainer/post-create.sh
 ```
 
-The harness self-tests statically check the Codex installer, parse-check the
+The harness self-tests statically check the agent CLI installer (packages,
+binaries, Node >= 22 guard, `--allow-scripts`, verification), parse-check the
 shell scripts with `bash -n`, and simulate the PSReadLine assembly conflict
 that previously made the PowerShell extension terminal noisy.

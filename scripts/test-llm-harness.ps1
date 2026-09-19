@@ -115,18 +115,20 @@ function Get-TextDiagnosticLines {
         [int]$Limit = 8
     )
 
-    $matches = [System.Collections.Generic.List[string]]::new()
+    # Deliberately not named `$matches`: the -match operator overwrites the
+    # automatic $Matches variable, which would clobber a local of that name.
+    $matchedLines = [System.Collections.Generic.List[string]]::new()
     $lines = @($Content -split "`r?`n")
     for ($i = 0; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -match $Pattern) {
-            $matches.Add(("{0}: {1}" -f ($i + 1), $lines[$i].TrimEnd()))
-            if ($matches.Count -ge $Limit) { break }
+            $matchedLines.Add(("{0}: {1}" -f ($i + 1), $lines[$i].TrimEnd()))
+            if ($matchedLines.Count -ge $Limit) { break }
         }
     }
-    if ($matches.Count -eq 0) {
+    if ($matchedLines.Count -eq 0) {
         return "(no lines matched diagnostic pattern '$Pattern')"
     }
-    return ($matches -join "`n")
+    return ($matchedLines -join "`n")
 }
 
 function Assert-TextMatches {
@@ -163,6 +165,29 @@ function Assert-TextDoesNotMatch {
         "`nMatching lines:`n$(Get-TextDiagnosticLines -Content $Content -Pattern $DiagnosticPattern)"
     }
     throw "$Subject must $Requirement. Forbidden pattern: $Pattern$details"
+}
+
+function Assert-ScriptParsesWithBash {
+    # WSL's bash.exe cannot open Windows-style absolute paths, so run bash -n
+    # with the script's directory as the working directory and the bare file
+    # name. Identical behavior under Git Bash, WSL, and native Linux.
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if (-not (Get-Command bash -ErrorAction SilentlyContinue)) { return }
+    $dir = Split-Path -Parent $Path
+    $leaf = Split-Path -Leaf $Path
+    Push-Location $dir
+    try {
+        & bash -n $leaf
+        if ($LASTEXITCODE -ne 0) {
+            throw "$Name failed bash -n syntax validation."
+        }
+    } finally {
+        Pop-Location
+    }
 }
 
 function ConvertTo-TestLfNewlines {
@@ -797,7 +822,6 @@ Assert-Test 'Dependabot auto-merge script handles workflow and check states with
     if (-not (Get-Command chmod -ErrorAction SilentlyContinue)) { return }
 
     $repoRoot = Split-Path -Parent $ScriptsDir
-    $script = Join-Path $repoRoot 'scripts/dependabot-auto-merge.sh'
     $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-auto-merge-gh-$([Guid]::NewGuid())")
     $fakeBin = Join-Path $sandbox 'bin'
     New-Item -ItemType Directory -Path $fakeBin -Force | Out-Null
@@ -899,8 +923,15 @@ exit 99
         foreach ($case in $cases) {
             Remove-Item -LiteralPath $env:FAKE_GH_LOG -Force -ErrorAction SilentlyContinue
             $env:FAKE_GH_SCENARIO = $case.Scenario
-            $output = & bash $script 2>&1
-            $exitCode = $LASTEXITCODE
+            # Invoke repoRoot-relative: WSL's bash.exe cannot open
+            # Windows-style absolute script paths.
+            Push-Location $repoRoot
+            try {
+                $output = & bash 'scripts/dependabot-auto-merge.sh' 2>&1
+                $exitCode = $LASTEXITCODE
+            } finally {
+                Pop-Location
+            }
             $combined = ($output | Out-String)
             if ($exitCode -ne 0) {
                 throw "Auto-merge scenario '$($case.Scenario)' should exit 0; got $exitCode. fake gh path: $fakeGh. Output: $combined"
@@ -1232,40 +1263,93 @@ Assert-Test 'generated executable test fixtures normalize shebang newlines' {
 
 # --- Dev container guardrails ---------------------------------------------
 
-Assert-Test 'devcontainer Codex installer is pinned, parseable, and validated' {
+Assert-Test 'devcontainer agent CLI installer is complete, parseable, and validated' {
     $repoRoot = Split-Path -Parent $ScriptsDir
-    $installer = Join-Path $repoRoot '.devcontainer/install-codex.sh'
+    $installer = Join-Path $repoRoot '.devcontainer/install-agent-tools.sh'
     if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
-        throw 'Missing .devcontainer/install-codex.sh'
+        throw 'Missing .devcontainer/install-agent-tools.sh'
     }
     $content = Get-Content -LiteralPath $installer -Raw
-    if ($content -notmatch 'CODEX_CLI_VERSION="\$\{CODEX_CLI_VERSION:-[0-9]+\.[0-9]+\.[0-9]+\}"') {
-        throw 'install-codex.sh must pin CODEX_CLI_VERSION to a concrete semver default.'
-    }
-    if ($content -notmatch 'CODEX_NPM_PACKAGE="@openai/codex"') {
-        throw 'install-codex.sh must identify @openai/codex as the package to install.'
-    }
-    if ($content -notmatch 'npm install --global' -or $content -notmatch '\$\{CODEX_NPM_PACKAGE\}@\$\{CODEX_CLI_VERSION\}') {
-        throw 'install-codex.sh must install the official @openai/codex package at the pinned version.'
-    }
-    if ($content -notmatch 'command -v codex' -or $content -notmatch 'codex --version') {
-        throw 'install-codex.sh must verify codex is on PATH and report its version.'
-    }
-    if ($content -notmatch 'npm config get prefix' -or $content -notmatch 'npm_bin_dir=' -or $content -notmatch 'export PATH="\$\{npm_bin_dir\}:\$\{PATH\}"') {
-        throw 'install-codex.sh must derive npm global bin directory and prepend it to PATH.'
-    }
-    if ($content -notmatch 'could not parse npm package metadata' -or $content -notmatch 'npm list returned no package metadata') {
-        throw 'install-codex.sh must log npm metadata lookup failures before reinstalling.'
-    }
-    if (Get-Command bash -ErrorAction SilentlyContinue) {
-        & bash -n $installer
-        if ($LASTEXITCODE -ne 0) {
-            throw 'install-codex.sh failed bash -n syntax validation.'
+
+    # Data-driven: every agent CLI must be declared as an npm spec default,
+    # paired with its binary name, and verified after provisioning.
+    $agentClis = @(
+        [pscustomobject]@{ Package = '@openai/codex'; Binary = 'codex' },
+        [pscustomobject]@{ Package = 'opencode-ai'; Binary = 'opencode' },
+        [pscustomobject]@{ Package = '@nanocollective/nanocoder'; Binary = 'nanocoder' },
+        [pscustomobject]@{ Package = '@anthropic-ai/claude-code'; Binary = 'claude' }
+    )
+    foreach ($cli in $agentClis) {
+        if ($content -notmatch [regex]::Escape($cli.Package)) {
+            throw "install-agent-tools.sh must install $($cli.Package)."
+        }
+        if ($content -notmatch [regex]::Escape($cli.Binary)) {
+            throw "install-agent-tools.sh must reference the $($cli.Binary) binary."
         }
     }
+    if ($content -notmatch 'BINARIES=\(codex opencode nanocoder claude\)') {
+        throw 'install-agent-tools.sh must declare the four agent binaries as BINARIES=(codex opencode nanocoder claude).'
+    }
+    # Loop-invariant: the verification pass must check every binary's presence
+    # and version regardless of which CLIs are declared.
+    if ($content -notmatch 'command -v "\$binary"' -or $content -notmatch '"\$binary" --version') {
+        throw 'install-agent-tools.sh must verify each binary is on PATH and reports a version.'
+    }
+
+    foreach ($requirement in @(
+            [pscustomobject]@{
+                Pattern     = '--update\)'
+                Requirement = 'support the warn-only --update refresh mode for post-start'
+                Diagnostic  = '--update|MODE|warn'
+            },
+            [pscustomobject]@{
+                Pattern     = '-lt 22'
+                Requirement = 'refuse to install on Node.js older than 22'
+                Diagnostic  = 'node_major|Node.js 22'
+            },
+            [pscustomobject]@{
+                Pattern     = 'npm config get prefix'
+                Requirement = 'derive the npm global prefix at runtime'
+                Diagnostic  = 'npm_prefix|npm config get prefix'
+            },
+            [pscustomobject]@{
+                Pattern     = 'npm install --global'
+                Requirement = 'install the CLIs with a global npm install'
+                Diagnostic  = 'npm install|install_specs'
+            },
+            [pscustomobject]@{
+                Pattern     = '--allow-scripts="\$ALLOW_SCRIPTS"'
+                Requirement = 'pass the reviewed lifecycle-script allow list to npm install'
+                Diagnostic  = 'allow-scripts|ALLOW_SCRIPTS'
+            },
+            [pscustomobject]@{
+                Pattern     = 'ALLOW_SCRIPTS="opencode-ai,@nanocollective/nanocoder,@anthropic-ai/claude-code,@openai/codex,@github/keytar,node-pty"'
+                Requirement = 'keep the reviewed lifecycle-script allow list intact; its postinstalls select platform binaries and build native modules'
+                Diagnostic  = 'ALLOW_SCRIPTS|opencode-ai'
+            },
+            [pscustomobject]@{
+                Pattern     = '-ge 11'
+                Requirement = 'pass --allow-scripts only on npm 11 or newer, which introduced the lifecycle-script policy'
+                Diagnostic  = 'npm_major|npm 11'
+            },
+            [pscustomobject]@{
+                Pattern     = 'npm view'
+                Requirement = 'probe the registry for the latest versions before installing'
+                Diagnostic  = 'npm view|latest|probe'
+            }
+        )) {
+        Assert-TextMatches `
+            -Subject '.devcontainer/install-agent-tools.sh' `
+            -Content $content `
+            -Pattern $requirement.Pattern `
+            -Requirement $requirement.Requirement `
+            -DiagnosticPattern $requirement.Diagnostic
+    }
+
+    Assert-ScriptParsesWithBash -Path $installer -Name 'install-agent-tools.sh'
 }
 
-Assert-Test 'devcontainer post-create installs direct hooks, Codex, and reports summary' {
+Assert-Test 'devcontainer post-create installs direct hooks, agent CLIs, and reports summary' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $postCreate = Join-Path $repoRoot '.devcontainer/post-create.sh'
     if (-not (Test-Path -LiteralPath $postCreate -PathType Leaf)) {
@@ -1275,9 +1359,9 @@ Assert-Test 'devcontainer post-create installs direct hooks, Codex, and reports 
 
     foreach ($requirement in @(
             [pscustomobject]@{
-                Pattern     = 'install-codex\.sh'
-                Requirement = 'invoke .devcontainer/install-codex.sh'
-                Diagnostic  = 'install-codex|Codex CLI|CODEX_VERSION_OUTPUT'
+                Pattern     = 'install-agent-tools\.sh'
+                Requirement = 'invoke .devcontainer/install-agent-tools.sh'
+                Diagnostic  = 'install-agent-tools|agent CLIs'
             },
             [pscustomobject]@{
                 Pattern     = 'install-git-hooks\.ps1\s+-Force'
@@ -1285,19 +1369,34 @@ Assert-Test 'devcontainer post-create installs direct hooks, Codex, and reports 
                 Diagnostic  = 'install-git-hooks|git hooks|pre-commit'
             },
             [pscustomobject]@{
+                Pattern     = 'for cli in codex opencode nanocoder claude'
+                Requirement = 'verify every agent CLI is on PATH after the installer runs'
+                Diagnostic  = 'agent CLI|codex|opencode|nanocoder|claude'
+            },
+            [pscustomobject]@{
+                Pattern     = 'is missing after post-create install'
+                Requirement = 'fail loudly if an agent CLI is missing after install-agent-tools.sh runs'
+                Diagnostic  = 'agent CLI|exit 1'
+            },
+            [pscustomobject]@{
                 Pattern     = 'codex --version'
                 Requirement = 'include codex --version in the toolchain summary'
-                Diagnostic  = 'Toolchain summary|codex|CODEX_VERSION_OUTPUT'
+                Diagnostic  = 'Toolchain summary|codex'
             },
             [pscustomobject]@{
-                Pattern     = 'CODEX_VERSION_OUTPUT='
-                Requirement = 'capture Codex version output before reporting the toolchain summary'
-                Diagnostic  = 'CODEX_VERSION_OUTPUT|codex --version|Codex CLI'
+                Pattern     = 'opencode --version'
+                Requirement = 'include opencode --version in the toolchain summary'
+                Diagnostic  = 'Toolchain summary|opencode'
             },
             [pscustomobject]@{
-                Pattern     = 'Codex CLI is missing after post-create install'
-                Requirement = 'fail loudly if Codex is missing after install-codex.sh runs'
-                Diagnostic  = 'Codex CLI|CODEX_VERSION_OUTPUT|exit 1'
+                Pattern     = 'nanocoder --version'
+                Requirement = 'include nanocoder --version in the toolchain summary'
+                Diagnostic  = 'Toolchain summary|nanocoder'
+            },
+            [pscustomobject]@{
+                Pattern     = 'claude --version'
+                Requirement = 'include claude --version in the toolchain summary'
+                Diagnostic  = 'Toolchain summary|claude'
             },
             [pscustomobject]@{
                 Pattern     = 'Failed to install PowerShell profile'
@@ -1329,19 +1428,60 @@ Assert-Test 'devcontainer post-create installs direct hooks, Codex, and reports 
         -Requirement 'not install the pre-commit framework hook; the direct shim is canonical' `
         -DiagnosticPattern 'pre-commit|install-git-hooks|direct git hooks'
 
-    if (Get-Command bash -ErrorAction SilentlyContinue) {
-        & bash -n $postCreate
-        if ($LASTEXITCODE -ne 0) {
-            throw 'post-create.sh failed bash -n syntax validation.'
-        }
+    Assert-ScriptParsesWithBash -Path $postCreate -Name 'post-create.sh'
+}
+
+Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attach' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $postStart = Join-Path $repoRoot '.devcontainer/post-start.sh'
+    if (-not (Test-Path -LiteralPath $postStart -PathType Leaf)) {
+        throw 'Missing .devcontainer/post-start.sh'
     }
+    $content = Get-Content -LiteralPath $postStart -Raw
+
+    foreach ($requirement in @(
+            [pscustomobject]@{
+                Pattern     = 'safe\.directory'
+                Requirement = 'keep the workspace trusted for git on every start'
+                Diagnostic  = 'safe.directory|git config'
+            },
+            [pscustomobject]@{
+                Pattern     = 'install-agent-tools\.sh" --update'
+                Requirement = 'refresh agent CLIs via install-agent-tools.sh --update'
+                Diagnostic  = 'agent-tools|--update|refresh'
+            },
+            [pscustomobject]@{
+                Pattern     = 'WARN: agent CLI refresh failed'
+                Requirement = 'warn instead of failing when the registry refresh fails'
+                Diagnostic  = 'WARN|refresh|installed versions'
+            }
+        )) {
+        Assert-TextMatches `
+            -Subject '.devcontainer/post-start.sh' `
+            -Content $content `
+            -Pattern $requirement.Pattern `
+            -Requirement $requirement.Requirement `
+            -DiagnosticPattern $requirement.Diagnostic
+    }
+
+    $devcontainer = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/devcontainer.json') -Raw
+    Assert-TextMatches `
+        -Subject '.devcontainer/devcontainer.json' `
+        -Content $devcontainer `
+        -Pattern 'bash \.devcontainer/post-start\.sh' `
+        -Requirement 'run post-start.sh as the postStartCommand' `
+        -DiagnosticPattern 'postStartCommand|post-start'
+
+    Assert-ScriptParsesWithBash -Path $postStart -Name 'post-start.sh'
 }
 
 Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $paths = @(
+        '.devcontainer/install-agent-tools.sh',
         '.devcontainer/install-godot.sh',
-        '.devcontainer/post-create.sh'
+        '.devcontainer/post-create.sh',
+        '.devcontainer/post-start.sh'
     )
     foreach ($rel in $paths) {
         $path = Join-Path $repoRoot $rel
