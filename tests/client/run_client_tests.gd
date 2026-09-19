@@ -34,6 +34,8 @@ func _run() -> void:
 	_test_preauth_guards_block_all_sends()
 	_test_authenticated_args_and_send_surface()
 	_test_room_lifecycle_state_machine()
+	_test_spectators_keep_lobby_updates_and_rosters_stay_stable()
+	_test_connected_handler_close_does_not_crash()
 	_test_presence_and_data_events()
 	_test_spectator_flow()
 	_test_reconnected_restores_room_state()
@@ -366,6 +368,84 @@ func _test_room_lifecycle_state_machine() -> void:
 	_assert_equal("", client.get_room_id(), "room state cleared on leave")
 	_assert_equal("", client.get_player_id(), "player id cleared on leave")
 	_assert_equal([], client.get_players(), "roster cleared on leave")
+	client.free()
+
+
+func _test_spectators_keep_lobby_updates_and_rosters_stay_stable() -> void:
+	var client := _make_authenticated_client()
+	# Lambdas capture locals by value; hold the payload in an Array to observe
+	# it after emission.
+	var room_holder: Array = []
+	client.room_joined.connect(func(info) -> void: room_holder.append(info))
+	client.transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	_assert_equal(1, client.get_players().size(), "initial roster")
+	client.transport.inject_server_message(
+		{"type": "PlayerJoined", "data": {"player": _player(PLAYER_B, "Bob")}}
+	)
+	_assert_equal(2, client.get_players().size(), "roster updated")
+	_assert_equal(
+		1, room_holder[0].current_players.size(), "emitted room_joined payload never mutates"
+	)
+
+	client.transport.inject_server_message(
+		{
+			"type": "SpectatorJoined",
+			"data":
+			{
+				"room_id": "20000000-0000-0000-0000-000000000009",
+				"room_code": "SPEC1",
+				"spectator_id": PLAYER_B,
+				"game_name": "reef-rally",
+				"current_players": [_player(PLAYER_A, "Alice")],
+				"current_spectators": [],
+				"lobby_state": "waiting"
+			}
+		}
+	)
+	_assert_equal(
+		SignalFishClientScript.SessionState.SPECTATING,
+		client.get_session_state(),
+		"spectating before lobby update"
+	)
+	client.transport.inject_server_message(
+		{
+			"type": "LobbyStateChanged",
+			"data": {"lobby_state": "lobby", "ready_players": [PLAYER_A], "all_ready": true}
+		}
+	)
+	_assert_equal(
+		SignalFishClientScript.SessionState.SPECTATING,
+		client.get_session_state(),
+		"spectators stay spectating across lobby updates"
+	)
+	_assert_equal(
+		SFTypesScript.LobbyState.LOBBY, client.get_lobby_state(), "spectator lobby state tracked"
+	)
+	client.free()
+
+
+func _test_connected_handler_close_does_not_crash() -> void:
+	var client := SignalFishClientScript.new()
+	var errors := _track_protocol_errors(client)
+	var close_events: Array = []
+	client.connected.connect(func() -> void: client.close())
+	client.disconnected.connect(
+		func(code: int, reason: String) -> void: close_events.append([code, reason])
+	)
+	_assert_equal(OK, client.configure(_make_config()), "configure")
+	client.transport = SFFakeTransportScript.new()
+	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
+	client.transport.inject_open()
+	_assert_equal([[1000, ""]], close_events, "handler-driven close completes cleanly")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSED, client.get_connection_state(), "closed"
+	)
+	_assert_equal(
+		SignalFishClientScript.SessionState.UNAUTHENTICATED,
+		client.get_session_state(),
+		"no authenticate attempted after handler close"
+	)
+	_assert_equal(0, errors.size(), "no protocol errors from the torn-down session")
 	client.free()
 
 

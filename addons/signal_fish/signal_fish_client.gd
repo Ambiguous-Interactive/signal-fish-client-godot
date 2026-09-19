@@ -336,9 +336,18 @@ func _wire_transport_signals() -> void:
 
 
 func _on_transport_opened() -> void:
+	# A `connected` handler may close the client synchronously; never resurrect
+	# a session that already moved past CONNECTING.
+	if (
+		_connection_state
+		in [ConnectionState.CLOSING, ConnectionState.CLOSED, ConnectionState.FAILED]
+	):
+		return
 	_connection_state = ConnectionState.CONNECTED
 	_session_state = SessionState.AUTHENTICATING
 	connected.emit()
+	if _connection_state != ConnectionState.CONNECTED:
+		return
 	_send_authenticate()
 
 
@@ -425,7 +434,10 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			authority_response.emit(event.args[0], event.args[1], event.args[2])
 		&"lobby_state_changed":
 			_lobby_state = event.args[0]
-			_session_state = _session_state_for_lobby(_lobby_state)
+			# Spectators receive lobby updates too; only players map lobby
+			# state onto in-room session states.
+			if _session_state != SessionState.SPECTATING:
+				_session_state = _session_state_for_lobby(_lobby_state)
 			lobby_state_changed.emit(event.args[0], event.args[1], event.args[2])
 		&"game_starting":
 			# One-shot instruction event; session state stays FINALIZED.
@@ -474,6 +486,11 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 	if not SFMessagesScript.is_valid_message(envelope):
 		_emit_protocol_error("%s: %s" % [action, SFMessagesScript.validation_error(envelope)])
 		return ERR_INVALID_DATA
+	if transport == null:
+		# A synchronous terminal event (close/failure) can tear the session
+		# down mid-dispatch, e.g. from a `connected` signal handler.
+		_emit_protocol_error("%s requires a connected transport" % action)
+		return ERR_UNCONFIGURED
 	var buffered: int = transport.get_buffered_amount()
 	if buffered > _config.max_buffered_bytes:
 		_emit_protocol_error(
@@ -495,16 +512,18 @@ func _apply_room_info(info) -> void:
 	_room_code = info.room_code
 	_player_id = info.player_id
 	_lobby_state = info.lobby_state
-	_players = info.current_players
-	_spectators = info.current_spectators
+	# Duplicate the rosters so later presence updates never mutate the payload
+	# objects already handed to consumers.
+	_players = info.current_players.duplicate()
+	_spectators = info.current_spectators.duplicate()
 
 
 func _apply_spectator_info(info) -> void:
 	_room_id = info.room_id
 	_room_code = info.room_code
 	_lobby_state = info.lobby_state
-	_players = info.current_players
-	_spectators = info.current_spectators
+	_players = info.current_players.duplicate()
+	_spectators = info.current_spectators.duplicate()
 
 
 func _clear_room_state() -> void:
