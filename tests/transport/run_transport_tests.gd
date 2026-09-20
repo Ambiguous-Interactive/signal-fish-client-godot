@@ -25,6 +25,7 @@ func _init() -> void:
 
 func _run() -> void:
 	_test_fake_connect_open_send_receive_and_close()
+	_test_fake_fail_on_send_mirrors_real_cascade()
 	_test_fake_reconnect_resets_terminal_flags()
 	_test_fake_failure_and_backpressure_getter()
 	_test_fake_fail_on_connect_close_does_not_emit_closed()
@@ -83,6 +84,34 @@ func _test_fake_connect_open_send_receive_and_close() -> void:
 	_assert_equal(1, closed_events.size(), "fake closed once")
 	_assert_equal([1001, "going away"], closed_events[0], "fake close event")
 	_assert_equal(WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "fake closed state")
+
+
+func _test_fake_fail_on_send_mirrors_real_cascade() -> void:
+	# Issue #24 send-failure parity: the fake must kill the session exactly
+	# like the real transport's synchronous send failure — `failed` emitted
+	# once, ERR_CONNECTION_ERROR returned, nothing recorded as sent.
+	var transport = SFFakeTransportScript.new()
+	var failures: Array = []
+	transport.failed.connect(func(error: String) -> void: failures.append(error))
+	_assert_equal(OK, transport.connect_to_url("ws://example.test/socket"), "fake connect")
+	transport.inject_open()
+	transport.fail_on_send = true
+	_assert_equal(
+		ERR_CONNECTION_ERROR, transport.send_text("lost"), "failing send returns the error"
+	)
+	_assert_equal(
+		ERR_UNCONFIGURED,
+		transport.send_binary(PackedByteArray([1])),
+		"post-failure binary send refused"
+	)
+	_assert_equal(1, failures.size(), "failed emitted once")
+	_assert_string_contains(failures[0], "failed to send", "failure names the send")
+	_assert_equal([], transport.sent_text, "failed text not recorded")
+	_assert_equal([], transport.sent_binary, "failed binary not recorded")
+	_assert_equal(WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "session dead")
+	_assert_equal(0, transport.get_buffered_amount(), "dead session reports zero buffered")
+	_assert_equal(ERR_UNCONFIGURED, transport.send_text("late"), "post-failure send refused")
+	_assert_equal(1, failures.size(), "failed emitted exactly once")
 
 
 func _test_fake_reconnect_resets_terminal_flags() -> void:
