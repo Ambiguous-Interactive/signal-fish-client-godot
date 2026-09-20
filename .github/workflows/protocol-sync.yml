@@ -1,0 +1,26 @@
+name: Protocol Sync
+
+on:
+    schedule:
+        # Mondays 06:00 UTC: detect upstream protocol drift weekly. Note:
+        # GitHub disables schedule triggers after ~60 days without repo
+        # activity; dispatch runs keep it recoverable.
+        - cron: "0 6 * * 1"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    sync:
+        name: Check upstream protocol pin
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Self-test the sync checker
+              run: python3 scripts/check-protocol-sync.py --self-test
+
+            - name: Check protocol pin against upstream
+              run: python3 scripts/check-protocol-sync.py

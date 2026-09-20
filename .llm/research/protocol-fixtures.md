@@ -12,11 +12,57 @@ codec or fixture files.
 
 ## Pinned Upstream Commits
 
-- `signal-fish-server`: `4f766b7856bead1e1cc07d4e7a1057831a045749`
-- `signal-fish-client-rust`: `da4c0bdf0657370ec340321363f3b5850e06b0b0`
+- `signal-fish-server`: `24a5d10b9e1700cdbef24f05dfe7fe1f0719ac3d` (tag `v0.9.1`)
+- `signal-fish-client-rust`: binding `0.14.0` / protocol authority
+  `e1b65b965390355e9fd15661dc95a8a4321eab17` (synced 2026-09-18 per the
+  upstream `tests/compatibility.toml`)
 - `signal-fish-cloud`: `ffdd5105d9e844aefd54ec4a3cd832231dd428cd`
 
-These commits were read from the public `main` branch on 2026-05-29.
+Re-pinned 2026-09-20 (issue #12). Prior pins (read 2026-05-29): server
+`4f766b7856bead1e1cc07d4e7a1057831a045749`, client-rust
+`da4c0bdf0657370ec340321363f3b5850e06b0b0`. Drift against the upstream
+binding is checked by `scripts/check-protocol-sync.py` (weekly scheduled
+workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
+
+- v2 wire bytes are frozen upstream: no legacy message variant, error code,
+  or field was renamed or removed; all new surface is additive and v3-route
+  only (new `Signal`/`NewPeer`/`SessionPlan`/`RoomOperationResult`/
+  `PeerTransportStatus`/`RelayStats`/`GoingAway`/`DeliveryReport` server
+  events; `StartGame`/`Signal`/`RoomOperation`/`TransportStatus` client
+  messages; `password` on JoinRoom/JoinAsSpectator; v3 negotiation fields on
+  `Authenticate`). The v2-route codec stays wire-compatible unchanged.
+- Error codes grew from 41 to 62 upstream (moderation, delivery, lifecycle,
+  game-start, auth categories). Unknown inbound codes already decode to
+  `Code.UNKNOWN`; extending the table (and its category ranges) is tracked
+  as follow-up work.
+- `PlayerNameRules.allowed_symbols` widened upstream from `Vec<char>` to
+  `Vec<String>` (both serialize as JSON string arrays; current servers emit
+  one-character strings). The GDScript codec treats entries as plain
+  strings with no width assumption, so both shapes decode; pinned by
+  `_test_allowed_symbols_widen_parity`. `max_length`/`min_length` are
+  measured in UTF-8 bytes upstream (advisory pass-through here, matching the
+  Rust client).
+- `RoomJoinedPayload`/`ReconnectedPayload` carry an optional server-issued
+  `reconnection_token`, rotated on every join and every successful
+  reconnect; the fixtures now model both (rotation pinned by the fixture
+  decode test).
+- The Rust SDK also vendors upstream wire samples with sha256 digests in
+  `tests/compatibility.toml` (`[wire_samples]`); all four verified live
+  2026-09-20 (this file is our provenance record for the digests):
+  - `v2-client-messages.jsonl`
+    `929f25d702d3e21f2cca640cd14f9ce044945a6ef9c2c258de56f3f112164227`
+  - `v2-server-messages.jsonl`
+    `b5aee60d2cbd410c1088da1bbd1142d88d89600bc600f00b2d1849586f1654cd`
+  - `v3-client-messages.jsonl`
+    `5f6e92f550e7bb0b2ea4be02dea30f5b09677ecf4e01b5451d41d824f405b4cb`
+  - `v3-server-messages.jsonl`
+    `a175151b8b4dffa95818b11d41651551d499f9388e00309c95e0ba12159bbfce`
+  The vendored v2 samples are byte-identical to the server repo's
+  `.llm/code-samples/protocol` copies at the pinned commit. The Godot
+  fixtures deliberately stay hand-built supersets (all 24 server variants,
+  full-field shapes, fake-placeholder tokens) rather than byte-copies of the
+  elided upstream samples; the digests pin the upstream bytes they were
+  cross-checked against.
 
 ## Source Paths
 
@@ -155,11 +201,11 @@ blank lines and lines beginning with `#`.
   error-code table.
 - Reconnection token origin (resolved 2026-09-19): the server issues
   `reconnection_token: Option<String>` inside every `RoomJoinedPayload` and
-  `ReconnectedPayload` (server `src/protocol/messages.rs` @ `eaae1ca3`); the
-  Rust client retains it for opt-in auto-reconnect (`src/client_core.rs`
-  `AutoReconnectContext` @ `fdab2e83`). See
-  `.llm/skills/reconnection-replay.md`. The vendored fixtures pre-date the
-  field, so the decoder tolerates absence/null; re-pinning fixtures to current
-  upstream is tracked by issue #12.
+  `ReconnectedPayload` (server `src/protocol/messages.rs` @ `eaae1ca3`);
+  the Rust client retains it for opt-in auto-reconnect
+  (`src/client_core.rs` `AutoReconnectContext` @ `fdab2e83`). See
+  `.llm/skills/reconnection-replay.md`. Upstream rotates the token on every
+  join and every successful reconnect; the fixtures now carry fake
+  placeholder tokens modeling the rotation (issue #12).
 - Upstream close-code conventions were not found in the protocol files listed
   above. Treat close-code mapping as a later transport-phase decision gate.
