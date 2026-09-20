@@ -203,14 +203,14 @@ func _test_server_decoders_match_fixtures() -> void:
 	if _failures.size() != failures_before_fixture_shape_checks:
 		return
 
-	var authenticated = decoded_events[0]
+	var authenticated: SFTypesScript.DecodedEvent = decoded_events[0]
 	_assert_equal("Reef Rally", authenticated.args[0], "authenticated app_name")
 	_assert_equal("Ambiguous Interactive", authenticated.args[1], "authenticated organization")
 	_assert_equal(60, authenticated.args[2].per_minute, "authenticated rate limit type")
 	_assert_equal(3600, authenticated.args[2].per_hour, "authenticated hourly rate")
 	_assert_equal(86400, authenticated.args[2].per_day, "authenticated daily rate")
 
-	var protocol_info = decoded_events[1]
+	var protocol_info: SFTypesScript.DecodedEvent = decoded_events[1]
 	_assert_equal("godot", protocol_info.args[0].platform, "protocol_info platform")
 	_assert_equal("0.1.0-godot", protocol_info.args[0].sdk_version, "protocol_info sdk")
 	_assert_equal("0.1.0", protocol_info.args[0].minimum_version, "protocol_info minimum")
@@ -239,13 +239,13 @@ func _test_server_decoders_match_fixtures() -> void:
 		"name symbols"
 	)
 
-	var authentication_error = decoded_events[2]
+	var authentication_error: SFTypesScript.DecodedEvent = decoded_events[2]
 	_assert_equal("invalid app id", authentication_error.args[0], "auth error message")
 	_assert_equal(
 		SFErrorCodesScript.Code.INVALID_APP_ID, authentication_error.args[1], "auth error code"
 	)
 
-	var room_joined = decoded_events[3]
+	var room_joined: SFTypesScript.DecodedEvent = decoded_events[3]
 	_assert_equal(
 		"20000000-0000-0000-0000-000000000001", room_joined.args[0].room_id, "room_joined room id"
 	)
@@ -279,14 +279,14 @@ func _test_server_decoders_match_fixtures() -> void:
 	_assert_equal(1, room_joined.args[0].current_spectators.size(), "room spectators")
 	_assert_equal("Observer", room_joined.args[0].current_spectators[0].name, "room spectator")
 
-	var room_join_failed = decoded_events[4]
+	var room_join_failed: SFTypesScript.DecodedEvent = decoded_events[4]
 	_assert_equal("room is full", room_join_failed.args[0], "room join failed reason")
 	_assert_equal(SFErrorCodesScript.Code.ROOM_FULL, room_join_failed.args[1], "room full code")
 
-	var room_left = decoded_events[5]
+	var room_left: SFTypesScript.DecodedEvent = decoded_events[5]
 	_assert_equal(0, room_left.args.size(), "room left args")
 
-	var player_joined = decoded_events[6]
+	var player_joined: SFTypesScript.DecodedEvent = decoded_events[6]
 	_assert_equal("10000000-0000-0000-0000-000000000002", player_joined.args[0].id, "pj id")
 	_assert_equal("Bob", player_joined.args[0].name, "pj name")
 	_assert_equal(false, player_joined.args[0].is_authority, "pj authority")
@@ -299,25 +299,25 @@ func _test_server_decoders_match_fixtures() -> void:
 		"pj ice"
 	)
 
-	var player_left = decoded_events[7]
+	var player_left: SFTypesScript.DecodedEvent = decoded_events[7]
 	_assert_equal("10000000-0000-0000-0000-000000000002", player_left.args[0], "left id")
 
-	var game_data = decoded_events[8]
+	var game_data: SFTypesScript.DecodedEvent = decoded_events[8]
 	_assert_equal("10000000-0000-0000-0000-000000000002", game_data.args[0], "game data from")
 	_assert_equal("move", game_data.args[1]["action"], "game data action")
 	_assert_equal(30, game_data.args[1]["x"], "game data x")
 	_assert_equal(40, game_data.args[1]["y"], "game data y")
 
-	var binary = decoded_events[9]
+	var binary: SFTypesScript.DecodedEvent = decoded_events[9]
 	_assert_equal("10000000-0000-0000-0000-000000000002", binary.args[0], "binary from")
 	_assert_equal(SFTypesScript.GameDataEncoding.MESSAGE_PACK, binary.args[1], "binary encoding")
 	_assert_equal(PackedByteArray([202, 254]), binary.args[2], "binary payload bytes")
 
-	var authority_changed = decoded_events[10]
+	var authority_changed: SFTypesScript.DecodedEvent = decoded_events[10]
 	_assert_equal("", authority_changed.args[0], "authority changed player")
 	_assert_equal(false, authority_changed.args[1], "authority changed self")
 
-	var authority_response = decoded_events[11]
+	var authority_response: SFTypesScript.DecodedEvent = decoded_events[11]
 	_assert_equal(false, authority_response.args[0], "authority response granted")
 	_assert_equal("authority conflict", authority_response.args[1], "authority response reason")
 	_assert_equal(
@@ -336,7 +336,7 @@ func _test_server_decoders_match_fixtures() -> void:
 	_assert_equal("", authority_response_null_reason.args[1], "authority response null reason arg")
 	_assert_equal(SFErrorCodesScript.Code.NONE, authority_response_null_reason.args[2], "auth none")
 
-	var lobby_state_changed = decoded_events[12]
+	var lobby_state_changed: SFTypesScript.DecodedEvent = decoded_events[12]
 	_assert_equal(
 		SFTypesScript.LobbyState.LOBBY, lobby_state_changed.args[0], "lobby changed state"
 	)
@@ -347,7 +347,7 @@ func _test_server_decoders_match_fixtures() -> void:
 	)
 	_assert_equal(false, lobby_state_changed.args[2], "lobby all ready")
 
-	var game_starting = decoded_events[13]
+	var game_starting: SFTypesScript.DecodedEvent = decoded_events[13]
 	_assert_equal(2, game_starting.args[0].size(), "game starting peers")
 	_assert_equal(
 		"10000000-0000-0000-0000-000000000001",
@@ -363,10 +363,10 @@ func _test_server_decoders_match_fixtures() -> void:
 		{"transport": "fixture"}, game_starting.args[0][1].connection_info.data, "custom data"
 	)
 
-	var pong = decoded_events[14]
+	var pong: SFTypesScript.DecodedEvent = decoded_events[14]
 	_assert_equal(0, pong.args.size(), "pong args")
 
-	var reconnected = decoded_events[15]
+	var reconnected: SFTypesScript.DecodedEvent = decoded_events[15]
 	_assert_equal("ABC123", reconnected.args[0].room_code, "reconnected room payload type")
 	_assert_equal(SFTypesScript.LobbyState.FINALIZED, reconnected.args[0].lobby_state, "re state")
 	_assert_equal(
@@ -387,7 +387,7 @@ func _test_server_decoders_match_fixtures() -> void:
 		"reconnection tokens rotate per baseline"
 	)
 
-	var reconnection_failed = decoded_events[16]
+	var reconnection_failed: SFTypesScript.DecodedEvent = decoded_events[16]
 	_assert_equal("token expired", reconnection_failed.args[0], "reconnection failed reason")
 	_assert_equal(
 		SFErrorCodesScript.Code.RECONNECTION_EXPIRED,
@@ -395,12 +395,12 @@ func _test_server_decoders_match_fixtures() -> void:
 		"reconnection failed code"
 	)
 
-	var player_reconnected = decoded_events[17]
+	var player_reconnected: SFTypesScript.DecodedEvent = decoded_events[17]
 	_assert_equal(
 		"10000000-0000-0000-0000-000000000002", player_reconnected.args[0], "player reconnected id"
 	)
 
-	var spectator_joined = decoded_events[18]
+	var spectator_joined: SFTypesScript.DecodedEvent = decoded_events[18]
 	_assert_equal("ABC123", spectator_joined.args[0].room_code, "spectator joined room")
 	_assert_equal(
 		"30000000-0000-0000-0000-000000000001",
@@ -419,7 +419,7 @@ func _test_server_decoders_match_fixtures() -> void:
 		SFTypesScript.SpectatorReason.JOINED, spectator_joined.args[0].reason, "spectator reason"
 	)
 
-	var spectator_join_failed = decoded_events[19]
+	var spectator_join_failed: SFTypesScript.DecodedEvent = decoded_events[19]
 	_assert_equal("spectator mode disabled", spectator_join_failed.args[0], "spectator fail reason")
 	_assert_equal(
 		SFErrorCodesScript.Code.SPECTATOR_NOT_ALLOWED,
@@ -427,7 +427,7 @@ func _test_server_decoders_match_fixtures() -> void:
 		"spectator fail code"
 	)
 
-	var spectator_left = decoded_events[20]
+	var spectator_left: SFTypesScript.DecodedEvent = decoded_events[20]
 	_assert_equal("20000000-0000-0000-0000-000000000001", spectator_left.args[0], "sl room")
 	_assert_equal("ABC123", spectator_left.args[1], "sl code")
 	_assert_equal(
@@ -435,20 +435,20 @@ func _test_server_decoders_match_fixtures() -> void:
 	)
 	_assert_equal(0, spectator_left.args[3].size(), "sl current spectators")
 
-	var new_spectator = decoded_events[21]
+	var new_spectator: SFTypesScript.DecodedEvent = decoded_events[21]
 	_assert_equal("30000000-0000-0000-0000-000000000002", new_spectator.args[0].id, "ns id")
 	_assert_equal("Watcher", new_spectator.args[0].name, "ns name")
 	_assert_equal(1, new_spectator.args[1].size(), "ns current spectators")
 	_assert_equal(SFTypesScript.SpectatorReason.JOINED, new_spectator.args[2], "ns reason")
 
-	var spectator_disconnected = decoded_events[22]
+	var spectator_disconnected: SFTypesScript.DecodedEvent = decoded_events[22]
 	_assert_equal("30000000-0000-0000-0000-000000000002", spectator_disconnected.args[0], "sd id")
 	_assert_equal(
 		SFTypesScript.SpectatorReason.DISCONNECTED, spectator_disconnected.args[1], "sd reason"
 	)
 	_assert_equal(0, spectator_disconnected.args[2].size(), "sd current spectators")
 
-	var server_error = decoded_events[23]
+	var server_error: SFTypesScript.DecodedEvent = decoded_events[23]
 	_assert_equal("message too large", server_error.args[0], "server error message")
 	_assert_equal(
 		SFErrorCodesScript.Code.MESSAGE_TOO_LARGE, server_error.args[1], "server error code"

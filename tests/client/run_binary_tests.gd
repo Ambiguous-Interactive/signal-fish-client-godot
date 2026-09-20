@@ -89,7 +89,7 @@ func _test_envelope_receive_paths() -> void:
 	var client := _make_in_room_client_with(config)
 	var events: Array = []
 	client.game_data_received.connect(
-		func(from_player: String, data) -> void: events.append(["data", from_player, data])
+		func(from_player: String, data: Variant) -> void: events.append(["data", from_player, data])
 	)
 	client.game_data_binary_received.connect(
 		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
@@ -120,7 +120,8 @@ func _test_envelope_receive_paths() -> void:
 	var decode_client := _make_in_room_client_with(decode_config)
 	var decode_events: Array = []
 	decode_client.game_data_received.connect(
-		func(from_player: String, data) -> void: decode_events.append(["data", from_player, data])
+		func(from_player: String, data: Variant) -> void:
+			decode_events.append(["data", from_player, data])
 	)
 	decode_client.game_data_binary_received.connect(
 		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:

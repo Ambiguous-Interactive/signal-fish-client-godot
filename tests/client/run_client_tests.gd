@@ -145,7 +145,7 @@ func _test_configure_and_connect_guards() -> void:
 	)
 	_assert_equal(3, errors.size(), "each refused connect emits protocol_error")
 
-	var fake = SFFakeTransportScript.new()
+	var fake: SFFakeTransportScript = SFFakeTransportScript.new()
 	client.transport = fake
 	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
 	_assert_equal(
@@ -156,7 +156,7 @@ func _test_configure_and_connect_guards() -> void:
 
 func _test_auto_authenticate_matches_builder_bytes() -> void:
 	var client := _make_connected_client()
-	var fake = client.transport
+	var fake: SFFakeTransportScript = client.transport
 	var expected := SFMessagesScript.encode(
 		SFMessagesScript.authenticate("test-app", "0.1.0", "linux", "json")
 	)
@@ -212,7 +212,9 @@ func _test_authenticated_args_and_send_surface() -> void:
 	var client := _make_connected_client()
 	var authenticated_events: Array = []
 	client.authenticated.connect(
-		func(app_name: String, organization: String, rate_limits) -> void:
+		func(
+			app_name: String, organization: String, rate_limits: SFTypesScript.RateLimitInfo
+		) -> void:
 			authenticated_events.append([app_name, organization, rate_limits.per_minute])
 	)
 	client.authentication_error.connect(
@@ -230,7 +232,7 @@ func _test_authenticated_args_and_send_surface() -> void:
 		"session authenticated"
 	)
 
-	var fake = client.transport
+	var fake: SFFakeTransportScript = client.transport
 	var params := SignalFishClientScript.JoinRoomParams.new()
 	params.game_name = "reef-rally"
 	params.player_name = "Alice"
@@ -379,7 +381,8 @@ func _test_duplicate_authenticated_is_once_per_dial() -> void:
 	var client := _make_connected_client()
 	var authenticated_events: Array = []
 	client.authenticated.connect(
-		func(_app: String, _org: String, _rate_limits) -> void: authenticated_events.append(1)
+		func(_app: String, _org: String, _rate_limits: SFTypesScript.RateLimitInfo) -> void:
+			authenticated_events.append(1)
 	)
 	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
@@ -396,7 +399,8 @@ func _test_duplicate_authenticated_is_once_per_dial() -> void:
 	var room_client := _make_authenticated_client()
 	var room_events: Array = []
 	room_client.authenticated.connect(
-		func(_app: String, _org: String, _rate_limits) -> void: room_events.append(1)
+		func(_app: String, _org: String, _rate_limits: SFTypesScript.RateLimitInfo) -> void:
+			room_events.append(1)
 	)
 	var params := SignalFishClientScript.JoinRoomParams.new()
 	params.game_name = "reef-rally"
@@ -425,7 +429,9 @@ func _test_room_lifecycle_state_machine() -> void:
 	var joined_payloads: Array = []
 	var lobby_events: Array = []
 	var room_left_count := [0]
-	client.room_joined.connect(func(info) -> void: joined_payloads.append(info))
+	client.room_joined.connect(
+		func(info: SFTypesScript.RoomJoinedInfo) -> void: joined_payloads.append(info)
+	)
 	client.lobby_state_changed.connect(
 		func(state: int, ready_players: PackedStringArray, all_ready: bool) -> void:
 			lobby_events.append([state, ready_players, all_ready])
@@ -503,7 +509,9 @@ func _test_spectators_keep_lobby_updates_and_rosters_stay_stable() -> void:
 	# Lambdas capture locals by value; hold the payload in an Array to observe
 	# it after emission.
 	var room_holder: Array = []
-	client.room_joined.connect(func(info) -> void: room_holder.append(info))
+	client.room_joined.connect(
+		func(info: SFTypesScript.RoomJoinedInfo) -> void: room_holder.append(info)
+	)
 	client.transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
 	_assert_equal(1, client.get_players().size(), "initial roster")
 	client.transport.inject_server_message(
@@ -579,11 +587,13 @@ func _test_connected_handler_close_does_not_crash() -> void:
 func _test_presence_and_data_events() -> void:
 	var client := _make_in_room_client()
 	var events: Array = []
-	client.player_joined.connect(func(player) -> void: events.append(["joined", player.id]))
+	client.player_joined.connect(
+		func(player: SFTypesScript.PlayerInfo) -> void: events.append(["joined", player.id])
+	)
 	client.player_left.connect(func(id: String) -> void: events.append(["left", id]))
 	client.player_reconnected.connect(func(id: String) -> void: events.append(["reconnected", id]))
 	client.game_data_received.connect(
-		func(from_player: String, data) -> void: events.append(["data", from_player, data])
+		func(from_player: String, data: Variant) -> void: events.append(["data", from_player, data])
 	)
 	client.game_data_binary_received.connect(
 		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
@@ -603,7 +613,8 @@ func _test_presence_and_data_events() -> void:
 			events.append(["server_error", message, error_code])
 	)
 	client.protocol_info.connect(
-		func(info) -> void: events.append(["protocol_info", info.sdk_version])
+		func(info: SFTypesScript.ProtocolInfo) -> void:
+			events.append(["protocol_info", info.sdk_version])
 	)
 
 	client.transport.inject_server_message(
@@ -667,10 +678,13 @@ func _test_spectator_flow() -> void:
 	var client := _make_authenticated_client()
 	var spectator_events: Array = []
 	client.spectator_joined.connect(
-		func(info) -> void: spectator_events.append(["joined", info.spectator_id])
+		func(info: SFTypesScript.SpectatorJoinedInfo) -> void:
+			spectator_events.append(["joined", info.spectator_id])
 	)
 	client.new_spectator_joined.connect(
-		func(spectator, current_spectators: Array, reason: int) -> void:
+		func(
+			spectator: SFTypesScript.SpectatorInfo, current_spectators: Array, reason: int
+		) -> void:
 			spectator_events.append(["new", spectator.id, current_spectators.size(), reason])
 	)
 	client.spectator_disconnected.connect(
@@ -773,7 +787,8 @@ func _test_reconnected_restores_room_state() -> void:
 	var restored: Array = []
 	var failures: Array = []
 	client.reconnected.connect(
-		func(info, missed_events: Array) -> void: restored.append([info, missed_events])
+		func(info: SFTypesScript.RoomJoinedInfo, missed_events: Array) -> void:
+			restored.append([info, missed_events])
 	)
 	client.reconnection_failed.connect(
 		func(reason: String, error_code: int) -> void: failures.append([reason, error_code])
@@ -800,7 +815,7 @@ func _test_reconnected_restores_room_state() -> void:
 func _test_backpressure_returns_busy_and_drops() -> void:
 	var client := _make_authenticated_client()
 	var errors := _track_protocol_errors(client)
-	var fake = client.transport
+	var fake: SFFakeTransportScript = client.transport
 	var baseline: int = fake.sent_text.size()
 	fake.buffered_amount = _make_config().max_buffered_bytes + 1
 	_assert_equal(ERR_BUSY, client.send_game_data({"x": 1}), "backpressure returns ERR_BUSY")
@@ -1040,42 +1055,66 @@ func _send_method_cases() -> Array:
 	params.game_name = "g"
 	params.player_name = "p"
 	return [
-		["join_room", func(client) -> Error: return client.join_room(params)],
-		["leave_room", func(client) -> Error: return client.leave_room()],
-		["send_game_data", func(client) -> Error: return client.send_game_data({})],
+		[
+			"join_room",
+			func(client: SignalFishClientScript) -> Error: return client.join_room(params)
+		],
+		["leave_room", func(client: SignalFishClientScript) -> Error: return client.leave_room()],
+		[
+			"send_game_data",
+			func(client: SignalFishClientScript) -> Error: return client.send_game_data({})
+		],
 		[
 			"send_game_data_binary",
-			func(client) -> Error: return client.send_game_data_binary(PackedByteArray([0x01]))
+			func(client: SignalFishClientScript) -> Error: return _send_binary_game_data(client)
 		],
-		["set_ready", func(client) -> Error: return client.set_ready()],
-		["start_game", func(client) -> Error: return client.start_game()],
-		["request_authority", func(client) -> Error: return client.request_authority(true)],
+		["set_ready", func(client: SignalFishClientScript) -> Error: return client.set_ready()],
+		["start_game", func(client: SignalFishClientScript) -> Error: return client.start_game()],
+		[
+			"request_authority",
+			func(client: SignalFishClientScript) -> Error: return client.request_authority(true)
+		],
 		[
 			"provide_connection_info",
-			func(client) -> Error: return _send_custom_connection_info(client)
+			func(client: SignalFishClientScript) -> Error: return _send_conn_info(client)
 		],
-		["ping", func(client) -> Error: return client.ping()],
+		["ping", func(client: SignalFishClientScript) -> Error: return client.ping()],
 		[
 			"join_as_spectator",
-			func(client) -> Error: return client.join_as_spectator("g", "ROOM1", "s")
+			func(client: SignalFishClientScript) -> Error: return _join_as_spectator(client)
 		],
-		["leave_spectator", func(client) -> Error: return client.leave_spectator()],
+		[
+			"leave_spectator",
+			func(client: SignalFishClientScript) -> Error: return client.leave_spectator()
+		],
 		[
 			"send_signal",
-			func(client) -> Error: return client.send_signal(PLAYER_B, "gen", {"Offer": "s"})
+			func(client: SignalFishClientScript) -> Error: return _send_signal_fixture(client)
 		],
 		[
 			"send_transport_status",
-			func(client) -> Error: return _send_webrtc_transport_status(client)
+			func(client: SignalFishClientScript) -> Error: return _send_webrtc_status(client)
 		],
 	]
 
 
-func _send_webrtc_transport_status(client: SignalFishClientScript) -> Error:
+func _send_binary_game_data(client: SignalFishClientScript) -> Error:
+	return client.send_game_data_binary(PackedByteArray([0x01]))
+
+
+func _join_as_spectator(client: SignalFishClientScript) -> Error:
+	return client.join_as_spectator("g", "ROOM1", "s")
+
+
+func _send_signal_fixture(client: SignalFishClientScript) -> Error:
+	return client.send_signal(PLAYER_B, "gen", {"Offer": "s"})
+
+
+func _send_webrtc_status(client: SignalFishClientScript) -> Error:
 	return client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true)
 
 
-func _send_custom_connection_info(client: SignalFishClientScript) -> Error:
+func _send_conn_info(client: SignalFishClientScript) -> Error:
 	var info := SFTypesScript.ConnectionInfo.new({"type": "custom", "data": {}})
 	return client.provide_connection_info(info)
 

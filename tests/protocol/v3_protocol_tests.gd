@@ -8,6 +8,7 @@ const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
+const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 
 const V3_CLIENT_FIXTURE := "res://tests/fixtures/v3_client_messages.jsonl"
 const V3_SERVER_FIXTURE := "res://tests/fixtures/v3_server_messages.jsonl"
@@ -98,7 +99,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 		return
 
 	# Line 1: mesh + webrtc plan with two peers and STUN/TURN ICE.
-	var mesh_plan = decoded_events[0].args[0]
+	var mesh_plan: SFSessionTypesScript.SessionPlanInfo = decoded_events[0].args[0]
 	_assert_equal(
 		"40000000-0000-0000-0000-000000000001", mesh_plan.generation, "mesh plan generation"
 	)
@@ -139,7 +140,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	)
 
 	# Line 2: host + direct plan with host and endpoint.
-	var host_plan = decoded_events[1].args[0]
+	var host_plan: SFSessionTypesScript.SessionPlanInfo = decoded_events[1].args[0]
 	_assert_equal(SFSessionTypesScript.Topology.HOST, host_plan.topology, "host plan topology")
 	_assert_equal(
 		SFSessionTypesScript.TransportKind.DIRECT, host_plan.transport, "host plan transport"
@@ -150,7 +151,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	_assert_equal(0, host_plan.ice_servers.size(), "direct plan has no ice servers")
 
 	# Line 3: explicit relay-floor reset plan.
-	var relay_plan = decoded_events[2].args[0]
+	var relay_plan: SFSessionTypesScript.SessionPlanInfo = decoded_events[2].args[0]
 	_assert_equal(SFSessionTypesScript.Topology.RELAY, relay_plan.topology, "relay reset topology")
 	_assert_equal(
 		SFSessionTypesScript.TransportKind.RELAY, relay_plan.transport, "relay reset transport"
@@ -158,14 +159,14 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	_assert_equal(0, relay_plan.peers.size(), "relay reset has no peers")
 
 	# Line 4: legacy Server 0.4 shape without generation.
-	var legacy_plan = decoded_events[3].args[0]
+	var legacy_plan: SFSessionTypesScript.SessionPlanInfo = decoded_events[3].args[0]
 	_assert_equal("", legacy_plan.generation, "legacy plan has no generation")
 
-	var new_peer = decoded_events[4]
+	var new_peer: SFTypesScript.DecodedEvent = decoded_events[4]
 	_assert_equal("30000000-0000-0000-0000-000000000003", new_peer.args[0], "new peer id")
 	_assert_equal(true, new_peer.args[1], "new peer initiate flag")
 
-	var signal_event = decoded_events[5]
+	var signal_event: SFTypesScript.DecodedEvent = decoded_events[5]
 	_assert_equal("30000000-0000-0000-0000-000000000002", signal_event.args[0], "signal from peer")
 	_assert_equal("40000000-0000-0000-0000-000000000001", signal_event.args[1], "signal generation")
 	_assert_equal(
@@ -174,14 +175,14 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 		"signal answer payload round-trips verbatim"
 	)
 
-	var status = decoded_events[6]
+	var status: SFTypesScript.DecodedEvent = decoded_events[6]
 	_assert_equal("30000000-0000-0000-0000-000000000002", status.args[0], "status peer id")
 	_assert_equal(
 		SFSessionTypesScript.TransportKind.WEBRTC, status.args[1], "status transport kind"
 	)
 	_assert_equal(true, status.args[2], "status connected")
 
-	var pre_gather = decoded_events[7].args[0]
+	var pre_gather: SFTypesScript.RoomJoinedInfo = decoded_events[7].args[0]
 	_assert_equal(1, pre_gather.ice_servers.size(), "room joined ice pre-gather")
 	_assert_equal(
 		PackedStringArray(["stun:stun.l.google.com:19302"]),
@@ -191,7 +192,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	# Protocol-v3 snapshots trim connected_at (server #539); absent -> "".
 	_assert_equal("", pre_gather.current_players[0].connected_at, "v3 snapshot trims connected_at")
 
-	var v3_info = decoded_events[8].args[0]
+	var v3_info: SFTypesScript.ProtocolInfo = decoded_events[8].args[0]
 	_assert_equal(3, v3_info.protocol_version, "info negotiated version")
 	_assert_equal(2, v3_info.min_protocol_version, "info min version")
 	_assert_equal(3, v3_info.max_protocol_version, "info max version")
@@ -404,7 +405,7 @@ func _test_v3_validation_and_sentinels() -> void:
 	)
 	if _assert_decoded_signal("player_joined", null_connected, "null connected_at decodes"):
 		_assert_equal("", null_connected.args[0].connected_at, "null connected_at sentinel")
-		var info = null_connected.args[0].connection_info
+		var info: SFTypesScript.ConnectionInfo = null_connected.args[0].connection_info
 		_assert_equal("direct", info.type, "connection_info survives null connected_at")
 
 	# JSON null signal payloads round-trip verbatim (upstream Value::Null).

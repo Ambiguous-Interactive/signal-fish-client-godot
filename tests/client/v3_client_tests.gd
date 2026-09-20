@@ -10,12 +10,13 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
+const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 
 var _failures: Array = []
 var _runner: Variant = null
 
 
-static func run(runner) -> Array:
+static func run(runner: Variant) -> Array:
 	var tests := new()
 	tests._runner = runner
 	tests.run_all()
@@ -41,7 +42,7 @@ func _make_authenticated_client() -> SignalFishClientScript:
 	return _runner._make_authenticated_client()
 
 
-func _track_protocol_errors(client) -> Array:
+func _track_protocol_errors(client: SignalFishClientScript) -> Array:
 	return _runner._track_protocol_errors(client)
 
 
@@ -110,16 +111,18 @@ func _test_v3_config_advertises_capabilities() -> void:
 
 func _test_v3_events_surface() -> void:
 	var client := _make_authenticated_client()
-	var fake = client.transport
+	var fake: SFFakeTransportScript = client.transport
 	var plans: Array = []
-	client.session_plan.connect(func(plan) -> void: plans.append(plan))
+	client.session_plan.connect(
+		func(plan: SFSessionTypesScript.SessionPlanInfo) -> void: plans.append(plan)
+	)
 	var new_peers: Array = []
 	client.new_peer.connect(
 		func(peer_id: String, you_initiate: bool) -> void: new_peers.append([peer_id, you_initiate])
 	)
 	var signals_in: Array = []
 	client.signal_received.connect(
-		func(from_player: String, generation: String, payload) -> void:
+		func(from_player: String, generation: String, payload: Variant) -> void:
 			signals_in.append([from_player, generation, payload])
 	)
 	var statuses: Array = []
@@ -241,7 +244,7 @@ func _test_v3_events_surface() -> void:
 
 func _test_v3_send_methods() -> void:
 	var client := _make_authenticated_client()
-	var fake = client.transport
+	var fake: SFFakeTransportScript = client.transport
 	var before: int = fake.sent_text.size()
 	_assert_equal(OK, client.send_signal(PLAYER_B, "gen-1", {"Offer": "v=0"}), "send_signal")
 	var expected_signal := SFMessagesScript.encode(

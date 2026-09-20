@@ -154,7 +154,8 @@ func _test_manual_reconnect_guards_and_wire_bytes() -> void:
 	var reconnector := _make_reconnect_client(TOKEN_V1)
 	var auth_events: Array = []
 	reconnector.authenticated.connect(
-		func(_app: String, _org: String, _limits) -> void: auth_events.append(1)
+		func(_app: String, _org: String, _limits: SFTypesScript.RateLimitInfo) -> void:
+			auth_events.append(1)
 	)
 	_assert_equal(
 		SignalFishClientScript.SessionState.AUTHENTICATING,
@@ -183,7 +184,7 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	var reconnected_count := [0]
 	var missed_count := [0]
 	client.reconnected.connect(
-		func(_info, missed: Array) -> void:
+		func(_info: SFTypesScript.RoomJoinedInfo, missed: Array) -> void:
 			reconnected_count[0] += 1
 			missed_count[0] = missed.size()
 	)
@@ -579,7 +580,7 @@ func _test_handler_redial_failure_burns_one_attempt() -> void:
 	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
 	client.disconnected.connect(
 		func(_code: int, _reason: String) -> void:
-			var dial = SFFakeTransportScript.new()
+			var dial: SFFakeTransportScript = SFFakeTransportScript.new()
 			dial.fail_on_connect = true
 			client.transport = dial
 			client.connect_to_server("ws://example.test/socket")
@@ -619,7 +620,7 @@ func _test_double_nested_close_cascade_wins_over_retry() -> void:
 	client.connection_failed.connect(func(_error: String) -> void: client.close())
 	client.disconnected.connect(
 		func(_code: int, _reason: String) -> void:
-			var dial = SFFakeTransportScript.new()
+			var dial: SFFakeTransportScript = SFFakeTransportScript.new()
 			dial.fail_on_connect = true
 			client.transport = dial
 			client.connect_to_server("ws://example.test/socket")
@@ -681,7 +682,8 @@ func _test_duplicate_authenticated_sends_handshake_once() -> void:
 	)
 	var auth_events: Array = []
 	reconnected_client.authenticated.connect(
-		func(_app: String, _org: String, _limits) -> void: auth_events.append(1)
+		func(_app: String, _org: String, _limits: SFTypesScript.RateLimitInfo) -> void:
+			auth_events.append(1)
 	)
 	var data := _room_joined_data({"lobby_state": "lobby"})
 	data["reconnection_token"] = TOKEN_V2
@@ -710,7 +712,7 @@ func _test_handshake_send_failure_resolves_attempt() -> void:
 	var errors := _track_protocol_errors(client)
 	var reconnection_failures: Array = []
 	var disconnects: Array = []
-	var dial = client.transport
+	var dial: SFFakeTransportScript = client.transport
 	client.reconnection_failed.connect(
 		func(reason: String, code: SFErrorCodesScript.Code) -> void:
 			reconnection_failures.append([reason, code])

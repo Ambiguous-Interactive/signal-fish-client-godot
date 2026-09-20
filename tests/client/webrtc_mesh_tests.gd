@@ -27,7 +27,7 @@ var _failures: Array = []
 var _runner: Variant = null
 
 
-static func run(runner) -> Array:
+static func run(runner: Variant) -> Array:
 	var tests := new()
 	tests._runner = runner
 	tests.run_all()
@@ -75,12 +75,12 @@ func _test_engine_api_parity() -> void:
 func _make_mesh() -> SFWebRTCMeshScript:
 	var mesh := SFWebRTCMeshScript.new()
 	var created: Array = []
-	mesh.peer_connection_factory = func():
+	mesh.peer_connection_factory = func() -> Variant:
 		var pc := FakePeerConnection.new()
 		created.append(pc)
 		return pc
 	var multiplayer := FakeMultiplayerPeer.new()
-	mesh.multiplayer_peer_factory = func(): return multiplayer
+	mesh.multiplayer_peer_factory = func() -> Variant: return multiplayer
 	mesh.set_meta("created", created)
 	mesh.set_meta("multiplayer", multiplayer)
 	return mesh
@@ -90,7 +90,7 @@ func _mesh_peers(mesh: SFWebRTCMeshScript) -> Array:
 	return mesh.get_meta("created")
 
 
-func _mesh_multiplayer(mesh: SFWebRTCMeshScript):
+func _mesh_multiplayer(mesh: SFWebRTCMeshScript) -> Variant:
 	return mesh.get_meta("multiplayer")
 
 
@@ -189,12 +189,12 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 	var errors := _track_protocol_errors(client)
 	var mesh := _make_mesh()
 	_attach(mesh, client)
-	var multiplayer = _mesh_multiplayer(mesh)
+	var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(mesh)
 
 	_inject_plan(client, [_peer(PLAYER_B, true)], "gen-1", "webrtc", [STUN, TURN])
 	var peers := _mesh_peers(mesh)
 	_assert_equal(1, peers.size(), "plan opens one peer connection")
-	var pc = peers[0]
+	var pc: FakePeerConnection = peers[0]
 	_assert_equal(
 		{"iceServers": [STUN, TURN]}, pc.initialize_config, "ice config carries the plan list"
 	)
@@ -296,15 +296,15 @@ func _test_plan_replaces_fully() -> void:
 	var client := _make_in_room_client()
 	var mesh := _make_mesh()
 	_attach(mesh, client)
-	var multiplayer = _mesh_multiplayer(mesh)
+	var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(mesh)
 
 	_inject_plan(client, [_peer(PLAYER_B, true), _peer(PLAYER_C, false)])
 	var peers := _mesh_peers(mesh)
 	_assert_equal(2, peers.size(), "two peers opened")
 	_assert_equal(1, peers[0].create_offer_calls, "B offers (server flag)")
 	_assert_equal(0, peers[1].create_offer_calls, "C answers, never offers")
-	var b_pc = peers[0]
-	var c_pc = peers[1]
+	var b_pc: FakePeerConnection = peers[0]
+	var c_pc: FakePeerConnection = peers[1]
 	_assert_equal(
 		[[b_pc, PLAYER_B_PEER_ID]], multiplayer.added.slice(0, 1), "mesh peers added in plan order"
 	)
@@ -361,7 +361,7 @@ func _test_ice_replace_and_clear() -> void:
 	)
 	_inject_plan(client, [_peer(PLAYER_B, false)], "gen-1", "webrtc", [])
 	_assert_equal([], _mesh_peers(mesh)[0].initialize_config["iceServers"], "empty plan clears ICE")
-	var clear_pc = _mesh_peers(mesh)[0]
+	var clear_pc: FakePeerConnection = _mesh_peers(mesh)[0]
 
 	# The next plan replaces (never merges) the list for new connections.
 	_inject_plan(client, [_peer(PLAYER_C, false)], "gen-2", "webrtc", [STUN])
@@ -385,7 +385,7 @@ func _test_signal_gates() -> void:
 
 	# Peer B answers under gen-1.
 	_inject_plan(client, [_peer(PLAYER_B, false)])
-	var pc = _mesh_peers(mesh)[0]
+	var pc: FakePeerConnection = _mesh_peers(mesh)[0]
 	var discards := [
 		["wrong generation", {"from": PLAYER_B, "generation": "gen-9", "signal": {"Answer": "x"}}],
 		["unknown sender", {"from": PLAYER_C, "generation": "gen-1", "signal": {"Answer": "x"}}],
@@ -468,9 +468,9 @@ func _test_teardown_paths() -> void:
 		var teardown_client := _make_in_room_client()
 		var teardown_mesh := _make_mesh()
 		_attach(teardown_mesh, teardown_client)
-		var multiplayer = _mesh_multiplayer(teardown_mesh)
+		var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(teardown_mesh)
 		_inject_plan(teardown_client, [_peer(PLAYER_B, true)])
-		var pc = _mesh_peers(teardown_mesh)[0]
+		var pc: FakePeerConnection = _mesh_peers(teardown_mesh)[0]
 		pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
 		teardown_mesh.poll()
 		match teardown:
@@ -617,7 +617,7 @@ class FakePeerConnection:
 	signal ice_candidate_created(media: String, index: int, name: String)
 
 	var state: int = 0  # WebRTCPeerConnection.STATE_NEW
-	var initialize_config = null
+	var initialize_config: Variant = null
 	var initialize_result: Error = OK
 	var create_offer_calls := 0
 	var local_description: Array = []
@@ -626,7 +626,7 @@ class FakePeerConnection:
 	var poll_calls := 0
 	var closed := false
 
-	func initialize(configuration) -> Error:
+	func initialize(configuration: Variant) -> Error:
 		initialize_config = configuration
 		return initialize_result
 
@@ -675,7 +675,7 @@ class FakeMultiplayerPeer:
 			mesh_id = unique_id
 		return create_mesh_result
 
-	func add_peer(connection, unique_id: int) -> Error:
+	func add_peer(connection: Variant, unique_id: int) -> Error:
 		added.append([connection, unique_id])
 		return OK
 
