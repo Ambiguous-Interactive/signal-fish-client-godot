@@ -320,6 +320,8 @@ func join_room(params: JoinRoomParams) -> Error:
 	var guard := _guard_session_send("join_room")
 	if guard != OK:
 		return guard
+	# Join passwords are secrets like tokens: redact them from any log line.
+	_remember_secret(params.password)
 	var max_players: Variant = null
 	if params.max_players > 0:
 		max_players = params.max_players
@@ -329,7 +331,8 @@ func join_room(params: JoinRoomParams) -> Error:
 		_optional_string(params.room_code),
 		max_players,
 		params.supports_authority,
-		params.relay_transport
+		params.relay_transport,
+		_optional_string(params.password)
 	)
 	return _send_envelope(envelope, "join_room")
 
@@ -402,6 +405,18 @@ func set_ready() -> Error:
 	return _send_envelope(SFMessagesScript.player_ready(), "set_ready")
 
 
+## Explicitly finalizes the lobby with its current members (upstream
+## `StartGame`). The server accepts it only when every current player is ready
+## and the sender may start (authority-designated rooms restrict it to the
+## authority); failures surface through [signal server_error] with
+## [code]GameStartNotReady[/code] / [code]GameStartForbidden[/code].
+func start_game() -> Error:
+	var guard := _guard_session_send("start_game")
+	if guard != OK:
+		return guard
+	return _send_envelope(SFMessagesScript.start_game(), "start_game")
+
+
 func request_authority(become_authority: bool) -> Error:
 	var guard := _guard_session_send("request_authority")
 	if guard != OK:
@@ -428,12 +443,17 @@ func ping() -> Error:
 	return _send_envelope(SFMessagesScript.ping(), "ping")
 
 
-func join_as_spectator(game_name: String, room_code: String, spectator_name: String) -> Error:
+func join_as_spectator(
+	game_name: String, room_code: String, spectator_name: String, password := ""
+) -> Error:
 	var guard := _guard_session_send("join_as_spectator")
 	if guard != OK:
 		return guard
+	_remember_secret(password)
 	return _send_envelope(
-		SFMessagesScript.join_as_spectator(game_name, room_code, spectator_name),
+		SFMessagesScript.join_as_spectator(
+			game_name, room_code, spectator_name, _optional_string(password)
+		),
 		"join_as_spectator"
 	)
 
@@ -470,6 +490,10 @@ class JoinRoomParams:
 	var max_players: int = 0
 	var supports_authority: Variant = null
 	var relay_transport: Variant = null
+	## Join password for password-protected rooms (upstream `JoinRoom.password`).
+	## Empty = omit from the wire: a password presented to an open room is
+	## refused upstream, and a non-empty value seals a room this join creates.
+	var password: String = ""
 
 
 ## Returns a non-empty error message when connecting to [param url] would hit

@@ -25,16 +25,19 @@ binding is checked by `scripts/check-protocol-sync.py` (weekly scheduled
 workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
 
 - v2 wire bytes are frozen upstream: no legacy message variant, error code,
-  or field was renamed or removed; all new surface is additive and v3-route
-  only (new `Signal`/`NewPeer`/`SessionPlan`/`RoomOperationResult`/
-  `PeerTransportStatus`/`RelayStats`/`GoingAway`/`DeliveryReport` server
-  events; `StartGame`/`Signal`/`RoomOperation`/`TransportStatus` client
-  messages; `password` on JoinRoom/JoinAsSpectator; v3 negotiation fields on
-  `Authenticate`). The v2-route codec stays wire-compatible unchanged.
+  or field was renamed or removed; all new surface is additive. `StartGame`
+  and `password` on JoinRoom/JoinAsSpectator are v2-reachable (both present
+  in the upstream v2 wire sample) and shipped in the Godot codec (issue
+  #26). The rest is v3-route only (new `Signal`/`NewPeer`/`SessionPlan`/
+  `RoomOperationResult`/`PeerTransportStatus`/`RelayStats`/`GoingAway`/
+  `DeliveryReport` server events; `Signal`/`RoomOperation`/`TransportStatus`
+  client messages; v3 negotiation fields on `Authenticate`). The v2-route
+  codec stays wire-compatible unchanged.
 - Error codes grew from 41 to 62 upstream (moderation, delivery, lifecycle,
-  game-start, auth categories). Unknown inbound codes already decode to
-  `Code.UNKNOWN`; extending the table (and its category ranges) is tracked
-  as follow-up work.
+  game-start, auth categories). The Godot table was extended to the full
+  v0.9.1 surface (issue #26): string lookups derive from the enum, and
+  `category()` follows the upstream `docs/reference/error-codes.md` tables
+  via a per-code map whose completeness is test-pinned.
 - `PlayerNameRules.allowed_symbols` widened upstream from `Vec<char>` to
   `Vec<String>` (both serialize as JSON string arrays; current servers emit
   one-character strings). The GDScript codec treats entries as plain
@@ -87,8 +90,9 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
 
 ## Fixture Files
 
-- `tests/fixtures/v2_client_messages.jsonl` covers all 11 `ClientMessage`
-  variants from `messages.rs` / `protocol.rs`.
+- `tests/fixtures/v2_client_messages.jsonl` covers all 12 `ClientMessage`
+  variants from `messages.rs` / `protocol.rs` (including `StartGame`, added
+  at the v0.9.1 re-pin; issue #26).
 - `tests/fixtures/v2_server_messages.jsonl` covers all 24 `ServerMessage`
   variants from `messages.rs` / `protocol.rs`.
 - `tests/fixtures/malformed.jsonl` covers malformed JSON, missing or invalid

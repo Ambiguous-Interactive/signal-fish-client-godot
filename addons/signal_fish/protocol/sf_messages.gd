@@ -31,7 +31,8 @@ static func join_room(
 	room_code: Variant = null,
 	max_players: Variant = null,
 	supports_authority: Variant = null,
-	relay_transport: Variant = null
+	relay_transport: Variant = null,
+	password: Variant = null
 ) -> Dictionary:
 	var data: Dictionary = {}
 	data["game_name"] = game_name
@@ -48,6 +49,9 @@ static func join_room(
 		if not error.is_empty():
 			return _invalid_message("JoinRoom", error, data)
 	error = _add_optional_relay_transport(data, "relay_transport", relay_transport)
+	if not error.is_empty():
+		return _invalid_message("JoinRoom", error, data)
+	error = _add_optional_string(data, "password", password)
 	if not error.is_empty():
 		return _invalid_message("JoinRoom", error, data)
 	return SFEnvelopeScript.message("JoinRoom", data)
@@ -95,17 +99,29 @@ static func reconnect(player_id: String, room_id: String, auth_token: String) ->
 
 
 static func join_as_spectator(
-	game_name: String, room_code: String, spectator_name: String
+	game_name: String, room_code: String, spectator_name: String, password: Variant = null
 ) -> Dictionary:
 	var data: Dictionary = {}
 	data["game_name"] = game_name
 	data["room_code"] = room_code
 	data["spectator_name"] = spectator_name
+	var error := _add_optional_string(data, "password", password)
+	if not error.is_empty():
+		return _invalid_message("JoinAsSpectator", error, data)
 	return SFEnvelopeScript.message("JoinAsSpectator", data)
 
 
 static func leave_spectator() -> Dictionary:
 	return SFEnvelopeScript.message("LeaveSpectator")
+
+
+## Explicitly finalizes the lobby with its current members (upstream
+## `ClientMessage::StartGame`, v2 unit message). Accepted only when every
+## current player is ready and the sender may start (authority-designated
+## rooms restrict it to the authority); otherwise the server answers
+## `Error{GameStartNotReady}` / `Error{GameStartForbidden}`.
+static func start_game() -> Dictionary:
+	return SFEnvelopeScript.message("StartGame")
 
 
 static func encode(envelope: Dictionary) -> String:

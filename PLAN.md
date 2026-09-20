@@ -95,9 +95,9 @@ file **and commit SHA** before implementing — never invent protocol details (c
 
 | Concern | Source of truth |
 |---|---|
-| Wire envelope, 11 client + 24 server messages | server `src/protocol/messages.rs`; `docs/protocol.md` |
+| Wire envelope, 12 client + 24 server messages | server `src/protocol/messages.rs`; `docs/protocol.md` |
 | Types (PlayerId, RoomId, LobbyState, GameDataEncoding, RelayTransport, ConnectionInfo, *Payload structs) | server `src/protocol/types.rs` |
-| Error codes (~37–40) | server `src/protocol/error_codes.rs`; client `src/error_codes.rs`; `docs/reference/error-codes.md` |
+| Error codes (62 upstream + cloud `DATABASE_ERROR` alias) | server `src/protocol/error_codes.rs`; client `src/error_codes.rs`; `docs/reference/error-codes.md` |
 | Room state machine (Waiting→Lobby→Finalized) | server `src/protocol/room_state.rs`; `docs/concepts/rooms-and-lobbies.md` |
 | Authority / spectator / reconnection rules | server `docs/concepts/{authority,spectator-mode,reconnection}.md`; `docs/adr/reconnection-protocol.md` |
 | **Gold wire fixtures** (vendor complete copies) | server `.llm/code-samples/protocol/v2-client-messages.jsonl` + `v2-server-messages.jsonl` |
@@ -116,9 +116,9 @@ file **and commit SHA** before implementing — never invent protocol details (c
 - **Envelope:** externally tagged — `{"type":"<Name>","data":{...}}`. Unit (no-field) messages
   serialize as `{"type":"X"}` with **no `data` key** (serde `tag="type", content="data"`). Decoder must
   also tolerate `data: null` and missing `data`.
-- **11 client→server messages:** `Authenticate`, `JoinRoom`, `LeaveRoom`, `GameData`,
-  `AuthorityRequest`, `PlayerReady`, `ProvideConnectionInfo`, `Ping`, `Reconnect`, `JoinAsSpectator`,
-  `LeaveSpectator`.
+- **12 client→server messages:** `Authenticate`, `JoinRoom`, `LeaveRoom`, `GameData`,
+  `AuthorityRequest`, `PlayerReady`, `StartGame`, `ProvideConnectionInfo`, `Ping`, `Reconnect`,
+  `JoinAsSpectator`, `LeaveSpectator`.
 - **26 client events** (24 server messages + synthetic `Connected`/`Disconnected`): see the full
   signal list in §4.
 - **Binary game data:** current upstream negotiates `game_data_format` after `Authenticate`.
@@ -152,7 +152,7 @@ addons/signal_fish/
   signal_fish_config.gd           # class_name SignalFishConfig (Resource)
   protocol/                       # PURE static; no Node, no transport import
     sf_envelope.gd                #   {type,data} <-> JSON (stringify/parse_string)
-    sf_messages.gd                #   builders for the 11 client messages -> Dictionary envelopes
+    sf_messages.gd                #   builders for the 12 client messages -> Dictionary envelopes
     sf_events.gd                  #   decoder: server Dictionary -> SFDecodedEvent (malformed-safe)
     sf_types.gd                   #   typed value objects + enums (see 4.3)
     sf_error_codes.gd             #   enum Code + string<->code table + category()
@@ -196,7 +196,7 @@ func get_buffered_amount() -> int
 func set_auto_reconnect(enabled: bool) -> void       # default OFF
 ```
 
-**11 send methods (1:1 with client messages, named per Rust client)** — each returns `Error` and is
+**12 send methods (1:1 with client messages, named per Rust client)** — each returns `Error` and is
 guarded on session state (room commands require `AUTHENTICATED`; pre-auth emits `protocol_error` +
 returns `ERR_UNAUTHORIZED`, sends nothing):
 
@@ -207,15 +207,16 @@ func leave_room() -> Error
 func send_game_data(data: Variant) -> Error
 func send_game_data_binary(bytes: PackedByteArray) -> Error
 func set_ready() -> Error                            # PlayerReady (toggle)
+func start_game() -> Error                           # StartGame (finalize lobby)
 func request_authority(become_authority: bool) -> Error
 func provide_connection_info(info: SFTypes.ConnectionInfo) -> Error
 func ping() -> Error
-func join_as_spectator(game_name: String, room_code: String, spectator_name: String) -> Error
+func join_as_spectator(game_name: String, room_code: String, spectator_name: String, password := "") -> Error
 func leave_spectator() -> Error
 ```
 
 `JoinRoomParams` = small RefCounted/inner class: `game_name`, `player_name`, `room_code?`,
-`max_players?`, `supports_authority?`, `relay_transport?`.
+`max_players?`, `supports_authority?`, `relay_transport?`, `password?`.
 
 **26 signals (1:1 with events, snake_case)**
 
@@ -352,8 +353,11 @@ func close(code := 1000, reason := "") -> void
   **Decode recursion is depth-bounded** (`MAX_MESSAGE_DEPTH`), and nested `Reconnected` entries inside
   `missed_events` are rejected as non-replayable (matching the Rust client) — a hostile server cannot
   overflow the script stack.
-- **Error codes (`sf_error_codes.gd`):** single source — `enum Code`, `STRING_TO_CODE`/`CODE_TO_STRING`,
-  `to_code()`/`to_string()`/`category()` (auth/validation/room/authority/ratelimit/reconnect/spectator/server).
+- **Error codes (`sf_error_codes.gd`):** single source — `enum Code` (62 upstream
+  codes + the cloud-only `DATABASE_ERROR` alias, string lookups derived from the
+  enum) + `from_string()`/`to_wire_string()`/`is_known()`/`category()` (per-code
+  map following the upstream doc's category tables; unknown → `UNKNOWN`
+  forward-compat; completeness pinned by tests).
 - **MessagePack (`sf_msgpack.gd`):** landed (P2). Payload decode is opt-in
   (`config.decode_msgpack_payloads`): decoded values surface through
   `game_data_received`; default behavior exposes the envelope payload bytes as
@@ -487,8 +491,10 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       failed handshake send resolves the attempt (`reconnection_failed` with `Code.NONE`,
       terminal teardown, auto-reconnect re-arms from the retained context), and transport
       teardown closes the socket instead of dropping it live.
-- [x] Full ~40 error-code surface mapped through `sf_error_codes.gd` (wire
-      string⇄enum table + categories; unknown → `UNKNOWN` forward-compat).
+- [x] Full v0.9.1 62-code error-code surface mapped through `sf_error_codes.gd`
+      (string⇄enum derived from the enum; per-code category map; unknown →
+      `UNKNOWN` forward-compat; `NON_EMITTED` annotations) + `StartGame`
+      builder/client method and `password` on joins (issue #26).
 - [x] **MessagePack** `sf_msgpack.gd` (opt-in decode; encode for building
       payloads) + raw-bytes pass-through + strict v2/v3 binary envelope
       decoder (`sf_binary_frames.gd`); Rkyv pass-through documented. Suite:
@@ -526,14 +532,17 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       **web-export-smoke** job (`chickensoft-games/setup-godot@v2.4.1` `use-dotnet:false
       include-templates:true`; `--import`; `--export-release "Web"`; assert artifacts).
 - [x] `permissions: contents: read`; pip + Godot binary caching (`actions/setup-python` pip cache,
-      `actions/cache` on `/usr/local/bin/godot` keyed by version).
+      `actions/cache` on `/usr/local/bin/godot` keyed by version); GDScript tooling installs via
+      `uv` (issue #27; ~4× faster than the pip venv path, same pinned gdtoolkit).
 - [x] `.github/dependabot.yml` (github-actions weekly + pip + devcontainers).
 - [ ] **Do not touch `llm-harness.yml`** (preflight, harness, generated-diff, 5000ms guard stay intact).
 - **DoD:** `ci.yml` green across matrix; `llm-harness.yml` still green.
 
 ### P6 — Asset Library release + first publish
-- [ ] `addons/signal_fish/plugin.cfg` (`version` = git tag, validated in CI); `CHANGELOG.md`
-      (Keep-a-Changelog); `icon.png` square ≥128² served from `raw.githubusercontent.com`.
+- [x] `CHANGELOG.md` (Keep-a-Changelog; user-facing changes only) + SemVer
+      policy (issue #29). Remaining: `addons/signal_fish/plugin.cfg`
+      (`version` = git tag, validated in CI); `icon.png` square ≥128² served
+      from `raw.githubusercontent.com`.
 - [ ] `.gitattributes` `export-ignore` for `/.llm /.devcontainer /.github /scripts tests/`; keep addon
       self-contained under `addons/signal_fish/`.
 - [ ] `.github/workflows/release.yml` on `release: published`: validate `plugin.cfg version == tag` →
@@ -667,11 +676,13 @@ CI time is untouched): runs `scripts/check-protocol-sync.py` to fail loudly when
 Rust SDK binding (`tests/compatibility.toml`) moves past the pins recorded in the fixture
 headers and `.llm/research/protocol-fixtures.md` (issue #12).
 
-`release.yml` (trigger: `release: published`; `permissions: contents: write` on release job only;
-concurrency `cancel-in-progress: false`):
-- `package` → assert `plugin.cfg version == ${tag#v}`; `zip -r` the addon (addons/ at root; exclude
-  `tests/`, `.gdignore`); `softprops/action-gh-release` (pin SHA) with the zip + generated notes.
-- `publish-asset-lib` → see §10.
+`release.yml` (landed, issue #28; `workflow_dispatch` with a `version` input;
+`permissions: contents: write` on the release job only):
+- validate `vMAJOR.MINOR.PATCH`, cut release notes from the matching
+  `CHANGELOG.md` section (fails loudly when the section is missing),
+  `zip -r` the addon (addons/ at zip root), then `gh release create` tags
+  and publishes the release with the zip. Asset-store auto-publish stays
+  gated on the one-time Asset Library bootstrap (§10, P6).
 
 **Caching:** pip wheels (setup-python cache) and the Godot binary (`actions/cache`) keep the
 `protocol` job fast; setup-godot caches Godot+templates for the export smoke.
@@ -802,7 +813,7 @@ Resolve each by reading the cited upstream file at a specific commit during impl
 ## 14. Definition of done (v1)
 
 v1 is complete when:
-- The **full** protocol is implemented and adversarially verified: all 11 client messages / 26 events,
+- The **full** protocol is implemented and adversarially verified: all 12 client messages / 26 events,
   authority, spectators, reconnection + missed-event replay, MessagePack (opt-in) + binary pass-through,
   and the optional WebRTC P2P helper.
 - All five context.md "first usable client" DoD items are met (fixtures pinned to upstream commits;

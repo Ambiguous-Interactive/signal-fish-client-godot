@@ -1,0 +1,91 @@
+name: Release
+
+on:
+    workflow_dispatch:
+        inputs:
+            version:
+                description: Tag to release, vMAJOR.MINOR.PATCH (e.g. v0.1.0)
+                required: true
+
+permissions:
+    contents: read
+
+concurrency:
+    group: release
+    cancel-in-progress: false
+
+jobs:
+    release:
+        name: Tag, package, publish
+        runs-on: ubuntu-24.04
+        permissions:
+            contents: write
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Validate version
+              env:
+                  VERSION: ${{ inputs.version }}
+              run: |
+                  if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$VERSION" == *$'\n'* ]]; then
+                      echo "::error::version must be a single vMAJOR.MINOR.PATCH token (e.g. v0.1.0)"
+                      exit 1
+                  fi
+                  echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+            - name: Cut release notes from CHANGELOG
+              run: |
+                  header="## [$VERSION]"
+                  awk -v header="$header" \
+                      'index($0, header) == 1 {flag = 1; next} /^## /{flag = 0} flag' \
+                      CHANGELOG.md > release-notes.md
+                  if [ ! -s release-notes.md ]; then
+                      echo "::error::no CHANGELOG.md section starting with [$header]; cut the changelog first"
+                      exit 1
+                  fi
+                  cat release-notes.md
+
+            - name: Check addon packaging contract
+              run: |
+                  cfg="addons/signal_fish/plugin.cfg"
+                  if [ ! -f "$cfg" ]; then
+                      echo "::error::$cfg is missing; the Asset Library requires it (PLAN P6)"
+                      exit 1
+                  fi
+                  expected="${VERSION#v}"
+                  actual=$(grep -oP '^\s*version\s*=\s*\K.+' "$cfg" | tr -d '"' | tr -d "'")
+                  if [ "$actual" != "$expected" ]; then
+                      echo "::error::$cfg version '$actual' != release $expected"
+                      exit 1
+                  fi
+
+            - name: Guard against an existing tag
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  set +e
+                  git ls-remote --exit-code --tags origin "refs/tags/$VERSION" 2>/dev/null
+                  status=$?
+                  set -e
+                  if [ "$status" -eq 0 ]; then
+                      echo "::error::tag $VERSION already exists; pick the next version"
+                      exit 1
+                  elif [ "$status" -ne 2 ]; then
+                      echo "::error::could not query tags (git ls-remote exit $status)"
+                      exit 1
+                  fi
+
+            - name: Package addon
+              run: zip -r "signal-fish-godot-${VERSION}.zip" addons
+
+            - name: Create tag and release
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  gh release create "$VERSION" \
+                      --repo "$GITHUB_REPOSITORY" \
+                      --target "$GITHUB_SHA" \
+                      --title "$VERSION" \
+                      --notes-file release-notes.md \
+                      "signal-fish-godot-${VERSION}.zip"
