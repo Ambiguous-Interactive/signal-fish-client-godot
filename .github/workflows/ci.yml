@@ -50,10 +50,9 @@ jobs:
 
             - name: Install GDScript tooling
               run: |
-                  python3 -m venv .venv-ci
-                  . .venv-ci/bin/activate
-                  python -m pip install --upgrade pip
-                  python -m pip install -r requirements-ci.txt
+                  python3 -m pip install uv
+                  python3 -m uv venv .venv-ci
+                  python3 -m uv pip install --python .venv-ci/bin/python -r requirements-ci.txt
 
             - name: Check private helper reachability
               run: bash scripts/run-runtime-checks.sh private-helpers
