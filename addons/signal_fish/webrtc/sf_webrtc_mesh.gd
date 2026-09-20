@@ -77,10 +77,14 @@ var _reported_connected := false
 
 ## Starts consuming a client's session-plan events. The client must stay
 ## driven (its own polling pumps inbound events); this node's [code]
-## _process[/code] pumps the peer connections.
+## _process[/code] pumps the peer connections. Attach before joining, or make
+## sure the next plan carries its own ICE list.
 func attach(client: SignalFishClientScript) -> Error:
 	if client == null:
 		return ERR_INVALID_PARAMETER
+	# Resolve a client that vanished since the last attach (freed without a
+	# poll) so a zombie mesh can never be re-attached onto a fresh client.
+	_client_is_live()
 	if _client != null:
 		return ERR_BUSY
 	_client = client
@@ -99,7 +103,9 @@ func attach(client: SignalFishClientScript) -> Error:
 
 ## Stops consuming events and tears the mesh down.
 func detach() -> void:
-	if _client == null:
+	# Also resolves a vanished client here so _exit_tree teardown never
+	# depends on a later poll.
+	if not _client_is_live():
 		return
 	_client.room_joined.disconnect(_on_client_room_joined)
 	_client.session_plan.disconnect(_on_client_session_plan)
@@ -145,7 +151,8 @@ func get_peer_ids() -> Array:
 ## Deterministic, platform-stable player UUID → [MultiplayerAPI] peer id
 ## (FNV-1a over the UUID string). The result is forced into the valid
 ## non-server id range [2, 2^31): 0 is invalid and 1 is the reserved server
-## id, and both would make [code]initialize_mesh[/code] fail.
+## id, and both would make [code]initialize_mesh[/code] fail. The range
+## squeeze is shared by every mesh member, so ids stay collision-consistent.
 static func uuid_to_peer_id(uuid: String) -> int:
 	var digest := _FNV1A_OFFSET_BASIS
 	for index: int in uuid.length():
@@ -338,16 +345,21 @@ func _reset_mesh() -> void:
 func _update_transport_status() -> void:
 	if _client == null:
 		return
-	var connected := 0
-	for uuid: String in _peers:
-		if _peers[uuid].connection.get_connection_state() == WebRTCPeerConnection.STATE_CONNECTED:
-			connected += 1
+	var connected := _count_connected_peers()
 	if connected > 0 and not _reported_connected:
 		_reported_connected = true
 		_client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true)
 	elif connected == 0 and _reported_connected:
 		_reported_connected = false
 		_client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, false)
+
+
+func _count_connected_peers() -> int:
+	var connected := 0
+	for uuid: String in _peers.keys():
+		if _peers[uuid].connection.get_connection_state() == WebRTCPeerConnection.STATE_CONNECTED:
+			connected += 1
+	return connected
 
 
 func _on_peer_session_description(entry, type: String, sdp: String) -> void:

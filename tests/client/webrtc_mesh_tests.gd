@@ -535,6 +535,21 @@ func _test_mesh_survives_engine_hostility() -> void:
 	refused.free()
 	refused_client.free()
 
+	# A zombie mesh (client freed without a poll since) resolves on re-attach
+	# instead of carrying stale peers onto the fresh client.
+	var zombie_client := _make_in_room_client()
+	var zombie_mesh := _make_mesh()
+	_attach(zombie_mesh, zombie_client)
+	_inject_plan(zombie_client, [_peer(PLAYER_B, false)])
+	zombie_client.free()
+	var fresh_client := _make_in_room_client()
+	_attach(zombie_mesh, fresh_client)
+	_assert_equal(0, zombie_mesh.get_peer_count(), "re-attach starts clean")
+	_inject_plan(fresh_client, [_peer(PLAYER_C, true)])
+	_assert_equal(1, zombie_mesh.get_peer_count(), "fresh client drives the mesh")
+	zombie_mesh.free()
+	fresh_client.free()
+
 
 func _assert(condition: bool, label: String) -> bool:
 	if not condition:
