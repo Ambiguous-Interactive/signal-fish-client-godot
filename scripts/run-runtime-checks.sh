@@ -48,6 +48,12 @@ run_lint() {
 	gdlint addons/signal_fish tests
 }
 
+run_static() {
+	run_private_helpers
+	run_format
+	run_lint
+}
+
 make_cold_parent() {
 	local cold_parent_template="${RUNNER_TEMP:-/tmp}/signal-fish-godot-cold.XXXXXX"
 	mktemp -d "${cold_parent_template}"
@@ -94,10 +100,11 @@ run_godot() {
 
 case "${target}" in
 	all)
-		run_private_helpers
-		run_format
-		run_lint
+		run_static
 		run_godot
+		;;
+	static)
+		run_static
 		;;
 	private-helpers)
 		run_private_helpers
@@ -112,7 +119,7 @@ case "${target}" in
 		run_godot
 		;;
 	*)
-		echo "usage: $0 [all|private-helpers|format|lint|godot]" >&2
+		echo "usage: $0 [all|static|private-helpers|format|lint|godot]" >&2
 		exit 2
 		;;
 esac
