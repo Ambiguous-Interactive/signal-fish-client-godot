@@ -233,6 +233,39 @@ func _test_authenticated_args_and_send_surface() -> void:
 		"set_ready bytes"
 	)
 
+	_assert_equal(OK, client.start_game(), "start_game")
+	_assert_equal(
+		SFMessagesScript.encode(SFMessagesScript.start_game()),
+		fake.sent_text.back(),
+		"start_game bytes"
+	)
+
+	# Password joins (issue #26): a set password rides the wire, an empty one
+	# is omitted (a password presented to an open room is refused upstream).
+	var sealed_params := SignalFishClientScript.JoinRoomParams.new()
+	sealed_params.game_name = "reef-rally"
+	sealed_params.player_name = "Alice"
+	sealed_params.room_code = "ABC123"
+	sealed_params.password = "sealed-room-pass"
+	_assert_equal(OK, client.join_room(sealed_params), "sealed join_room")
+	_assert_equal(
+		SFMessagesScript.encode(
+			SFMessagesScript.join_room(
+				"reef-rally", "Alice", "ABC123", null, null, null, "sealed-room-pass"
+			)
+		),
+		fake.sent_text.back(),
+		"sealed join_room bytes"
+	)
+	_assert_equal(OK, client.join_room(params), "open join_room omits password")
+	_assert_equal(
+		SFMessagesScript.encode(
+			SFMessagesScript.join_room("reef-rally", "Alice", "ABC123", null, null, null, null)
+		),
+		fake.sent_text.back(),
+		"password omitted from open join_room"
+	)
+
 	_assert_equal(OK, client.request_authority(true), "request_authority")
 	_assert_equal(
 		SFMessagesScript.encode(SFMessagesScript.authority_request(true)),
@@ -270,6 +303,20 @@ func _test_authenticated_args_and_send_surface() -> void:
 		),
 		fake.sent_text.back(),
 		"join_as_spectator bytes"
+	)
+	_assert_equal(
+		OK,
+		client.join_as_spectator("reef-rally", "ABC123", "Watcher", "sealed-room-pass"),
+		"sealed join_as_spectator"
+	)
+	_assert_equal(
+		SFMessagesScript.encode(
+			SFMessagesScript.join_as_spectator(
+				"reef-rally", "ABC123", "Watcher", "sealed-room-pass"
+			)
+		),
+		fake.sent_text.back(),
+		"sealed join_as_spectator bytes"
 	)
 	_assert_equal(OK, client.leave_spectator(), "leave_spectator")
 	_assert_equal(
@@ -970,6 +1017,7 @@ func _send_method_cases() -> Array:
 			func(client) -> Error: return client.send_game_data_binary(PackedByteArray([0x01]))
 		],
 		["set_ready", func(client) -> Error: return client.set_ready()],
+		["start_game", func(client) -> Error: return client.start_game()],
 		["request_authority", func(client) -> Error: return client.request_authority(true)],
 		[
 			"provide_connection_info",

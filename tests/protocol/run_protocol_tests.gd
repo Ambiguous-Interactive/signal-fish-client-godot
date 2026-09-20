@@ -84,15 +84,18 @@ func _test_allowed_symbols_widen_parity() -> void:
 
 func _test_client_encoders_match_fixtures() -> void:
 	var lines := _read_fixture_lines(CLIENT_FIXTURE)
-	if not _assert_fixture_count(11, lines, CLIENT_FIXTURE):
+	if not _assert_fixture_count(12, lines, CLIENT_FIXTURE):
 		return
 	var built := [
 		SFMessagesScript.authenticate("mb_app_fixture", "0.1.0-godot", "godot", "json"),
-		SFMessagesScript.join_room("reef-rally", "Alice", "ABC123", 4, true, "websocket"),
+		SFMessagesScript.join_room(
+			"reef-rally", "Alice", "ABC123", 4, true, "websocket", "hunter2-not-secret"
+		),
 		SFMessagesScript.leave_room(),
 		SFMessagesScript.game_data({"action": "move", "x": 10, "y": 20, "buttons": ["jump"]}),
 		SFMessagesScript.authority_request(true),
 		SFMessagesScript.player_ready(),
+		SFMessagesScript.start_game(),
 		SFMessagesScript.provide_connection_info(
 			{"type": "direct", "host": "127.0.0.1", "port": 7777}
 		),
@@ -102,7 +105,9 @@ func _test_client_encoders_match_fixtures() -> void:
 			"20000000-0000-0000-0000-000000000001",
 			"test-reconnect-token-not-secret"
 		),
-		SFMessagesScript.join_as_spectator("reef-rally", "ABC123", "Observer"),
+		SFMessagesScript.join_as_spectator(
+			"reef-rally", "ABC123", "Observer", "hunter2-not-secret"
+		),
 		SFMessagesScript.leave_spectator(),
 	]
 	if not _assert_equal(lines.size(), built.size(), "client fixture builder count"):
@@ -819,6 +824,10 @@ func _test_protocol_error_diagnostics() -> void:
 	)
 
 
+## Data-driven sweep over the whole wire table (issue #26): every enum token
+## must round-trip through both string conversions and own a category, so a
+## future append can never silently decode to UNKNOWN or land in the wrong
+## bucket. Category spot pins guard the upstream-doc grouping semantics.
 func _test_error_code_table() -> void:
 	_assert_equal(
 		SFTypesScript.GameDataEncoding.UNKNOWN,
@@ -840,18 +849,109 @@ func _test_error_code_table() -> void:
 		SFTypesScript.spectator_reason_from_string(null),
 		"null spectator reason"
 	)
-	_assert_equal(
-		SFErrorCodesScript.Code.INVALID_APP_ID,
-		SFErrorCodesScript.from_string("INVALID_APP_ID"),
-		"invalid app id code"
-	)
-	_assert_equal(
-		SFErrorCodesScript.Code.ROOM_FULL,
-		SFErrorCodesScript.from_string("ROOM_FULL"),
-		"room full code"
-	)
+	for token: String in SFErrorCodesScript.Code:
+		if token == "UNKNOWN" or token == "NONE":
+			continue
+		var code: int = SFErrorCodesScript.Code[token]
+		_assert_equal(
+			code, SFErrorCodesScript.from_string(token), "%s round-trips from_string" % token
+		)
+		_assert_equal(
+			token, SFErrorCodesScript.to_wire_string(code), "%s round-trips to_wire_string" % token
+		)
+		_assert(SFErrorCodesScript.is_known(token), "%s is_known" % token)
+		_assert(
+			SFErrorCodesScript.category(code) != "unknown", "%s has an explicit category" % token
+		)
+	var non_emitted: Array[String] = SFErrorCodesScript.NON_EMITTED_CODES
+	_assert_equal(6, non_emitted.size(), "NON_EMITTED_CODES matches upstream count")
+	for token: String in non_emitted:
+		_assert(SFErrorCodesScript.is_known(token), "non-emitted %s stays decodable" % token)
+	var categories := [
+		# authentication
+		["UNAUTHORIZED", "authentication"],
+		["INVALID_TOKEN", "authentication"],
+		["AUTHENTICATION_REQUIRED", "authentication"],
+		["INVALID_APP_ID", "authentication"],
+		["APP_ID_EXPIRED", "authentication"],
+		["APP_ID_REVOKED", "authentication"],
+		["APP_ID_SUSPENDED", "authentication"],
+		["MISSING_APP_ID", "authentication"],
+		["AUTHENTICATION_TIMEOUT", "authentication"],
+		["SDK_VERSION_UNSUPPORTED", "authentication"],
+		["UNSUPPORTED_GAME_DATA_FORMAT", "authentication"],
+		["CONNECTION_IDLE_TIMEOUT", "authentication"],
+		["SLOW_CONSUMER", "authentication"],
+		["ACTIVITY_TIMEOUT", "authentication"],
+		["UNSUPPORTED_PROTOCOL_VERSION", "authentication"],
+		["CONNECT_TOKEN_INVALID", "authentication"],
+		["CONNECT_TOKEN_REQUIRED", "authentication"],
+		# validation
+		["INVALID_INPUT", "validation"],
+		["INVALID_GAME_NAME", "validation"],
+		["INVALID_ROOM_CODE", "validation"],
+		["INVALID_PLAYER_NAME", "validation"],
+		["INVALID_MAX_PLAYERS", "validation"],
+		["MESSAGE_TOO_LARGE", "validation"],
+		["INVALID_DELIVERY_CLASS", "validation"],
+		# room
+		["ROOM_NOT_FOUND", "room"],
+		["ROOM_FULL", "room"],
+		["ALREADY_IN_ROOM", "room"],
+		["NOT_IN_ROOM", "room"],
+		["ROOM_CREATION_FAILED", "room"],
+		["MAX_ROOMS_PER_GAME_EXCEEDED", "room"],
+		["INVALID_ROOM_STATE", "room"],
+		["GAME_START_NOT_READY", "room"],
+		["GAME_START_FORBIDDEN", "room"],
+		["ROOM_SESSION_INCOMPATIBLE", "room"],
+		["NOT_ROOM_AUTHORITY", "room"],
+		["KICK_TARGET_NOT_FOUND", "room"],
+		["KICKED", "room"],
+		["PASSWORD_REQUIRED", "room"],
+		["BANNED", "room"],
+		["TRANSFER_TARGET_NOT_FOUND", "room"],
+		# authority
+		["AUTHORITY_NOT_SUPPORTED", "authority"],
+		["AUTHORITY_CONFLICT", "authority"],
+		["AUTHORITY_DENIED", "authority"],
+		# ratelimit
+		["RATE_LIMIT_EXCEEDED", "ratelimit"],
+		["TOO_MANY_CONNECTIONS", "ratelimit"],
+		# reconnection
+		["RECONNECTION_FAILED", "reconnection"],
+		["RECONNECTION_TOKEN_INVALID", "reconnection"],
+		["RECONNECTION_EXPIRED", "reconnection"],
+		["PLAYER_ALREADY_CONNECTED", "reconnection"],
+		# spectator
+		["SPECTATOR_NOT_ALLOWED", "spectator"],
+		["TOO_MANY_SPECTATORS", "spectator"],
+		["NOT_A_SPECTATOR", "spectator"],
+		["SPECTATOR_JOIN_FAILED", "spectator"],
+		# signaling
+		["CROSS_ROOM_SIGNAL", "signaling"],
+		["UNSUPPORTED_TRANSPORT", "signaling"],
+		["SIGNAL_TARGET_NOT_FOUND", "signaling"],
+		["SIGNAL_RATE_LIMITED", "signaling"],
+		["SIGNAL_TOO_LARGE", "signaling"],
+		# server
+		["INTERNAL_ERROR", "server"],
+		["STORAGE_ERROR", "server"],
+		["SERVICE_UNAVAILABLE", "server"],
+		["DATABASE_ERROR", "server"],
+		["SERVER_DRAINING", "server"],
+	]
+	for entry: Array in categories:
+		_assert_equal(
+			entry[1],
+			SFErrorCodesScript.category(SFErrorCodesScript.Code[entry[0]]),
+			"%s category" % entry[0]
+		)
 	_assert_equal(
 		SFErrorCodesScript.Code.NONE, SFErrorCodesScript.from_string(null), "absent optional code"
+	)
+	_assert_equal(
+		"none", SFErrorCodesScript.category(SFErrorCodesScript.Code.NONE), "none category"
 	)
 	_assert_equal(
 		SFErrorCodesScript.Code.UNKNOWN,
@@ -859,10 +959,23 @@ func _test_error_code_table() -> void:
 		"unknown code"
 	)
 	_assert_equal(
-		"reconnection",
-		SFErrorCodesScript.category(SFErrorCodesScript.Code.RECONNECTION_EXPIRED),
-		"reconnection category"
+		SFErrorCodesScript.Code.UNKNOWN,
+		SFErrorCodesScript.from_string(12),
+		"non-string input stays UNKNOWN"
 	)
+	_assert_equal(
+		"UNKNOWN",
+		SFErrorCodesScript.to_wire_string(SFErrorCodesScript.Code.UNKNOWN),
+		"unknown wire"
+	)
+	_assert_equal("UNKNOWN", SFErrorCodesScript.to_wire_string(-999), "unmapped int wire")
+	_assert_equal("unknown", SFErrorCodesScript.category(-999), "unknown category")
+	_assert_equal(
+		SFErrorCodesScript.Code.UNKNOWN,
+		SFErrorCodesScript.from_string("UNKNOWN"),
+		"UNKNOWN token stays UNKNOWN"
+	)
+	_assert_equal("", SFErrorCodesScript.to_wire_string(SFErrorCodesScript.Code.NONE), "none wire")
 
 
 func _minimal_spectator_joined_data() -> Dictionary:
