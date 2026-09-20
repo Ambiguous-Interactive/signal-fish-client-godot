@@ -34,6 +34,8 @@ signal pong
 ## entries decode to [code]signal_name == &"protocol_error"[/code] sentinels —
 ## check them when replaying (see SFEvents).
 signal reconnected(info, missed_events: Array)
+## [param error_code] is the server's error code, or [code]Code.NONE[/code]
+## for a local failure (e.g. a handshake send that never reached the wire).
 signal reconnection_failed(reason: String, error_code: int)
 signal spectator_joined(info)
 signal spectator_join_failed(reason: String, error_code: int)
@@ -101,6 +103,9 @@ var _spectators: Array = []
 var _reconnect_player_id := ""
 var _reconnect_room_id := ""
 var _reconnect_auth_token := ""
+# Once-per-dial guard for the directed Reconnect handshake: a duplicate
+# `Authenticated` server event must never resend the handshake.
+var _reconnect_handshake_sent := false
 # Last URL a dial was attempted against. Reconnect/auto-reconnect dials reuse
 # it so a session opened with an explicit connect_to_server override rejoins
 # the same endpoint; it falls back to config.endpoint_url when never set.
@@ -478,12 +483,19 @@ static func insecure_scheme_error(url: String, is_web_platform: bool, secure_pag
 func _open_transport(target: String) -> Error:
 	var scheme_error := insecure_scheme_error(target, _is_web_platform(), _is_secure_page())
 	if not scheme_error.is_empty():
+		# A refused dial never starts, so any pending reconnect handshake
+		# credentials are dropped here instead of lingering in memory until
+		# the next dial overwrites them.
+		_reconnect_player_id = ""
+		_reconnect_room_id = ""
+		_reconnect_auth_token = ""
 		_emit_protocol_error(scheme_error)
 		return ERR_INVALID_PARAMETER
 	# Remember the dial target so reconnect/auto-reconnect rejoin the same
 	# endpoint even when the session started with an explicit override.
 	_last_dial_url = target
 	_user_close_requested = false
+	_reconnect_handshake_sent = false
 	# Each dial renegotiates the game-data format from the configured
 	# preference.
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
@@ -539,6 +551,22 @@ func _send_reconnect() -> Error:
 		_reconnect_player_id, _reconnect_room_id, _reconnect_auth_token
 	)
 	return _send_envelope(envelope, "reconnect")
+
+
+func _fail_reconnect_handshake() -> void:
+	# The directed handshake could not go out on the fresh socket: without it
+	# the session would hang authenticated-but-roomless with nothing in
+	# flight. Resolve the attempt negatively: reconnection_failed always
+	# fires. When the link is still up (e.g. the client-side backpressure cap
+	# refused the send), the attempt is torn down exactly like a close frame
+	# so consumers observe the terminal disconnect; when the send error
+	# already killed the link, the transport-failure cascade has surfaced
+	# connection_failed instead and auto-reconnect keeps the episode going.
+	_reconnect_player_id = ""
+	_reconnect_room_id = ""
+	_reconnect_auth_token = ""
+	reconnection_failed.emit("reconnect handshake send failed", SFErrorCodesScript.Code.NONE)
+	_terminate_reconnection_attempt()
 
 
 func _send_authenticate() -> Error:
@@ -695,18 +723,27 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"protocol_error":
 			_emit_protocol_error(event.args[0])
 		&"authenticated":
-			_session_state = SessionState.AUTHENTICATED
-			if _reconnect_auth_token.is_empty():
-				authenticated.emit(event.args[0], event.args[1], event.args[2])
-			elif _connection_state == ConnectionState.CONNECTED:
-				# Reconnect dial: the fresh connection is authenticated, so
-				# the directed handshake goes out now (upstream
-				# `take_auto_reconnect_operation` fires only post-auth).
-				# `authenticated` stays consumer-silent on dials: emitting it
-				# would invite a join-on-auth handler to race the handshake
-				# with a fresh JoinRoom. Consumers observe `reconnected`
-				# (or `reconnection_failed`) next.
-				_send_reconnect()
+			if not _reconnect_handshake_sent:
+				_session_state = SessionState.AUTHENTICATED
+				if _reconnect_auth_token.is_empty():
+					authenticated.emit(event.args[0], event.args[1], event.args[2])
+				elif _connection_state == ConnectionState.CONNECTED:
+					# Reconnect dial: the fresh connection is authenticated,
+					# so the directed handshake goes out now (upstream
+					# `take_auto_reconnect_operation` fires only post-auth).
+					# `authenticated` stays consumer-silent on dials: emitting
+					# it would invite a join-on-auth handler to race the
+					# handshake with a fresh JoinRoom. Consumers observe
+					# `reconnected` (or `reconnection_failed`) next. The send
+					# is once-per-dial: a duplicate Authenticated event must
+					# not resend it, and a failed send resolves the attempt
+					# instead of leaving the session authenticated-but-
+					# roomless. Duplicates after the handshake stay fully
+					# silent above: they must not clobber the restored session
+					# state or leak the consumer-silent dial contract.
+					_reconnect_handshake_sent = true
+					if _send_reconnect() != OK:
+						_fail_reconnect_handshake()
 		&"protocol_info":
 			_reconcile_game_data_format(event.args[0].game_data_formats)
 			protocol_info.emit(event.args[0])
@@ -952,8 +989,11 @@ func _schedule_auto_reconnect() -> void:
 		return
 	if _user_close_requested:
 		# A consumer closed from a disconnect/failure handler after the flag
-		# was snapshotted: their clean close wins over arming a retry.
-		_user_close_requested = false
+		# was snapshotted: their clean close wins over arming a retry. The
+		# flag is deliberately left set so every scheduling point in one
+		# termination cascade observes the consumer's final intent — even
+		# double-nested handler cascades. The next dial or cascade entry
+		# clears it.
 		return
 	if (
 		_connection_state
@@ -1008,9 +1048,11 @@ func _start_auto_reconnect() -> void:
 		return
 	# The dial never started (e.g. a refused URL): re-enter scheduling so the
 	# consumed attempt still arms the next backoff window or ends the episode
-	# with the exhaustion notice instead of stalling. A synchronously refused
-	# dial already re-entered scheduling from `failed`; this early-returns
-	# there, so exactly one attempt is armed per cascade.
+	# with the exhaustion notice instead of stalling. A transport-level
+	# refusal already scheduled from the `failed` cascade, so this re-entry
+	# no-ops on the armed timer; a scheme refusal returns before the
+	# transport is wired and only schedules here. Exactly one attempt is
+	# armed per cascade either way.
 	_schedule_auto_reconnect()
 
 
@@ -1051,6 +1093,10 @@ func _teardown_transport() -> void:
 		transport.packet_received.disconnect(_on_transport_packet)
 		transport.closed.disconnect(_on_transport_closed)
 		transport.failed.disconnect(_on_transport_failed)
+		# Signals are already unwired, so this close cannot re-enter a
+		# cascade: a torn-down attempt must never leak a live socket (the
+		# server would otherwise pin the session until its own timeout).
+		transport.close(1000, "client teardown")
 	transport = null
 
 
