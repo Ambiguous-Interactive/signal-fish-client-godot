@@ -161,8 +161,7 @@ func configure(config: SignalFishConfigScript) -> Error:
 	_config = config
 	_secrets = PackedStringArray()
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
-	if not config.credential.is_empty():
-		_secrets.append(config.credential)
+	_remember_secret(config.credential)
 	# Retained reconnect identities may outlive configure() (it is allowed
 	# whenever no connection is active); keep them on the redaction list.
 	_remember_secret(_reconnect_auth_token)
@@ -642,7 +641,8 @@ func _send_authenticate() -> Error:
 		_config.protocol_version if _config.protocol_version > 0 else null,
 		_string_list_or_null(_config.supported_transports),
 		_string_list_or_null(_config.supported_topologies),
-		_string_list_or_null(_config.requested_capabilities)
+		_string_list_or_null(_config.requested_capabilities),
+		_optional_string(_config.credential)
 	)
 	return _send_envelope(envelope, "authenticate")
 

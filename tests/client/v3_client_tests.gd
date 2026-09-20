@@ -1,7 +1,8 @@
 extends RefCounted
 
-## Protocol v3 (session-plan/WebRTC signaling) client tests. Receives the
-## client runner instance so connect/auth fakes stay defined in one place.
+## Protocol v3-era client tests: the session-plan/WebRTC signaling surface and
+## the v0.14.0 `connect_token` auth field. Receives the client runner instance
+## so connect/auth fakes stay defined in one place.
 
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
@@ -25,6 +26,7 @@ func run_all() -> void:
 	_test_v3_config_advertises_capabilities()
 	_test_v3_events_surface()
 	_test_v3_send_methods()
+	_test_connect_token_reaches_wire()
 
 
 func _make_config() -> SignalFishConfigScript:
@@ -285,3 +287,52 @@ func _test_v3_send_methods() -> void:
 	)
 	_assert_equal(before + 3, fake.sent_text.size(), "refused sends put nothing on the wire")
 	client.free()
+
+
+func _test_connect_token_reaches_wire() -> void:
+	# The config credential rides Authenticate as the upstream connect_token
+	# field (rust SDK 0.14.0, issue #33); unset stays omitted (v2 bytes).
+	var config := _make_config()
+	config.credential = "sfct_v1.tenant-secret"
+	var credentialed := _connect_new_client(config)
+	credentialed.transport.inject_open()
+	var expected := SFMessagesScript.encode(
+		SFMessagesScript.authenticate(
+			"test-app", "0.1.0", "linux", "json", null, null, null, null, "sfct_v1.tenant-secret"
+		)
+	)
+	_assert_equal([expected], credentialed.transport.sent_text, "credential rides connect_token")
+	credentialed.free()
+
+	var anonymous := _connect_new_client(_make_config())
+	anonymous.transport.inject_open()
+	_assert_equal(
+		[
+			SFMessagesScript.encode(
+				SFMessagesScript.authenticate("test-app", "0.1.0", "linux", "json")
+			)
+		],
+		anonymous.transport.sent_text,
+		"unset credential keeps authenticate bytes unchanged"
+	)
+	anonymous.free()
+
+	var wrong_type := SFMessagesScript.authenticate(
+		"a", null, null, null, null, null, null, null, 5
+	)
+	_assert_equal(false, SFMessagesScript.is_valid_message(wrong_type), "non-string token refused")
+	_assert_string_contains(
+		SFMessagesScript.validation_error(wrong_type), "connect_token", "error names the field"
+	)
+
+
+func _assert_string_contains(actual: String, expected_substring: String, label: String) -> bool:
+	if actual.find(expected_substring) == -1:
+		_failures.append(
+			(
+				"%s: expected %s to contain %s"
+				% [label, var_to_str(actual), var_to_str(expected_substring)]
+			)
+		)
+		return false
+	return true

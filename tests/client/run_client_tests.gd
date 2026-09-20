@@ -9,6 +9,8 @@ const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fak
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
+const WebrtcMeshTestsScript = preload("res://tests/client/webrtc_mesh_tests.gd")
+const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
@@ -44,6 +46,9 @@ func _helper_suites_are_loadable() -> bool:
 	if not (V3ClientTestsScript as Script).has_method("run"):
 		push_error("helper suite failed to load: v3_client_tests")
 		return false
+	if not (WebrtcMeshTestsScript as Script).has_method("run"):
+		push_error("helper suite failed to load: webrtc_mesh_tests")
+		return false
 	return true
 
 
@@ -72,6 +77,7 @@ func _run() -> void:
 	_test_log_redaction_and_level_gate()
 	_test_config_to_string_redacts_credential()
 	_failures.append_array(V3ClientTestsScript.run(self))
+	_failures.append_array(WebrtcMeshTestsScript.run(self))
 	_run_completed = true
 
 
@@ -1075,75 +1081,27 @@ func _send_custom_connection_info(client: SignalFishClientScript) -> Error:
 
 
 func _authenticated_data() -> Dictionary:
-	return {
-		"app_name": "Reef Rally",
-		"organization": "",
-		"rate_limits": {"per_minute": 60, "per_hour": 1000, "per_day": 10000},
-	}
+	return ClientFixtures.authenticated_data()
 
 
 func _protocol_info() -> Dictionary:
-	return {
-		"platform": "steam",
-		"sdk_version": "0.8.0",
-		"minimum_version": "0.7.0",
-		"recommended_version": "0.8.0",
-		"notes": "",
-		"capabilities": [],
-		"game_data_formats": ["json", "message_pack"],
-		"player_name_rules":
-		{
-			"max_length": 32,
-			"min_length": 3,
-			"allow_unicode_alphanumeric": true,
-			"allow_spaces": true,
-			"allow_leading_trailing_whitespace": false,
-			"allowed_symbols": ["-", "_"]
-		},
-	}
+	return ClientFixtures.protocol_info()
 
 
 func _player(id: String, display_name: String) -> Dictionary:
-	return {
-		"id": id,
-		"name": display_name,
-		"is_authority": id == PLAYER_A,
-		"is_ready": false,
-		"connected_at": "2026-05-29T00:00:00Z"
-	}
+	return ClientFixtures.player(id, display_name)
 
 
 func _spectator(id: String, display_name: String) -> Dictionary:
-	return {"id": id, "name": display_name, "connected_at": "2026-05-29T00:00:01Z"}
+	return ClientFixtures.spectator(id, display_name)
 
 
 func _peer_connection() -> Dictionary:
-	return {
-		"player_id": PLAYER_A,
-		"player_name": "Alice",
-		"is_authority": true,
-		"relay_type": "websocket"
-	}
+	return ClientFixtures.peer_connection()
 
 
 func _room_joined_data(overrides: Dictionary = {}) -> Dictionary:
-	var data := {
-		"room_id": ROOM_ID,
-		"room_code": "ABC123",
-		"player_id": PLAYER_A,
-		"game_name": "reef-rally",
-		"max_players": 4,
-		"supports_authority": true,
-		"current_players": [_player(PLAYER_A, "Alice")],
-		"is_authority": true,
-		"lobby_state": "waiting",
-		"ready_players": [],
-		"relay_type": "websocket",
-		"current_spectators": [_spectator(PLAYER_B, "Observer")],
-	}
-	for key: String in overrides:
-		data[key] = overrides[key]
-	return data
+	return ClientFixtures.room_joined_data(overrides)
 
 
 class PollCountingTransport:

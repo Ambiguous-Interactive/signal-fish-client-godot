@@ -5,8 +5,9 @@
 > replay, and the MessagePack/binary game-data milestone (strict v2/v3 envelope decode, opt-in payload
 > decode, raw pass-through for rkyv). Root README + auth primer shipped (#13). The v3 session-plan
 > signaling surface (capabilities in `Authenticate`, `SessionPlan`/`Signal`/`NewPeer`/
-> `PeerTransportStatus`, ICE pre-gather) has landed; remaining P3 work is the WebRTC mesh node that
-> consumes those plans, then P4 demo + web-export smoke + full docs; remaining #15 item (Godot matrix)
+> `PeerTransportStatus`, ICE pre-gather) has landed, and the P3 WebRTC mesh node that consumes those
+> plans is in (#32); remaining P3 is only the demo P2P example, which lands with the P4 demo.
+> Remaining after that: P4 demo + web-export smoke + full docs; remaining #15 item (Godot matrix)
 > is P5 work.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
@@ -472,7 +473,8 @@ loop and exits only on its consensus criteria. Fan-out points noted.
   binary milestone, `game_data_format` accepts `json`/empty, `message_pack`, and `rkyv`.
   `reconnect()`/`set_auto_reconnect()` landed with the P2 reconnection work;
   `send_game_data_binary()` shipped with the P2 binary game-data milestone. The `credential`
-  slot is a plain (non-exported) var so the Resource pipeline can never persist it.
+  slot is a plain (non-exported) var so the Resource pipeline can never persist it; it now
+  rides `Authenticate` as the upstream `connect_token` field (issue #33).
 
 ### P2 — Full protocol depth  *(complete)*
 **Goal:** Complete the protocol surface.
@@ -518,7 +520,7 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 
 ### P3 — WebRTC P2P helper (optional layer)
 **Goal:** Turn server signaling into real peer connections, without bloating the core.
-- [x] **v3 signaling protocol surface** (landed this milestone): `SignalFishConfig` capability
+- [x] **v3 signaling protocol surface** (landed in #31): `SignalFishConfig` capability
       fields (`protocol_version`, `supported_transports`, `supported_topologies`,
       `requested_capabilities` — omitted when unset, so v2 wire bytes stay identical);
       `sf_session_types.gd` (`SessionPlanInfo`/`SessionPeerInfo`/`DirectEndpointInfo`/
@@ -532,18 +534,25 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       Upstream anchors: server `src/protocol/messages.rs` (v3 variants),
       `docs/concepts/protocol-versions.md`, rust client `src/protocol.rs`/`src/webrtc.rs`/
       `src/mesh.rs`.
-- [ ] `webrtc/sf_webrtc_mesh.gd`: consume `session_plan` + `signal_received`, answer with
-      `send_signal` (offer when a peer's `initiate` flag says so — never compute roles
-      locally), apply `ice_servers` (replace, never merge; empty set is authoritative),
-      rebuild peers on generation change, drop peers absent from the latest plan, tear down
-      on `room_left`/`player_left`/`disconnected`/`reconnected`, report
-      `send_transport_status` only at the 0↔1 connected-peer boundaries, and build a
-      `WebRTCMultiplayerPeer` mesh (deterministic UUID→int peer-id mapping to be decided).
-- [ ] Browser export uses built-in WebRTC; **native requires the official Godot WebRTC GDExtension** —
-      document clearly; the core server-relayed client stays zero-native.
-- [ ] P2P example in the demo; tests where deterministic (signaling glue around a fake
-      peer-connection factory).
-- **DoD:** opt-in layer; server-relayed users pay nothing; documented native dependency.
+- [x] `webrtc/sf_webrtc_mesh.gd` (#32): consumes `session_plan` + `signal_received`, answers
+      with `send_signal` (offers only when the server's `initiate` flag says so — roles are
+      never computed locally), applies `ice_servers` (replace, never merge; empty set is
+      authoritative), rebuilds retained peers on generation/role change, drops peers absent
+      from the latest plan, tears down on
+      `room_left`/`player_left`/`disconnected`/`reconnected`/`_exit_tree` (a replayed plan
+      inside `missed_events` cannot revive the old mesh), reports `send_transport_status`
+      only at the aggregate 0↔1 connected-peer boundaries, and exposes a
+      `WebRTCMultiplayerPeer` for high-level multiplayer RPCs. Peer ids come from a pinned
+      deterministic FNV-1a UUID→int mapping. Peer-connection and multiplayer-peer factories
+      are injectable; the deterministic suite (`tests/client/webrtc_mesh_tests.gd`) runs
+      entirely on fakes (PLAN §8).
+- [x] Platform note documented (mesh header + README): Godot 4 ships WebRTC on every
+      platform via the built-in libdatachannel module; browser exports use the browser's own
+      WebRTC. (The old "native needs the WebRTC GDExtension" note was Godot-3-era.) The core
+      server-relayed client stays zero-native and the mesh layer is opt-in.
+- [ ] P2P example in the demo (lands with the P4 demo work).
+- **DoD:** opt-in layer; server-relayed users pay nothing; platform story documented.
+  (Demo example tracked under P4.)
 
 ### P4 — Demo + web-export smoke + docs  *(→ context.md "first usable client" DoD met)*
 - [ ] `demo/` Godot 4 project: connect→join→game-data→leave (+ optional P2P scene).
@@ -793,9 +802,10 @@ P6 release gate.
 
 - [ ] `app_id` / reconnection `auth_token` **never logged** at default level; `sf_log.gd` redacts them on
       all paths; debug (full payloads) opt-in + clearly local-only.
-- [ ] Config reserves an explicit `credential` slot for the upstream secret-key (`sfk_*`) decision:
+- [ ] Config reserves an explicit `credential` slot (now wired as the upstream
+      `Authenticate.connect_token` tenant credential, rust SDK 0.14.0, issue #33):
       values only (never globals), never stitched into URLs, absent from `to_string()`/debug output and
-      redacted by the logger; revisit after the upstream server/cloud decision lands.
+      redacted by the logger.
 - [ ] Tokens **never in fixtures** (use fake placeholders); reviewer checks every committed fixture.
 - [ ] Tokens not surfaced in error messages or signal payloads.
 - [ ] Treat browser `localStorage`/query strings as **user-visible**; prefer in-memory tokens; persist

@@ -12,12 +12,14 @@ GDExtension, no compilation — and it runs everywhere Godot runs, including web
 - **Transport seam** with a `WebSocketPeer` adapter and a synchronous fake transport.
 - **`SignalFishClient`** (`Node`): typed connect/authenticate/join/send/leave/reconnect
   API with one snake_case signal per server event. Polling model — no threads, web-safe.
+- **Optional `SFWebRTCMesh`** (`Node`): v3 session plans in, `WebRTCMultiplayerPeer`
+  mesh out — server-assigned offerer roles, ICE replacement, and teardown handled.
 
 ## Status
 
-Work in progress toward v1 (P3 WebRTC helper, P4 demo + web-export smoke + full docs,
-remaining P5 items: Godot 4.4 CI matrix, web-export CI job). See [PLAN.md](PLAN.md) for
-the roadmap and current state.
+Work in progress toward v1 (P4 demo + web-export smoke + full docs, the P3 demo
+P2P example, and remaining P5 items: Godot 4.4 CI matrix, web-export CI job).
+See [PLAN.md](PLAN.md) for the roadmap and current state.
 
 | | |
 |---|---|
@@ -86,10 +88,23 @@ var event := SFEvents.decode_text(server_text_frame)    # -> typed event, never 
 Optional features: MessagePack payload decoding (`config.decode_msgpack_payloads`),
 binary game data (`send_game_data_binary`), directed reconnect with replay
 (`reconnect()`), opt-in auto-reconnect with backoff (`set_auto_reconnect(true)`),
-and the v3 peer-to-peer signaling surface (set `config.protocol_version = 3`
-plus `supported_transports`/`supported_topologies`, then consume
-`session_plan`/`signal_received` and reply with `send_signal`). The WebRTC
-peer-connection layer that acts on those plans is the next milestone (PLAN P3).
+the v3 peer-to-peer signaling surface (set `config.protocol_version = 3`
+plus `supported_transports`/`supported_topologies`), and the `SFWebRTCMesh`
+node that turns those session plans into a working `WebRTCMultiplayerPeer`
+mesh — signaling, offers, and ICE are handled for you; the server decides who
+offers:
+
+```gdscript
+var mesh := SFWebRTCMesh.new()
+add_child(mesh)
+mesh.attach(client)
+# Once a webrtc plan lands, run RPCs over the mesh:
+multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
+```
+
+Godot 4 ships WebRTC on every platform (browser exports use the browser's own),
+so the mesh needs no extra dependencies. The core server-relayed client stays
+zero-native either way.
 
 ## Development
 
