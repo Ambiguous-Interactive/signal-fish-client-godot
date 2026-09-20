@@ -9,6 +9,7 @@ const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fak
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
+const WebrtcMeshTestsScript = preload("res://tests/client/webrtc_mesh_tests.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
@@ -44,6 +45,9 @@ func _helper_suites_are_loadable() -> bool:
 	if not (V3ClientTestsScript as Script).has_method("run"):
 		push_error("helper suite failed to load: v3_client_tests")
 		return false
+	if not (WebrtcMeshTestsScript as Script).has_method("run"):
+		push_error("helper suite failed to load: webrtc_mesh_tests")
+		return false
 	return true
 
 
@@ -72,6 +76,7 @@ func _run() -> void:
 	_test_log_redaction_and_level_gate()
 	_test_config_to_string_redacts_credential()
 	_failures.append_array(V3ClientTestsScript.run(self))
+	_failures.append_array(WebrtcMeshTestsScript.run(self))
 	_run_completed = true
 
 
