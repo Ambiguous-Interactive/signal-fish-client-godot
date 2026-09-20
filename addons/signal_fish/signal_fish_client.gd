@@ -43,6 +43,16 @@ signal spectator_left(room_id: String, room_code: String, reason: int, current_s
 signal new_spectator_joined(spectator, current_spectators: Array, reason: int)
 signal spectator_disconnected(spectator_id: String, reason: int, current_spectators: Array)
 signal server_error(message: String, error_code: int)
+# Protocol v3 session-plan surface (upstream SessionPlan/Signal/NewPeer/
+# PeerTransportStatus). session_plan.plan is an SFSessionTypes.SessionPlanInfo; the
+# latest plan wins and a relay/relay plan with no peers is the floor reset.
+# signal_received.payload is the server-forwarded value verbatim (matchbox
+# convention: {"Offer"|"Answer"|"IceCandidate": ...}); generation is "" on the
+# legacy Server 0.4 shape.
+signal signal_received(from_player: String, generation: String, signal_payload)
+signal new_peer(peer_id: String, you_initiate: bool)
+signal session_plan(plan)
+signal peer_transport_status(peer_id: String, transport: int, connected: bool)
 
 enum ConnectionState {
 	DISCONNECTED,  # idle, no transport
@@ -69,6 +79,7 @@ const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
 const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
+const SFGameDataFormatScript = preload("res://addons/signal_fish/protocol/sf_game_data_format.gd")
 const SFTransportScript = preload("res://addons/signal_fish/transport/sf_transport.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFWebSocketTransportScript = preload(
@@ -465,6 +476,31 @@ func leave_spectator() -> Error:
 	return _send_envelope(SFMessagesScript.leave_spectator(), "leave_spectator")
 
 
+## Relay one opaque WebRTC signal to [param to_peer] (protocol v3). Requires a
+## negotiated v3 connection; the server rejects it on the relay floor.
+## [param generation] is the latest [signal session_plan] generation. "" omits
+## the field for legacy Server 0.4 plans only — the pinned server (v0.9.1+)
+## requires it. [param signal_payload] is forwarded verbatim.
+func send_signal(to_peer: String, generation: String, signal_payload) -> Error:
+	var guard := _guard_session_send("send_signal")
+	if guard != OK:
+		return guard
+	return _send_envelope(
+		SFMessagesScript.peer_signal(to_peer, _optional_string(generation), signal_payload),
+		"send_signal"
+	)
+
+
+## Report the current data-path transport state (protocol v3; informational).
+func send_transport_status(transport: int, connected: bool) -> Error:
+	var guard := _guard_session_send("send_transport_status")
+	if guard != OK:
+		return guard
+	return _send_envelope(
+		SFMessagesScript.transport_status(transport, connected), "send_transport_status"
+	)
+
+
 func _process(_delta: float) -> void:
 	if _reconnect_timer_running:
 		_reconnect_delay_remaining -= _delta
@@ -602,9 +638,17 @@ func _send_authenticate() -> Error:
 		_config.app_id,
 		_optional_string(_config.sdk_version),
 		_optional_string(_config.platform),
-		_optional_string(_config.game_data_format)
+		_optional_string(_config.game_data_format),
+		_config.protocol_version if _config.protocol_version > 0 else null,
+		_string_list_or_null(_config.supported_transports),
+		_string_list_or_null(_config.supported_topologies),
+		_string_list_or_null(_config.requested_capabilities)
 	)
 	return _send_envelope(envelope, "authenticate")
+
+
+func _string_list_or_null(values: PackedStringArray) -> Variant:
+	return null if values.is_empty() else Array(values)
 
 
 func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
@@ -667,33 +711,18 @@ func _handle_binary_frame(payload: PackedByteArray) -> void:
 		)
 
 
-## The requested format drives the wire until the server says otherwise: an
-## unsupported preference is downgraded to JSON at Authenticate (an
-## `Error{UnsupportedGameDataFormat}` event and/or absence from
-## `ProtocolInfo.game_data_formats`; server `websocket/connection.rs`).
 func _negotiated_game_data_format() -> int:
 	if _config == null:
 		return SFTypesScript.GameDataEncoding.UNKNOWN
-	if _effective_game_data_format != SFTypesScript.GameDataEncoding.UNKNOWN:
-		return _effective_game_data_format
-	return SFTypesScript.game_data_encoding_from_string(_config.game_data_format)
+	return SFGameDataFormatScript.negotiated(_config.game_data_format, _effective_game_data_format)
 
 
 func _reconcile_game_data_format(supported_formats: Array) -> void:
-	if supported_formats.is_empty():
-		# No server statement; keep following the configured preference.
-		return
-	var requested := SFTypesScript.game_data_encoding_from_string(_config.game_data_format)
-	if (
-		requested == SFTypesScript.GameDataEncoding.UNKNOWN
-		or (requested == SFTypesScript.GameDataEncoding.JSON)
-	):
-		return
-	if requested in supported_formats:
-		return
-	_downgrade_game_data_format(
-		"server game_data_formats %s does not include the requested format" % supported_formats
+	var reason := SFGameDataFormatScript.downgrade_reason(
+		_config.game_data_format, supported_formats
 	)
+	if not reason.is_empty():
+		_downgrade_game_data_format(reason)
 
 
 ## Pins the effective negotiation to JSON and explains why once. The server
@@ -708,9 +737,7 @@ func _downgrade_game_data_format(reason: String) -> void:
 
 
 func _game_data_format_label(encoding: int) -> String:
-	if encoding == SFTypesScript.GameDataEncoding.UNKNOWN:
-		return "server-default json"
-	return SFTypesScript.game_data_encoding_to_string(encoding)
+	return SFGameDataFormatScript.label(encoding)
 
 
 func _on_transport_closed(code: int, reason: String) -> void:
@@ -834,6 +861,14 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			game_starting.emit(event.args[0])
 		&"pong":
 			pong.emit()
+		&"signal_received":
+			signal_received.emit(event.args[0], event.args[1], event.args[2])
+		&"new_peer":
+			new_peer.emit(event.args[0], event.args[1])
+		&"session_plan":
+			session_plan.emit(event.args[0])
+		&"peer_transport_status":
+			peer_transport_status.emit(event.args[0], event.args[1], event.args[2])
 		&"reconnected":
 			_apply_room_info(event.args[0])
 			_session_state = _session_state_for_lobby(_lobby_state)

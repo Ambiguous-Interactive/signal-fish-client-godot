@@ -9,10 +9,18 @@ const TestWebSocketPeerAdapterScript = preload(
 )
 
 var _failures: Array = []
+# Completion sentinel: a runtime abort inside _run() unwinds before
+# quit() is reached, which would otherwise leave the process hanging
+# until CI kills it instead of reporting a red result.
+var _run_completed := false
 
 
 func _init() -> void:
 	_run()
+	if not _run_completed:
+		push_error("transport tests aborted before completion")
+		quit(1)
+		return
 	if _failures.is_empty():
 		print("transport tests passed")
 		quit(0)
@@ -40,6 +48,7 @@ func _run() -> void:
 	_test_websocket_connecting_close_fails_without_closed()
 	_test_websocket_connecting_close_surfaces_caller_reason()
 	_test_websocket_read_error_is_terminal_once()
+	_run_completed = true
 
 
 func _test_fake_connect_open_send_receive_and_close() -> void:

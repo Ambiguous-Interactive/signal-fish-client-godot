@@ -12,6 +12,7 @@ extends Resource
 ## Resource containing a credential to a committed file.
 
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 
 ## Public application identifier. Safe to ship in game builds.
 @export var app_id: String = ""
@@ -61,6 +62,30 @@ const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 ## [method SignalFishClient.reconnect] calls ignore this.
 @export var reconnect_max_attempts: int = 5
 
+## Highest protocol version advertised with [code]Authenticate[/code]
+## (upstream `Authenticate.protocol_version`). [code]0[/code] = omit: the
+## client stays on the v2 relay floor and v3-only messages never appear.
+## Advertise [code]3[/code] (plus the lists below) to opt into peer-to-peer
+## session plans; the negotiated result arrives through
+## [signal SignalFishClient.protocol_info].
+@export var protocol_version: int = 0
+
+## Data-path transports this client can actually fulfill, as wire tokens
+## ([code]relay[/code], [code]direct[/code], [code]webrtc[/code]). Absent
+## means relay-only upstream, even on [code]/v3/ws[/code]. Always include
+## [code]relay[/code] so the connection keeps the universal relay floor.
+@export var supported_transports: PackedStringArray = PackedStringArray()
+
+## Session topologies this client can participate in, as wire tokens
+## ([code]relay[/code], [code]host[/code], [code]mesh[/code]). Absent means
+## relay-only upstream.
+@export var supported_topologies: PackedStringArray = PackedStringArray()
+
+## Additive protocol capability tokens the client is prepared to use (e.g.
+## [code]room_operation_ids[/code]). A requested token may be used only after
+## the server echoes it in [code]ProtocolInfo.capabilities[/code].
+@export var requested_capabilities: PackedStringArray = PackedStringArray()
+
 ## Reserved slot for a secret credential (e.g. an [code]sfk_*[/code] app key)
 ## should upstream move to secret-based authentication. Empty = unset.
 ## Deliberately NOT an [code]@export[/code]: secrets must be set in code only,
@@ -95,6 +120,27 @@ func validation_error() -> String:
 	]:
 		if cap[1] <= 0:
 			return "%s must be positive" % cap[0]
+	return _v3_capabilities_error()
+
+
+func _v3_capabilities_error() -> String:
+	if protocol_version < 0 or protocol_version > SFSessionTypesScript.U16_MAX:
+		return "protocol_version must be in range 0..%d" % SFSessionTypesScript.U16_MAX
+	for token: String in supported_transports:
+		if (
+			SFSessionTypesScript.transport_kind_from_string(token)
+			== SFSessionTypesScript.TransportKind.UNKNOWN
+		):
+			return "supported_transports contains an unknown token: %s" % token
+	for token: String in supported_topologies:
+		if (
+			SFSessionTypesScript.topology_from_string(token)
+			== SFSessionTypesScript.Topology.UNKNOWN
+		):
+			return "supported_topologies contains an unknown token: %s" % token
+	for token: String in requested_capabilities:
+		if token.is_empty():
+			return "requested_capabilities must not contain empty strings"
 	return ""
 
 

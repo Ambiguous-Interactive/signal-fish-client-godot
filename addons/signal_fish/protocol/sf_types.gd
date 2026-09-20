@@ -8,6 +8,7 @@ enum SpectatorReason { UNKNOWN = -1, JOINED, VOLUNTARY_LEAVE, DISCONNECTED, REMO
 
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const TypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
+const SessionTypes = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 
 const U8_MAX := 255
 const U16_MAX := 65535
@@ -57,6 +58,11 @@ const RELAY_TRANSPORT_FROM_STRING: Dictionary = {
 	"udp": RelayTransport.UDP,
 	"websocket": RelayTransport.WEBSOCKET,
 	"auto": RelayTransport.AUTO,
+}
+## Server message transports (upstream `MessageTransport` enum; currently
+## websocket only). Strictly validated wherever the wire carries the list.
+const MESSAGE_TRANSPORT_FROM_STRING: Dictionary = {
+	"websocket": true,
 }
 const SPECTATOR_REASON_TO_STRING: Dictionary = {
 	SpectatorReason.JOINED: "joined",
@@ -139,6 +145,16 @@ class ProtocolInfo:
 	var notes: String = ""
 	var game_data_formats: Array = []
 	var player_name_rules: PlayerNameRules = null
+	## Negotiated protocol version (v3+ only; 0 = absent on negotiated v2).
+	var protocol_version: int = 0
+	## Lowest accepted protocol version (v3+ only; 0 = absent).
+	var min_protocol_version: int = 0
+	## Highest spoken protocol version (v3+ only; 0 = absent).
+	var max_protocol_version: int = 0
+	## Server message transports available to this connection (v3 only).
+	var transports: PackedStringArray = PackedStringArray()
+	## Maximum complete encoded outbound payload in bytes (v3+ only; 0 = absent).
+	var max_outbound_message_size: int = 0
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
@@ -155,6 +171,11 @@ class ProtocolInfo:
 			and typeof(data.get("player_name_rules")) == TYPE_DICTIONARY
 		):
 			player_name_rules = PlayerNameRules.new(data["player_name_rules"])
+		protocol_version = _nonnegative_int_or_zero(data.get("protocol_version"))
+		min_protocol_version = _nonnegative_int_or_zero(data.get("min_protocol_version"))
+		max_protocol_version = _nonnegative_int_or_zero(data.get("max_protocol_version"))
+		transports = _coerce_strings(data.get("transports", []))
+		max_outbound_message_size = _nonnegative_int_or_zero(data.get("max_outbound_message_size"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -182,6 +203,11 @@ class ProtocolInfo:
 				_:
 					result.append(GameDataEncoding.UNKNOWN)
 		return result
+
+	func _nonnegative_int_or_zero(value: Variant) -> int:
+		if value == null or not TypeUtils.is_integral_number(value):
+			return 0
+		return maxi(int(value), 0)
 
 	func _string_or_empty(value: Variant) -> String:
 		if value == null:
@@ -312,7 +338,7 @@ class PlayerInfo:
 		name = String(data.get("name", ""))
 		is_authority = bool(data.get("is_authority", false))
 		is_ready = bool(data.get("is_ready", false))
-		connected_at = String(data.get("connected_at", ""))
+		connected_at = _string_or_empty(data.get("connected_at"))
 		if data.has("connection_info") and typeof(data.get("connection_info")) == TYPE_DICTIONARY:
 			connection_info = ConnectionInfo.new(data["connection_info"])
 
@@ -321,6 +347,11 @@ class PlayerInfo:
 		if connection_info != null:
 			result["connection_info"] = connection_info.to_dict()
 		return result
+
+	func _string_or_empty(value: Variant) -> String:
+		if value == null:
+			return ""
+		return String(value)
 
 
 class SpectatorInfo:
@@ -334,10 +365,15 @@ class SpectatorInfo:
 		raw = data.duplicate(true)
 		id = String(data.get("id", ""))
 		name = String(data.get("name", ""))
-		connected_at = String(data.get("connected_at", ""))
+		connected_at = _string_or_empty(data.get("connected_at"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
+
+	func _string_or_empty(value: Variant) -> String:
+		if value == null:
+			return ""
+		return String(value)
 
 
 class PeerConnectionInfo:
@@ -379,6 +415,11 @@ class RoomJoinedInfo:
 	var ready_players: PackedStringArray = PackedStringArray()
 	var relay_type: String = ""
 	var current_spectators: Array = []
+	## ICE (STUN/TURN) servers for early candidate gathering (v3 ICE
+	## pre-gather, upstream `RoomJoinedPayload.ice_servers`). Empty for v2
+	## connections; the latest SFSessionTypes.SessionPlanInfo list supersedes
+	## this one (pre-gather TURN credentials may expire during a long lobby).
+	var ice_servers: Array = []
 	## Server-issued reconnection token (server messages.rs
 	## `RoomJoinedPayload.reconnection_token` / `ReconnectedPayload.reconnection_token`).
 	## Empty when the server omitted it or sent JSON null. Handle as a secret.
@@ -399,6 +440,7 @@ class RoomJoinedInfo:
 		ready_players = _coerce_strings(data.get("ready_players", []))
 		relay_type = String(data.get("relay_type", ""))
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
+		ice_servers = _coerce_ice_servers(data.get("ice_servers", []))
 		reconnection_token = _string_or_empty(data.get("reconnection_token"))
 
 	func to_dict() -> Dictionary:
@@ -415,6 +457,15 @@ class RoomJoinedInfo:
 		for value: Variant in values:
 			if typeof(value) == TYPE_DICTIONARY:
 				result.append(PlayerInfo.new(value))
+		return result
+
+	func _coerce_ice_servers(values: Variant) -> Array:
+		var result: Array = []
+		if typeof(values) != TYPE_ARRAY:
+			return result
+		for value: Variant in values:
+			if typeof(value) == TYPE_DICTIONARY:
+				result.append(SessionTypes.IceServerInfo.new(value))
 		return result
 
 	func _coerce_spectators(values: Variant) -> Array:
@@ -627,6 +678,19 @@ static func validate_protocol_info(data: Variant) -> String:
 		var error := validate_player_name_rules(dict["player_name_rules"])
 		if not error.is_empty():
 			return error
+	for key: String in ["protocol_version", "min_protocol_version", "max_protocol_version"]:
+		if dict.has(key) and dict[key] != null:
+			if not _is_integer_value_in_range(dict[key], 0, U16_MAX):
+				return "ProtocolInfo %s must be u16" % key
+	if dict.has("max_outbound_message_size") and dict["max_outbound_message_size"] != null:
+		if not _is_nonnegative_integer(dict["max_outbound_message_size"]):
+			return "ProtocolInfo max_outbound_message_size must be a non-negative integer"
+	if dict.has("transports") and dict["transports"] != null:
+		if not _is_string_array_value(dict["transports"]):
+			return "ProtocolInfo transports must be a string array"
+		for token: Variant in dict["transports"]:
+			if not MESSAGE_TRANSPORT_FROM_STRING.has(String(token)):
+				return "ProtocolInfo transports contains an unknown token"
 	return ""
 
 
@@ -658,9 +722,14 @@ static func validate_player_info(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "PlayerInfo must be an object"
 	var dict: Dictionary = data
-	for key: String in ["id", "name", "connected_at"]:
+	for key: String in ["id", "name"]:
 		if not _has_string(dict, key):
 			return "PlayerInfo requires string %s" % key
+	# connected_at is optional: protocol-v3 room snapshots trim it for
+	# privacy (upstream serde(default); signal-fish-server #539). Absent or
+	# null decodes to the "" sentinel; a present value must be a string.
+	if not _is_optional_string(dict, "connected_at"):
+		return "PlayerInfo connected_at must be a string"
 	for key: String in ["is_authority", "is_ready"]:
 		if not _has_bool(dict, key):
 			return "PlayerInfo requires bool %s" % key
@@ -675,9 +744,11 @@ static func validate_spectator_info(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "SpectatorInfo must be an object"
 	var dict: Dictionary = data
-	for key: String in ["id", "name", "connected_at"]:
+	for key: String in ["id", "name"]:
 		if not _has_string(dict, key):
 			return "SpectatorInfo requires string %s" % key
+	if not _is_optional_string(dict, "connected_at"):
+		return "SpectatorInfo connected_at must be a string"
 	return ""
 
 
@@ -720,6 +791,10 @@ static func validate_room_joined_info(data: Variant) -> String:
 		var spectators_error := validate_spectators_array(dict["current_spectators"])
 		if not spectators_error.is_empty():
 			return "RoomJoinedInfo current_spectators: %s" % spectators_error
+	if dict.has("ice_servers") and dict["ice_servers"] != null:
+		var ice_error := SessionTypes.validate_ice_servers_array(dict["ice_servers"])
+		if not ice_error.is_empty():
+			return "RoomJoinedInfo ice_servers: %s" % ice_error
 	return ""
 
 
@@ -975,6 +1050,20 @@ static func _has_integer_in_range(
 
 static func _has_string_array(data: Dictionary, key: String) -> bool:
 	return data.has(key) and _is_string_array_value(data[key])
+
+
+## Absent or JSON-null optional string (upstream `Option`, serde default);
+## a present value must be a string.
+static func _is_optional_string(data: Dictionary, key: String) -> bool:
+	if not data.has(key) or data[key] == null:
+		return true
+	return typeof(data[key]) == TYPE_STRING
+
+
+static func _is_nonnegative_integer(value: Variant) -> bool:
+	if not _is_integral_number(value):
+		return false
+	return float(value) >= 0.0
 
 
 static func _has_known_lobby_state(data: Dictionary, key: String) -> bool:

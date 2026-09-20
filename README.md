@@ -4,10 +4,11 @@ A pure-GDScript client for the [Signal Fish](https://github.com/Ambiguous-Intera
 protocol. Drop the `addons/signal_fish` folder into any Godot 4 project — no C#, no
 GDExtension, no compilation — and it runs everywhere Godot runs, including web exports.
 
-- **Protocol codec** for the Signal Fish v2 wire: 12 client messages, 24 server
-  events, the full v0.9.1 error-code table (62 codes), MessagePack game data,
-  and strict binary game-data frames, all pinned to upstream commits and
-  covered by deterministic fixture tests.
+- **Protocol codec** for the Signal Fish v2 wire plus the v3 session-plan
+  signaling surface: 12 client messages, 24 server events, the full v0.9.1
+  error-code table (62 codes), MessagePack game data, strict binary game-data
+  frames, and opt-in v3 peer-to-peer session plans — all pinned to upstream
+  commits and covered by deterministic fixture tests.
 - **Transport seam** with a `WebSocketPeer` adapter and a synchronous fake transport.
 - **`SignalFishClient`** (`Node`): typed connect/authenticate/join/send/leave/reconnect
   API with one snake_case signal per server event. Polling model — no threads, web-safe.
@@ -21,7 +22,7 @@ the roadmap and current state.
 | | |
 |---|---|
 | Engine | Godot 4.3+ (GDScript) |
-| Protocol | Signal Fish v2 (fixtures pinned to upstream; drift-checked weekly) |
+| Protocol | Signal Fish v2 + v3 session-plan signaling (fixtures pinned to upstream; drift-checked weekly) |
 | License | [MIT](LICENSE) |
 | CI | [![Runtime CI](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/ci.yml/badge.svg)](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/ci.yml) |
 
@@ -84,7 +85,11 @@ var event := SFEvents.decode_text(server_text_frame)    # -> typed event, never 
 
 Optional features: MessagePack payload decoding (`config.decode_msgpack_payloads`),
 binary game data (`send_game_data_binary`), directed reconnect with replay
-(`reconnect()`), and opt-in auto-reconnect with backoff (`set_auto_reconnect(true)`).
+(`reconnect()`), opt-in auto-reconnect with backoff (`set_auto_reconnect(true)`),
+and the v3 peer-to-peer signaling surface (set `config.protocol_version = 3`
+plus `supported_transports`/`supported_topologies`, then consume
+`session_plan`/`signal_received` and reply with `send_signal`). The WebRTC
+peer-connection layer that acts on those plans is the next milestone (PLAN P3).
 
 ## Development
 

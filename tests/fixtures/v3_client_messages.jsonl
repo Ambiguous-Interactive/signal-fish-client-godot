@@ -1,0 +1,10 @@
+# Signal Fish protocol v3 client message fixtures
+# Source: signal-fish-server@24a5d10b9e1700cdbef24f05dfe7fe1f0719ac3d (v0.9.1) src/protocol/messages.rs (Signal, TransportStatus; Authenticate v3 capability fields)
+# Source: signal-fish-client-rust binding 0.14.0 (protocol authority e1b65b965390355e9fd15661dc95a8a4321eab17, synced 2026-09-18) src/protocol.rs (ClientMessage::Signal/TransportStatus, PeerSignal shapes)
+# Format: one canonical JSON envelope per non-comment line. The `signal` value is opaque on the wire (server forwards verbatim); these lines model the matchbox convention {"Offer"|"Answer"|"IceCandidate": "..."}.
+# `generation` is required by the pinned server on Signal; the empty-generation legacy Server 0.4 omission shape is pinned by client tests, not here.
+{"type":"Authenticate","data":{"app_id":"mb_app_fixture","sdk_version":"0.1.0-godot","platform":"godot","game_data_format":"json","protocol_version":3,"supported_transports":["relay","direct","webrtc"],"supported_topologies":["relay","host","mesh"],"requested_capabilities":["room_operation_ids"]}}
+{"type":"Signal","data":{"to":"30000000-0000-0000-0000-000000000001","generation":"40000000-0000-0000-0000-000000000001","signal":{"Offer":"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=signal-fish-fixture\r\n"}}}
+{"type":"Signal","data":{"to":"30000000-0000-0000-0000-000000000001","generation":"40000000-0000-0000-0000-000000000001","signal":{"IceCandidate":"candidate:1 1 UDP 2130706431 10.0.0.5 54321 typ host"}}}
+{"type":"TransportStatus","data":{"transport":"webrtc","connected":true}}
+{"type":"TransportStatus","data":{"transport":"relay","connected":false}}

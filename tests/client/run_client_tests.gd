@@ -4,19 +4,29 @@ const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_c
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
+const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const ROOM_ID := "20000000-0000-0000-0000-000000000001"
 
 var _failures: Array = []
+# Completion sentinel: a runtime abort inside _run() unwinds before
+# quit() is reached, which would otherwise leave the process hanging
+# until CI kills it instead of reporting a red result.
+var _run_completed := false
 
 
 func _init() -> void:
 	_run()
+	if not _run_completed:
+		push_error("client tests aborted before completion")
+		quit(1)
+		return
 	if _failures.is_empty():
 		print("client tests passed")
 		quit(0)
@@ -27,7 +37,20 @@ func _init() -> void:
 		quit(1)
 
 
+## A helper suite that fails to compile preloads as a GDScript object with no
+## members; calling it would abort _run() mid-way and the (empty) failure list
+## would report a false pass. Verify every helper suite is loadable up front.
+func _helper_suites_are_loadable() -> bool:
+	if not (V3ClientTestsScript as Script).has_method("run"):
+		push_error("helper suite failed to load: v3_client_tests")
+		return false
+	return true
+
+
 func _run() -> void:
+	if not _helper_suites_are_loadable():
+		_failures.append("helper suites failed to load")
+		return
 	_test_configure_validation()
 	_test_configure_and_connect_guards()
 	_test_auto_authenticate_matches_builder_bytes()
@@ -48,6 +71,8 @@ func _run() -> void:
 	_test_mixed_content_guard_is_data_driven()
 	_test_log_redaction_and_level_gate()
 	_test_config_to_string_redacts_credential()
+	_failures.append_array(V3ClientTestsScript.run(self))
+	_run_completed = true
 
 
 func _test_configure_validation() -> void:
@@ -1029,7 +1054,19 @@ func _send_method_cases() -> Array:
 			func(client) -> Error: return client.join_as_spectator("g", "ROOM1", "s")
 		],
 		["leave_spectator", func(client) -> Error: return client.leave_spectator()],
+		[
+			"send_signal",
+			func(client) -> Error: return client.send_signal(PLAYER_B, "gen", {"Offer": "s"})
+		],
+		[
+			"send_transport_status",
+			func(client) -> Error: return _send_webrtc_transport_status(client)
+		],
 	]
+
+
+func _send_webrtc_transport_status(client: SignalFishClientScript) -> Error:
+	return client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true)
 
 
 func _send_custom_connection_info(client: SignalFishClientScript) -> Error:

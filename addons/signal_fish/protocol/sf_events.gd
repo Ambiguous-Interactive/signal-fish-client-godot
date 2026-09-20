@@ -18,6 +18,7 @@ const SFBinaryCodecScript = preload("res://addons/signal_fish/protocol/sf_binary
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 
 
 static func decode_text(text: String) -> RefCounted:
@@ -163,6 +164,47 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			)
 		"Pong":
 			return _event(type_name, &"pong", [], envelope)
+		"Signal":
+			return _decode_signal(type_name, data, envelope)
+		"NewPeer":
+			if not _has_string(data, "peer_id") or not _has_bool(data, "you_initiate"):
+				return _protocol_error("NewPeer requires peer_id and you_initiate", envelope)
+			return _event(
+				type_name,
+				&"new_peer",
+				[String(data["peer_id"]), bool(data["you_initiate"])],
+				envelope
+			)
+		"SessionPlan":
+			var session_plan_error := SFSessionTypesScript.validate_session_plan_info(data)
+			if not session_plan_error.is_empty():
+				return _protocol_error(session_plan_error, envelope)
+			return _event(
+				type_name,
+				&"session_plan",
+				[SFSessionTypesScript.make_session_plan_info(data)],
+				envelope
+			)
+		"PeerTransportStatus":
+			if not _has_string(data, "peer_id") or not _has_bool(data, "connected"):
+				return _protocol_error(
+					"PeerTransportStatus requires peer_id and connected", envelope
+				)
+			if (
+				SFSessionTypesScript.transport_kind_from_string(data.get("transport", ""))
+				== SFSessionTypesScript.TransportKind.UNKNOWN
+			):
+				return _protocol_error("PeerTransportStatus transport is unknown", envelope)
+			return _event(
+				type_name,
+				&"peer_transport_status",
+				[
+					String(data["peer_id"]),
+					SFSessionTypesScript.transport_kind_from_string(data["transport"]),
+					bool(data["connected"])
+				],
+				envelope
+			)
 		"Reconnected":
 			return _decode_reconnected(type_name, data, envelope, depth)
 		"ReconnectionFailed":
@@ -372,6 +414,28 @@ static func _decode_game_data_binary(
 		type_name,
 		&"game_data_binary_received",
 		[String(data["from_player"]), encoding, payload_result["bytes"]],
+		envelope
+	)
+
+
+## Relayed opaque WebRTC signal from another peer (protocol v3, upstream
+## `ServerMessage::Signal`). The payload is forwarded verbatim from the
+## sender's `Signal` client message (matchbox convention:
+## [code]{"Offer"|"Answer"|"IceCandidate": ...}[/code]); unknown future shapes
+## round-trip untouched, including JSON null (upstream `Value::Null`), so
+## consumers must null-check [code]args[2][/code] before indexing.
+## [code]generation[/code] is "" when the sender's
+## legacy Server 0.4 plan had none.
+static func _decode_signal(type_name: String, data: Dictionary, envelope: Dictionary) -> RefCounted:
+	if not _has_string(data, "from") or not data.has("signal"):
+		return _protocol_error("Signal requires from and signal", envelope)
+	if data.has("generation") and data["generation"] != null:
+		if typeof(data["generation"]) != TYPE_STRING:
+			return _protocol_error("Signal generation must be a string", envelope)
+	return _event(
+		type_name,
+		&"signal_received",
+		[String(data["from"]), _string_or_empty(data.get("generation")), data["signal"]],
 		envelope
 	)
 

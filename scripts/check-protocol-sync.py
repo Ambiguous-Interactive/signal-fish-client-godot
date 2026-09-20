@@ -27,6 +27,8 @@ COMPATIBILITY_URL = (
 FIXTURE_FILES = (
     Path("tests/fixtures/v2_client_messages.jsonl"),
     Path("tests/fixtures/v2_server_messages.jsonl"),
+    Path("tests/fixtures/v3_client_messages.jsonl"),
+    Path("tests/fixtures/v3_server_messages.jsonl"),
     Path("tests/fixtures/malformed.jsonl"),
 )
 

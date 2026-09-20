@@ -3,8 +3,11 @@
 > **Status:** P0–P2 complete: protocol codec + fixtures (re-pinned to upstream v0.9.1, #12),
 > transport seam/adapters, core client/config/state machines, authority, spectators, reconnection +
 > replay, and the MessagePack/binary game-data milestone (strict v2/v3 envelope decode, opt-in payload
-> decode, raw pass-through for rkyv). Root README + auth primer shipped (#13). Next: P3 WebRTC helper
-> and P4 demo + web-export smoke + full docs; remaining #15 item (Godot matrix) is P5 work.
+> decode, raw pass-through for rkyv). Root README + auth primer shipped (#13). The v3 session-plan
+> signaling surface (capabilities in `Authenticate`, `SessionPlan`/`Signal`/`NewPeer`/
+> `PeerTransportStatus`, ICE pre-gather) has landed; remaining P3 work is the WebRTC mesh node that
+> consumes those plans, then P4 demo + web-export smoke + full docs; remaining #15 item (Godot matrix)
+> is P5 work.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -155,6 +158,8 @@ addons/signal_fish/
     sf_messages.gd                #   builders for the 12 client messages -> Dictionary envelopes
     sf_events.gd                  #   decoder: server Dictionary -> SFDecodedEvent (malformed-safe)
     sf_types.gd                   #   typed value objects + enums (see 4.3)
+    sf_session_types.gd           #   v3 session-plan value objects + Topology/TransportKind enums
+    sf_game_data_format.gd        #   pure game-data-format negotiation decisions
     sf_error_codes.gd             #   enum Code + string<->code table + category()
     sf_binary_codec.gd            #   byte-array/base64 compatibility <-> PackedByteArray
     sf_msgpack.gd                 #   pure-GDScript MessagePack encode/decode (opt-in)
@@ -213,6 +218,8 @@ func provide_connection_info(info: SFTypes.ConnectionInfo) -> Error
 func ping() -> Error
 func join_as_spectator(game_name: String, room_code: String, spectator_name: String, password := "") -> Error
 func leave_spectator() -> Error
+func send_signal(to_peer: String, generation: String, signal_payload) -> Error   # v3 WebRTC relay
+func send_transport_status(transport: int, connected: bool) -> Error             # v3, informational
 ```
 
 `JoinRoomParams` = small RefCounted/inner class: `game_name`, `player_name`, `room_code?`,
@@ -260,6 +267,11 @@ signal new_spectator_joined(spectator: SFTypes.SpectatorInfo, current_spectators
 signal spectator_disconnected(spectator_id: String, reason: SFTypes.SpectatorReason, current_spectators: Array)
 # generic server error
 signal server_error(message: String, error_code: SFErrorCodes.Code)
+# protocol v3 session-plan surface (opt-in via SignalFishConfig capabilities)
+signal signal_received(from_player: String, generation: String, signal_payload)
+signal new_peer(peer_id: String, you_initiate: bool)
+signal session_plan(plan: SFSessionTypes.SessionPlanInfo)
+signal peer_transport_status(peer_id: String, transport: SFSessionTypes.TransportKind, connected: bool)
 ```
 
 ### 4.3 Data representation rulings
@@ -506,11 +518,31 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 
 ### P3 — WebRTC P2P helper (optional layer)
 **Goal:** Turn server signaling into real peer connections, without bloating the core.
-- [ ] `webrtc/sf_webrtc_mesh.gd`: consume `game_starting` + `ConnectionInfo` (SDP/ICE) and
-      `provide_connection_info()` to build a `WebRTCMultiplayerPeer` mesh.
+- [x] **v3 signaling protocol surface** (landed this milestone): `SignalFishConfig` capability
+      fields (`protocol_version`, `supported_transports`, `supported_topologies`,
+      `requested_capabilities` — omitted when unset, so v2 wire bytes stay identical);
+      `sf_session_types.gd` (`SessionPlanInfo`/`SessionPeerInfo`/`DirectEndpointInfo`/
+      `IceServerInfo`/`NewPeerInfo`/`PeerTransportStatusInfo` + `Topology`/`TransportKind`
+      enums); `sf_messages.gd` `peer_signal`/`transport_status` builders (upstream
+      `ClientMessage::Signal` — named `peer_signal` because `signal` is a GDScript keyword —
+      and `ClientMessage::TransportStatus`); `sf_events.gd` decoders + client
+      `session_plan`/`new_peer`/`signal_received`/`peer_transport_status` signals; ICE
+      pre-gather on `RoomJoined`/`Reconnected` (`RoomJoinedInfo.ice_servers`); extended
+      `ProtocolInfo` v3 fields; v3 fixture pair pinned to server v0.9.1 + rust authority.
+      Upstream anchors: server `src/protocol/messages.rs` (v3 variants),
+      `docs/concepts/protocol-versions.md`, rust client `src/protocol.rs`/`src/webrtc.rs`/
+      `src/mesh.rs`.
+- [ ] `webrtc/sf_webrtc_mesh.gd`: consume `session_plan` + `signal_received`, answer with
+      `send_signal` (offer when a peer's `initiate` flag says so — never compute roles
+      locally), apply `ice_servers` (replace, never merge; empty set is authoritative),
+      rebuild peers on generation change, drop peers absent from the latest plan, tear down
+      on `room_left`/`player_left`/`disconnected`/`reconnected`, report
+      `send_transport_status` only at the 0↔1 connected-peer boundaries, and build a
+      `WebRTCMultiplayerPeer` mesh (deterministic UUID→int peer-id mapping to be decided).
 - [ ] Browser export uses built-in WebRTC; **native requires the official Godot WebRTC GDExtension** —
       document clearly; the core server-relayed client stays zero-native.
-- [ ] P2P example in the demo; tests where deterministic (signaling glue around a fake transport).
+- [ ] P2P example in the demo; tests where deterministic (signaling glue around a fake
+      peer-connection factory).
 - **DoD:** opt-in layer; server-relayed users pay nothing; documented native dependency.
 
 ### P4 — Demo + web-export smoke + docs  *(→ context.md "first usable client" DoD met)*
