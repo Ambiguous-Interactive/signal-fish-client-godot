@@ -33,6 +33,7 @@ func _run() -> void:
 	_test_auto_authenticate_matches_builder_bytes()
 	_test_preauth_guards_block_all_sends()
 	_test_authenticated_args_and_send_surface()
+	_test_duplicate_authenticated_is_once_per_dial()
 	_test_room_lifecycle_state_machine()
 	_test_spectators_keep_lobby_updates_and_rosters_stay_stable()
 	_test_connected_handler_close_does_not_crash()
@@ -291,6 +292,54 @@ func _test_authenticated_args_and_send_surface() -> void:
 	)
 	_assert_equal(ERR_UNAUTHORIZED, client.send_game_data({}), "send after close blocked")
 	client.free()
+
+
+func _test_duplicate_authenticated_is_once_per_dial() -> void:
+	# Issue #24: a duplicate `Authenticated` on a normal dial is hostile-
+	# server input; the once-per-dial guard (previously reconnect-dials only)
+	# keeps it fully silent instead of re-emitting and re-setting state.
+	var client := _make_connected_client()
+	var authenticated_events: Array = []
+	client.authenticated.connect(
+		func(_app: String, _org: String, _rate_limits) -> void: authenticated_events.append(1)
+	)
+	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	_assert_equal([1], authenticated_events, "authenticated emitted exactly once per dial")
+	_assert_equal(
+		SignalFishClientScript.SessionState.AUTHENTICATED,
+		client.get_session_state(),
+		"session state untouched by the duplicate"
+	)
+	client.free()
+
+	# The same guard must also protect an in-room session: a late duplicate
+	# must not clobber the restored room state back to AUTHENTICATED.
+	var room_client := _make_authenticated_client()
+	var room_events: Array = []
+	room_client.authenticated.connect(
+		func(_app: String, _org: String, _rate_limits) -> void: room_events.append(1)
+	)
+	var params := SignalFishClientScript.JoinRoomParams.new()
+	params.game_name = "reef-rally"
+	params.player_name = "Alice"
+	room_client.join_room(params)
+	room_client.transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	_assert_equal(
+		SignalFishClientScript.SessionState.IN_ROOM_WAITING,
+		room_client.get_session_state(),
+		"in-room before the duplicate"
+	)
+	room_client.transport.inject_server_message(
+		{"type": "Authenticated", "data": _authenticated_data()}
+	)
+	_assert_equal([], room_events, "in-room duplicate stays consumer-silent")
+	_assert_equal(
+		SignalFishClientScript.SessionState.IN_ROOM_WAITING,
+		room_client.get_session_state(),
+		"in-room state untouched by the duplicate"
+	)
+	room_client.free()
 
 
 func _test_room_lifecycle_state_machine() -> void:

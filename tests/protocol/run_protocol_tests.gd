@@ -33,11 +33,53 @@ func _run() -> void:
 	_test_malformed_inputs_decode_to_protocol_error()
 	_test_binary_codec_accepts_base64_payload()
 	_test_upstream_optional_fields_decode()
+	_test_allowed_symbols_widen_parity()
 	_test_strict_protocol_validation()
 	_test_protocol_error_diagnostics()
 	_test_error_code_table()
 	_failures.append_array(ProtocolHardeningTestsScript.run())
 	_failures.append_array(BinaryFrameTestsScript.run())
+
+
+func _test_allowed_symbols_widen_parity() -> void:
+	# Issue #12: upstream widened PlayerNameRules.allowed_symbols from
+	# Vec<char> to Vec<String> (rust SDK 0.8.0-era breaking change). Both wire
+	# shapes are JSON string arrays, so the codec must coerce either verbatim:
+	# legacy servers emit one-character strings, current ones may emit
+	# multi-character strings.
+	var shapes := [
+		["legacy one-char symbols", ["_", "-"]],
+		["widened multi-char symbols", ["_-", "SEP"]],
+	]
+	for shape: Array in shapes:
+		var envelope := {
+			"type": "ProtocolInfo",
+			"data":
+			{
+				"player_name_rules":
+				{
+					"max_length": 32,
+					"min_length": 1,
+					"allow_unicode_alphanumeric": true,
+					"allow_spaces": true,
+					"allow_leading_trailing_whitespace": false,
+					"allowed_symbols": shape[1],
+				}
+			}
+		}
+		var event := SFEventsScript.decode_envelope(envelope)
+		if not _assert_equal("protocol_info", String(event.signal_name), "%s: decodes" % shape[0]):
+			continue
+		_assert_equal(
+			PackedStringArray(shape[1]),
+			event.args[0].player_name_rules.allowed_symbols,
+			"%s: preserved verbatim" % shape[0]
+		)
+		_assert_equal(
+			"",
+			SFTypesScript.validate_player_name_rules(envelope["data"]["player_name_rules"]),
+			"%s: validates" % shape[0]
+		)
 
 
 func _test_client_encoders_match_fixtures() -> void:
@@ -185,6 +227,11 @@ func _test_server_decoders_match_fixtures() -> void:
 	)
 	_assert_equal(PackedStringArray(), room_joined.args[0].ready_players, "room ready players")
 	_assert_equal("websocket", room_joined.args[0].relay_type, "room relay type")
+	_assert_equal(
+		"test-reconnect-token-not-secret",
+		room_joined.args[0].reconnection_token,
+		"room join issues the reconnection token"
+	)
 	_assert_equal(1, room_joined.args[0].current_players.size(), "room_joined players")
 	_assert_equal("Alice", room_joined.args[0].current_players[0].name, "room player name")
 	_assert_equal(true, room_joined.args[0].current_players[0].is_authority, "room player auth")
@@ -293,6 +340,15 @@ func _test_server_decoders_match_fixtures() -> void:
 	_assert_equal(2, reconnected.args[1].size(), "reconnected missed event count")
 	_assert_equal("pong", String(reconnected.args[1][0].signal_name), "reconnected missed pong")
 	_assert_equal("player_left", String(reconnected.args[1][1].signal_name), "re missed left")
+	_assert_equal(
+		"test-reconnect-token-rotated-not-secret",
+		reconnected.args[0].reconnection_token,
+		"reconnect rotates the reconnection token"
+	)
+	_assert(
+		room_joined.args[0].reconnection_token != reconnected.args[0].reconnection_token,
+		"reconnection tokens rotate per baseline"
+	)
 
 	var reconnection_failed = decoded_events[16]
 	_assert_equal("token expired", reconnection_failed.args[0], "reconnection failed reason")

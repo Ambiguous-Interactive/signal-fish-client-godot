@@ -5,6 +5,11 @@ var sent_text: Array = []
 var sent_binary: Array = []
 var buffered_amount := 0
 var fail_on_connect := false
+## When true, sends fail the session exactly like the real transport: a
+## synchronous [signal failed] plus an [code]ERR_CONNECTION_ERROR[/code]
+## return (issue #24 send-failure parity). Both terminal shapes of the
+## client's reconnect-handshake failure path become fake-testable.
+var fail_on_send := false
 
 var _ready_state := WebSocketPeer.STATE_CLOSED
 var _opened_emitted := false
@@ -33,6 +38,8 @@ func poll() -> void:
 func send_text(text: String) -> Error:
 	if _ready_state != WebSocketPeer.STATE_OPEN or _is_terminal():
 		return ERR_UNCONFIGURED
+	if fail_on_send:
+		return _fail_send("failed to send WebSocket text frame: fake transport send failure")
 	sent_text.append(text)
 	return OK
 
@@ -40,6 +47,8 @@ func send_text(text: String) -> Error:
 func send_binary(bytes: PackedByteArray) -> Error:
 	if _ready_state != WebSocketPeer.STATE_OPEN or _is_terminal():
 		return ERR_UNCONFIGURED
+	if fail_on_send:
+		return _fail_send("failed to send WebSocket binary frame: fake transport send failure")
 	sent_binary.append(bytes.duplicate())
 	return OK
 
@@ -109,6 +118,17 @@ func _reset_session_flags() -> void:
 
 func _is_terminal() -> bool:
 	return _closed_emitted or _failed_emitted
+
+
+## Mirrors the real transport's client-observable send-failure cascade: the
+## session dies (ready state CLOSED, [signal failed] emitted once) and the
+## caller still receives an error code. Note the concrete code differs from
+## the real transport (which surfaces the underlying WebSocketPeer error);
+## the client only branches on OK/not-OK.
+func _fail_send(message: String) -> Error:
+	_ready_state = WebSocketPeer.STATE_CLOSED
+	_emit_failed_once(message)
+	return ERR_CONNECTION_ERROR
 
 
 func _emit_closed_once(code: int, reason: String) -> void:

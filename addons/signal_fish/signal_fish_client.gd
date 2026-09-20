@@ -106,6 +106,9 @@ var _reconnect_auth_token := ""
 # Once-per-dial guard for the directed Reconnect handshake: a duplicate
 # `Authenticated` server event must never resend the handshake.
 var _reconnect_handshake_sent := false
+# Once-per-dial guard for `Authenticated` itself: a duplicate event on any
+# dial (issue #24) must not re-emit `authenticated` or re-set session state.
+var _authenticated_seen := false
 # Last URL a dial was attempted against. Reconnect/auto-reconnect dials reuse
 # it so a session opened with an explicit connect_to_server override rejoins
 # the same endpoint; it falls back to config.endpoint_url when never set.
@@ -496,6 +499,7 @@ func _open_transport(target: String) -> Error:
 	_last_dial_url = target
 	_user_close_requested = false
 	_reconnect_handshake_sent = false
+	_authenticated_seen = false
 	# Each dial renegotiates the game-data format from the configured
 	# preference.
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
@@ -723,27 +727,34 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"protocol_error":
 			_emit_protocol_error(event.args[0])
 		&"authenticated":
-			if not _reconnect_handshake_sent:
-				_session_state = SessionState.AUTHENTICATED
-				if _reconnect_auth_token.is_empty():
-					authenticated.emit(event.args[0], event.args[1], event.args[2])
-				elif _connection_state == ConnectionState.CONNECTED:
-					# Reconnect dial: the fresh connection is authenticated,
-					# so the directed handshake goes out now (upstream
-					# `take_auto_reconnect_operation` fires only post-auth).
-					# `authenticated` stays consumer-silent on dials: emitting
-					# it would invite a join-on-auth handler to race the
-					# handshake with a fresh JoinRoom. Consumers observe
-					# `reconnected` (or `reconnection_failed`) next. The send
-					# is once-per-dial: a duplicate Authenticated event must
-					# not resend it, and a failed send resolves the attempt
-					# instead of leaving the session authenticated-but-
-					# roomless. Duplicates after the handshake stay fully
-					# silent above: they must not clobber the restored session
-					# state or leak the consumer-silent dial contract.
-					_reconnect_handshake_sent = true
-					if _send_reconnect() != OK:
-						_fail_reconnect_handshake()
+			# Once-per-dial: a duplicate `Authenticated` on any dial is
+			# hostile-server input (issue #24) and must stay fully silent —
+			# no second `authenticated` emission and no session-state reset.
+			# On reconnect dials the same guard covers the directed handshake
+			# below, so exactly one goes out per dial.
+			if not _authenticated_seen:
+				_authenticated_seen = true
+				if not _reconnect_handshake_sent:
+					_session_state = SessionState.AUTHENTICATED
+					if _reconnect_auth_token.is_empty():
+						authenticated.emit(event.args[0], event.args[1], event.args[2])
+					elif _connection_state == ConnectionState.CONNECTED:
+						# Reconnect dial: the fresh connection is authenticated,
+						# so the directed handshake goes out now (upstream
+						# `take_auto_reconnect_operation` fires only post-auth).
+						# `authenticated` stays consumer-silent on dials: emitting
+						# it would invite a join-on-auth handler to race the
+						# handshake with a fresh JoinRoom. Consumers observe
+						# `reconnected` (or `reconnection_failed`) next. The send
+						# is once-per-dial: a duplicate Authenticated event must
+						# not resend it, and a failed send resolves the attempt
+						# instead of leaving the session authenticated-but-
+						# roomless. Duplicates after the handshake stay fully
+						# silent above: they must not clobber the restored session
+						# state or leak the consumer-silent dial contract.
+						_reconnect_handshake_sent = true
+						if _send_reconnect() != OK:
+							_fail_reconnect_handshake()
 		&"protocol_info":
 			_reconcile_game_data_format(event.args[0].game_data_formats)
 			protocol_info.emit(event.args[0])
@@ -1087,6 +1098,12 @@ func _remember_secret(secret: String) -> void:
 		_secrets.append(secret)
 
 
+## Unwires and closes the transport after a termination cascade. Known
+## deferred limitation (issue #24): the socket is closed but never polled
+## again, so the WebSocket close handshake may not complete before the
+## RefCounted peer is reclaimed; the engine force-closes the underlying TCP
+## socket on free, which is functionally fine. Revisit (poll-to-flush) only
+## if a server-side half-open is ever observed in practice.
 func _teardown_transport() -> void:
 	if transport != null:
 		transport.opened.disconnect(_on_transport_opened)

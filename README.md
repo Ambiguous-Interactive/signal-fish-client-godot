@@ -1,63 +1,96 @@
-# Signal Fish — Godot 4 Client
+# Signal Fish Godot Client
 
-A pure-GDScript client for the [Signal Fish](https://github.com/Ambiguous-Interactive) protocol:
-a `SignalFishClient` node you drop into any Godot 4 scene, connect, and drive through typed methods
-and signals. No C#, no native extensions, no compilation — it runs everywhere Godot runs,
-including web exports.
+A pure-GDScript client for the [Signal Fish](https://github.com/Ambiguous-Interactive/signal-fish-server)
+protocol. Drop the `addons/signal_fish` folder into any Godot 4 project — no C#, no
+GDExtension, no compilation — and it runs everywhere Godot runs, including web exports.
+
+- **Protocol codec** for the Signal Fish v2 wire: 11 client messages, 24 server
+  events, 40+ error-code tokens (full upstream table extension tracked in
+  [PLAN.md](PLAN.md)), MessagePack game data, and strict binary game-data frames,
+  all pinned to upstream commits and covered by deterministic fixture tests.
+- **Transport seam** with a `WebSocketPeer` adapter and a synchronous fake transport.
+- **`SignalFishClient`** (`Node`): typed connect/authenticate/join/send/leave/reconnect
+  API with one snake_case signal per server event. Polling model — no threads, web-safe.
 
 ## Status
 
-In active development. The wire-protocol codec (all 11 client messages, 24 server messages,
-error codes, fixtures pinned to upstream commits) and the core client (connect, authenticate,
-join, send/receive, leave, close — with state machines, frame caps, and backpressure) are done.
-Remaining roadmap: reconnection/replay, MessagePack, WebRTC helper, demo project, Asset Library
-release. See [PLAN.md](PLAN.md) for the full plan and current phase.
+Work in progress toward v1 (P3 WebRTC helper, P4 demo + web-export smoke + full docs,
+remaining P5 items: Godot 4.4 CI matrix, web-export CI job). See [PLAN.md](PLAN.md) for
+the roadmap and current state.
 
-## Requirements
-
-- Godot 4.3 or newer (tested on 4.3; see `.github/workflows/ci.yml` for the current matrix).
+| | |
+|---|---|
+| Engine | Godot 4.3+ (GDScript) |
+| Protocol | Signal Fish v2 (fixtures pinned to upstream; drift-checked weekly) |
+| License | [MIT](LICENSE) |
+| CI | [![Runtime CI](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/ci.yml/badge.svg)](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/ci.yml) |
 
 ## Installation
 
-1. Copy `addons/signal_fish/` into your project (or install from the Godot Asset Library once
-   listed).
-2. Create a `SignalFishConfig` resource with your `app_id` and pass it to the client.
-
-```gdscript
-var config := SignalFishConfig.new()
-config.app_id = "your-app-id"
-
-var client := SignalFishClient.new()
-add_child(client)
-client.configure(config)
-client.connect_to_server("wss://your-server.example/socket")
-
-client.room_joined.connect(func(info) -> void:
-    print("joined %s" % info.room_code))
-client.send_game_data({"move": "left"})
-```
+**Manual:** copy `addons/signal_fish/` into your project's `addons/` folder.
+(Asset Library listing is planned for the v1 release; until then, manual copy.)
 
 ## Authentication primer
 
-- **`app_id` is a public identifier.** It is safe to ship in game builds; it identifies your game
-  to the Signal Fish server and is not a secret.
-- **Reconnection tokens are secrets.** The server issues them for `Reconnect`; never log them,
-  never commit them, and expect the server to rotate them.
-- **Log through the redacting logger.** The addon ships `sf_log.gd`, which redacts credentials and
-  tokens before output. Avoid `print()`ing raw protocol envelopes: once reconnection support
-  lands, payloads will contain secrets.
-- Production endpoints use `wss://`. The client refuses `ws://` on web builds inside secure pages
-  (browsers block mixed content) instead of failing silently.
+Signal Fish has two credentials and they are **not** the same kind of thing:
+
+- **`app_id` is a public identifier**, not a secret — it routes the connection to your
+  app's lobby namespace and is safe to ship in game builds.
+- **Reconnection tokens are server-issued secrets.** The server mints one when you join
+  a room and rotates it on every successful reconnect. Never log them, never commit
+  them, never persist them without an explicit decision; treat them like session keys.
+  `SignalFishClient` feeds every token it sees through its redacting logger
+  (`addons/signal_fish/protocol/sf_log.gd`) — don't grow `print()` habits that leak
+  envelopes containing tokens.
+
+## Quick start
+
+Add a `SignalFishClient` node, configure it, and drive it from signals:
+
+```gdscript
+var client := SignalFishClient.new()
+add_child(client)
+
+client.authenticated.connect(
+    func(app_name, _org, _limits):
+        print("authenticated: %s" % app_name)
+        # Room commands require an authenticated session.
+        var params := SignalFishClient.JoinRoomParams.new()
+        params.game_name = "reef-rally"
+        params.player_name = "Alice"
+        client.join_room(params)
+)
+client.room_joined.connect(func(info): print("joined room %s" % info.room_code))
+client.game_data_received.connect(func(from_player, data): print("%s: %s" % [from_player, data]))
+
+var config := SignalFishConfig.new()
+config.app_id = "my-app"                       # public identifier
+config.endpoint_url = "wss://signal-fish.example/ws"
+client.configure(config)
+client.connect_to_server()
+# The client auto-sends Authenticate when the socket opens; drive the
+# session from signals from here on.
+```
+
+Once in the room: `client.send_game_data({"action": "move", "x": 30, "y": 40})`.
+
+Prefer protocol-only use (no Node)? The codec is pure and static:
+
+```gdscript
+var envelope := SFMessages.authenticate("my-app")
+var text := SFEnvelope.encode(envelope)                 # wire text frame
+var event := SFEvents.decode_text(server_text_frame)    # -> typed event, never crashes
+```
+
+Optional features: MessagePack payload decoding (`config.decode_msgpack_payloads`),
+binary game data (`send_game_data_binary`), directed reconnect with replay
+(`reconnect()`), and opt-in auto-reconnect with backoff (`set_auto_reconnect(true)`).
 
 ## Development
 
 ```bash
-bash scripts/run-runtime-checks.sh all   # format + lint + headless Godot tests
+bash scripts/run-runtime-checks.sh all   # private-helper guard, format, lint, 5 Godot suites
 ```
 
-Protocol behavior is pinned to upstream Signal Fish repos and commits; see
-`.llm/research/protocol-fixtures.md`.
-
-## License
-
-[MIT](LICENSE)
+Requires Godot 4.3+ and Python 3 with `requirements-ci.txt` (`gdtoolkit`). AI/agent
+context lives in [.llm/context.md](.llm/context.md).

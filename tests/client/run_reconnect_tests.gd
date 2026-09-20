@@ -75,6 +75,7 @@ func _run() -> void:
 	_test_scheme_refused_reconnect_drops_dial_credentials()
 	_test_duplicate_authenticated_sends_handshake_once()
 	_test_handshake_send_failure_resolves_attempt()
+	_test_handshake_send_failure_killing_link_cascades()
 	_test_auto_reconnect_exhaustion_emits_connection_failed()
 	_test_failure_driven_exhaustion_and_budget_recovery()
 	_test_reconnect_tokens_are_redacted()
@@ -742,6 +743,45 @@ func _test_handshake_send_failure_resolves_attempt() -> void:
 	)
 	_assert_equal(1, retry_errors.size(), "exactly the transport diagnostic")
 	reconnector.free()
+
+
+func _test_handshake_send_failure_killing_link_cascades() -> void:
+	# Issue #24: a handshake send that kills the link resolves through the
+	# transport-failure cascade (`failed` -> connection_failed) instead of the
+	# client teardown shape: the send error surfaces, the attempt still
+	# resolves negatively, and no `disconnected(-1)` double-fires after the
+	# link is already dead. The fake's fail_on_send knob mirrors the real
+	# transport's synchronous send-failure cascade, so this shape is now
+	# fake-testable.
+	var client := _make_reconnect_client(TOKEN_V1, false)
+	var errors := _track_protocol_errors(client)
+	var connection_failures: Array = []
+	var reconnection_failures: Array = []
+	var disconnects: Array = []
+	client.connection_failed.connect(func(error: String) -> void: connection_failures.append(error))
+	client.reconnection_failed.connect(
+		func(reason: String, code: SFErrorCodesScript.Code) -> void:
+			reconnection_failures.append([reason, code])
+	)
+	client.disconnected.connect(func(code: int, _reason: String) -> void: disconnects.append(code))
+	client.transport.fail_on_send = true
+	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	_assert_equal(1, connection_failures.size(), "dead link surfaces connection_failed once")
+	_assert_string_contains(
+		connection_failures[0], "send", "transport failure names the failed send"
+	)
+	_assert_equal(1, reconnection_failures.size(), "attempt still resolves negatively")
+	_assert_string_contains(reconnection_failures[0][0], "handshake", "failure reason")
+	_assert_equal([], disconnects, "no terminal disconnect after a dead link")
+	_assert_equal("", client._reconnect_auth_token, "dial credentials consumed")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"session ends FAILED"
+	)
+	_assert_equal(1, errors.size(), "exactly the send diagnostic")
+	_assert_string_contains(errors[0], "send failed", "send diagnostic")
+	client.free()
 
 
 func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:

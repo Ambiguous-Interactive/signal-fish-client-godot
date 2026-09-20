@@ -1,5 +1,7 @@
 # Signal Fish v2 malformed protocol fixtures
-# Source: decoder hardening cases derived from signal-fish-server@4f766b7856bead1e1cc07d4e7a1057831a045749 src/protocol/messages.rs
+# Source: signal-fish-server@24a5d10b9e1700cdbef24f05dfe7fe1f0719ac3d (v0.9.1) src/protocol/messages.rs
+# Prior pin: server@4f766b7856bead1e1cc07d4e7a1057831a045749 (2026-05-29); re-validated 2026-09-20 (issue #12).
+# Derivation: decoder hardening cases (malformed JSON, bad envelopes, hostile payload shapes).
 # Format: one malformed input per non-comment line; readers must not assume each line is valid JSON.
 not-json
 []
