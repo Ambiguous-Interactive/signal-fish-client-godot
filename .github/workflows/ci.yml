@@ -19,6 +19,13 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v7
 
+            - name: Set up Python (with pip cache)
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.x"
+                  cache: pip
+                  cache-dependency-path: requirements-ci.txt
+
             - name: Install Godot runtime dependencies
               run: |
                   sudo apt-get update
@@ -57,8 +64,19 @@ jobs:
             - name: Lint GDScript
               run: bash scripts/run-runtime-checks.sh lint
 
+            - name: Cache Godot binary
+              id: godot-cache
+              uses: actions/cache@v4
+              with:
+                  path: /usr/local/bin/godot
+                  key: godot-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
+
             - name: Install Godot
+              if: steps.godot-cache.outputs.cache-hit != 'true'
               run: sudo bash .devcontainer/install-godot.sh "${GODOT_VERSION}"
+
+            - name: Verify Godot binary
+              run: godot --headless --version
 
             - name: Run protocol fixture tests
               run: bash scripts/run-runtime-checks.sh godot

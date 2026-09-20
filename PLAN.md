@@ -1,10 +1,10 @@
 # Signal Fish — Godot 4 GDScript Client Bindings · Implementation Plan
 
-> **Status:** P0–P2 complete: protocol codec + fixtures, transport seam/adapters, core
-> client/config/state machines, authority, spectators, reconnection + replay, and the
-> MessagePack/binary game-data milestone (strict v2/v3 envelope decode, opt-in payload
-> decode, raw pass-through for rkyv). Next: P3 WebRTC helper and P4 demo + web-export
-> smoke + user docs; fixture re-pin (#12) and README (#13) also remain open.
+> **Status:** P0–P2 complete: protocol codec + fixtures (re-pinned to upstream v0.9.1, #12),
+> transport seam/adapters, core client/config/state machines, authority, spectators, reconnection +
+> replay, and the MessagePack/binary game-data milestone (strict v2/v3 envelope decode, opt-in payload
+> decode, raw pass-through for rkyv). Root README + auth primer shipped (#13). Next: P3 WebRTC helper
+> and P4 demo + web-export smoke + full docs; remaining #15 item (Godot matrix) is P5 work.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -78,7 +78,7 @@ validation, and automated Asset Library releases.
 | 1 | Implementation approach | **Pure GDScript addon** (no C#, no Rust/GDExtension). Rust client = behavioral reference only. |
 | 2 | Public API style | **Rich, typed, idiomatic API** mirroring the Rust client: per-message methods + one snake_case signal per event, with typed payload objects. (Not a thin `send_message(Dictionary)`.) |
 | 3 | v1 scope | **Everything**: core + authority + spectators + reconnection/replay + MessagePack binary game data + an **optional WebRTC P2P helper** layer. |
-| 4 | Test framework | **gdUnit4** (suite + CI). |
+| 4 | Test framework | **Deterministic custom `SceneTree` runners** (`godot --headless --script`), replacing the originally locked gdUnit4 choice (issue #15, item 5): the P0 suites landed as dependency-free runners with byte-pinned fixtures, injected clocks, and synchronous fake transports; gdUnit4 would add a dependency and async harness without adding coverage. CI wires the same runners in. |
 | 5 | Engine target | **Godot 4 first** (devcontainer pins `4.3-stable`). Godot 3.6 only post-v1 behind a separate compatibility decision (context.md MVP rule). |
 
 Hard constraint: the existing `.llm/` + PowerShell harness and `llm-harness.yml` CI **must stay green
@@ -167,7 +167,7 @@ addons/signal_fish/
     sf_webrtc_mesh.gd             #   GameStarting/ConnectionInfo -> WebRTCMultiplayerPeer
   icon.png  README.md  LICENSE
 demo/                             # Godot 4 demo project
-tests/                            # gdUnit4: protocol/, transport/, smoke/, fixtures/
+tests/                            # custom SceneTree runners: protocol/, transport/, client/
 ```
 
 ### 4.2 Public `SignalFishClient` API
@@ -512,20 +512,22 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 - [ ] Headless `WebSocketPeer` smoke test (network-gated/opt-in).
 - [ ] **Browser-export manual checklist** executed & recorded: HTTPS host, `wss://`, `Origin`,
       mixed-content (`ws://` from HTTPS) rejection, single-thread export, no native-only sockets.
-- [ ] `README.md` + quickstart + API reference reflecting the **real** API; `icon.png`.
+- [x] `README.md` + quickstart + auth primer shipped early (issue #13; snippets verified against
+      the shipped API). Remaining: full API reference and `icon.png`.
 - [ ] Update `.llm/code-samples/gdscript-client-shape.md` to the shipped API; add
       `.llm/skills/runtime-architecture.md` (regenerate index + `agent-check.ps1`).
 - **DoD:** demo runs in editor + exports to web; docs accurate; all five context.md DoD items met.
 
 ### P5 — CI/CD  *(separate from llm-harness.yml)*
-- [ ] New `.github/workflows/ci.yml`: `detect` guard (no-op until `addons/signal_fish/**/*.gd` exists) →
-      **lint** (`pip install gdtoolkit==4.5.0`; `gdformat --check addons/signal_fish/`; `gdlint ...`) →
-      **test** matrix (`MikeSchulze/gdUnit4-action@v1.3.1`, Godot `['4.3.0','4.4.1']`, `paths:
-      res://addons/signal_fish/tests`, JUnit upload) → **web-export-smoke**
-      (`chickensoft-games/setup-godot@v2.4.1` `use-dotnet:false include-templates:true`; `--import`;
-      `--export-release "Web"`; assert artifacts).
-- [ ] `permissions: contents: read`; concurrency `cancel-in-progress: true`; `fail-fast: false`.
-- [ ] `.github/dependabot.yml` (github-actions weekly + pip).
+- [x] New `.github/workflows/ci.yml` (landed during P1 and grown with the suites; single `protocol`
+      job running the custom runners via `scripts/run-runtime-checks.sh`). Remaining P5 work:
+      a **Godot version matrix** (issue #15, item 6 — add 4.4.x as a second parallel job before the
+      API freeze; wall-clock stays flat because the jobs run concurrently) and the
+      **web-export-smoke** job (`chickensoft-games/setup-godot@v2.4.1` `use-dotnet:false
+      include-templates:true`; `--import`; `--export-release "Web"`; assert artifacts).
+- [x] `permissions: contents: read`; pip + Godot binary caching (`actions/setup-python` pip cache,
+      `actions/cache` on `/usr/local/bin/godot` keyed by version).
+- [x] `.github/dependabot.yml` (github-actions weekly + pip + devcontainers).
 - [ ] **Do not touch `llm-harness.yml`** (preflight, harness, generated-diff, 5000ms guard stay intact).
 - **DoD:** `ci.yml` green across matrix; `llm-harness.yml` still green.
 
@@ -637,8 +639,9 @@ WebSocketPeer smoke (network-gated, opt-in).
 | Cleanup on close | — | transport nulled; roster/ids cleared; UNAUTHENTICATED | — |
 | Web export | — | — | wss://, Origin, mixed-content (manual checklist) |
 
-Runner: `godot --headless` via the gdUnit4 runner over `res://addons/signal_fish/tests`. Codec (F)
-tests need no SceneTree.
+Runner: `godot --headless --script` custom `SceneTree` suites over
+`tests/` (locked decision #4, issue #15 item 5). Codec (F) tests need no
+SceneTree.
 
 ---
 
@@ -646,17 +649,23 @@ tests need no SceneTree.
 
 **Two sibling workflows; the harness one is never modified.**
 
-`ci.yml` (triggers: `pull_request`, `push:[main]`; `permissions: contents: read`; concurrency
-cancel-in-progress):
-- `detect` → outputs `has_addon` (true once `addons/signal_fish/**/*.gd` exists) so jobs no-op at bootstrap.
-- `lint-gdscript` → `actions/setup-python@v5`, `pip install gdtoolkit==4.5.0`, `gdformat --check
-  addons/signal_fish/`, `gdlint addons/signal_fish/`.
-- `test` → matrix `godot: ['4.3.0','4.4.1']`, `MikeSchulze/gdUnit4-action@v1.3.1` (`paths:
-  res://addons/signal_fish/tests`, `publish-report`/`upload-report`). *(Adding 4.5.x is a coordinated
-  bump to a gdUnit4-v6-compatible action — not a free matrix row.)*
-- `web-export-smoke` → `chickensoft-games/setup-godot@v2.4.1` (`use-dotnet:false`,
+`ci.yml` (triggers: `pull_request`, `push:[main]`; `permissions: contents: read`; no concurrency
+gate needed at one job):
+- `protocol` (single job) → `actions/checkout`, `actions/setup-python@v5` (pip cache keyed on
+  `requirements-ci.txt`), apt Godot deps, venv + `gdtoolkit==4.5.0`, then
+  `scripts/run-runtime-checks.sh` steps: `private-helpers`, `format` (`gdformat --check`),
+  `lint` (`gdlint`), Godot install (cached via `actions/cache` on `/usr/local/bin/godot`,
+  keyed by version), and the custom SceneTree suites (`godot`).
+- **Godot matrix** (pending, issue #15 item 6): add 4.4.x as a second parallel `protocol` job
+  before the API freeze; wall-clock stays flat because jobs run concurrently.
+- `web-export-smoke` (pending) → `chickensoft-games/setup-godot@v2.4.1` (`use-dotnet:false`,
   `include-templates:true`), `godot --headless --path . --import`, `godot --headless --path .
   --export-release "Web" build/web/index.html`, assert `index.html`+`index.wasm`, upload artifact.
+
+`protocol-sync.yml` (scheduled weekly cron + `workflow_dispatch`; never on push/PR, so fast-gate
+CI time is untouched): runs `scripts/check-protocol-sync.py` to fail loudly when the upstream
+Rust SDK binding (`tests/compatibility.toml`) moves past the pins recorded in the fixture
+headers and `.llm/research/protocol-fixtures.md` (issue #12).
 
 `release.yml` (trigger: `release: published`; `permissions: contents: write` on release job only;
 concurrency `cancel-in-progress: false`):
@@ -664,9 +673,10 @@ concurrency `cancel-in-progress: false`):
   `tests/`, `.gdignore`); `softprops/action-gh-release` (pin SHA) with the zip + generated notes.
 - `publish-asset-lib` → see §10.
 
-**Caching:** gdUnit4-action caches Godot internally; setup-godot caches Godot+templates; setup-python +
-pip are fast. **Pin third-party actions to commit SHA** (gdUnit4-action, setup-godot,
-godot-asset-lib-action, action-gh-release); `actions/*` may stay on major tags.
+**Caching:** pip wheels (setup-python cache) and the Godot binary (`actions/cache`) keep the
+`protocol` job fast; setup-godot caches Godot+templates for the export smoke.
+**Pin third-party actions to commit SHA** (setup-godot, godot-asset-lib-action,
+action-gh-release); `actions/*` may stay on major tags.
 
 ---
 
@@ -707,7 +717,7 @@ export-ignore`). **Versioning:** SemVer tags `vMAJOR.MINOR.PATCH`; git tag is th
 (CI asserts `plugin.cfg` matches); keep `CHANGELOG.md`. Pre-1.0 while protocol/API stabilize.
 
 **Sources** (verify live during P6): `godotengine/godot-asset-library/blob/master/API.md`; Godot docs
-"Submitting to the Asset Library"; `deep-entertainment/godot-asset-lib-action`; `MikeSchulze/gdUnit4-action`;
+"Submitting to the Asset Library"; `deep-entertainment/godot-asset-lib-action`;
 `chickensoft-games/setup-godot`; `Scony/godot-gdscript-toolkit`.
 
 ---
