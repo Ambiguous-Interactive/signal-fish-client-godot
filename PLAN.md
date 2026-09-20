@@ -1,9 +1,10 @@
 # Signal Fish — Godot 4 GDScript Client Bindings · Implementation Plan
 
-> **Status:** P0 complete. P1 complete (transport seam + adapters + core client/config/state
-> machines + fake-transport client tests). P2 in progress: reconnection + replay landed
-> (manual `reconnect()`, opt-in auto-reconnect with backoff, `reconnection_token`
-> capture); next: authority/spectator matrix depth, MessagePack, binary game data.
+> **Status:** P0–P2 complete: protocol codec + fixtures, transport seam/adapters, core
+> client/config/state machines, authority, spectators, reconnection + replay, and the
+> MessagePack/binary game-data milestone (strict v2/v3 envelope decode, opt-in payload
+> decode, raw pass-through for rkyv). Next: P3 WebRTC helper and P4 demo + web-export
+> smoke + user docs; fixture re-pin (#12) and README (#13) also remain open.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -204,7 +205,7 @@ returns `ERR_UNAUTHORIZED`, sends nothing):
 func join_room(params: JoinRoomParams) -> Error
 func leave_room() -> Error
 func send_game_data(data: Variant) -> Error
-func send_game_data_binary(bytes: PackedByteArray, encoding := SFTypes.GameDataEncoding.MESSAGE_PACK) -> Error
+func send_game_data_binary(bytes: PackedByteArray) -> Error
 func set_ready() -> Error                            # PlayerReady (toggle)
 func request_authority(become_authority: bool) -> Error
 func provide_connection_info(info: SFTypes.ConnectionInfo) -> Error
@@ -353,11 +354,36 @@ func close(code := 1000, reason := "") -> void
   overflow the script stack.
 - **Error codes (`sf_error_codes.gd`):** single source — `enum Code`, `STRING_TO_CODE`/`CODE_TO_STRING`,
   `to_code()`/`to_string()`/`category()` (auth/validation/room/authority/ratelimit/reconnect/spectator/server).
-- **MessagePack (`sf_msgpack.gd`):** opt-in (`config.decode_msgpack_payloads`). Default behavior =
-  expose binary payload bytes as `PackedByteArray` + hand back the `encoding` enum (no transcode).
-  **Rkyv = pass-through bytes only** (zero-copy archive format, not implementable in pure GDScript) —
-  documented. `game_data_format` in `Authenticate` is independently settable (tells the server the
-  preference) regardless of local decode.
+- **MessagePack (`sf_msgpack.gd`):** landed (P2). Payload decode is opt-in
+  (`config.decode_msgpack_payloads`): decoded values surface through
+  `game_data_received`; default behavior exposes the envelope payload bytes as
+  `PackedByteArray` + the `encoding` enum (no transcode), and an undecodable
+  payload falls back to the bytes path with a `protocol_error` diagnostic.
+  `send_game_data_binary(bytes)` sends one raw binary frame — the server tags
+  inbound binary with the negotiated format and drops binary on `json`
+  connections (server `websocket/connection.rs`), so the client refuses that
+  case locally (`ERR_UNAVAILABLE`); no client-side `encoding` parameter exists
+  (rust client `send_binary_game_data(payload)` parity).
+  **Rkyv = pass-through bytes only** (zero-copy archive format, not
+  implementable in pure GDScript) — documented; v2-route rkyv frames carry no
+  envelope, so `from_player` is `""` for them. `game_data_format` in
+  `Authenticate` is independently settable (tells the server the preference)
+  regardless of local decode.
+- **Binary game-data envelopes (`sf_binary_frames.gd`):** strict decode of the
+  v2 map (`from_player` 16-byte binary UUID → canonical string, `encoding`
+  `message_pack`, binary `payload`) and the v3 shape (adds non-zero `seq`/
+  `epoch`; `json`/`rkyv` tokens), pinned to server `websocket/sending.rs`
+  (`LegacyBinaryGameDataFrame`/`V3BinaryGameDataFrame`) and the rust client's
+  `protocol/binary.rs` strictness: string keys, no duplicate/unknown fields,
+  no trailing bytes, any unsigned marker width for stamps. Wire format has
+  been stable since server v0.4.0; v3 frames only arrive on the separate v3
+  WebSocket route, and the decoder accepts both for forward compatibility.
+  The effective negotiation is tracked: an unsupported preference downgraded
+  to JSON by the server (`Error{UnsupportedGameDataFormat}` and/or absence
+  from `ProtocolInfo.game_data_formats`) gates binary send/receive to the
+  effective format, not the request. Binary frames are also subject to the
+  same CLOSING guard as text events, so late frames cannot surface game data
+  after a user close.
 
 ### 4.7 Performance & reliability (web-safe)
 
@@ -423,18 +449,20 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 - **Notes:** `is_connected()` was renamed `is_connected_to_server()` — Godot 4 `Object.is_connected`
   takes `(signal, callable)` and cannot be shadowed. `is_connected_to_server()` reports transport
   CONNECTED. Inbound frames over `max_inbound_frame_bytes` are dropped with `protocol_error` at the
-  client boundary before decode; raw binary frames before format negotiation are dropped the same way
-  (binary game-data decode is P2). `sf_log.gd` (redacting logger) landed with the client (issue #15),
-  and `ws://` from secure web pages is a loud `ERR_INVALID_PARAMETER` (issue #15, R2). Until P2,
-  `game_data_format` accepts only `json`/empty so the server cannot negotiate formats whose binary
-  frames the client would drop. `reconnect()`/`set_auto_reconnect()` landed with the P2 reconnection work;
-  `send_game_data_binary()` ships with the P2 binary game-data milestone. The `credential`
+  client boundary before decode; binary frames on a JSON-negotiated connection are dropped the same
+  way (the P2 milestone dispatches them per negotiated format). `sf_log.gd` (redacting logger) landed
+  with the client (issue #15),
+  and `ws://` from secure web pages is a loud `ERR_INVALID_PARAMETER` (issue #15, R2). With the P2
+  binary milestone, `game_data_format` accepts `json`/empty, `message_pack`, and `rkyv`.
+  `reconnect()`/`set_auto_reconnect()` landed with the P2 reconnection work;
+  `send_game_data_binary()` shipped with the P2 binary game-data milestone. The `credential`
   slot is a plain (non-exported) var so the Resource pipeline can never persist it.
 
-### P2 — Full protocol depth
+### P2 — Full protocol depth  *(complete)*
 **Goal:** Complete the protocol surface.
-- [ ] **Authority:** `request_authority`, `authority_changed`, `authority_response` + tests.
-- [ ] **Spectators:** `join_as_spectator`/`leave_spectator` + 5 spectator events + `SPECTATING` state + tests.
+- [x] **Authority:** `request_authority`, `authority_changed`, `authority_response` + tests.
+- [x] **Spectators:** `join_as_spectator`/`leave_spectator` + 5 spectator events + `SPECTATING`
+      state + tests (including lobby updates while spectating and stable rosters).
 - [x] **Reconnection + replay** (lands last — perturbs state most): `reconnect()`, `Reconnected` w/
       `missed_events`, `ReconnectionFailed`, bounded retry + backoff (**injected clock** in tests).
       Notes: `reconnect()` authenticates first and sends `Reconnect` once
@@ -452,8 +480,13 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       context; tokenless and spectator baselines clear it (upstream `client_core.rs`
       `AutoReconnectContext`). Tokens feed the redacting logger. Suite:
       `tests/client/run_reconnect_tests.gd`; skill doc: `.llm/skills/reconnection-replay.md`.
-- [ ] Full ~40 error-code surface mapped through `sf_error_codes.gd`.
-- [ ] **MessagePack** `sf_msgpack.gd` (opt-in) + raw-bytes pass-through; Rkyv pass-through documented.
+- [x] Full ~40 error-code surface mapped through `sf_error_codes.gd` (wire
+      string⇄enum table + categories; unknown → `UNKNOWN` forward-compat).
+- [x] **MessagePack** `sf_msgpack.gd` (opt-in decode; encode for building
+      payloads) + raw-bytes pass-through + strict v2/v3 binary envelope
+      decoder (`sf_binary_frames.gd`); Rkyv pass-through documented. Suite:
+      `tests/protocol/binary_frame_tests.gd` (byte-pinned canonical vectors,
+      hostile matrix) + client binary send/receive paths.
 - [x] Add `.llm/skills/reconnection-replay.md` (regenerate index + `agent-check.ps1`).
 - **DoD:** every feature has deterministic fake-transport tests; all green.
 - **Fan-out:** authority ‖ spectators ‖ reconnection (merge reconnection last).

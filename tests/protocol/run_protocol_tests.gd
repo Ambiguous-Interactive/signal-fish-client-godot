@@ -6,6 +6,7 @@ const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_c
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const ProtocolHardeningTestsScript = preload("res://tests/protocol/protocol_hardening_tests.gd")
+const BinaryFrameTestsScript = preload("res://tests/protocol/binary_frame_tests.gd")
 
 const CLIENT_FIXTURE := "res://tests/fixtures/v2_client_messages.jsonl"
 const SERVER_FIXTURE := "res://tests/fixtures/v2_server_messages.jsonl"
@@ -36,6 +37,7 @@ func _run() -> void:
 	_test_protocol_error_diagnostics()
 	_test_error_code_table()
 	_failures.append_array(ProtocolHardeningTestsScript.run())
+	_failures.append_array(BinaryFrameTestsScript.run())
 
 
 func _test_client_encoders_match_fixtures() -> void:

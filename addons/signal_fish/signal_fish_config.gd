@@ -22,11 +22,21 @@ const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 ## Optional platform identifier reported to the server. Empty = omitted.
 @export var platform: String = ""
 
-## Game data format preference. Until binary game-data decode ships (PLAN P2),
-## only [code]json[/code] (or empty = server-default JSON) is accepted: asking
-## for [code]message_pack[/code]/[code]rkyv[/code] would make the server send
-## binary frames this client cannot decode yet.
+## Game data format preference sent with [code]Authenticate[/code].
+## Empty = server-default JSON. [code]message_pack[/code] negotiates binary
+## game-data frames (PLAN P2): received frames surface as bytes through
+## [signal SignalFishClient.game_data_binary_received], or decoded through
+## [signal SignalFishClient.game_data_received] when
+## [member decode_msgpack_payloads] is on. [code]rkyv[/code] negotiates raw
+## pass-through bytes this client can never decode — only pick it when your
+## game brings its own rkyv reader (PLAN §4.6).
 @export var game_data_format: String = ""
+
+## Opt-in MessagePack payload decode: with [code]message_pack[/code] game data
+## negotiated, received payloads are decoded to Godot values and surfaced
+## through [signal SignalFishClient.game_data_received]; decode failures fall
+## back to the bytes path. Default off (raw bytes, no transcode).
+@export var decode_msgpack_payloads: bool = false
 
 ## Default endpoint used when [method SignalFishClient.connect_to_server] is
 ## called without an explicit URL.
@@ -92,12 +102,4 @@ func _game_data_format_error() -> String:
 	var encoding := SFTypesScript.game_data_encoding_from_string(game_data_format)
 	if encoding == SFTypesScript.GameDataEncoding.UNKNOWN:
 		return "game_data_format is unknown: %s" % game_data_format
-	if encoding != SFTypesScript.GameDataEncoding.JSON:
-		return (
-			(
-				"game_data_format %s is reserved for the P2 binary game-data milestone;"
-				+ " the client cannot decode binary frames yet"
-			)
-			% game_data_format
-		)
 	return ""

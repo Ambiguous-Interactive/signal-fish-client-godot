@@ -61,9 +61,9 @@ func _test_configure_validation() -> void:
 	config.game_data_format = "carrier_pigeon"
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "unknown format rejected")
 	config.game_data_format = "message_pack"
-	_assert_equal(ERR_INVALID_DATA, client.configure(config), "binary formats reserved until P2")
+	_assert_equal(OK, client.configure(config), "message_pack format accepted")
 	config.game_data_format = "rkyv"
-	_assert_equal(ERR_INVALID_DATA, client.configure(config), "rkyv reserved until P2")
+	_assert_equal(OK, client.configure(config), "rkyv format accepted")
 	config.game_data_format = "json"
 	config.max_buffered_bytes = 0
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "zero cap rejected")
@@ -916,6 +916,10 @@ func _send_method_cases() -> Array:
 		["join_room", func(client) -> Error: return client.join_room(params)],
 		["leave_room", func(client) -> Error: return client.leave_room()],
 		["send_game_data", func(client) -> Error: return client.send_game_data({})],
+		[
+			"send_game_data_binary",
+			func(client) -> Error: return client.send_game_data_binary(PackedByteArray([0x01]))
+		],
 		["set_ready", func(client) -> Error: return client.set_ready()],
 		["request_authority", func(client) -> Error: return client.request_authority(true)],
 		[

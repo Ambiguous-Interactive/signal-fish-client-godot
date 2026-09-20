@@ -90,6 +90,36 @@ blank lines and lines beginning with `#`.
   as the default sentinel.
 - The fixture `GameDataBinary` line is a serde-compatible text representation
   for codec coverage. Transport tests must separately verify binary frames.
+- Binary game-data frames (pinned 2026-09-20; stable since server v0.4.0,
+  rust `src/protocol/binary.rs` port note; re-verified against server
+  `main` @ v0.9.1 `src/websocket/sending.rs`):
+  - Client→server binary frames are the raw payload bytes only. The server
+    tags them with the negotiated format and drops binary on `json`
+    connections with `InvalidInput` (server `websocket/connection.rs`).
+  - Server→client v2-route `message_pack` frames are a MessagePack named map:
+    `from_player` (16-byte binary UUID; `PlayerId = uuid::Uuid` serializes as
+    bytes in non-human-readable formats), `encoding` (`"message_pack"`), and
+    `payload` (binary). v2-route `rkyv` frames are the raw payload bytes with
+    no envelope, so the sender is unknowable for them. The v2 cohort match
+    (`encoding == recipient_format`) also admits json-encoded binary frames
+    to json recipients, but that path cannot originate: the server drops
+    binary from json senders, and any other encoding relayed to a json
+    recipient falls back to a text `GameData` frame (`BinaryFallbackV2`).
+    The Godot client therefore treats binary on a json connection as
+    hostile/buggy input: `protocol_error`, frame dropped, link stays up.
+  - The server may downgrade an unsupported `game_data_format` preference to
+    JSON at Authenticate (`Error{UnsupportedGameDataFormat}` and/or the
+    requested format missing from `ProtocolInfo.game_data_formats`); the
+    client tracks the effective format and gates binary send/receive on it.
+  - v3 (separate v3 WebSocket route only) adds mandatory non-zero `seq` (u64)
+    and `epoch` (u32) stamps and allows `json`/`message_pack`/`rkyv` encoding
+    tokens (`V3BinaryGameDataFrame`).
+  - Strictness (rust `decode_v2/v3_binary_game_data` parity): map keys are
+    strings, fields appear at most once, unknown fields and trailing bytes are
+    rejected, and integer stamps may use any unsigned marker width. The
+    Godot decoder (`sf_binary_frames.gd`) accepts v2 and v3; for well-formed
+    frames a v2 envelope can never parse as v3 and vice versa (v3 requires
+    both stamps, v2 forbids them).
 - Relay `ConnectionInfo.transport` defaults to `auto` upstream when omitted or
   null. Outbound builders should reject typo strings, while inbound decoding
   should map unknown future transport strings to `RelayTransport.UNKNOWN`.
@@ -108,11 +138,15 @@ blank lines and lines beginning with `#`.
 
 ## Open Verification Items
 
+- Binary frame format (resolved 2026-09-20): the pinned v2/v3 envelope
+  contract in the Wire Notes section supersedes the older docs-vs-source
+  drift question for frames; implemented in
+  `addons/signal_fish/protocol/sf_binary_frames.gd` with byte-pinned tests.
 - Server docs still show a base64 string for `GameDataBinary.payload`, while
   current source uses binary frames for negotiated binary payloads and
-  `serde_bytes` for text serialization. Keep the decoder tolerant of both byte
-  arrays and base64 strings until a captured live frame or upstream fixture
-  resolves the documentation drift.
+  `serde_bytes` for text serialization. The text-form decoder
+  (`sf_binary_codec.gd`) stays tolerant of both byte arrays and base64
+  strings until an upstream fixture resolves the documentation drift.
 - `supports_authority` defaults to `true` in server
   `src/server/room_service.rs`; docs imply omitted or false disables authority.
   Godot API defaults must be decided against source compatibility before P1.
