@@ -5,6 +5,7 @@ extends RefCounted
 ## real WebRTC runs in fast gates (PLAN §8). Receives the client runner
 ## instance so connect/auth fakes stay defined in one place.
 
+const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFWebRTCMeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
@@ -14,9 +15,8 @@ const PLAYER_A := "10000000-0000-0000-0000-000000000001"
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const PLAYER_C := "10000000-0000-0000-0000-000000000003"
 const PLAYER_D := "10000000-0000-0000-0000-000000000004"
-# Pinned FNV-1a vectors: the UUID -> peer-id mapping must stay stable across
-# versions and platforms (mesh members derive the same ids independently).
-# Valid ids are 2..2^31-1: 0 is invalid, 1 is the reserved server id.
+# Pinned FNV-1a vectors: must stay stable across versions/platforms (peers
+# derive ids independently); valid range 2..2^31-1 (1 = reserved server id).
 const PLAYER_A_PEER_ID := 1186410739
 const PLAYER_B_PEER_ID := 1186411174
 
@@ -24,7 +24,7 @@ const STUN := {"urls": ["stun:stun.example:3478"]}
 const TURN := {"urls": ["turn:turn.example:3478"], "username": "alice", "credential": "turn-secret"}
 
 var _failures: Array = []
-var _runner: Variant = null
+var _runner: Object = null
 
 
 static func run(runner: Variant) -> Array:
@@ -48,9 +48,8 @@ func run_all() -> void:
 
 
 func _test_engine_api_parity() -> void:
-	# The fakes duck-type the engine classes, so a renamed engine method would
-	# silently false-pass (this exact trap: create_mesh was once asserted as
-	# initialize_mesh). Fail loudly if the API the mesh calls drifts.
+	# Fakes duck-type the engine classes: a renamed engine method would silently
+	# false-pass, so fail loudly if the API the mesh calls drifts.
 	for method: String in ["create_mesh", "add_peer", "remove_peer", "close"]:
 		_assert(
 			ClassDB.class_has_method("WebRTCMultiplayerPeer", method),
@@ -99,11 +98,11 @@ func _attach(mesh: SFWebRTCMeshScript, client: SignalFishClientScript) -> void:
 
 
 func _make_in_room_client() -> SignalFishClientScript:
-	return _runner._make_in_room_client()
+	return _runner.call("_make_in_room_client")
 
 
 func _track_protocol_errors(client: SignalFishClientScript) -> Array:
-	return _runner._track_protocol_errors(client)
+	return _runner.call("_track_protocol_errors", client)
 
 
 func _inject_plan(
@@ -123,7 +122,8 @@ func _inject_plan(
 	}
 	if ice_servers != null:
 		data["ice_servers"] = ice_servers
-	client.transport.inject_server_message({"type": "SessionPlan", "data": data})
+	var fake_transport: SFFakeTransportScript = client.transport
+	fake_transport.inject_server_message({"type": "SessionPlan", "data": data})
 
 
 func _peer(player_id: String, initiate: bool) -> Dictionary:
@@ -136,7 +136,8 @@ func _peer(player_id: String, initiate: bool) -> Dictionary:
 
 
 func _sent_after(client: SignalFishClientScript, before: int) -> Array:
-	return client.transport.sent_text.slice(before)
+	var fake_transport: SFFakeTransportScript = client.transport
+	return fake_transport.sent_text.slice(before)
 
 
 func _test_uuid_mapping_is_deterministic() -> void:
@@ -170,8 +171,6 @@ func _test_attach_and_detach_guards() -> void:
 	mesh.free()
 	client.free()
 
-	# Detach unwires events: later plans cannot touch the mesh, and a fresh
-	# attach works.
 	var second := _make_mesh()
 	var second_client := _make_in_room_client()
 	_attach(second, second_client)
@@ -204,8 +203,8 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 	)
 	_assert_equal(1, pc.create_offer_calls, "initiate flag drives the offer")
 
-	# Offer path: session_description_created -> set_local + Signal relayed.
-	var before: int = client.transport.sent_text.size()
+	var fake_transport: SFFakeTransportScript = client.transport
+	var before: int = fake_transport.sent_text.size()
 	pc.emit_session_description_created("offer", "v=0")
 	_assert_equal(["offer", "v=0"], pc.local_description, "local description set")
 	_assert_equal(
@@ -218,7 +217,6 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 		"offer relayed to the peer"
 	)
 
-	# Trickle ICE out and in (the empty marker is not relayed).
 	pc.emit_ice_candidate_created("", 0, "cand:1")
 	pc.emit_ice_candidate_created("", 0, "")
 	_assert_equal(
@@ -231,8 +229,7 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 		"candidate relayed, end marker skipped"
 	)
 	(
-		client
-		. transport
+		fake_transport
 		. inject_server_message(
 			{
 				"type": "Signal",
@@ -247,10 +244,8 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 	)
 	_assert_equal([["", 0, "cand:2"]], pc.added_candidates, "inbound candidate applied")
 
-	# Answer path.
 	(
-		client
-		. transport
+		fake_transport
 		. inject_server_message(
 			{
 				"type": "Signal",
@@ -260,7 +255,6 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 	)
 	_assert_equal(["answer", "v=1"], pc.remote_description, "answer applied")
 
-	# Aggregate connected boundary: 0 -> 1 exactly once, 1 -> 0 exactly once.
 	pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
 	mesh.poll()
 	_assert_equal(
@@ -275,7 +269,7 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 	pc.poll_calls = 0
 	mesh.poll()
 	_assert_equal(1, pc.poll_calls, "poll pumps the connection")
-	_assert_equal(before + 3, client.transport.sent_text.size(), "no duplicate status")
+	_assert_equal(before + 3, fake_transport.sent_text.size(), "no duplicate status")
 	pc.state = 4  # WebRTCPeerConnection.STATE_FAILED
 	mesh.poll()
 	_assert_equal(
@@ -309,13 +303,12 @@ func _test_plan_replaces_fully() -> void:
 		[[b_pc, PLAYER_B_PEER_ID]], multiplayer.added.slice(0, 1), "mesh peers added in plan order"
 	)
 
-	# The identical plan again: nothing rebuilds.
 	_inject_plan(client, [_peer(PLAYER_B, true), _peer(PLAYER_C, false)])
 	_assert_equal(2, _mesh_peers(mesh).size(), "no extra connections")
-	_assert(_mesh_peers(mesh)[0] == b_pc, "B retained verbatim")
+	var retained: FakePeerConnection = _mesh_peers(mesh)[0]
+	_assert(retained == b_pc, "B retained verbatim")
 	_assert(not b_pc.closed, "retained peer untouched")
 
-	# Generation change rebuilds retained peers; D joins.
 	_inject_plan(
 		client, [_peer(PLAYER_B, true), _peer(PLAYER_C, true), _peer(PLAYER_D, false)], "gen-2"
 	)
@@ -329,21 +322,22 @@ func _test_plan_replaces_fully() -> void:
 	_assert_equal(5, multiplayer.added.size(), "3 opens + 2 rebuilds added")
 	_assert_equal(2, multiplayer.removed.size(), "both stale peers removed on rebuild")
 
-	# Latest plan wins: peers absent from the new plan are disconnected.
 	_inject_plan(client, [_peer(PLAYER_B, true)], "gen-2")
 	_assert_equal(1, mesh.get_peer_count(), "absent peers dropped")
-	_assert(rebuilt[1].closed, "C closed when dropped")
-	_assert(rebuilt[2].closed, "D closed when dropped")
+	var rebuilt_c: FakePeerConnection = rebuilt[1]
+	var rebuilt_d: FakePeerConnection = rebuilt[2]
+	_assert(rebuilt_c.closed, "C closed when dropped")
+	_assert(rebuilt_d.closed, "D closed when dropped")
 	_assert_equal(4, multiplayer.removed.size(), "C and D removed from the mesh roster")
 
-	# Relay-floor reset: the transport is not webrtc, so the mesh empties.
 	_inject_plan(client, [], "gen-3", "relay")
 	_assert_equal(0, mesh.get_peer_count(), "relay plan empties the mesh")
-	_assert(rebuilt[0].closed, "B closed on relay reset")
+	var rebuilt_b: FakePeerConnection = rebuilt[0]
+	_assert(rebuilt_b.closed, "B closed on relay reset")
 	_assert(not multiplayer.closed, "multiplayer peer survives plan churn until teardown")
 
-	# A host+direct plan carries peers but no WebRTC data path for this mesh:
-	# it must not open connections whose signals would be gated away.
+	# A host+direct plan carries peers but no WebRTC data path: the mesh must
+	# not open connections whose signals would be gated away.
 	_inject_plan(client, [_peer(PLAYER_C, true)], "gen-4", "direct", null, "host")
 	_assert_equal(0, mesh.get_peer_count(), "non-webrtc plan with peers stays empty")
 	_assert_equal(5, multiplayer.added.size(), "no peer opened for the direct plan")
@@ -356,14 +350,14 @@ func _test_ice_replace_and_clear() -> void:
 	var mesh := _make_mesh()
 	_attach(mesh, client)
 	# RoomJoined pre-gather seeds ICE until the first plan lands.
-	client.transport.inject_server_message(
-		{"type": "RoomJoined", "data": _runner._room_joined_data({"ice_servers": [TURN]})}
+	var fake_transport: SFFakeTransportScript = client.transport
+	fake_transport.inject_server_message(
+		{"type": "RoomJoined", "data": _runner.call("_room_joined_data", {"ice_servers": [TURN]})}
 	)
 	_inject_plan(client, [_peer(PLAYER_B, false)], "gen-1", "webrtc", [])
 	_assert_equal([], _mesh_peers(mesh)[0].initialize_config["iceServers"], "empty plan clears ICE")
 	var clear_pc: FakePeerConnection = _mesh_peers(mesh)[0]
 
-	# The next plan replaces (never merges) the list for new connections.
 	_inject_plan(client, [_peer(PLAYER_C, false)], "gen-2", "webrtc", [STUN])
 	_assert_equal([STUN], _mesh_peers(mesh)[1].initialize_config["iceServers"], "plan ICE applied")
 	_assert(clear_pc.closed, "previous-generation peer rebuilt")
@@ -377,13 +371,12 @@ func _test_signal_gates() -> void:
 	var mesh := _make_mesh()
 	_attach(mesh, client)
 
-	# No plan yet: signals are discarded.
-	client.transport.inject_server_message(
+	var fake_transport: SFFakeTransportScript = client.transport
+	fake_transport.inject_server_message(
 		{"type": "Signal", "data": {"from": PLAYER_B, "generation": "gen-1", "signal": {}}}
 	)
 	_assert_equal(0, mesh.get_peer_count(), "no peers without a plan")
 
-	# Peer B answers under gen-1.
 	_inject_plan(client, [_peer(PLAYER_B, false)])
 	var pc: FakePeerConnection = _mesh_peers(mesh)[0]
 	var discards := [
@@ -393,16 +386,14 @@ func _test_signal_gates() -> void:
 		["opaque payload", {"from": PLAYER_B, "generation": "gen-1", "signal": {"Zorp": 1}}],
 	]
 	for discard: Array in discards:
-		client.transport.inject_server_message({"type": "Signal", "data": discard[1]})
+		fake_transport.inject_server_message({"type": "Signal", "data": discard[1]})
 		_assert_equal([], pc.remote_description, "%s discarded" % discard[0])
 	_assert_equal(0, errors.size(), "discards stay silent")
 	_assert_equal(1, mesh.get_peer_count(), "signals never invent or remove peers")
 
-	# A relay-transport plan closes the gate entirely.
 	_inject_plan(client, [], "gen-2", "relay")
 	(
-		client
-		. transport
+		fake_transport
 		. inject_server_message(
 			{
 				"type": "Signal",
@@ -421,22 +412,21 @@ func _test_new_peer_event_obey_flag() -> void:
 	_attach(mesh, client)
 	_inject_plan(client, [], "gen-1")
 
-	client.transport.inject_server_message(
+	var fake_transport: SFFakeTransportScript = client.transport
+	fake_transport.inject_server_message(
 		{"type": "NewPeer", "data": {"peer_id": PLAYER_B, "you_initiate": true}}
 	)
 	_assert_equal(1, mesh.get_peer_count(), "new peer opened")
 	_assert_equal(1, _mesh_peers(mesh)[0].create_offer_calls, "you_initiate drives the offer")
 
-	# Duplicate directive: already known, ignored.
-	client.transport.inject_server_message(
+	fake_transport.inject_server_message(
 		{"type": "NewPeer", "data": {"peer_id": PLAYER_B, "you_initiate": false}}
 	)
 	_assert_equal(1, mesh.get_peer_count(), "duplicate new_peer ignored")
 	_assert_equal(1, _mesh_peers(mesh)[0].create_offer_calls, "role never flipped locally")
 
-	# Without a webrtc plan the directive is inert.
 	_inject_plan(client, [], "gen-2", "relay")
-	client.transport.inject_server_message(
+	fake_transport.inject_server_message(
 		{"type": "NewPeer", "data": {"peer_id": PLAYER_C, "you_initiate": true}}
 	)
 	_assert_equal(0, mesh.get_peer_count(), "relay plan gates new_peer")
@@ -445,16 +435,18 @@ func _test_new_peer_event_obey_flag() -> void:
 
 
 func _test_teardown_paths() -> void:
-	# player_left drops only that peer.
 	var client := _make_in_room_client()
 	var mesh := _make_mesh()
 	_attach(mesh, client)
 	_inject_plan(client, [_peer(PLAYER_B, true), _peer(PLAYER_C, false)])
 	var peers := _mesh_peers(mesh)
-	client.transport.inject_server_message({"type": "PlayerLeft", "data": {"player_id": PLAYER_C}})
+	var fake_transport: SFFakeTransportScript = client.transport
+	fake_transport.inject_server_message({"type": "PlayerLeft", "data": {"player_id": PLAYER_C}})
 	_assert_equal(1, mesh.get_peer_count(), "only the leaver dropped")
-	_assert(peers[1].closed, "leaver connection closed")
-	_assert(not peers[0].closed, "other peers untouched")
+	var leaver: FakePeerConnection = peers[1]
+	var survivor: FakePeerConnection = peers[0]
+	_assert(leaver.closed, "leaver connection closed")
+	_assert(not survivor.closed, "other peers untouched")
 	mesh.free()
 	client.free()
 
@@ -473,17 +465,17 @@ func _test_teardown_paths() -> void:
 		var pc: FakePeerConnection = _mesh_peers(teardown_mesh)[0]
 		pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
 		teardown_mesh.poll()
+		var teardown_fake: SFFakeTransportScript = teardown_client.transport
 		match teardown:
 			"room_left":
-				teardown_client.transport.inject_server_message({"type": "RoomLeft"})
+				teardown_fake.inject_server_message({"type": "RoomLeft"})
 			"disconnected":
-				teardown_client.transport.inject_close(1000, "bye")
+				teardown_fake.inject_close(1000, "bye")
 			"connection_failed":
-				teardown_client.transport.inject_failure("socket dropped")
+				teardown_fake.inject_failure("socket dropped")
 			"reconnected":
-				var reconnected_data: Dictionary = _runner._room_joined_data()
-				# The real replay shape carries full events, including plans:
-				# none of them may revive the torn-down mesh.
+				var reconnected_data: Dictionary = _runner.call("_room_joined_data")
+				# Real replay shape carries full events incl. plans: none may revive the torn-down mesh.
 				reconnected_data["missed_events"] = [
 					{
 						"type": "SessionPlan",
@@ -497,23 +489,23 @@ func _test_teardown_paths() -> void:
 						},
 					},
 				]
-				teardown_client.transport.inject_server_message(
+				teardown_fake.inject_server_message(
 					{"type": "Reconnected", "data": reconnected_data}
 				)
 			"fresh room_joined":
-				teardown_client.transport.inject_server_message(
-					{"type": "RoomJoined", "data": _runner._room_joined_data()}
+				teardown_fake.inject_server_message(
+					{"type": "RoomJoined", "data": _runner.call("_room_joined_data")}
 				)
 		_assert_equal(0, teardown_mesh.get_peer_count(), "%s empties the mesh" % teardown)
 		_assert(pc.closed, "%s closes connections" % teardown)
 		_assert(multiplayer.closed, "%s closes the multiplayer peer" % teardown)
 		_assert_equal(null, teardown_mesh.get_multiplayer_peer(), "%s releases the peer" % teardown)
-		# Stale signaling after teardown must stay inert (only teardowns that
-		# keep the link, e.g. room_left, still have a transport).
+		# Stale signaling after teardown must stay inert (only teardowns that keep
+		# the link, e.g. room_left, still have a transport).
 		if teardown_client.transport != null:
+			var late_fake: SFFakeTransportScript = teardown_client.transport
 			(
-				teardown_client
-				. transport
+				late_fake
 				. inject_server_message(
 					{
 						"type": "Signal",
@@ -526,7 +518,6 @@ func _test_teardown_paths() -> void:
 		teardown_mesh.free()
 		teardown_client.free()
 
-	# _exit_tree detaches and tears down; events after removal are ignored.
 	var exit_client := _make_in_room_client()
 	var exit_mesh := _make_mesh()
 	_attach(exit_mesh, exit_client)
@@ -553,9 +544,9 @@ func _test_mesh_survives_engine_hostility() -> void:
 	_assert_equal(null, mesh.get_multiplayer_peer(), "freed client releases the peer")
 	mesh.free()
 
-	# A refused create_mesh leaves no half-built mesh: peers stay closed.
 	var refused := _make_mesh()
-	(_mesh_multiplayer(refused) as FakeMultiplayerPeer).create_mesh_result = ERR_UNAVAILABLE
+	var refused_multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(refused)
+	refused_multiplayer.create_mesh_result = ERR_UNAVAILABLE
 	var refused_client := _make_in_room_client()
 	var refused_errors := _track_protocol_errors(refused_client)
 	_attach(refused, refused_client)
@@ -563,7 +554,8 @@ func _test_mesh_survives_engine_hostility() -> void:
 	_assert_equal(0, refused.get_peer_count(), "refused mesh opens no peers")
 	_assert_equal(null, refused.get_multiplayer_peer(), "refused mesh releases the peer")
 	_assert_equal(1, _mesh_peers(refused).size(), "one connection was attempted")
-	_assert(_mesh_peers(refused)[0].closed, "attempted connection closed")
+	var attempted: FakePeerConnection = _mesh_peers(refused)[0]
+	_assert(attempted.closed, "attempted connection closed")
 	_assert_equal(0, refused_errors.size(), "refusal is quiet, not a protocol error")
 	refused.free()
 	refused_client.free()

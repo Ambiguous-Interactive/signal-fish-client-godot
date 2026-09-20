@@ -17,9 +17,7 @@ const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const ROOM_ID := "20000000-0000-0000-0000-000000000001"
 
 var _failures: Array = []
-# Completion sentinel: a runtime abort inside _run() unwinds before
-# quit() is reached, which would otherwise leave the process hanging
-# until CI kills it instead of reporting a red result.
+# Sentinel: an abort inside _run() unwinds before quit(); CI would hang instead of reporting red.
 var _run_completed := false
 
 
@@ -168,13 +166,13 @@ func _test_auto_authenticate_matches_builder_bytes() -> void:
 	)
 	client.free()
 
-	# Minimal config: unset optional fields must be omitted from the wire.
 	var minimal_config := _make_config()
 	minimal_config.sdk_version = ""
 	minimal_config.platform = ""
 	minimal_config.game_data_format = ""
 	var minimal := _connect_new_client(minimal_config)
-	minimal.transport.inject_open()
+	var minimal_transport: SFFakeTransportScript = minimal.transport
+	minimal_transport.inject_open()
 	_assert_equal(
 		[SFMessagesScript.encode(SFMessagesScript.authenticate("test-app"))],
 		minimal.transport.sent_text,
@@ -191,25 +189,27 @@ func _test_preauth_guards_block_all_sends() -> void:
 		var phase := "unconfigured" if attempt == 0 else "authenticating"
 		if attempt == 1:
 			_assert_equal(OK, client.configure(_make_config()), "configure")
-			client.transport = SFFakeTransportScript.new()
+			var transport: SFFakeTransportScript = SFFakeTransportScript.new()
+			client.transport = transport
 			_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
-			client.transport.inject_open()
+			transport.inject_open()
 		for send_case: Array in send_cases:
+			var send_case_fn: Callable = send_case[1]
 			_assert_equal(
 				ERR_UNAUTHORIZED,
-				send_case[1].call(client),
+				send_case_fn.call(client),
 				"%s blocked while %s" % [send_case[0], phase]
 			)
 		_assert_equal(send_cases.size(), errors.size(), "every blocked send explains itself")
 		if attempt == 1:
-			_assert_equal(
-				1, client.transport.sent_text.size(), "only authenticate was sent while guarding"
-			)
+			var fake: SFFakeTransportScript = client.transport
+			_assert_equal(1, fake.sent_text.size(), "only authenticate was sent while guarding")
 		client.free()
 
 
 func _test_authenticated_args_and_send_surface() -> void:
 	var client := _make_connected_client()
+	var fake: SFFakeTransportScript = client.transport
 	var authenticated_events: Array = []
 	client.authenticated.connect(
 		func(
@@ -221,7 +221,7 @@ func _test_authenticated_args_and_send_surface() -> void:
 		func(error: String, error_code: int) -> void:
 			authenticated_events.append(["error", error, error_code])
 	)
-	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	fake.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	_assert_equal(
 		[["Reef Rally", "", 60]], authenticated_events, "authenticated surfaces typed payload"
 	)
@@ -232,7 +232,6 @@ func _test_authenticated_args_and_send_surface() -> void:
 		"session authenticated"
 	)
 
-	var fake: SFFakeTransportScript = client.transport
 	var params := SignalFishClientScript.JoinRoomParams.new()
 	params.game_name = "reef-rally"
 	params.player_name = "Alice"
@@ -273,8 +272,7 @@ func _test_authenticated_args_and_send_surface() -> void:
 		"start_game bytes"
 	)
 
-	# Password joins (issue #26): a set password rides the wire, an empty one
-	# is omitted (a password presented to an open room is refused upstream).
+	# Issue #26: set passwords ride the wire, empty ones are omitted (refused upstream).
 	var sealed_params := SignalFishClientScript.JoinRoomParams.new()
 	sealed_params.game_name = "reef-rally"
 	sealed_params.player_name = "Alice"
@@ -375,17 +373,16 @@ func _test_authenticated_args_and_send_surface() -> void:
 
 
 func _test_duplicate_authenticated_is_once_per_dial() -> void:
-	# Issue #24: a duplicate `Authenticated` on a normal dial is hostile-
-	# server input; the once-per-dial guard (previously reconnect-dials only)
-	# keeps it fully silent instead of re-emitting and re-setting state.
+	# Issue #24: duplicate Authenticated on a normal dial is hostile input; the guard keeps it silent.
 	var client := _make_connected_client()
+	var fake: SFFakeTransportScript = client.transport
 	var authenticated_events: Array = []
 	client.authenticated.connect(
 		func(_app: String, _org: String, _rate_limits: SFTypesScript.RateLimitInfo) -> void:
 			authenticated_events.append(1)
 	)
-	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
-	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	fake.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	fake.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	_assert_equal([1], authenticated_events, "authenticated emitted exactly once per dial")
 	_assert_equal(
 		SignalFishClientScript.SessionState.AUTHENTICATED,
@@ -394,9 +391,8 @@ func _test_duplicate_authenticated_is_once_per_dial() -> void:
 	)
 	client.free()
 
-	# The same guard must also protect an in-room session: a late duplicate
-	# must not clobber the restored room state back to AUTHENTICATED.
 	var room_client := _make_authenticated_client()
+	var room_fake: SFFakeTransportScript = room_client.transport
 	var room_events: Array = []
 	room_client.authenticated.connect(
 		func(_app: String, _org: String, _rate_limits: SFTypesScript.RateLimitInfo) -> void:
@@ -406,15 +402,13 @@ func _test_duplicate_authenticated_is_once_per_dial() -> void:
 	params.game_name = "reef-rally"
 	params.player_name = "Alice"
 	room_client.join_room(params)
-	room_client.transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	room_fake.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
 	_assert_equal(
 		SignalFishClientScript.SessionState.IN_ROOM_WAITING,
 		room_client.get_session_state(),
 		"in-room before the duplicate"
 	)
-	room_client.transport.inject_server_message(
-		{"type": "Authenticated", "data": _authenticated_data()}
-	)
+	room_fake.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	_assert_equal([], room_events, "in-room duplicate stays consumer-silent")
 	_assert_equal(
 		SignalFishClientScript.SessionState.IN_ROOM_WAITING,
@@ -426,6 +420,7 @@ func _test_duplicate_authenticated_is_once_per_dial() -> void:
 
 func _test_room_lifecycle_state_machine() -> void:
 	var client := _make_authenticated_client()
+	var fake: SFFakeTransportScript = client.transport
 	var joined_payloads: Array = []
 	var lobby_events: Array = []
 	var room_left_count := [0]
@@ -438,7 +433,7 @@ func _test_room_lifecycle_state_machine() -> void:
 	)
 	client.room_left.connect(func() -> void: room_left_count[0] += 1)
 
-	client.transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	fake.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
 	_assert_equal(1, joined_payloads.size(), "room_joined emitted")
 	_assert_equal(PLAYER_A, joined_payloads[0].player_id, "room_joined payload player")
 	_assert_equal("ABC123", client.get_room_code(), "room_code cached")
@@ -452,7 +447,7 @@ func _test_room_lifecycle_state_machine() -> void:
 	_assert_equal(1, client.get_players().size(), "roster populated")
 	_assert_equal(1, client.get_spectators().size(), "spectators populated")
 
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{
 			"type": "LobbyStateChanged",
 			"data": {"lobby_state": "lobby", "ready_players": [PLAYER_A], "all_ready": true}
@@ -470,7 +465,7 @@ func _test_room_lifecycle_state_machine() -> void:
 	)
 	_assert_equal(SFTypesScript.LobbyState.LOBBY, client.get_lobby_state(), "lobby state cached")
 
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{"type": "GameStarting", "data": {"peer_connections": [_peer_connection()]}}
 	)
 	_assert_equal(
@@ -479,7 +474,7 @@ func _test_room_lifecycle_state_machine() -> void:
 		"game_starting does not change session state"
 	)
 
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{
 			"type": "LobbyStateChanged",
 			"data": {"lobby_state": "finalized", "ready_players": [], "all_ready": false}
@@ -491,7 +486,7 @@ func _test_room_lifecycle_state_machine() -> void:
 		"finalized session state"
 	)
 
-	client.transport.inject_server_message({"type": "RoomLeft"})
+	fake.inject_server_message({"type": "RoomLeft"})
 	_assert_equal(1, room_left_count[0], "room_left emitted")
 	_assert_equal(
 		SignalFishClientScript.SessionState.AUTHENTICATED,
@@ -506,23 +501,24 @@ func _test_room_lifecycle_state_machine() -> void:
 
 func _test_spectators_keep_lobby_updates_and_rosters_stay_stable() -> void:
 	var client := _make_authenticated_client()
-	# Lambdas capture locals by value; hold the payload in an Array to observe
-	# it after emission.
+	var fake: SFFakeTransportScript = client.transport
+	# Lambdas capture locals by value; hold the payload in an Array to observe it.
 	var room_holder: Array = []
 	client.room_joined.connect(
 		func(info: SFTypesScript.RoomJoinedInfo) -> void: room_holder.append(info)
 	)
-	client.transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	fake.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
 	_assert_equal(1, client.get_players().size(), "initial roster")
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{"type": "PlayerJoined", "data": {"player": _player(PLAYER_B, "Bob")}}
 	)
 	_assert_equal(2, client.get_players().size(), "roster updated")
+	var emitted_info: SFTypesScript.RoomJoinedInfo = room_holder[0]
 	_assert_equal(
-		1, room_holder[0].current_players.size(), "emitted room_joined payload never mutates"
+		1, emitted_info.current_players.size(), "emitted room_joined payload never mutates"
 	)
 
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{
 			"type": "SpectatorJoined",
 			"data":
@@ -542,7 +538,7 @@ func _test_spectators_keep_lobby_updates_and_rosters_stay_stable() -> void:
 		client.get_session_state(),
 		"spectating before lobby update"
 	)
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{
 			"type": "LobbyStateChanged",
 			"data": {"lobby_state": "lobby", "ready_players": [PLAYER_A], "all_ready": true}
@@ -568,9 +564,10 @@ func _test_connected_handler_close_does_not_crash() -> void:
 		func(code: int, reason: String) -> void: close_events.append([code, reason])
 	)
 	_assert_equal(OK, client.configure(_make_config()), "configure")
-	client.transport = SFFakeTransportScript.new()
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
+	client.transport = transport
 	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
-	client.transport.inject_open()
+	transport.inject_open()
 	_assert_equal([[1000, ""]], close_events, "handler-driven close completes cleanly")
 	_assert_equal(
 		SignalFishClientScript.ConnectionState.CLOSED, client.get_connection_state(), "closed"
@@ -586,6 +583,7 @@ func _test_connected_handler_close_does_not_crash() -> void:
 
 func _test_presence_and_data_events() -> void:
 	var client := _make_in_room_client()
+	var fake: SFFakeTransportScript = client.transport
 	var events: Array = []
 	client.player_joined.connect(
 		func(player: SFTypesScript.PlayerInfo) -> void: events.append(["joined", player.id])
@@ -617,38 +615,36 @@ func _test_presence_and_data_events() -> void:
 			events.append(["protocol_info", info.sdk_version])
 	)
 
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{"type": "PlayerJoined", "data": {"player": _player(PLAYER_B, "Bob")}}
 	)
 	_assert_equal(2, client.get_players().size(), "player_joined upserts roster")
-	client.transport.inject_server_message({"type": "PlayerLeft", "data": {"player_id": PLAYER_B}})
+	fake.inject_server_message({"type": "PlayerLeft", "data": {"player_id": PLAYER_B}})
 	_assert_equal(1, client.get_players().size(), "player_left removes from roster")
-	client.transport.inject_server_message(
-		{"type": "PlayerReconnected", "data": {"player_id": PLAYER_A}}
-	)
-	client.transport.inject_server_message({"type": "Pong"})
-	client.transport.inject_server_message(
+	fake.inject_server_message({"type": "PlayerReconnected", "data": {"player_id": PLAYER_A}})
+	fake.inject_server_message({"type": "Pong"})
+	fake.inject_server_message(
 		{"type": "GameData", "data": {"from_player": PLAYER_A, "data": {"score": 3}}}
 	)
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{
 			"type": "GameDataBinary",
 			"data": {"from_player": PLAYER_A, "encoding": "message_pack", "payload": [1, 2, 3]}
 		}
 	)
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{
 			"type": "AuthorityChanged",
 			"data": {"authority_player": PLAYER_A, "you_are_authority": true}
 		}
 	)
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{"type": "AuthorityResponse", "data": {"granted": false, "reason": "not eligible"}}
 	)
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{"type": "Error", "data": {"message": "slow down", "error_code": "RATE_LIMIT_EXCEEDED"}}
 	)
-	client.transport.inject_server_message({"type": "ProtocolInfo", "data": _protocol_info()})
+	fake.inject_server_message({"type": "ProtocolInfo", "data": _protocol_info()})
 
 	_assert_equal(
 		[
@@ -676,6 +672,7 @@ func _test_presence_and_data_events() -> void:
 
 func _test_spectator_flow() -> void:
 	var client := _make_authenticated_client()
+	var fake: SFFakeTransportScript = client.transport
 	var spectator_events: Array = []
 	client.spectator_joined.connect(
 		func(info: SFTypesScript.SpectatorJoinedInfo) -> void:
@@ -700,7 +697,7 @@ func _test_spectator_flow() -> void:
 			spectator_events.append(["failed", reason, error_code])
 	)
 
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{
 			"type": "SpectatorJoined",
 			"data":
@@ -723,7 +720,7 @@ func _test_spectator_flow() -> void:
 	_assert_equal("SPEC1", client.get_room_code(), "spectator room code cached")
 	_assert_equal(1, client.get_players().size(), "spectator sees players")
 
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{
 			"type": "NewSpectatorJoined",
 			"data":
@@ -735,7 +732,7 @@ func _test_spectator_flow() -> void:
 		}
 	)
 	_assert_equal(1, client.get_spectators().size(), "new_spectator_joined upserts roster")
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{
 			"type": "SpectatorDisconnected",
 			"data":
@@ -747,10 +744,10 @@ func _test_spectator_flow() -> void:
 		}
 	)
 	_assert_equal(0, client.get_spectators().size(), "spectator_disconnected updates roster")
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{"type": "SpectatorJoinFailed", "data": {"reason": "room full", "error_code": "ROOM_FULL"}}
 	)
-	client.transport.inject_server_message(
+	fake.inject_server_message(
 		{
 			"type": "SpectatorLeft",
 			"data":
@@ -784,6 +781,7 @@ func _test_spectator_flow() -> void:
 
 func _test_reconnected_restores_room_state() -> void:
 	var client := _make_authenticated_client()
+	var fake: SFFakeTransportScript = client.transport
 	var restored: Array = []
 	var failures: Array = []
 	client.reconnected.connect(
@@ -799,9 +797,10 @@ func _test_reconnected_restores_room_state() -> void:
 		{"type": "Pong"},
 		{"type": "GameData", "data": {"from_player": PLAYER_A, "data": {"hp": 2}}},
 	]
-	client.transport.inject_server_message({"type": "Reconnected", "data": reconnected_data})
+	fake.inject_server_message({"type": "Reconnected", "data": reconnected_data})
 	_assert_equal(1, restored.size(), "reconnected emitted")
-	_assert_equal(2, restored[0][1].size(), "missed_events decoded")
+	var missed_events: Array = restored[0][1]
+	_assert_equal(2, missed_events.size(), "missed_events decoded")
 	_assert_equal(
 		SignalFishClientScript.SessionState.IN_ROOM_LOBBY,
 		client.get_session_state(),
@@ -821,20 +820,24 @@ func _test_backpressure_returns_busy_and_drops() -> void:
 	_assert_equal(ERR_BUSY, client.send_game_data({"x": 1}), "backpressure returns ERR_BUSY")
 	_assert_equal(baseline, fake.sent_text.size(), "backpressure drops the message")
 	_assert_equal(1, errors.size(), "backpressure emits protocol_error")
-	_assert_string_contains(errors[0], "backpressure", "backpressure message")
+	var backpressure_error: String = errors[0]
+	_assert_string_contains(backpressure_error, "backpressure", "backpressure message")
 	client.free()
 
 
 func _test_close_surfaces_code_reason_and_cleans_up() -> void:
 	for close_case: Array in [[1000, "bye"], [-1, ""]]:
 		var client := _make_in_room_client()
+		var fake: SFFakeTransportScript = client.transport
 		var close_events: Array = []
 		client.disconnected.connect(
 			func(code: int, reason: String) -> void: close_events.append([code, reason])
 		)
 		_assert_equal(0, client.get_buffered_amount(), "buffered amount proxies transport")
 
-		client.transport.inject_close(close_case[0], close_case[1])
+		var close_code: int = close_case[0]
+		var close_reason: String = close_case[1]
+		fake.inject_close(close_code, close_reason)
 		_assert_equal([close_case], close_events, "close code/reason surfaced (%d)" % close_case[0])
 		_assert_equal(
 			SignalFishClientScript.ConnectionState.CLOSED,
@@ -860,15 +863,16 @@ func _test_process_and_exit_tree_paths() -> void:
 	var client := SignalFishClientScript.new()
 	_track_protocol_errors(client)
 	_assert_equal(OK, client.configure(config), "configure")
-	client.transport = PollCountingTransport.new()
+	var transport: PollCountingTransport = PollCountingTransport.new()
+	client.transport = transport
 	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
 	client._process(0.016)
 	_assert_equal(1, client.transport.poll_count, "_process drives transport poll")
-	client.transport.inject_open()
+	transport.inject_open()
 	client._process(0.016)
 	_assert_equal(2, client.transport.poll_count, "poll continues while connected")
 
-	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	config.auto_poll = false
 	client._process(0.016)
 	_assert_equal(2, client.transport.poll_count, "auto_poll off disables _process polling")
@@ -888,15 +892,17 @@ func _test_failures_clean_up_and_failed_open_surfaces_reason() -> void:
 	var failures: Array = []
 	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
 	_assert_equal(OK, client.configure(_make_config()), "configure")
-	client.transport = SFFakeTransportScript.new()
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
+	client.transport = transport
 	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
-	client.transport.close(4321, "aborted during dial")
+	transport.close(4321, "aborted during dial")
 	_assert_equal(
 		SignalFishClientScript.ConnectionState.FAILED,
 		client.get_connection_state(),
 		"close during connecting is a failed open"
 	)
-	_assert_string_contains(failures[0], "aborted during dial", "failed open surfaces reason")
+	var open_failure: String = failures[0]
+	_assert_string_contains(open_failure, "aborted during dial", "failed open surfaces reason")
 	_assert_equal(null, client.transport, "transport released after failed open")
 	_assert_equal(
 		SignalFishClientScript.SessionState.UNAUTHENTICATED,
@@ -906,9 +912,10 @@ func _test_failures_clean_up_and_failed_open_surfaces_reason() -> void:
 	client.free()
 
 	var drop_client := _make_in_room_client()
+	var drop_fake: SFFakeTransportScript = drop_client.transport
 	var drop_failures: Array = []
 	drop_client.connection_failed.connect(func(error: String) -> void: drop_failures.append(error))
-	drop_client.transport.inject_failure("socket exploded")
+	drop_fake.inject_failure("socket exploded")
 	_assert_equal(["socket exploded"], drop_failures, "failure surfaced")
 	_assert_equal(
 		SignalFishClientScript.ConnectionState.FAILED,
@@ -929,23 +936,26 @@ func _test_frame_cap_drops_oversized_and_binary_frames() -> void:
 	var config := _make_config()
 	config.max_inbound_frame_bytes = 32
 	var client := _connect_new_client(config)
-	client.transport.inject_open()
-	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	var fake: SFFakeTransportScript = client.transport
+	fake.inject_open()
+	fake.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	var errors := _track_protocol_errors(client)
 	var big_data := {"type": "GameData", "data": {"from_player": PLAYER_A, "data": "x"}}
 	var payload := JSON.stringify(big_data)
 	while payload.length() <= 64:
 		big_data["data"]["data"] += "x"
 		payload = JSON.stringify(big_data)
-	client.transport.inject_text(payload)
+	fake.inject_text(payload)
 	_assert_equal(1, errors.size(), "oversized text frame flagged")
-	_assert_string_contains(errors[0], "exceeds cap", "oversized frame message")
+	var oversized_error: String = errors[0]
+	_assert_string_contains(oversized_error, "exceeds cap", "oversized frame message")
 
-	client.transport.inject_binary(PackedByteArray([0, 1, 2]))
+	fake.inject_binary(PackedByteArray([0, 1, 2]))
 	_assert_equal(2, errors.size(), "binary frame flagged pre-negotiation")
-	_assert_string_contains(errors[1], "binary frame", "binary frame message")
+	var binary_error: String = errors[1]
+	_assert_string_contains(binary_error, "binary frame", "binary frame message")
 
-	client.transport.inject_server_message({"type": "Pong"})
+	fake.inject_server_message({"type": "Pong"})
 	_assert_equal(
 		SignalFishClientScript.ConnectionState.CONNECTED,
 		client.get_connection_state(),
@@ -964,13 +974,17 @@ func _test_mixed_content_guard_is_data_driven() -> void:
 		["ftp://x.test", false, false, true, "non-websocket scheme rejected"],
 	]
 	for case_row: Array in cases:
+		var case_url: String = case_row[0]
+		var case_web_platform: bool = case_row[1]
+		var case_secure_page: bool = case_row[2]
+		var case_label: String = case_row[4]
 		var message: String = SignalFishClientScript.insecure_scheme_error(
-			case_row[0], case_row[1], case_row[2]
+			case_url, case_web_platform, case_secure_page
 		)
 		if case_row[3]:
 			_assert(not message.is_empty(), "%s: expected an error" % case_row[4])
 		else:
-			_assert_equal("", message, case_row[4])
+			_assert_equal("", message, case_label)
 	var mixed_message: String = SignalFishClientScript.insecure_scheme_error(
 		"ws://x.test", true, true
 	)
@@ -989,7 +1003,9 @@ func _test_log_redaction_and_level_gate() -> void:
 		["keep empty", PackedStringArray([""]), "keep empty"],
 	]
 	for case_row: Array in cases:
-		_assert_equal(case_row[2], SFLogScript.redact(case_row[0], case_row[1]), "redact case")
+		var case_text: String = case_row[0]
+		var case_secrets: PackedStringArray = case_row[1]
+		_assert_equal(case_row[2], SFLogScript.redact(case_text, case_secrets), "redact case")
 
 	var original_level: int = SFLogScript.min_level
 	SFLogScript.min_level = SFLogScript.Level.OFF
@@ -1028,19 +1044,22 @@ func _connect_new_client(config: SignalFishConfigScript) -> SignalFishClientScri
 
 func _make_connected_client() -> SignalFishClientScript:
 	var client := _connect_new_client(_make_config())
-	client.transport.inject_open()
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_open()
 	return client
 
 
 func _make_authenticated_client() -> SignalFishClientScript:
 	var client := _make_connected_client()
-	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	return client
 
 
 func _make_in_room_client() -> SignalFishClientScript:
 	var client := _make_authenticated_client()
-	client.transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
 	return client
 
 

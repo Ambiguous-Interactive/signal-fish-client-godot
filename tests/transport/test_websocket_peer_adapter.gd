@@ -63,11 +63,13 @@ func get_packet() -> PackedByteArray:
 	if packet_errors.is_empty():
 		_last_packet_error = OK
 	else:
-		_last_packet_error = int(packet_errors.pop_front())
+		var packet_error: int = packet_errors.pop_front()
+		_last_packet_error = packet_error
 	if packet_is_text.is_empty():
 		_last_was_string = false
 	else:
-		_last_was_string = bool(packet_is_text.pop_front())
+		var was_string: bool = packet_is_text.pop_front()
+		_last_was_string = was_string
 	if packets.is_empty():
 		return PackedByteArray()
 	return packets.pop_front()

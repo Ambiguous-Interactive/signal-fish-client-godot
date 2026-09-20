@@ -79,8 +79,10 @@ func _test_msgpack_decode_vectors() -> void:
 		},
 	]
 	for vector: Dictionary in vectors:
-		var result := SFMsgpackScript.decode(_packed(vector["bytes"]))
-		if not _assert(result["ok"], true, "decode %s succeeds" % vector["label"]):
+		var vector_bytes: Array = vector["bytes"]
+		var result: Dictionary = SFMsgpackScript.decode(_packed(vector_bytes))
+		var result_ok: bool = result["ok"]
+		if not _assert(result_ok, true, "decode %s succeeds" % vector["label"]):
 			continue
 		_assert_equal(vector["want"], result["value"], "decode %s value" % vector["label"])
 
@@ -97,28 +99,30 @@ func _test_msgpack_hostile_vectors() -> void:
 		{"label": "fixext1", "bytes": [0xD4, 0x00, 0x2A]},
 	]
 	for vector: Dictionary in vectors:
-		var result := SFMsgpackScript.decode(_packed(vector["bytes"]))
-		_assert(result["ok"], false, "decode %s is rejected" % vector["label"])
-	# Deep nesting beyond the depth cap must fail, not overflow the stack.
+		var vector_bytes: Array = vector["bytes"]
+		var result: Dictionary = SFMsgpackScript.decode(_packed(vector_bytes))
+		var result_ok: bool = result["ok"]
+		_assert(result_ok, false, "decode %s is rejected" % vector["label"])
 	var deep: Array = []
 	for _index: int in SFMsgpackScript.MAX_DEPTH + 1:
 		deep = [deep]
-	var deep_encode := SFMsgpackScript.encode(deep)
-	_assert(deep_encode["ok"], false, "deep encode is rejected")
-	# Decode-side cap: hand-crafted nest-of-arrays (fixarray markers) one
-	# level deeper than allowed.
+	var deep_encode: Dictionary = SFMsgpackScript.encode(deep)
+	var deep_encode_ok: bool = deep_encode["ok"]
+	_assert(deep_encode_ok, false, "deep encode is rejected")
 	var deep_bytes := PackedByteArray()
 	for _index: int in SFMsgpackScript.MAX_DEPTH + 1:
 		deep_bytes.append(0x91)
 	deep_bytes.append(0x01)
-	var deep_decode := SFMsgpackScript.decode(deep_bytes)
-	_assert(deep_decode["ok"], false, "deep decode is rejected")
+	var deep_decode: Dictionary = SFMsgpackScript.decode(deep_bytes)
+	var deep_decode_ok: bool = deep_decode["ok"]
+	_assert(deep_decode_ok, false, "deep decode is rejected")
 	var at_cap_bytes := PackedByteArray()
 	for _index: int in SFMsgpackScript.MAX_DEPTH:
 		at_cap_bytes.append(0x91)
 	at_cap_bytes.append(0x01)
-	var at_cap_decode := SFMsgpackScript.decode(at_cap_bytes)
-	_assert(at_cap_decode["ok"], true, "nesting at the cap decodes")
+	var at_cap_decode: Dictionary = SFMsgpackScript.decode(at_cap_bytes)
+	var at_cap_decode_ok: bool = at_cap_decode["ok"]
+	_assert(at_cap_decode_ok, true, "nesting at the cap decodes")
 
 
 func _test_msgpack_encode_widths() -> void:
@@ -140,19 +144,22 @@ func _test_msgpack_encode_widths() -> void:
 		{"value": null, "bytes": [0xC0]},
 	]
 	for vector: Dictionary in vectors:
-		var result := SFMsgpackScript.encode(vector["value"])
-		if not _assert(result["ok"], true, "encode %s succeeds" % vector["value"]):
+		var result: Dictionary = SFMsgpackScript.encode(vector["value"])
+		var result_ok: bool = result["ok"]
+		if not _assert(result_ok, true, "encode %s succeeds" % vector["value"]):
 			continue
-		_assert_equal(
-			_packed(vector["bytes"]), result["bytes"], "encode %s bytes" % vector["value"]
-		)
-	var string_result := SFMsgpackScript.encode("y".repeat(300))
-	if _assert(string_result["ok"], true, "encode 300-char string succeeds"):
+		var vector_bytes: Array = vector["bytes"]
+		_assert_equal(_packed(vector_bytes), result["bytes"], "encode %s bytes" % vector["value"])
+	var string_result: Dictionary = SFMsgpackScript.encode("y".repeat(300))
+	var string_result_ok: bool = string_result["ok"]
+	if _assert(string_result_ok, true, "encode 300-char string succeeds"):
 		_assert_equal(0xDA, string_result["bytes"][0], "300-char string uses str16")
-	var int_key_result := SFMsgpackScript.encode({1: "x"})
-	_assert(int_key_result["ok"], false, "int map keys are rejected")
-	var object_result := SFMsgpackScript.encode(RefCounted.new())
-	_assert(object_result["ok"], false, "objects are rejected")
+	var int_key_result: Dictionary = SFMsgpackScript.encode({1: "x"})
+	var int_key_result_ok: bool = int_key_result["ok"]
+	_assert(int_key_result_ok, false, "int map keys are rejected")
+	var object_result: Dictionary = SFMsgpackScript.encode(RefCounted.new())
+	var object_result_ok: bool = object_result["ok"]
+	_assert(object_result_ok, false, "objects are rejected")
 
 
 func _test_msgpack_round_trip_matrix() -> void:
@@ -183,11 +190,14 @@ func _test_msgpack_round_trip_matrix() -> void:
 		{"alpha": 1, "beta": [true, null], "gamma": {"delta": "value"}},
 	]
 	for value: Variant in values:
-		var encoded := SFMsgpackScript.encode(value)
-		if not _assert(encoded["ok"], true, "round-trip encode %s" % var_to_str(value)):
+		var encoded: Dictionary = SFMsgpackScript.encode(value)
+		var encoded_ok: bool = encoded["ok"]
+		if not _assert(encoded_ok, true, "round-trip encode %s" % var_to_str(value)):
 			continue
-		var decoded := SFMsgpackScript.decode(encoded["bytes"])
-		if not _assert(decoded["ok"], true, "round-trip decode %s" % var_to_str(value)):
+		var encoded_bytes: PackedByteArray = encoded["bytes"]
+		var decoded: Dictionary = SFMsgpackScript.decode(encoded_bytes)
+		var decoded_ok: bool = decoded["ok"]
+		if not _assert(decoded_ok, true, "round-trip decode %s" % var_to_str(value)):
 			continue
 		_assert_equal(value, decoded["value"], "round-trip value %s" % var_to_str(value))
 
@@ -208,8 +218,9 @@ func _test_v2_envelope_canonical_bytes() -> void:
 		+ _string_codepoints("payload")
 		+ [0xC4, 0x02, 0xDE, 0xAD]
 	)
-	var result := SFBinaryFramesScript.decode_envelope(_packed(canonical))
-	if not _assert(result["ok"], true, "canonical v2 envelope decodes"):
+	var result: Dictionary = SFBinaryFramesScript.decode_envelope(_packed(canonical))
+	var result_ok: bool = result["ok"]
+	if not _assert(result_ok, true, "canonical v2 envelope decodes"):
 		return
 	_assert_equal(PLAYER_B, result["from_player"], "canonical v2 from_player")
 	_assert_equal(
@@ -234,8 +245,10 @@ func _test_envelope_variant_matrix() -> void:
 		},
 	]
 	for case: Dictionary in cases:
-		var result := SFBinaryFramesScript.decode_envelope(case["bytes"])
-		if not _assert(result["ok"], true, "%s decodes" % case["label"]):
+		var case_bytes: PackedByteArray = case["bytes"]
+		var result: Dictionary = SFBinaryFramesScript.decode_envelope(case_bytes)
+		var result_ok: bool = result["ok"]
+		if not _assert(result_ok, true, "%s decodes" % case["label"]):
 			continue
 		_assert_equal(PLAYER_B, result["from_player"], "%s from_player" % case["label"])
 		_assert_equal(
@@ -397,11 +410,12 @@ func _test_envelope_hostile_matrix() -> void:
 		},
 	]
 	for case: Dictionary in cases:
-		var result := SFBinaryFramesScript.decode_envelope(case["bytes"])
-		_assert(result["ok"], false, "%s is rejected" % case["label"])
-		_assert(
-			not (result["error"] as String).is_empty(), true, "%s explains itself" % case["label"]
-		)
+		var case_bytes: PackedByteArray = case["bytes"]
+		var result: Dictionary = SFBinaryFramesScript.decode_envelope(case_bytes)
+		var result_ok: bool = result["ok"]
+		_assert(result_ok, false, "%s is rejected" % case["label"])
+		var result_error: String = result["error"]
+		_assert(not result_error.is_empty(), true, "%s explains itself" % case["label"])
 
 
 func _test_v3_envelope_matrix() -> void:
@@ -418,18 +432,21 @@ func _test_v3_envelope_matrix() -> void:
 		{"label": "uint32 seq", "encoding": "message_pack", "seq": _raw([0xCE, 0, 0, 0x10, 0x00])},
 	]
 	for case: Dictionary in cases:
+		var case_encoding: String = case["encoding"]
+		var case_seq: PackedByteArray = case["seq"]
 		var bytes := _envelope(
 			[
 				_uuid_field(),
-				_encoding_field(case["encoding"]),
+				_encoding_field(case_encoding),
 				payload,
-				_field("seq", case["seq"]),
+				_field("seq", case_seq),
 				_field("epoch", epoch),
 			],
 			[0x85]
 		)
-		var result := SFBinaryFramesScript.decode_envelope(bytes)
-		if not _assert(result["ok"], true, "v3 %s decodes" % case["label"]):
+		var result: Dictionary = SFBinaryFramesScript.decode_envelope(bytes)
+		var result_ok: bool = result["ok"]
+		if not _assert(result_ok, true, "v3 %s decodes" % case["label"]):
 			continue
 		_assert_equal(3, result["version"], "v3 %s version" % case["label"])
 		_assert_equal(
@@ -440,8 +457,7 @@ func _test_v3_envelope_matrix() -> void:
 			result["encoding"],
 			"v3 %s encoding" % case["label"]
 		)
-	# A u64 stamp above i64 max wraps negative in Godot but must stay valid
-	# (rust reads u64 natively); a str8-form encoding token must be accepted.
+	# A u64 stamp above i64 max wraps negative in Godot but must stay valid (rust reads u64 natively).
 	var huge_stamp: Array = [0xCF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
 	var str8_encoding: Array = (
 		[0xA8] + _string_codepoints("encoding") + [0xD9, 0x0C] + _string_codepoints("message_pack")
@@ -456,8 +472,9 @@ func _test_v3_envelope_matrix() -> void:
 		],
 		[0x85]
 	)
-	var result := SFBinaryFramesScript.decode_envelope(bytes)
-	if _assert(result["ok"], true, "u64-max seq and str8 token decode"):
+	var result: Dictionary = SFBinaryFramesScript.decode_envelope(bytes)
+	var result_ok: bool = result["ok"]
+	if _assert(result_ok, true, "u64-max seq and str8 token decode"):
 		_assert_equal(
 			SFTypesScript.GameDataEncoding.MESSAGE_PACK, result["encoding"], "str8 token encoding"
 		)

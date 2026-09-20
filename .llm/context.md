@@ -44,6 +44,9 @@ point here unless a tool requires a tiny wrapper format.
 - Keep user-facing copy (commits, PRs, changelogs, docs, code comments)
   extremely short, simple, and to the point (STE style). Omit internal-only
   detail; changelogs list user-relevant changes only.
+- Keep code comments minimal: comments carry only non-inferable rationale
+  (upstream/issue citations, behavioral "why"). No comments on internal
+  helpers; keep `##` docs on public API; naming and structure carry the rest.
 
 ## Runtime Implementation Checklist
 
@@ -117,8 +120,8 @@ Definition of done for the first usable client:
   by CI and local checks. It sets a deterministic writable `HOME` for
   tool caches, activates `.venv-ci` when present, and runs Godot from a
   temporary project copy that excludes `.godot` so local runs exercise the same
-  cold-cache path as CI. Subcommands are `all`, `private-helpers`, `format`,
-  `lint`, and `godot`.
+  cold-cache path as CI. Subcommands are `all`, `static`, `private-helpers`,
+  `format`, `lint`, and `godot`.
 - `scripts/validate-github-config.py`: deterministic local validator for
   GitHub workflows and Dependabot config. It rejects duplicate YAML keys,
   `gh api --slurp` combined with `--jq`, unsafe workflow triggers or

@@ -59,7 +59,8 @@ func _test_v3_client_encoders_match_fixtures() -> void:
 	if not _assert_equal(lines.size(), built.size(), "v3 client fixture builder count"):
 		return
 	for index: int in lines.size():
-		var encoded := SFEnvelopeScript.encode(built[index])
+		var message: Dictionary = built[index]
+		var encoded := SFEnvelopeScript.encode(message)
 		_assert_equal(lines[index], encoded, "%s line %d" % [V3_CLIENT_FIXTURE, index + 1])
 
 
@@ -84,10 +85,11 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	var decoded_events: Array = []
 	var failures_before_fixture_shape_checks := _failures.size()
 	for index: int in lines.size():
-		var decoded := SFEventsScript.decode_text(lines[index])
+		var decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(lines[index])
 		decoded_events.append(decoded)
+		var expected_signal: String = expected_signals[index]
 		if not _assert_decoded_signal(
-			expected_signals[index], decoded, "%s line %d" % [V3_SERVER_FIXTURE, index + 1]
+			expected_signal, decoded, "%s line %d" % [V3_SERVER_FIXTURE, index + 1]
 		):
 			continue
 		_assert_equal(
@@ -98,7 +100,6 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	if _failures.size() != failures_before_fixture_shape_checks:
 		return
 
-	# Line 1: mesh + webrtc plan with two peers and STUN/TURN ICE.
 	var mesh_plan: SFSessionTypesScript.SessionPlanInfo = decoded_events[0].args[0]
 	_assert_equal(
 		"40000000-0000-0000-0000-000000000001", mesh_plan.generation, "mesh plan generation"
@@ -139,7 +140,6 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 		"plan debug must not contain the turn credential"
 	)
 
-	# Line 2: host + direct plan with host and endpoint.
 	var host_plan: SFSessionTypesScript.SessionPlanInfo = decoded_events[1].args[0]
 	_assert_equal(SFSessionTypesScript.Topology.HOST, host_plan.topology, "host plan topology")
 	_assert_equal(
@@ -150,7 +150,6 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	_assert_equal(7777, host_plan.direct_endpoint.port, "host endpoint port")
 	_assert_equal(0, host_plan.ice_servers.size(), "direct plan has no ice servers")
 
-	# Line 3: explicit relay-floor reset plan.
 	var relay_plan: SFSessionTypesScript.SessionPlanInfo = decoded_events[2].args[0]
 	_assert_equal(SFSessionTypesScript.Topology.RELAY, relay_plan.topology, "relay reset topology")
 	_assert_equal(
@@ -158,7 +157,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	)
 	_assert_equal(0, relay_plan.peers.size(), "relay reset has no peers")
 
-	# Line 4: legacy Server 0.4 shape without generation.
+	# Legacy server 0.4 wire shape.
 	var legacy_plan: SFSessionTypesScript.SessionPlanInfo = decoded_events[3].args[0]
 	_assert_equal("", legacy_plan.generation, "legacy plan has no generation")
 
@@ -201,7 +200,6 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 
 
 func _test_v3_validation_and_sentinels() -> void:
-	# Builder validation.
 	_assert(
 		not SFMessagesScript.is_valid_message(
 			SFMessagesScript.peer_signal("", "gen", {"Offer": "s"})
@@ -251,14 +249,12 @@ func _test_v3_validation_and_sentinels() -> void:
 		"empty capability token is rejected"
 	)
 
-	# Unset v3 fields are omitted from the authenticate wire bytes.
 	var minimal_auth := SFMessagesScript.authenticate("app")
 	_assert(
 		not SFEnvelopeScript.encode(minimal_auth).contains("protocol_version"),
 		"unset protocol_version omitted"
 	)
 
-	# Decoder validation: malformed v3 frames are protocol errors, never crashes.
 	var bad_plans := [
 		[
 			"plan with unknown topology",
@@ -345,13 +341,12 @@ func _test_v3_validation_and_sentinels() -> void:
 		"room joined with bad ice"
 	)
 
-	# Hostile / edge shapes.
 	_assert_protocol_error_contains(
 		SFEventsScript.decode_envelope({"type": "ProtocolInfo", "data": {"transports": ["smoke"]}}),
 		"ProtocolInfo transports contains an unknown token",
 		"info with unknown message transport"
 	)
-	var big_outbound := SFEventsScript.decode_envelope(
+	var big_outbound: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "ProtocolInfo", "data": {"max_outbound_message_size": 8589934592}}
 	)
 	if _assert_decoded_signal("protocol_info", big_outbound, "u64-range outbound cap decodes"):
@@ -397,10 +392,9 @@ func _test_v3_validation_and_sentinels() -> void:
 		"PlayerInfo connected_at must be a string",
 		"non-string connected_at rejected"
 	)
-	# Explicit JSON null connected_at decodes to the "" sentinel without
-	# aborting the rest of the player parse (upstream rejects null, but the
-	# validator accepts it, so the parse must stay total).
-	var null_connected := SFEventsScript.decode_envelope(
+	# Null connected_at decodes to the "" sentinel without aborting the parse
+	# (upstream rejects null; validator accepts it).
+	var null_connected: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "PlayerJoined", "data": {"player": _player_with_null_connected_at()}}
 	)
 	if _assert_decoded_signal("player_joined", null_connected, "null connected_at decodes"):
@@ -409,14 +403,13 @@ func _test_v3_validation_and_sentinels() -> void:
 		_assert_equal("direct", info.type, "connection_info survives null connected_at")
 
 	# JSON null signal payloads round-trip verbatim (upstream Value::Null).
-	var null_signal := SFEventsScript.decode_envelope(
+	var null_signal: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "Signal", "data": {"from": "p", "generation": "gen", "signal": null}}
 	)
 	if _assert_decoded_signal("signal_received", null_signal, "null signal payload decodes"):
 		_assert_equal(null_signal.args[2], null, "null signal payload kept verbatim")
 
-	# Engine-only Variants nested in a signal payload are refused locally
-	# instead of being stringified onto the wire.
+	# Engine-only Variants are refused locally instead of being stringified onto the wire.
 	_assert(
 		not SFMessagesScript.is_valid_message(
 			SFMessagesScript.peer_signal("peer", "gen", {"Offer": Vector2(1, 2)})
@@ -424,8 +417,7 @@ func _test_v3_validation_and_sentinels() -> void:
 		"engine-only nested payload refused"
 	)
 
-	# A v3 plan inside missed_events decodes like any other event.
-	var reconnected := (
+	var reconnected: SFTypesScript.DecodedEvent = (
 		SFEventsScript
 		. decode_envelope(
 			{
@@ -462,7 +454,8 @@ func _test_v3_validation_and_sentinels() -> void:
 		)
 	)
 	if _assert_decoded_signal("reconnected", reconnected, "reconnect with v3 replay"):
-		_assert_decoded_signal("session_plan", reconnected.args[1][0], "replayed v3 plan decodes")
+		var replayed: SFTypesScript.DecodedEvent = reconnected.args[1][0]
+		_assert_decoded_signal("session_plan", replayed, "replayed v3 plan decodes")
 
 
 func _room_joined_with_bad_ice() -> Dictionary:
@@ -506,7 +499,8 @@ func _assert_decoded_signal(expected: String, decoded: RefCounted, label: String
 	if decoded == null:
 		_failures.append("%s: expected signal %s, got <null decoded event>" % [label, expected])
 		return false
-	if String(decoded.signal_name) == expected:
+	var event: SFTypesScript.DecodedEvent = decoded
+	if String(event.signal_name) == expected:
 		return true
 	_failures.append(
 		"%s: expected signal %s, got %s" % [label, expected, _decoded_summary(decoded)]
@@ -517,10 +511,11 @@ func _assert_decoded_signal(expected: String, decoded: RefCounted, label: String
 func _assert_protocol_error(decoded: RefCounted, label: String) -> bool:
 	if not _assert_decoded_signal("protocol_error", decoded, label):
 		return false
-	if not _assert_equal(1, decoded.args.size(), "%s protocol_error args" % label):
+	var event: SFTypesScript.DecodedEvent = decoded
+	if not _assert_equal(1, event.args.size(), "%s protocol_error args" % label):
 		return false
 	return _assert(
-		typeof(decoded.args[0]) == TYPE_STRING and not String(decoded.args[0]).is_empty(),
+		typeof(event.args[0]) == TYPE_STRING and not str(event.args[0]).is_empty(),
 		"%s protocol_error message must be non-empty" % label
 	)
 
@@ -530,7 +525,8 @@ func _assert_protocol_error_contains(
 ) -> bool:
 	if not _assert_protocol_error(decoded, label):
 		return false
-	return _assert_string_contains(String(decoded.args[0]), expected_substring, label)
+	var event: SFTypesScript.DecodedEvent = decoded
+	return _assert_string_contains(str(event.args[0]), expected_substring, label)
 
 
 func _assert(condition: bool, label: String) -> bool:
@@ -564,12 +560,13 @@ func _assert_string_contains(actual: String, expected_substring: String, label: 
 func _decoded_summary(decoded: RefCounted) -> String:
 	if decoded == null:
 		return "<null decoded event>"
+	var event: SFTypesScript.DecodedEvent = decoded
 	var signal_text := "<missing>"
-	if decoded.get("signal_name") != null:
-		signal_text = String(decoded.signal_name)
+	if event.get("signal_name") != null:
+		signal_text = String(event.signal_name)
 	var args_text := "<missing>"
-	if decoded.get("args") != null:
-		args_text = var_to_str(decoded.args)
+	if event.get("args") != null:
+		args_text = var_to_str(event.args)
 	return "%s args=%s" % [signal_text, args_text]
 
 

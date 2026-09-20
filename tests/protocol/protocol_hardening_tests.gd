@@ -80,7 +80,9 @@ func _test_client_message_validation() -> void:
 		},
 	]
 	for test_case: Dictionary in valid_messages:
-		_assert_valid_message(test_case["envelope"], test_case["label"])
+		var envelope: Dictionary = test_case["envelope"]
+		var label: String = test_case["label"]
+		_assert_valid_message(envelope, label)
 
 	var invalid_messages := [
 		{
@@ -237,10 +239,12 @@ func _test_client_message_validation() -> void:
 		},
 	]
 	for test_case: Dictionary in invalid_messages:
-		_assert_invalid_message(test_case["envelope"], test_case["error"], test_case["label"])
-	_assert_equal(
-		"", SFEnvelopeScript.encode(invalid_messages[0]["envelope"], false), "invalid encode guard"
-	)
+		var envelope: Dictionary = test_case["envelope"]
+		var expected_error: String = test_case["error"]
+		var label: String = test_case["label"]
+		_assert_invalid_message(envelope, expected_error, label)
+	var invalid_envelope: Dictionary = invalid_messages[0]["envelope"]
+	_assert_equal("", SFEnvelopeScript.encode(invalid_envelope, false), "invalid encode guard")
 
 
 func _test_connection_info_to_dict_resend_canonicalization() -> void:
@@ -372,18 +376,22 @@ func _test_inbound_strict_null_validation() -> void:
 		},
 	]
 	for test_case: Dictionary in invalid_envelopes:
-		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
+		var envelope: Dictionary = test_case["envelope"]
+		var label: String = test_case["label"]
+		_assert_protocol_error_envelope(envelope, label)
 
-	var pong_null_data := SFEventsScript.decode_envelope({"type": "Pong", "data": null})
+	var pong_null_data: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "Pong", "data": null}
+	)
 	_assert_equal("pong", String(pong_null_data.signal_name), "pong null data")
 
-	var player_custom_null := SFEventsScript.decode_envelope(
+	var player_custom_null: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "PlayerJoined", "data": {"player": custom_null_player}}
 	)
 	_assert_equal("player_joined", String(player_custom_null.signal_name), "custom null player")
 	_assert_equal(null, player_custom_null.args[0].connection_info.data, "custom null player data")
 
-	var peer_custom_null := SFEventsScript.decode_envelope(
+	var peer_custom_null: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		_game_starting_envelope(
 			[_peer_connection({"connection_info": {"type": "custom", "data": null}})]
 		)
@@ -393,7 +401,7 @@ func _test_inbound_strict_null_validation() -> void:
 
 	var null_connection_player := _minimal_player_data()
 	null_connection_player["connection_info"] = null
-	var player_null_connection := SFEventsScript.decode_envelope(
+	var player_null_connection: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "PlayerJoined", "data": {"player": null_connection_player}}
 	)
 	_assert_equal(
@@ -403,7 +411,7 @@ func _test_inbound_strict_null_validation() -> void:
 
 
 func _test_binary_codec_hardening() -> void:
-	var unpadded := SFEventsScript.decode_envelope(
+	var unpadded: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{
 			"type": "GameDataBinary",
 			"data": {"from_player": "p1", "encoding": "message_pack", "payload": "yv4"}
@@ -414,7 +422,7 @@ func _test_binary_codec_hardening() -> void:
 	)
 	_assert_equal(PackedByteArray([202, 254]), unpadded.args[2], "unpadded base64 payload")
 
-	var future_encoding := SFEventsScript.decode_envelope(
+	var future_encoding: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{
 			"type": "GameDataBinary",
 			"data": {"from_player": "p1", "encoding": "future_pack", "payload": "yv4"}
@@ -443,7 +451,7 @@ func _test_binary_codec_hardening() -> void:
 
 
 func _test_forward_compatible_inbound_strings() -> void:
-	var future_protocol_info := SFEventsScript.decode_envelope(
+	var future_protocol_info: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "ProtocolInfo", "data": {"game_data_formats": ["json", "future_pack"]}}
 	)
 	_assert_equal(
@@ -458,7 +466,7 @@ func _test_forward_compatible_inbound_strings() -> void:
 	)
 
 	var relay_future_transport_data := _relay_connection_info({"transport": "future_transport"})
-	var relay_future_transport := SFEventsScript.decode_envelope(
+	var relay_future_transport: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		_game_starting_envelope(
 			[_peer_connection({"connection_info": relay_future_transport_data})]
 		)
@@ -478,7 +486,7 @@ func _test_forward_compatible_inbound_strings() -> void:
 	future_connection_type_player["connection_info"] = {
 		"type": "future_transport", "data": {"x": 1}
 	}
-	var future_connection_type := SFEventsScript.decode_envelope(
+	var future_connection_type: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "PlayerJoined", "data": {"player": future_connection_type_player}}
 	)
 	_assert_equal(
@@ -494,8 +502,9 @@ func _test_forward_compatible_inbound_strings() -> void:
 
 	var spectator_joined_unknown_data := _minimal_spectator_joined_data()
 	spectator_joined_unknown_data["reason"] = "future_reason"
-	var spectator_joined_unknown_reason := SFEventsScript.decode_envelope(
-		{"type": "SpectatorJoined", "data": spectator_joined_unknown_data}
+	var spectator_joined_unknown_reason: SFTypesScript.DecodedEvent = (
+		SFEventsScript
+		. decode_envelope({"type": "SpectatorJoined", "data": spectator_joined_unknown_data})
 	)
 	_assert_equal(
 		"spectator_joined",
@@ -508,7 +517,7 @@ func _test_forward_compatible_inbound_strings() -> void:
 		"spectator joined unknown reason value"
 	)
 
-	var spectator_left_unknown_reason := SFEventsScript.decode_envelope(
+	var spectator_left_unknown_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "SpectatorLeft", "data": {"reason": "future_reason"}}
 	)
 	_assert_equal(
@@ -522,7 +531,7 @@ func _test_forward_compatible_inbound_strings() -> void:
 		"spectator left unknown reason value"
 	)
 
-	var new_spectator_unknown_reason := SFEventsScript.decode_envelope(
+	var new_spectator_unknown_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{
 			"type": "NewSpectatorJoined",
 			"data": {"spectator": _minimal_spectator_data(), "reason": "future_reason"}
@@ -539,7 +548,7 @@ func _test_forward_compatible_inbound_strings() -> void:
 		"new spectator unknown reason value"
 	)
 
-	var disconnected_unknown_reason := SFEventsScript.decode_envelope(
+	var disconnected_unknown_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "SpectatorDisconnected", "data": {"spectator_id": "s1", "reason": "future_reason"}}
 	)
 	_assert_equal(
@@ -553,7 +562,7 @@ func _test_forward_compatible_inbound_strings() -> void:
 		"spectator disconnected unknown reason value"
 	)
 
-	var null_game_data := SFEventsScript.decode_envelope(
+	var null_game_data: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "GameData", "data": {"from_player": "p1", "data": null}}
 	)
 	_assert_equal("game_data_received", String(null_game_data.signal_name), "null game data")
@@ -596,7 +605,9 @@ func _test_non_empty_wire_strings() -> void:
 		},
 	]
 	for test_case: Dictionary in required_error_code_cases:
-		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
+		var envelope: Dictionary = test_case["envelope"]
+		var label: String = test_case["label"]
+		_assert_protocol_error_envelope(envelope, label)
 
 	var optional_error_code_cases := [
 		{
@@ -618,7 +629,9 @@ func _test_non_empty_wire_strings() -> void:
 		},
 	]
 	for test_case: Dictionary in optional_error_code_cases:
-		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
+		var envelope: Dictionary = test_case["envelope"]
+		var label: String = test_case["label"]
+		_assert_protocol_error_envelope(envelope, label)
 
 	var spectator_joined_data := _minimal_spectator_joined_data()
 	spectator_joined_data["reason"] = ""
@@ -646,7 +659,9 @@ func _test_non_empty_wire_strings() -> void:
 		},
 	]
 	for test_case: Dictionary in spectator_reason_cases:
-		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
+		var envelope: Dictionary = test_case["envelope"]
+		var label: String = test_case["label"]
+		_assert_protocol_error_envelope(envelope, label)
 
 
 func _test_reconnected_missed_events_nonfatal() -> void:
@@ -656,22 +671,18 @@ func _test_reconnected_missed_events_nonfatal() -> void:
 		{"type": "Pong"},
 		12,
 	]
-	var future_missed_event := SFEventsScript.decode_envelope(
+	var future_missed_event: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "Reconnected", "data": future_missed_event_data}
 	)
 	_assert_equal(
 		"reconnected", String(future_missed_event.signal_name), "future missed event reconnect"
 	)
-	_assert_equal(3, future_missed_event.args[1].size(), "future missed event count")
-	_assert_equal(
-		"protocol_error",
-		String(future_missed_event.args[1][0].signal_name),
-		"future missed event entry"
-	)
-	_assert_equal("pong", String(future_missed_event.args[1][1].signal_name), "known missed event")
-	_assert_protocol_error_contains(
-		future_missed_event.args[1][2], "missed_events[2]", "non-object missed event"
-	)
+	var missed_events: Array = future_missed_event.args[1]
+	_assert_equal(3, missed_events.size(), "future missed event count")
+	_assert_equal("protocol_error", str(missed_events[0].signal_name), "future missed event entry")
+	_assert_equal("pong", str(missed_events[1].signal_name), "known missed event")
+	var non_object_entry: RefCounted = missed_events[2]
+	_assert_protocol_error_contains(non_object_entry, "missed_events[2]", "non-object missed event")
 
 
 func _test_reconnected_missed_events_depth_hardening() -> void:
@@ -679,14 +690,13 @@ func _test_reconnected_missed_events_depth_hardening() -> void:
 	nested_entry_data["missed_events"] = []
 	var nested_data := _minimal_room_joined_data()
 	nested_data["missed_events"] = [{"type": "Reconnected", "data": nested_entry_data}]
-	var nested_reconnected := SFEventsScript.decode_envelope(
+	var nested_reconnected: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "Reconnected", "data": nested_data}
 	)
 	_assert_equal("reconnected", String(nested_reconnected.signal_name), "nested entry outer")
+	var nested_entry: RefCounted = nested_reconnected.args[1][0]
 	_assert_protocol_error_contains(
-		nested_reconnected.args[1][0],
-		"not replayable inside missed_events",
-		"nested reconnected rejected"
+		nested_entry, "not replayable inside missed_events", "nested reconnected rejected"
 	)
 
 	var over_depth := SFEventsScript.decode_envelope(
@@ -699,15 +709,19 @@ func _test_reconnected_missed_events_depth_hardening() -> void:
 	for _index: int in SFEventsScript.MAX_MISSED_EVENTS + 1:
 		oversized_missed_events.append({"type": "Pong"})
 	oversized_data["missed_events"] = oversized_missed_events
-	var oversized := SFEventsScript.decode_envelope({"type": "Reconnected", "data": oversized_data})
+	var oversized: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "Reconnected", "data": oversized_data}
+	)
 	_assert_equal("reconnected", String(oversized.signal_name), "oversized missed events outer")
+	var oversized_entries: Array = oversized.args[1]
 	_assert_equal(
 		SFEventsScript.MAX_MISSED_EVENTS + 1,
-		oversized.args[1].size(),
+		oversized_entries.size(),
 		"oversized missed events decoded entries"
 	)
+	var truncated_entry: RefCounted = oversized_entries[SFEventsScript.MAX_MISSED_EVENTS]
 	_assert_protocol_error_contains(
-		oversized.args[1][SFEventsScript.MAX_MISSED_EVENTS],
+		truncated_entry,
 		"exceeds %d entries" % SFEventsScript.MAX_MISSED_EVENTS,
 		"oversized missed events truncated"
 	)
@@ -808,12 +822,13 @@ func _assert_protocol_error(decoded: RefCounted, label: String) -> bool:
 	if decoded == null:
 		_failures.append("%s: expected protocol_error, got <null decoded event>" % label)
 		return false
-	if not _assert_equal("protocol_error", String(decoded.signal_name), label):
+	var event: SFTypesScript.DecodedEvent = decoded
+	if not _assert_equal("protocol_error", String(event.signal_name), label):
 		return false
-	if not _assert_equal(1, decoded.args.size(), "%s protocol_error args" % label):
+	if not _assert_equal(1, event.args.size(), "%s protocol_error args" % label):
 		return false
 	return _assert(
-		typeof(decoded.args[0]) == TYPE_STRING and not String(decoded.args[0]).is_empty(),
+		typeof(event.args[0]) == TYPE_STRING and not str(event.args[0]).is_empty(),
 		"%s protocol_error message must be non-empty" % label
 	)
 
@@ -823,7 +838,8 @@ func _assert_protocol_error_contains(
 ) -> bool:
 	if not _assert_protocol_error(decoded, label):
 		return false
-	return _assert_string_contains(String(decoded.args[0]), expected_substring, label)
+	var event: SFTypesScript.DecodedEvent = decoded
+	return _assert_string_contains(str(event.args[0]), expected_substring, label)
 
 
 func _assert(condition: bool, label: String) -> bool:

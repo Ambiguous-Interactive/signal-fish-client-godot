@@ -13,7 +13,7 @@ const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_con
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 
 var _failures: Array = []
-var _runner: Variant = null
+var _runner: Object = null
 
 
 static func run(runner: Variant) -> Array:
@@ -31,19 +31,19 @@ func run_all() -> void:
 
 
 func _make_config() -> SignalFishConfigScript:
-	return _runner._make_config()
+	return _runner.call("_make_config")
 
 
 func _connect_new_client(config: SignalFishConfigScript) -> SignalFishClientScript:
-	return _runner._connect_new_client(config)
+	return _runner.call("_connect_new_client", config)
 
 
 func _make_authenticated_client() -> SignalFishClientScript:
-	return _runner._make_authenticated_client()
+	return _runner.call("_make_authenticated_client")
 
 
 func _track_protocol_errors(client: SignalFishClientScript) -> Array:
-	return _runner._track_protocol_errors(client)
+	return _runner.call("_track_protocol_errors", client)
 
 
 func _assert_equal(expected: Variant, actual: Variant, label: String) -> bool:
@@ -56,7 +56,6 @@ func _assert_equal(expected: Variant, actual: Variant, label: String) -> bool:
 
 
 func _test_v3_config_advertises_capabilities() -> void:
-	# Invalid v3 config fields are rejected at configure time.
 	var client := SignalFishClientScript.new()
 	_track_protocol_errors(client)
 	var config := _make_config()
@@ -76,9 +75,9 @@ func _test_v3_config_advertises_capabilities() -> void:
 	_assert_equal(OK, client.configure(config), "v3 capability config accepted")
 	client.free()
 
-	# The v3 fields reach the Authenticate wire bytes exactly as configured.
 	var v3_client := _connect_new_client(config)
-	v3_client.transport.inject_open()
+	var v3_fake: SFFakeTransportScript = v3_client.transport
+	v3_fake.inject_open()
 	var expected := SFMessagesScript.encode(
 		SFMessagesScript.authenticate(
 			"test-app",
@@ -94,9 +93,9 @@ func _test_v3_config_advertises_capabilities() -> void:
 	_assert_equal([expected], v3_client.transport.sent_text, "v3 authenticate bytes")
 	v3_client.free()
 
-	# Default config: v3 fields stay omitted (v2 wire bytes unchanged).
 	var v2_client := _connect_new_client(_make_config())
-	v2_client.transport.inject_open()
+	var v2_fake: SFFakeTransportScript = v2_client.transport
+	v2_fake.inject_open()
 	_assert_equal(
 		[
 			SFMessagesScript.encode(
@@ -157,12 +156,13 @@ func _test_v3_events_surface() -> void:
 		)
 	)
 	_assert_equal(1, plans.size(), "session_plan surfaced")
-	_assert_equal("gen-1", plans[0].generation, "plan generation surfaced")
-	_assert_equal(SFSessionTypesScript.Topology.MESH, plans[0].topology, "plan topology surfaced")
-	_assert_equal(1, plans[0].peers.size(), "plan peers surfaced")
-	_assert_equal(PLAYER_B, plans[0].peers[0].player_id, "plan peer id surfaced")
-	_assert_equal(true, plans[0].peers[0].initiate, "plan initiate surfaced")
-	_assert_equal(1, plans[0].ice_servers.size(), "plan ice surfaced")
+	var first_plan: SFSessionTypesScript.SessionPlanInfo = plans[0]
+	_assert_equal("gen-1", first_plan.generation, "plan generation surfaced")
+	_assert_equal(SFSessionTypesScript.Topology.MESH, first_plan.topology, "plan topology surfaced")
+	_assert_equal(1, first_plan.peers.size(), "plan peers surfaced")
+	_assert_equal(PLAYER_B, first_plan.peers[0].player_id, "plan peer id surfaced")
+	_assert_equal(true, first_plan.peers[0].initiate, "plan initiate surfaced")
+	_assert_equal(1, first_plan.ice_servers.size(), "plan ice surfaced")
 
 	fake.inject_server_message(
 		{"type": "NewPeer", "data": {"peer_id": PLAYER_B, "you_initiate": false}}
@@ -194,7 +194,6 @@ func _test_v3_events_surface() -> void:
 		"signal payload round-trips"
 	)
 
-	# Legacy plans without generation keep the "" sentinel.
 	(
 		fake
 		. inject_server_message(
@@ -220,7 +219,6 @@ func _test_v3_events_surface() -> void:
 		"status args surfaced"
 	)
 
-	# The relay-floor reset plan surfaces like any other plan.
 	(
 		fake
 		. inject_server_message(
@@ -238,7 +236,8 @@ func _test_v3_events_surface() -> void:
 		)
 	)
 	_assert_equal(2, plans.size(), "relay reset plan surfaced")
-	_assert_equal(0, plans[1].peers.size(), "relay reset plan has no peers")
+	var relay_plan: SFSessionTypesScript.SessionPlanInfo = plans[1]
+	_assert_equal(0, relay_plan.peers.size(), "relay reset plan has no peers")
 	client.free()
 
 
@@ -293,12 +292,12 @@ func _test_v3_send_methods() -> void:
 
 
 func _test_connect_token_reaches_wire() -> void:
-	# The config credential rides Authenticate as the upstream connect_token
-	# field (rust SDK 0.14.0, issue #33); unset stays omitted (v2 bytes).
+	# Credential rides Authenticate as the upstream connect_token field (rust SDK 0.14.0, issue #33).
 	var config := _make_config()
 	config.credential = "sfct_v1.tenant-secret"
 	var credentialed := _connect_new_client(config)
-	credentialed.transport.inject_open()
+	var credentialed_fake: SFFakeTransportScript = credentialed.transport
+	credentialed_fake.inject_open()
 	var expected := SFMessagesScript.encode(
 		SFMessagesScript.authenticate(
 			"test-app", "0.1.0", "linux", "json", null, null, null, null, "sfct_v1.tenant-secret"
@@ -308,7 +307,8 @@ func _test_connect_token_reaches_wire() -> void:
 	credentialed.free()
 
 	var anonymous := _connect_new_client(_make_config())
-	anonymous.transport.inject_open()
+	var anonymous_fake: SFFakeTransportScript = anonymous.transport
+	anonymous_fake.inject_open()
 	_assert_equal(
 		[
 			SFMessagesScript.encode(

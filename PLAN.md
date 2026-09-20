@@ -695,9 +695,10 @@ WebSocketPeer smoke (network-gated, opt-in).
 Runner: `godot --headless --script` custom `SceneTree` suites over
 `tests/` (locked decision #4, issue #15 item 5). Codec (F) tests need no
 SceneTree. All GDScript is fully explicitly typed and CI-enforced:
-`project.godot` promotes `untyped_declaration` to error, so any untyped
-declaration fails the existing Godot suite steps (issue #35; the `unsafe_*`
-Variant-access family is a tracked follow-up).
+`project.godot` promotes `untyped_declaration` and the `unsafe_*`
+Variant-access family (`unsafe_property_access`, `unsafe_method_access`,
+`unsafe_call_argument`, `unsafe_cast`) to error, so untyped or unsafely-typed
+code fails the existing Godot suite steps (issues #35, #42).
 
 ---
 
@@ -709,9 +710,9 @@ Variant-access family is a tracked follow-up).
 gate needed at one job):
 - `protocol` (single job) → `actions/checkout`, `actions/setup-python@v5` (pip cache keyed on
   `requirements-ci.txt`), apt Godot deps, venv + `gdtoolkit==4.5.0`, then
-  `scripts/run-runtime-checks.sh` steps: `private-helpers`, `format` (`gdformat --check`),
-  `lint` (`gdlint`), Godot install (cached via `actions/cache` on `/usr/local/bin/godot`,
-  keyed by version), and the custom SceneTree suites (`godot`).
+  `scripts/run-runtime-checks.sh` steps: `static` (private-helpers + `gdformat --check` +
+  `gdlint`, merged into one CI step), Godot install (cached via `actions/cache` on
+  `/usr/local/bin/godot`, keyed by version), and the custom SceneTree suites (`godot`).
 - **Godot matrix** (pending, issue #15 item 6): add 4.4.x as a second parallel `protocol` job
   before the API freeze; wall-clock stays flat because jobs run concurrently.
 - `web-export-smoke` (pending) → `chickensoft-games/setup-godot@v2.4.1` (`use-dotnet:false`,
