@@ -71,6 +71,10 @@ func _run() -> void:
 	_test_close_from_disconnected_handler_wins_over_retry()
 	_test_handler_redial_failure_burns_one_attempt()
 	_test_close_from_connection_failed_handler_wins_over_retry()
+	_test_double_nested_close_cascade_wins_over_retry()
+	_test_scheme_refused_reconnect_drops_dial_credentials()
+	_test_duplicate_authenticated_sends_handshake_once()
+	_test_handshake_send_failure_resolves_attempt()
 	_test_auto_reconnect_exhaustion_emits_connection_failed()
 	_test_failure_driven_exhaustion_and_budget_recovery()
 	_test_reconnect_tokens_are_redacted()
@@ -595,6 +599,151 @@ func _test_close_from_connection_failed_handler_wins_over_retry() -> void:
 	client.free()
 
 
+func _test_double_nested_close_cascade_wins_over_retry() -> void:
+	# Issue #20: a consumer redials from a `disconnected` handler and calls
+	# close() from that redial's `connection_failed` handler. The inner
+	# cascade must not consume the late close intent: every scheduling point
+	# in the termination cascade observes the consumer's close, none arms,
+	# and no budgeted attempt is burned.
+	var client := _make_client(true, "token")
+	client.connection_failed.connect(func(_error: String) -> void: client.close())
+	client.disconnected.connect(
+		func(_code: int, _reason: String) -> void:
+			var dial = SFFakeTransportScript.new()
+			dial.fail_on_connect = true
+			client.transport = dial
+			client.connect_to_server("ws://example.test/socket")
+	)
+	client.transport.inject_close(4999, "dropped")
+	_assert_equal(0, client._auto_reconnect_attempts, "no attempt armed by the nested cascade")
+	_assert(not client._reconnect_timer_running, "no retry timer armed")
+	_assert(client._user_close_requested, "close intent stays settled after the cascade")
+	_step(client, 30.0)
+	_assert(not client._reconnect_timer_running, "no late retry once the clock runs")
+	# The settled intent clears on the next dial so future cascades arm again.
+	client.transport = SFFakeTransportScript.new()
+	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "fresh dial")
+	_assert(not client._user_close_requested, "a fresh dial clears the settled intent")
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_scheme_refused_reconnect_drops_dial_credentials() -> void:
+	# Issue #21: a reconnect whose dial target fails scheme validation never
+	# starts, so the handshake credentials must not stay resident in memory
+	# until the next dial overwrites them.
+	var client := SignalFishClientScript.new()
+	var errors := _track_protocol_errors(client)
+	_assert_equal(OK, client.configure(_make_config()), "configure")
+	client._last_dial_url = "http://example.test/socket"
+	_assert_equal(
+		ERR_INVALID_PARAMETER, client.reconnect(PLAYER_A, ROOM_ID, TOKEN_V1), "scheme refusal"
+	)
+	_assert_equal(1, errors.size(), "the refusal announces itself once")
+	_assert_string_contains(errors[0], "invalid WebSocket URL scheme", "refusal reason")
+	_assert_equal("", client._reconnect_player_id, "player_id dropped on refusal")
+	_assert_equal("", client._reconnect_room_id, "room_id dropped on refusal")
+	_assert_equal("", client._reconnect_auth_token, "token dropped on refusal")
+	_assert(client._secrets.has(TOKEN_V1), "dropped token stays redacted")
+	client.free()
+
+
+func _test_duplicate_authenticated_sends_handshake_once() -> void:
+	# Issue #21: duplicate `Authenticated` server events are outside the wire
+	# contract, but a hostile or buggy server must not trigger a second
+	# directed handshake; exactly one Reconnect goes out per dial.
+	var client := _make_reconnect_client(TOKEN_V1)
+	var auth_bytes := SFMessagesScript.encode(SFMessagesScript.authenticate("test-app"))
+	var handshake := SFMessagesScript.encode(
+		SFMessagesScript.reconnect(PLAYER_A, ROOM_ID, TOKEN_V1)
+	)
+	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	_assert_equal([auth_bytes, handshake], client.transport.sent_text, "handshake sent once")
+	_assert_no_protocol_errors()
+	client.free()
+
+	# After the handshake completed, duplicates must also stay consumer-
+	# silent and leave the restored session state untouched.
+	var reconnected_client := _make_reconnect_client(TOKEN_V1)
+	reconnected_client.transport.inject_server_message(
+		{"type": "Authenticated", "data": _authenticated_data()}
+	)
+	var auth_events: Array = []
+	reconnected_client.authenticated.connect(
+		func(_app: String, _org: String, _limits) -> void: auth_events.append(1)
+	)
+	var data := _room_joined_data({"lobby_state": "lobby"})
+	data["reconnection_token"] = TOKEN_V2
+	data["missed_events"] = []
+	reconnected_client.transport.inject_server_message({"type": "Reconnected", "data": data})
+	reconnected_client.transport.inject_server_message(
+		{"type": "Authenticated", "data": _authenticated_data()}
+	)
+	_assert_equal([], auth_events, "duplicate after the handshake stays consumer-silent")
+	_assert_equal(
+		SignalFishClientScript.SessionState.IN_ROOM_LOBBY,
+		reconnected_client.get_session_state(),
+		"session state untouched by the duplicate"
+	)
+	_assert_no_protocol_errors()
+	reconnected_client.free()
+
+
+func _test_handshake_send_failure_resolves_attempt() -> void:
+	# Issue #21: if the directed handshake send fails (here: backpressure),
+	# the attempt resolves negatively instead of hanging authenticated-but-
+	# roomless: reconnection_failed plus the terminal disconnect fire. Runs
+	# without the shared error tracker: the backpressure protocol_error is
+	# expected and asserted locally.
+	var client := _make_reconnect_client(TOKEN_V1, false)
+	var errors := _track_protocol_errors(client)
+	var reconnection_failures: Array = []
+	var disconnects: Array = []
+	var dial = client.transport
+	client.reconnection_failed.connect(
+		func(reason: String, code: SFErrorCodesScript.Code) -> void:
+			reconnection_failures.append([reason, code])
+	)
+	client.disconnected.connect(func(code: int, _reason: String) -> void: disconnects.append(code))
+	# Backpressure the transport only after the Authenticate went out.
+	client.transport.buffered_amount = client._config.max_buffered_bytes + 1
+	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	_assert_equal(1, reconnection_failures.size(), "handshake failure resolves the attempt")
+	_assert_string_contains(reconnection_failures[0][0], "handshake", "failure reason")
+	_assert_equal(SFErrorCodesScript.Code.NONE, reconnection_failures[0][1], "local failure code")
+	_assert_equal([-1], disconnects, "terminal disconnect surfaces")
+	_assert_equal("", client._reconnect_auth_token, "dial credentials consumed")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSED, client.get_connection_state(), "torn down"
+	)
+	_assert(dial._closed_emitted, "torn-down socket is closed, not dropped live")
+	_assert_equal(1, errors.size(), "exactly the transport diagnostic")
+	_assert_string_contains(errors[0], "backpressure", "transport diagnostic")
+	client.free()
+
+	# With auto-reconnect, the failed handshake re-dials from the retained
+	# baseline instead of stalling the episode.
+	var reconnector := _make_client(true, "token", false)
+	var retry_errors := _track_protocol_errors(reconnector)
+	reconnector.transport.inject_close(4999, "dropped")
+	reconnector.transport = SFFakeTransportScript.new()
+	_step(reconnector, 30.0)
+	reconnector.transport.inject_open()
+	reconnector.transport.buffered_amount = reconnector._config.max_buffered_bytes + 1
+	reconnector.transport.inject_server_message(
+		{"type": "Authenticated", "data": _authenticated_data()}
+	)
+	# Attempt 1 armed by the drop, attempt 2 re-armed by the failed handshake.
+	_assert_equal(2, reconnector._auto_reconnect_attempts, "failed handshake re-arms the retry")
+	_assert(reconnector._reconnect_timer_running, "backoff armed after handshake failure")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSED, reconnector.get_connection_state(), "closed"
+	)
+	_assert_equal(1, retry_errors.size(), "exactly the transport diagnostic")
+	reconnector.free()
+
+
 func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:
 	var client := _make_client(true, "token")
 	client._config.reconnect_max_attempts = 2
@@ -730,9 +879,10 @@ func _make_client(
 	return client
 
 
-func _make_reconnect_client(token: String) -> SignalFishClientScript:
+func _make_reconnect_client(token: String, track_errors := true) -> SignalFishClientScript:
 	var client := SignalFishClientScript.new()
-	_error_trackers.append(_track_protocol_errors(client))
+	if track_errors:
+		_error_trackers.append(_track_protocol_errors(client))
 	_assert_equal(OK, client.configure(_make_config()), "configure")
 	client.transport = SFFakeTransportScript.new()
 	_assert_equal(OK, client.reconnect(PLAYER_A, ROOM_ID, token), "reconnect dial")

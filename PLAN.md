@@ -480,6 +480,13 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       context; tokenless and spectator baselines clear it (upstream `client_core.rs`
       `AutoReconnectContext`). Tokens feed the redacting logger. Suite:
       `tests/client/run_reconnect_tests.gd`; skill doc: `.llm/skills/reconnection-replay.md`.
+      Follow-up hardening (issues #20/#21): consumer close intent is sticky across one
+      termination cascade (double-nested handler cascades cannot arm past a close, and no
+      attempt is burned), refused/failed dials drop the pending handshake credentials, the
+      directed handshake is once-per-dial with post-handshake duplicates fully silent, a
+      failed handshake send resolves the attempt (`reconnection_failed` with `Code.NONE`,
+      terminal teardown, auto-reconnect re-arms from the retained context), and transport
+      teardown closes the socket instead of dropping it live.
 - [x] Full ~40 error-code surface mapped through `sf_error_codes.gd` (wire
       string⇄enum table + categories; unknown → `UNKNOWN` forward-compat).
 - [x] **MessagePack** `sf_msgpack.gd` (opt-in decode; encode for building
