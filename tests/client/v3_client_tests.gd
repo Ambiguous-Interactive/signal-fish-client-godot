@@ -1,0 +1,287 @@
+extends RefCounted
+
+## Protocol v3 (session-plan/WebRTC signaling) client tests. Receives the
+## client runner instance so connect/auth fakes stay defined in one place.
+
+const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
+const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
+const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
+
+const PLAYER_B := "10000000-0000-0000-0000-000000000002"
+const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
+
+var _failures: Array = []
+var _runner: Variant = null
+
+
+static func run(runner) -> Array:
+	var tests := new()
+	tests._runner = runner
+	tests.run_all()
+	return tests._failures
+
+
+func run_all() -> void:
+	_test_v3_config_advertises_capabilities()
+	_test_v3_events_surface()
+	_test_v3_send_methods()
+
+
+func _make_config() -> SignalFishConfigScript:
+	return _runner._make_config()
+
+
+func _connect_new_client(config: SignalFishConfigScript) -> SignalFishClientScript:
+	return _runner._connect_new_client(config)
+
+
+func _make_authenticated_client() -> SignalFishClientScript:
+	return _runner._make_authenticated_client()
+
+
+func _track_protocol_errors(client) -> Array:
+	return _runner._track_protocol_errors(client)
+
+
+func _assert_equal(expected: Variant, actual: Variant, label: String) -> bool:
+	if expected != actual:
+		var expected_text := "%s (%s)" % [var_to_str(expected), type_string(typeof(expected))]
+		var actual_text := "%s (%s)" % [var_to_str(actual), type_string(typeof(actual))]
+		_failures.append("%s: expected %s, got %s" % [label, expected_text, actual_text])
+		return false
+	return true
+
+
+func _test_v3_config_advertises_capabilities() -> void:
+	# Invalid v3 config fields are rejected at configure time.
+	var client := SignalFishClientScript.new()
+	_track_protocol_errors(client)
+	var config := _make_config()
+	config.app_id = "test-app"
+	config.protocol_version = -1
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "negative version rejected")
+	config.protocol_version = 70000
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "oversized version rejected")
+	config.protocol_version = 3
+	config.supported_transports = PackedStringArray(["relay", "carrier_pigeon"])
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "unknown transport rejected")
+	config.supported_transports = PackedStringArray(["relay", "direct", "webrtc"])
+	config.supported_topologies = PackedStringArray(["relay", "star"])
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "unknown topology rejected")
+	config.supported_topologies = PackedStringArray(["relay", "host", "mesh"])
+	config.requested_capabilities = PackedStringArray(["room_operation_ids"])
+	_assert_equal(OK, client.configure(config), "v3 capability config accepted")
+	client.free()
+
+	# The v3 fields reach the Authenticate wire bytes exactly as configured.
+	var v3_client := _connect_new_client(config)
+	v3_client.transport.inject_open()
+	var expected := SFMessagesScript.encode(
+		SFMessagesScript.authenticate(
+			"test-app",
+			"0.1.0",
+			"linux",
+			"json",
+			3,
+			["relay", "direct", "webrtc"],
+			["relay", "host", "mesh"],
+			["room_operation_ids"]
+		)
+	)
+	_assert_equal([expected], v3_client.transport.sent_text, "v3 authenticate bytes")
+	v3_client.free()
+
+	# Default config: v3 fields stay omitted (v2 wire bytes unchanged).
+	var v2_client := _connect_new_client(_make_config())
+	v2_client.transport.inject_open()
+	_assert_equal(
+		[
+			SFMessagesScript.encode(
+				SFMessagesScript.authenticate("test-app", "0.1.0", "linux", "json")
+			)
+		],
+		v2_client.transport.sent_text,
+		"default config keeps v2 authenticate bytes"
+	)
+	v2_client.free()
+
+
+func _test_v3_events_surface() -> void:
+	var client := _make_authenticated_client()
+	var fake = client.transport
+	var plans: Array = []
+	client.session_plan.connect(func(plan) -> void: plans.append(plan))
+	var new_peers: Array = []
+	client.new_peer.connect(
+		func(peer_id: String, you_initiate: bool) -> void: new_peers.append([peer_id, you_initiate])
+	)
+	var signals_in: Array = []
+	client.signal_received.connect(
+		func(from_player: String, generation: String, payload) -> void:
+			signals_in.append([from_player, generation, payload])
+	)
+	var statuses: Array = []
+	client.peer_transport_status.connect(
+		func(peer_id: String, transport: int, connected: bool) -> void:
+			statuses.append([peer_id, transport, connected])
+	)
+
+	(
+		fake
+		. inject_server_message(
+			{
+				"type": "SessionPlan",
+				"data":
+				{
+					"generation": "gen-1",
+					"topology": "mesh",
+					"transport": "webrtc",
+					"peers":
+					[
+						{
+							"player_id": PLAYER_B,
+							"player_name": "Bob",
+							"is_authority": false,
+							"initiate": true,
+						},
+					],
+					"ice_servers": [{"urls": ["stun:stun.l.google.com:19302"]}],
+					"fallback": "relay",
+				}
+			}
+		)
+	)
+	_assert_equal(1, plans.size(), "session_plan surfaced")
+	_assert_equal("gen-1", plans[0].generation, "plan generation surfaced")
+	_assert_equal(SFSessionTypesScript.Topology.MESH, plans[0].topology, "plan topology surfaced")
+	_assert_equal(1, plans[0].peers.size(), "plan peers surfaced")
+	_assert_equal(PLAYER_B, plans[0].peers[0].player_id, "plan peer id surfaced")
+	_assert_equal(true, plans[0].peers[0].initiate, "plan initiate surfaced")
+	_assert_equal(1, plans[0].ice_servers.size(), "plan ice surfaced")
+
+	fake.inject_server_message(
+		{"type": "NewPeer", "data": {"peer_id": PLAYER_B, "you_initiate": false}}
+	)
+	_assert_equal(1, new_peers.size(), "new_peer surfaced")
+	_assert_equal([PLAYER_B, false], new_peers[0], "new_peer args surfaced")
+
+	(
+		fake
+		. inject_server_message(
+			{
+				"type": "Signal",
+				"data":
+				{
+					"from": PLAYER_B,
+					"generation": "gen-1",
+					"signal":
+					{"IceCandidate": "candidate:1 1 UDP 2130706431 10.0.0.5 54321 typ host"},
+				}
+			}
+		)
+	)
+	_assert_equal(1, signals_in.size(), "signal_received surfaced")
+	_assert_equal(PLAYER_B, signals_in[0][0], "signal from surfaced")
+	_assert_equal("gen-1", signals_in[0][1], "signal generation surfaced")
+	_assert_equal(
+		"candidate:1 1 UDP 2130706431 10.0.0.5 54321 typ host",
+		signals_in[0][2]["IceCandidate"],
+		"signal payload round-trips"
+	)
+
+	# Legacy plans without generation keep the "" sentinel.
+	(
+		fake
+		. inject_server_message(
+			{
+				"type": "Signal",
+				"data": {"from": PLAYER_B, "signal": {"Answer": "v=0"}},
+			}
+		)
+	)
+	_assert_equal(2, signals_in.size(), "legacy signal surfaced")
+	_assert_equal("", signals_in[1][1], "missing generation is empty string")
+
+	fake.inject_server_message(
+		{
+			"type": "PeerTransportStatus",
+			"data": {"peer_id": PLAYER_B, "transport": "webrtc", "connected": true}
+		}
+	)
+	_assert_equal(1, statuses.size(), "peer_transport_status surfaced")
+	_assert_equal(
+		[PLAYER_B, SFSessionTypesScript.TransportKind.WEBRTC, true],
+		statuses[0],
+		"status args surfaced"
+	)
+
+	# The relay-floor reset plan surfaces like any other plan.
+	(
+		fake
+		. inject_server_message(
+			{
+				"type": "SessionPlan",
+				"data":
+				{
+					"generation": "gen-2",
+					"topology": "relay",
+					"transport": "relay",
+					"peers": [],
+					"fallback": "relay",
+				}
+			}
+		)
+	)
+	_assert_equal(2, plans.size(), "relay reset plan surfaced")
+	_assert_equal(0, plans[1].peers.size(), "relay reset plan has no peers")
+	client.free()
+
+
+func _test_v3_send_methods() -> void:
+	var client := _make_authenticated_client()
+	var fake = client.transport
+	var before: int = fake.sent_text.size()
+	_assert_equal(OK, client.send_signal(PLAYER_B, "gen-1", {"Offer": "v=0"}), "send_signal")
+	var expected_signal := SFMessagesScript.encode(
+		SFMessagesScript.peer_signal(PLAYER_B, "gen-1", {"Offer": "v=0"})
+	)
+	_assert_equal(expected_signal, fake.sent_text[before], "send_signal wire bytes")
+
+	_assert_equal(
+		OK,
+		client.send_signal(PLAYER_B, "", {"IceCandidate": "candidate:1"}),
+		"legacy empty generation accepted"
+	)
+	var expected_legacy := SFMessagesScript.encode(
+		SFMessagesScript.peer_signal(PLAYER_B, "", {"IceCandidate": "candidate:1"})
+	)
+	_assert_equal(expected_legacy, fake.sent_text[before + 1], "legacy signal omits generation")
+
+	_assert_equal(
+		ERR_INVALID_DATA,
+		client.send_signal(PLAYER_B, "gen-1", null),
+		"null signal payload refused locally"
+	)
+	_assert_equal(
+		ERR_INVALID_DATA,
+		client.send_signal("", "gen-1", {"Offer": "s"}),
+		"empty peer refused locally"
+	)
+
+	_assert_equal(
+		OK,
+		client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true),
+		"send_transport_status"
+	)
+	var expected_status := SFMessagesScript.encode(
+		SFMessagesScript.transport_status("webrtc", true)
+	)
+	_assert_equal(expected_status, fake.sent_text[before + 2], "status wire bytes")
+
+	_assert_equal(
+		ERR_INVALID_DATA,
+		client.send_transport_status(SFSessionTypesScript.TransportKind.UNKNOWN, true),
+		"unknown transport refused locally"
+	)
+	_assert_equal(before + 3, fake.sent_text.size(), "refused sends put nothing on the wire")
+	client.free()

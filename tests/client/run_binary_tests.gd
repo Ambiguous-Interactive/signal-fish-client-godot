@@ -15,10 +15,18 @@ const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_con
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 
 var _failures: Array = []
+# Completion sentinel: a runtime abort inside _run() unwinds before
+# quit() is reached, which would otherwise leave the process hanging
+# until CI kills it instead of reporting a red result.
+var _run_completed := false
 
 
 func _init() -> void:
 	_run()
+	if not _run_completed:
+		push_error("binary client tests aborted before completion")
+		quit(1)
+		return
 	if _failures.is_empty():
 		print("binary client tests passed")
 		quit(0)
@@ -34,6 +42,7 @@ func _run() -> void:
 	_test_envelope_receive_paths()
 	_test_rkyv_pass_through()
 	_test_server_format_downgrade()
+	_run_completed = true
 
 
 func _test_send_guards_and_wire_bytes() -> void:

@@ -3,13 +3,18 @@ extends RefCounted
 
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 
 
 static func authenticate(
 	app_id: String,
 	sdk_version: Variant = null,
 	platform: Variant = null,
-	game_data_format: Variant = null
+	game_data_format: Variant = null,
+	protocol_version: Variant = null,
+	supported_transports: Variant = null,
+	supported_topologies: Variant = null,
+	requested_capabilities: Variant = null
 ) -> Dictionary:
 	var data: Dictionary = {}
 	data["app_id"] = app_id
@@ -20,6 +25,30 @@ static func authenticate(
 	if not error.is_empty():
 		return _invalid_message("Authenticate", error, data)
 	error = _add_optional_game_data_encoding(data, "game_data_format", game_data_format)
+	if not error.is_empty():
+		return _invalid_message("Authenticate", error, data)
+	error = _add_optional_u16(data, "protocol_version", protocol_version)
+	if not error.is_empty():
+		return _invalid_message("Authenticate", error, data)
+	# Absent means relay-only upstream, even on /v3/ws (server docs
+	# "Protocol v2 vs v3"): unset lists are omitted, never sent empty.
+	error = _add_optional_token_list(
+		data,
+		"supported_transports",
+		supported_transports,
+		SFSessionTypesScript.TRANSPORT_KIND_FROM_STRING
+	)
+	if not error.is_empty():
+		return _invalid_message("Authenticate", error, data)
+	error = _add_optional_token_list(
+		data,
+		"supported_topologies",
+		supported_topologies,
+		SFSessionTypesScript.TOPOLOGY_FROM_STRING
+	)
+	if not error.is_empty():
+		return _invalid_message("Authenticate", error, data)
+	error = _add_optional_string_list(data, "requested_capabilities", requested_capabilities)
 	if not error.is_empty():
 		return _invalid_message("Authenticate", error, data)
 	return SFEnvelopeScript.message("Authenticate", data)
@@ -124,6 +153,43 @@ static func start_game() -> Dictionary:
 	return SFEnvelopeScript.message("StartGame")
 
 
+## Relay one opaque WebRTC signal to a peer (protocol v3, upstream
+## `ClientMessage::Signal`). Named [code]peer_signal[/code] here because
+## [code]signal[/code] is a GDScript keyword. The payload is forwarded
+## verbatim by the server; by convention it is matchbox-shaped:
+## [code]{"Offer": sdp}[/code], [code]{"Answer": sdp}[/code], or
+## [code]{"IceCandidate": candidate}[/code]. [param generation] is the
+## generation of the sender's latest authoritative session plan; the pinned
+## server requires it, legacy Server 0.4 plans have none, so an empty string
+## omits the field (rust-client parity). JSON-shape check: nulls inside
+## nested arrays/objects are refused locally (send an empty-string sentinel
+## or omit the entry) even though upstream forwards them.
+static func peer_signal(
+	to: String, generation: Variant = null, signal_payload: Variant = null
+) -> Dictionary:
+	var data: Dictionary = {}
+	if to.is_empty():
+		return _invalid_message("Signal", "to must not be empty", data)
+	data["to"] = to
+	var error := _add_optional_string(data, "generation", generation)
+	if not error.is_empty():
+		return _invalid_message("Signal", error, data)
+	if not _is_json_value(signal_payload):
+		return _invalid_message("Signal", "signal payload is required and must be JSON data", data)
+	data["signal"] = signal_payload
+	return SFEnvelopeScript.message("Signal", data)
+
+
+## Report the current data-path transport state (protocol v3, upstream
+## `ClientMessage::TransportStatus`). Informational: the relay floor never
+## closes regardless of what is reported.
+static func transport_status(transport: Variant, connected: bool) -> Dictionary:
+	var token := _transport_kind_token(transport)
+	if token.is_empty():
+		return _invalid_message("TransportStatus", "transport is unknown", {})
+	return SFEnvelopeScript.message("TransportStatus", {"transport": token, "connected": connected})
+
+
 static func encode(envelope: Dictionary) -> String:
 	return SFEnvelopeScript.encode(envelope)
 
@@ -206,6 +272,111 @@ static func _add_optional_u8(
 		return "%s must be in range %d..%d" % [key, min_value, SFTypesScript.U8_MAX]
 	data[key] = int_value
 	return ""
+
+
+static func _add_optional_u16(data: Dictionary, key: String, value: Variant) -> String:
+	if value == null:
+		return ""
+	if not _is_integral_number(value):
+		return "%s must be an integer" % key
+	var int_value := int(value)
+	if int_value < 0 or int_value > SFTypesScript.U16_MAX:
+		return "%s must be in range 0..%d" % [key, SFTypesScript.U16_MAX]
+	if int_value == 0:
+		# 0 is the client-side "unset" convention (v2 default); omit it so the
+		# wire bytes stay identical to a v2 handshake.
+		return ""
+	data[key] = int_value
+	return ""
+
+
+static func _add_optional_token_list(
+	data: Dictionary, key: String, values: Variant, from_string: Dictionary
+) -> String:
+	if values == null:
+		return ""
+	if typeof(values) != TYPE_ARRAY and not (values is PackedStringArray):
+		return "%s must be an array" % key
+	var tokens: Array = []
+	for value: Variant in values:
+		var token := _enum_token(value, from_string)
+		if token.is_empty():
+			return "%s contains an unknown token" % key
+		tokens.append(token)
+	if tokens.is_empty():
+		return ""
+	data[key] = tokens
+	return ""
+
+
+static func _add_optional_string_list(data: Dictionary, key: String, values: Variant) -> String:
+	if values == null:
+		return ""
+	if typeof(values) != TYPE_ARRAY and not (values is PackedStringArray):
+		return "%s must be an array" % key
+	var tokens: Array = []
+	for value: Variant in values:
+		if typeof(value) != TYPE_STRING and typeof(value) != TYPE_STRING_NAME:
+			return "%s must contain strings" % key
+		var token := String(value)
+		if token.is_empty():
+			return "%s must not contain empty strings" % key
+		tokens.append(token)
+	if tokens.is_empty():
+		return ""
+	data[key] = tokens
+	return ""
+
+
+static func _enum_token(value: Variant, from_string: Dictionary) -> String:
+	if typeof(value) == TYPE_INT or typeof(value) == TYPE_FLOAT:
+		if not _is_integral_number(value):
+			return ""
+		for token: String in from_string:
+			if int(from_string[token]) == int(value):
+				return token
+		return ""
+	if typeof(value) != TYPE_STRING and typeof(value) != TYPE_STRING_NAME:
+		return ""
+	var token := String(value)
+	return token if from_string.has(token) else ""
+
+
+static func _transport_kind_token(value: Variant) -> String:
+	return _enum_token(value, SFSessionTypesScript.TRANSPORT_KIND_FROM_STRING)
+
+
+static func _is_json_value(value: Variant) -> bool:
+	return _is_json_value_depth(value, 0)
+
+
+## Recursive JSON-shape check so a payload containing engine-only Variants
+## (e.g. a nested Vector2) is refused locally instead of being silently
+## stringified onto the wire by JSON.stringify.
+static func _is_json_value_depth(value: Variant, depth: int) -> bool:
+	if depth > 16:
+		return false
+	match typeof(value):
+		TYPE_DICTIONARY:
+			var dict: Dictionary = value
+			for key: Variant in dict:
+				if typeof(key) != TYPE_STRING:
+					return false
+				if not _is_json_value_depth(dict[key], depth + 1):
+					return false
+			return true
+		TYPE_ARRAY:
+			for entry: Variant in value:
+				if not _is_json_value_depth(entry, depth + 1):
+					return false
+			return true
+		# Whitelist the JSON-representable scalars; engine-only Variants
+		# (Vector2, Color, ...) would be silently stringified by
+		# JSON.stringify, and null is refused by the caller (required field).
+		TYPE_BOOL, TYPE_INT, TYPE_FLOAT, TYPE_STRING:
+			return true
+		_:
+			return false
 
 
 static func _add_optional_bool(data: Dictionary, key: String, value: Variant) -> String:

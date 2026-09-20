@@ -33,6 +33,10 @@ const DELAY_BOUNDS := {
 }
 
 var _failures: Array = []
+# Completion sentinel: a runtime abort inside _run() unwinds before
+# quit() is reached, which would otherwise leave the process hanging
+# until CI kills it instead of reporting a red result.
+var _run_completed := false
 ## Protocol-error trackers for every client built by `_make_client` /
 ## `_make_reconnect_client`; reconnection flows must stay error-free, so
 ## tests end with `_assert_no_protocol_errors()` checking them all.
@@ -41,6 +45,10 @@ var _error_trackers: Array = []
 
 func _init() -> void:
 	_run()
+	if not _run_completed:
+		push_error("reconnect tests aborted before completion")
+		quit(1)
+		return
 	if _failures.is_empty():
 		print("reconnect tests passed")
 		quit(0)
@@ -79,6 +87,7 @@ func _run() -> void:
 	_test_auto_reconnect_exhaustion_emits_connection_failed()
 	_test_failure_driven_exhaustion_and_budget_recovery()
 	_test_reconnect_tokens_are_redacted()
+	_run_completed = true
 
 
 func _test_reconnection_token_decodes_from_baselines() -> void:

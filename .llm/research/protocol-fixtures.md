@@ -98,6 +98,22 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
 - `tests/fixtures/malformed.jsonl` covers malformed JSON, missing or invalid
   envelope types, unknown events, wrong payload shapes, and invalid binary
   payload shapes.
+- `tests/fixtures/v3_client_messages.jsonl` (added 2026-09-20, P3) covers the
+  v3 client surface: `Authenticate` capability fields, `Signal`
+  (offer + trickle-ICE), and `TransportStatus`, pinned to the same server
+  v0.9.1 commit and the rust `protocol.rs` v3 variants.
+- `tests/fixtures/v3_server_messages.jsonl` (added 2026-09-20, P3) covers the
+  v3 server surface: `SessionPlan` in all four baseline shapes (mesh+webrtc
+  with STUN/TURN, host+direct with endpoint, explicit relay-floor reset, and
+  the legacy Server 0.4 shape without `generation`), `NewPeer`, `Signal`
+  (answer), `PeerTransportStatus`, `RoomJoined` ICE pre-gather, and the
+  extended `ProtocolInfo` (negotiated/min/max version, `transports`,
+  `max_outbound_message_size`).
+- Upstream v3 signaling anchors: server `docs/concepts/protocol-versions.md`
+  (v2-vs-v3 mental model, capability negotiation, selection ladder),
+  rust `src/webrtc.rs` + `src/mesh.rs` (signaling choreography: obey the
+  per-peer `initiate` flag verbatim; latest plan wins; reject signals from
+  other generations; `TransportStatus` only at the aggregate 0↔1 boundaries).
 
 Each fixture file starts with comment metadata. Future fixture readers must skip
 blank lines and lines beginning with `#`.

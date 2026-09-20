@@ -5,18 +5,28 @@ const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const ProtocolHardeningTestsScript = preload("res://tests/protocol/protocol_hardening_tests.gd")
 const BinaryFrameTestsScript = preload("res://tests/protocol/binary_frame_tests.gd")
+const V3ProtocolTestsScript = preload("res://tests/protocol/v3_protocol_tests.gd")
 
 const CLIENT_FIXTURE := "res://tests/fixtures/v2_client_messages.jsonl"
 const SERVER_FIXTURE := "res://tests/fixtures/v2_server_messages.jsonl"
 const MALFORMED_FIXTURE := "res://tests/fixtures/malformed.jsonl"
 
 var _failures: Array = []
+# Completion sentinel: a runtime abort inside _run() unwinds before
+# quit() is reached, which would otherwise leave the process hanging
+# until CI kills it instead of reporting a red result.
+var _run_completed := false
 
 
 func _init() -> void:
 	_run()
+	if not _run_completed:
+		push_error("protocol fixture tests aborted before completion")
+		quit(1)
+		return
 	if _failures.is_empty():
 		print("protocol fixture tests passed")
 		quit(0)
@@ -27,7 +37,27 @@ func _init() -> void:
 		quit(1)
 
 
+## A helper suite that fails to compile preloads as a GDScript object with no
+## members; calling it would abort _run() mid-way and the (empty) failure list
+## would report a false pass. Verify every helper suite is loadable up front.
+func _helper_suites_are_loadable() -> bool:
+	var suites := [
+		["protocol_hardening_tests", ProtocolHardeningTestsScript],
+		["binary_frame_tests", BinaryFrameTestsScript],
+		["v3_protocol_tests", V3ProtocolTestsScript],
+	]
+	var loadable := true
+	for suite: Array in suites:
+		if not (suite[1] as Script).has_method("run"):
+			push_error("helper suite failed to load: %s" % suite[0])
+			loadable = false
+	return loadable
+
+
 func _run() -> void:
+	if not _helper_suites_are_loadable():
+		_failures.append("helper suites failed to load")
+		return
 	_test_client_encoders_match_fixtures()
 	_test_server_decoders_match_fixtures()
 	_test_malformed_inputs_decode_to_protocol_error()
@@ -39,6 +69,8 @@ func _run() -> void:
 	_test_error_code_table()
 	_failures.append_array(ProtocolHardeningTestsScript.run())
 	_failures.append_array(BinaryFrameTestsScript.run())
+	_failures.append_array(V3ProtocolTestsScript.run())
+	_run_completed = true
 
 
 func _test_allowed_symbols_widen_parity() -> void:

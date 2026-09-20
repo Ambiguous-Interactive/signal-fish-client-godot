@@ -13,6 +13,10 @@ jobs:
     protocol:
         name: Protocol checks
         runs-on: ubuntu-24.04
+        # The whole matrix historically finishes in ~1 minute; a hang (e.g. a
+        # test runner crashing without quit()) must fail fast, not idle into
+        # the 360-minute GitHub default.
+        timeout-minutes: 10
         env:
             GODOT_VERSION: 4.3-stable
         steps:
