@@ -41,6 +41,9 @@ point here unless a tool requires a tiny wrapper format.
   issue before continuing or proposing a commit. This is the same validation
   the pre-commit hook and CI run; running it locally turns hook failures
   into fast in-loop feedback.
+- Keep user-facing copy (commits, PRs, changelogs, docs, code comments)
+  extremely short, simple, and to the point (STE style). Omit internal-only
+  detail; changelogs list user-relevant changes only.
 
 ## Runtime Implementation Checklist
 
