@@ -211,6 +211,61 @@ func _test_server_format_downgrade() -> void:
 	)
 	downgrade_client.free()
 
+	# The Error event alone downgrades a client the server has not spoken
+	# about via ProtocolInfo yet.
+	var error_downgraded := _make_in_room_client_with(downgrade_config)
+	(
+		error_downgraded
+		. transport
+		. inject_server_message(
+			{
+				"type": "Error",
+				"data": {"message": "unsupported", "error_code": "UNSUPPORTED_GAME_DATA_FORMAT"},
+			}
+		)
+	)
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		error_downgraded.send_game_data_binary(PackedByteArray([0x01])),
+		"error-event downgrade refuses binary sends"
+	)
+	error_downgraded.free()
+
+	# A downgrade is per-connection: the next dial renegotiates from the
+	# configured preference, so a server that does support message_pack
+	# accepts binary again.
+	var redialed := SignalFishClientScript.new()
+	_track_protocol_errors(redialed)
+	_assert_equal(OK, redialed.configure(downgrade_config), "reconfigure for redial")
+	redialed.transport = SFFakeTransportScript.new()
+	_assert_equal(OK, redialed.connect_to_server("ws://example.test/socket"), "redial")
+	redialed.transport.inject_open()
+	redialed.transport.inject_server_message(
+		{"type": "Authenticated", "data": _authenticated_data()}
+	)
+	redialed.transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	_assert_equal(
+		OK, redialed.send_game_data_binary(PackedByteArray([0x01])), "downgrade resets on dial"
+	)
+	redialed.free()
+
+	# Late binary frames while CLOSING are ignored, like text events: the
+	# client only polls for the close frame in that window.
+	var closing := _make_in_room_client_with(downgrade_config)
+	var closing_events: Array = []
+	closing.game_data_binary_received.connect(
+		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
+			closing_events.append(["binary", from_player, encoding, payload])
+	)
+	var closing_errors := _track_protocol_errors(closing)
+	closing._connection_state = SignalFishClientScript.ConnectionState.CLOSING
+	closing.transport.inject_binary(
+		_binary_frame(PLAYER_B, "message_pack", PackedByteArray([0x01]))
+	)
+	_assert_equal(0, closing_events.size(), "late binary frame surfaces nothing")
+	_assert_equal(0, closing_errors.size(), "late binary frame emits no error")
+	closing.free()
+
 
 func _make_config() -> SignalFishConfigScript:
 	var config := SignalFishConfigScript.new()
