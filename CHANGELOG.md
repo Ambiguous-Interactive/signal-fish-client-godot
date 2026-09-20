@@ -8,6 +8,14 @@ CI, tests, and internal tooling are not listed.
 
 ### Added
 
+- `SFWebRTCMesh` node (opt-in): turns negotiated v3 session plans into a
+  `WebRTCMultiplayerPeer` mesh for high-level multiplayer RPCs. The server
+  decides who offers; ICE lists are replaced on every plan; peers are rebuilt
+  on generation/role changes and dropped when a plan or a player leaves.
+  Peer ids derive deterministically from player UUIDs.
+- `SignalFishConfig.credential` now rides `Authenticate` as the upstream
+  `connect_token` field (rust SDK 0.14.0). Still set in code only: never
+  exported, never logged, never persisted by the Resource pipeline.
 - Protocol v3 session-plan surface: `SignalFishConfig` capability fields
   (`protocol_version`, `supported_transports`, `supported_topologies`,
   `requested_capabilities`), `SessionPlan`/`NewPeer`/`Signal`/
