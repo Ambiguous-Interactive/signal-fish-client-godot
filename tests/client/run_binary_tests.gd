@@ -8,8 +8,9 @@ const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
+const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 
-const PLAYER_B := "10000000-0000-0000-0000-000000000002"
+const PLAYER_B := ClientFixtures.PLAYER_B
 
 var _failures: Array = []
 # Completion sentinel: a runtime abort inside _run() would otherwise leave
@@ -290,49 +291,21 @@ func _make_in_room_client_with(config: SignalFishConfigScript) -> SignalFishClie
 
 
 func _authenticated_data() -> Dictionary:
-	return {
-		"app_name": "Reef Rally",
-		"organization": "",
-		"rate_limits": {"per_minute": 60, "per_hour": 1000, "per_day": 10000},
-	}
+	return ClientFixtures.authenticated_data()
 
 
 func _room_joined_data() -> Dictionary:
-	return {
-		"room_id": "20000000-0000-0000-0000-000000000001",
-		"room_code": "ABC123",
-		"player_id": "10000000-0000-0000-0000-000000000001",
-		"game_name": "reef-rally",
-		"max_players": 4,
-		"supports_authority": true,
+	# This suite joins a fresh room before any peers or spectators arrive.
+	var overrides := {
 		"current_players": [],
 		"is_authority": false,
-		"lobby_state": "waiting",
-		"ready_players": [],
-		"relay_type": "websocket",
 		"current_spectators": [],
 	}
+	return ClientFixtures.room_joined_data(overrides)
 
 
 func _protocol_info() -> Dictionary:
-	return {
-		"platform": "steam",
-		"sdk_version": "0.8.0",
-		"minimum_version": "0.7.0",
-		"recommended_version": "0.8.0",
-		"notes": "",
-		"capabilities": [],
-		"game_data_formats": ["json", "message_pack"],
-		"player_name_rules":
-		{
-			"max_length": 32,
-			"min_length": 3,
-			"allow_unicode_alphanumeric": true,
-			"allow_spaces": true,
-			"allow_leading_trailing_whitespace": false,
-			"allowed_symbols": ["-", "_"]
-		},
-	}
+	return ClientFixtures.protocol_info()
 
 
 func _track_protocol_errors(client: SignalFishClientScript) -> Array:

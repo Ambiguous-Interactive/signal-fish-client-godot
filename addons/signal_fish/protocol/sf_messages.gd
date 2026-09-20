@@ -2,6 +2,7 @@ class_name SFMessages
 extends RefCounted
 
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 
@@ -360,7 +361,7 @@ static func _is_json_value(value: Variant) -> bool:
 ## (e.g. a nested Vector2) is refused locally instead of being silently
 ## stringified onto the wire by JSON.stringify.
 static func _is_json_value_depth(value: Variant, depth: int) -> bool:
-	if depth > 16:
+	if depth > SFTypeUtils.MAX_MESSAGE_DEPTH:
 		return false
 	match typeof(value):
 		TYPE_DICTIONARY:

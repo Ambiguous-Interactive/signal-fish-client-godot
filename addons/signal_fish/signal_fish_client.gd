@@ -184,9 +184,7 @@ func connect_to_server(url := "") -> Error:
 		target = _config.endpoint_url
 	# A fresh dial starts a normal Authenticate session, never a stale
 	# reconnect handshake.
-	_reconnect_player_id = ""
-	_reconnect_room_id = ""
-	_reconnect_auth_token = ""
+	_clear_reconnect_credentials()
 	return _open_transport(target)
 
 
@@ -548,9 +546,7 @@ func _open_transport(target: String) -> Error:
 		# A refused dial never starts, so any pending reconnect handshake
 		# credentials are dropped here instead of lingering in memory until
 		# the next dial overwrites them.
-		_reconnect_player_id = ""
-		_reconnect_room_id = ""
-		_reconnect_auth_token = ""
+		_clear_reconnect_credentials()
 		_emit_protocol_error(scheme_error)
 		return ERR_INVALID_PARAMETER
 	# Remember the dial target so reconnect/auto-reconnect rejoin the same
@@ -625,9 +621,7 @@ func _fail_reconnect_handshake() -> void:
 	# so consumers observe the terminal disconnect; when the send error
 	# already killed the link, the transport-failure cascade has surfaced
 	# connection_failed instead and auto-reconnect keeps the episode going.
-	_reconnect_player_id = ""
-	_reconnect_room_id = ""
-	_reconnect_auth_token = ""
+	_clear_reconnect_credentials()
 	reconnection_failed.emit("reconnect handshake send failed", SFErrorCodesScript.Code.NONE)
 	_terminate_reconnection_attempt()
 
@@ -688,18 +682,21 @@ func _handle_binary_frame(payload: PackedByteArray) -> void:
 		if not frame["ok"]:
 			_emit_protocol_error(frame["error"])
 			return
+		var frame_encoding: int = frame["encoding"]
+		var from_player: String = frame["from_player"]
+		var frame_payload: PackedByteArray = frame["payload"]
 		if (
 			_config.decode_msgpack_payloads
-			and (frame["encoding"] == SFTypesScript.GameDataEncoding.MESSAGE_PACK)
+			and (frame_encoding == SFTypesScript.GameDataEncoding.MESSAGE_PACK)
 		):
-			var decoded: Dictionary = SFMsgpackScript.decode(frame["payload"])
+			var decoded: Dictionary = SFMsgpackScript.decode(frame_payload)
 			if decoded["ok"]:
-				game_data_received.emit(frame["from_player"], decoded["value"])
+				game_data_received.emit(from_player, decoded["value"])
 				return
 			_emit_protocol_error(
 				"message_pack payload decode failed (%s); surfacing raw bytes" % decoded["error"]
 			)
-		game_data_binary_received.emit(frame["from_player"], frame["encoding"], frame["payload"])
+		game_data_binary_received.emit(from_player, frame_encoding, frame_payload)
 	elif negotiated == SFTypesScript.GameDataEncoding.RKYV:
 		game_data_binary_received.emit("", SFTypesScript.GameDataEncoding.RKYV, payload)
 	else:
@@ -814,9 +811,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# A failed authentication also kills any pending reconnect
 			# handshake; the server closes the link after auth failures, so
 			# the normal close cascade takes over from here.
-			_reconnect_player_id = ""
-			_reconnect_room_id = ""
-			_reconnect_auth_token = ""
+			_clear_reconnect_credentials()
 			authentication_error.emit(event.args[0], event.args[1])
 		&"room_joined":
 			_apply_room_info(event.args[0])
@@ -874,16 +869,12 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			_session_state = _session_state_for_lobby(_lobby_state)
 			# The reconnection handshake completed: drop the dial credentials
 			# and reset the auto-reconnect budget.
-			_reconnect_player_id = ""
-			_reconnect_room_id = ""
-			_reconnect_auth_token = ""
+			_clear_reconnect_credentials()
 			_auto_reconnect_attempts = 0
 			reconnected.emit(event.args[0], event.args[1])
 		&"reconnection_failed":
 			# The handshake resolved negatively: consume the dial credentials.
-			_reconnect_player_id = ""
-			_reconnect_room_id = ""
-			_reconnect_auth_token = ""
+			_clear_reconnect_credentials()
 			if (
 				event.args[1]
 				in [
@@ -1050,6 +1041,12 @@ func _capture_reconnect_context(player_id: String, room_id: String, auth_token: 
 	_context_room_id = room_id
 	_context_auth_token = auth_token
 	_remember_secret(auth_token)
+
+
+func _clear_reconnect_credentials() -> void:
+	_reconnect_player_id = ""
+	_reconnect_room_id = ""
+	_reconnect_auth_token = ""
 
 
 func _schedule_auto_reconnect() -> void:

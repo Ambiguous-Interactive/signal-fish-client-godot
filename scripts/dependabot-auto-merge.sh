@@ -107,7 +107,10 @@ for workflow in "${required_workflows[@]}"; do
        | if length == 0 then
            ["missing", ""]
          else
-           (sort_by(.created_at) | reverse | .[0] | [.status // "missing", .conclusion // ""])
+           # run_started_at reflects the latest re-run attempt; created_at
+           # does not, so sorting on it can bless a stale attempt after a
+           # re-run.
+           (sort_by(.run_started_at) | reverse | .[0] | [.status // "missing", .conclusion // ""])
          end
        | @tsv' <<<"${runs_json}"
   )"
@@ -149,7 +152,24 @@ if [[ -n "${non_passing_checks}" ]]; then
   exit 0
 fi
 
+set +e
 gh pr merge "${pull_number}" \
   --squash \
   --delete-branch \
   --match-head-commit "${HEAD_SHA}"
+merge_exit=$?
+set -e
+
+if [[ ${merge_exit} -ne 0 ]]; then
+  merged_info="$(
+    gh pr view "${pull_number}" --json state,headRefOid 2>/dev/null |
+      jq -r '[.state, .headRefOid] | @tsv' 2>/dev/null || true
+  )"
+  IFS=$'\t' read -r pr_state merged_head_oid <<<"${merged_info:-}"
+  if [[ "${pr_state}" == "MERGED" && "${merged_head_oid}" == "${HEAD_SHA}" ]]; then
+    echo "PR #${pull_number} was already merged by a racing workflow_run; treating as success."
+    exit 0
+  fi
+  echo "gh pr merge failed for #${pull_number} (exit ${merge_exit}, state ${pr_state:-UNKNOWN})."
+  exit "${merge_exit}"
+fi

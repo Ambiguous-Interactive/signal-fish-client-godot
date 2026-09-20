@@ -26,9 +26,12 @@ export HOME="${GDSCRIPT_TOOL_HOME:-${RUNNER_TEMP:-/tmp}/signal-fish-runtime-home
 mkdir -p "${HOME}"
 export GDTOOLKIT_CACHE_DIR="${GDTOOLKIT_CACHE_DIR:-${HOME}/gdtoolkit-cache}"
 
-if [[ -d ".venv-ci" ]]; then
+if [[ -f ".venv-ci/bin/activate" ]]; then
 	# shellcheck disable=SC1091
 	source ".venv-ci/bin/activate"
+elif [[ -d ".venv-ci" ]]; then
+	echo "::warning::.venv-ci is missing bin/activate; using user site-packages" >&2
+	export PYTHONPATH="${original_user_site}${PYTHONPATH:+:${PYTHONPATH}}"
 elif [[ -d "${original_user_site}" ]]; then
 	export PYTHONPATH="${original_user_site}${PYTHONPATH:+:${PYTHONPATH}}"
 fi

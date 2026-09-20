@@ -1,6 +1,8 @@
 class_name SFMsgpack
 extends RefCounted
 
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
+
 ## Pure-GDScript MessagePack codec (PLAN §4.6, P2 binary game data). Decodes
 ## the MessagePack binary game-data envelope frames and, when the consumer
 ## opts in via [member SignalFishConfig.decode_msgpack_payloads], game-data
@@ -20,11 +22,13 @@ extends RefCounted
 ## instead of a decode error — benign for game data, and tokens (envelope
 ## keys, encoding names) still fail their exact-match checks.
 
-## Mirrors SFEvents.MAX_MESSAGE_DEPTH: a hostile payload cannot overflow the
-## script stack during recursive decode/encode.
-const MAX_DEPTH := 16
+## Mirrors the shared protocol nesting cap (SFTypeUtils.MAX_MESSAGE_DEPTH):
+## a hostile payload cannot overflow the script stack during recursive
+## decode/encode.
+const MAX_DEPTH := SFTypeUtils.MAX_MESSAGE_DEPTH
 
 const _U64_CARRY := 18446744073709551616.0
+const _SIGNED_INT_WIDTHS := {0xD0: 1, 0xD1: 2, 0xD2: 4, 0xD3: 8}
 
 
 ## Decodes exactly one MessagePack value; trailing bytes are malformed.
@@ -95,8 +99,7 @@ static func _decode_value(peer: StreamPeerBuffer, depth: int) -> Dictionary:
 		0xCF:
 			return _read_uint(peer, 8)
 		0xD0, 0xD1, 0xD2, 0xD3:
-			var widths := {0xD0: 1, 0xD1: 2, 0xD2: 4, 0xD3: 8}
-			var width: int = widths[marker]
+			var width: int = _SIGNED_INT_WIDTHS[marker]
 			if peer.get_available_bytes() < width:
 				return _error("truncated MessagePack integer")
 			var value := 0

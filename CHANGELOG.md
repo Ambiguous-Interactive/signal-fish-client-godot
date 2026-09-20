@@ -6,6 +6,17 @@ CI, tests, and internal tooling are not listed.
 
 ## [Unreleased]
 
+### Changed
+
+- Lower steady-state and per-message allocations: idle mesh polling no longer
+  allocates, and MessagePack/binary game-data decode reuses constant tables
+  instead of rebuilding lookups per frame.
+
+### Fixed
+
+- Closing during the `opened` callback no longer risks a crash when a consumer
+  handler fails the session synchronously.
+
 ### Added
 
 - `SFWebRTCMesh` node (opt-in): turns negotiated v3 session plans into a

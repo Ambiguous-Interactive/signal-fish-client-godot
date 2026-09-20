@@ -82,6 +82,11 @@ func close(code := 1000, reason := "") -> void:
 		return
 	if state == WebSocketPeer.STATE_OPEN:
 		_emit_opened_once()
+		# `opened` re-enters consumer handlers; a synchronous failure inside
+		# one tears the transport down before the close frame is queued (the
+		# same re-check _drain_packets performs after every emit).
+		if _peer == null or _is_terminal():
+			return
 	elif not _opened_emitted:
 		_fail_current_session(_preopen_close_message(code, reason), true, code, reason)
 		return
