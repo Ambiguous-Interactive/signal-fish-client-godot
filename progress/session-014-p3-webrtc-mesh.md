@@ -72,9 +72,42 @@ and aggregated into one PR per the session rules.
   all five Godot suites in the cold-cache path).
 - `pwsh -NoProfile -File scripts/agent-check.ps1` green (no `.llm` edits this session, run
   before commit anyway via the pre-commit hook).
-- Adversarial sub-agent review round on the diff (see PR review).
+- Adversarial sub-agent review round + fix re-review; all P1/P2 findings fixed with
+  covering tests (see below).
 
-## Deferred (filed as issues)
+### Adversarial review round (fixes)
+
+- **P1: zombie mesh after a transport failure.** The client emits `connection_failed`
+  without `disconnected` on a mid-session send/read failure; the mesh now tears down on
+  `connection_failed` too (test added to the teardown matrix).
+- **P2: freed attached client left a zombie mesh.** Godot 4.3 reads a freed object held by
+  a script-typed variable as `null`, so the mesh could not tell "client vanished" from
+  "never attached" and skipped its teardown. The mesh now tracks `_attached` explicitly and
+  tears down when the attached client node is freed (test: free the client, tick `_process`,
+  mesh is empty and released).
+- **P2: re-entrant `_peers` mutation.** A real connection's `poll()` can pump callbacks
+  into consumer handlers that legally mutate the mesh; `poll()` now iterates a keys copy
+  (matching `_apply_plan`/`_reset_mesh`).
+- **P2: peer-id range.** `maxi(digest, 1)` could mint `1` — Godot's reserved server id,
+  which fails `initialize_mesh` silently. The mapping is now forced into the valid
+  non-server range `[2, 2^31)` with a range test, `initialize_mesh` errors are logged and
+  leave no half-built mesh (test with a refused fake), and `_open_peer` bails cleanly when
+  the multiplayer peer is unavailable.
+- **P2: vacuous replay test.** The reconnected teardown case now replays a real
+  `SessionPlan` entry inside `missed_events` and asserts the mesh stays empty (replay
+  reaches consumers only through `reconnected`).
+- **P2: runner lint headroom.** `run_client_tests.gd` was 3 lines under the 1200-line cap;
+  the shared wire-shape builders moved to `tests/client/client_fixtures.gd` (thin delegates
+  keep the suite-facing helpers stable), restoring ~50 lines of headroom.
+- Reviewer-noted, resolved by documentation: the mesh attaches before joining (or the next
+  plan carries its own ICE list) — stated in the header and README; relayed ICE candidates
+  carry the candidate string only, which matches the single default data channel.
+- Not deferred lightly: unchecked `create_offer`/`set_*_description` failures stay
+  log-only-by-design (the fake suite pins the calls that matter); a credentialed
+  `Authenticate` fixture against rust SDK 0.14.0 remains open because serde is
+  key-order-insensitive and no upstream credentialed fixture exists to pin.
+
+## Deferred (tracked in PLAN.md)
 
 - P3 remainder: P2P example in the demo (lands with the P4 demo work; PLAN updated).
 - Data-channel tuning (`WebRTCMultiplayerPeer.initialize_mesh` channels config) can be

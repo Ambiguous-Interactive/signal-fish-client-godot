@@ -16,8 +16,9 @@ const PLAYER_C := "10000000-0000-0000-0000-000000000003"
 const PLAYER_D := "10000000-0000-0000-0000-000000000004"
 # Pinned FNV-1a vectors: the UUID -> peer-id mapping must stay stable across
 # versions and platforms (mesh members derive the same ids independently).
-const PLAYER_A_PEER_ID := 7157757237718888691
-const PLAYER_B_PEER_ID := 7157758337230516902
+# Valid ids are 2..2^31-1: 0 is invalid, 1 is the reserved server id.
+const PLAYER_A_PEER_ID := 1186410739
+const PLAYER_B_PEER_ID := 1186411174
 
 const STUN := {"urls": ["stun:stun.example:3478"]}
 const TURN := {"urls": ["turn:turn.example:3478"], "username": "alice", "credential": "turn-secret"}
@@ -42,6 +43,7 @@ func run_all() -> void:
 	_test_signal_gates()
 	_test_new_peer_event_obey_flag()
 	_test_teardown_paths()
+	_test_mesh_survives_engine_hostility()
 
 
 func _make_mesh() -> SFWebRTCMeshScript:
@@ -125,7 +127,9 @@ func _test_uuid_mapping_is_deterministic() -> void:
 		SFWebRTCMeshScript.uuid_to_peer_id(PLAYER_B),
 		"distinct uuids map apart"
 	)
-	_assert(SFWebRTCMeshScript.uuid_to_peer_id("") >= 1, "empty uuid stays a valid id")
+	for uuid: String in [PLAYER_A, PLAYER_B, PLAYER_C, PLAYER_D, ""]:
+		var id: int = SFWebRTCMeshScript.uuid_to_peer_id(uuid)
+		_assert(id >= 2 and id < 2147483648, "id in the valid non-server range for %s" % uuid)
 
 
 func _test_attach_and_detach_guards() -> void:
@@ -421,7 +425,13 @@ func _test_teardown_paths() -> void:
 	mesh.free()
 	client.free()
 
-	for teardown: String in ["room_left", "disconnected", "reconnected", "fresh room_joined"]:
+	for teardown: String in [
+		"room_left",
+		"disconnected",
+		"connection_failed",
+		"reconnected",
+		"fresh room_joined",
+	]:
 		var teardown_client := _make_in_room_client()
 		var teardown_mesh := _make_mesh()
 		_attach(teardown_mesh, teardown_client)
@@ -435,9 +445,25 @@ func _test_teardown_paths() -> void:
 				teardown_client.transport.inject_server_message({"type": "RoomLeft"})
 			"disconnected":
 				teardown_client.transport.inject_close(1000, "bye")
+			"connection_failed":
+				teardown_client.transport.inject_failure("socket dropped")
 			"reconnected":
 				var reconnected_data: Dictionary = _runner._room_joined_data()
-				reconnected_data["missed_events"] = []
+				# The real replay shape carries full events, including plans:
+				# none of them may revive the torn-down mesh.
+				reconnected_data["missed_events"] = [
+					{
+						"type": "SessionPlan",
+						"data":
+						{
+							"generation": "stale",
+							"topology": "mesh",
+							"transport": "webrtc",
+							"peers": [_peer(PLAYER_C, true)],
+							"fallback": "relay",
+						},
+					},
+				]
 				teardown_client.transport.inject_server_message(
 					{"type": "Reconnected", "data": reconnected_data}
 				)
@@ -478,6 +504,36 @@ func _test_teardown_paths() -> void:
 	_assert_equal(0, exit_mesh.get_peer_count(), "detached mesh ignores later plans")
 	exit_mesh.free()
 	exit_client.free()
+
+
+func _test_mesh_survives_engine_hostility() -> void:
+	# A freed client (legal: independent nodes) must not leave the mesh poking
+	# a dangling reference from _process.
+	var client := _make_in_room_client()
+	var mesh := _make_mesh()
+	_attach(mesh, client)
+	_inject_plan(client, [_peer(PLAYER_B, false)])
+	_assert_equal(1, mesh.get_peer_count(), "peer opened before client free")
+	client.free()
+	mesh._process(0.016)
+	_assert_equal(0, mesh.get_peer_count(), "freed client tears the mesh down")
+	_assert_equal(null, mesh.get_multiplayer_peer(), "freed client releases the peer")
+	mesh.free()
+
+	# A refused initialize_mesh leaves no half-built mesh: peers stay closed.
+	var refused := _make_mesh()
+	(_mesh_multiplayer(refused) as FakeMultiplayerPeer).initialize_mesh_result = ERR_UNAVAILABLE
+	var refused_client := _make_in_room_client()
+	var refused_errors := _track_protocol_errors(refused_client)
+	_attach(refused, refused_client)
+	_inject_plan(refused_client, [_peer(PLAYER_B, true)])
+	_assert_equal(0, refused.get_peer_count(), "refused mesh opens no peers")
+	_assert_equal(null, refused.get_multiplayer_peer(), "refused mesh releases the peer")
+	_assert_equal(1, _mesh_peers(refused).size(), "one connection was attempted")
+	_assert(_mesh_peers(refused)[0].closed, "attempted connection closed")
+	_assert_equal(0, refused_errors.size(), "refusal is quiet, not a protocol error")
+	refused.free()
+	refused_client.free()
 
 
 func _assert(condition: bool, label: String) -> bool:
@@ -561,13 +617,15 @@ class FakeMultiplayerPeer:
 	## Duck-typed WebRTCMultiplayerPeer double.
 
 	var mesh_id := 0
+	var initialize_mesh_result: Error = OK
 	var added: Array = []
 	var removed: Array = []
 	var closed := false
 
 	func initialize_mesh(unique_id: int) -> Error:
-		mesh_id = unique_id
-		return OK
+		if initialize_mesh_result == OK:
+			mesh_id = unique_id
+		return initialize_mesh_result
 
 	func add_peer(connection, unique_id: int) -> Error:
 		added.append([connection, unique_id])

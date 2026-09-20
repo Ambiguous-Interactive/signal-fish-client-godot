@@ -20,12 +20,17 @@ extends Node
 ##   [/code]-transport plan, with a matching generation; anything else is
 ##   discarded silently.
 ## - ICE servers are replaced (never merged) on every plan; an empty plan list
-##   is an authoritative clear. TURN credentials stay out of logs (PLAN §12).
+##   is an authoritative clear. `RoomJoined` pre-gather seeds the list before
+##   the first plan lands, so attach before joining (or re-attach only when
+##   the next plan carries its own ICE list). TURN credentials stay out of
+##   logs (PLAN §12).
 ## - [method SignalFishClient.send_transport_status] is reported only at the
 ##   aggregate 0↔1 connected-peer boundaries.
-## - The mesh is torn down on [signal room_left], [signal player_left],
-##   [signal disconnected], and [signal reconnected]; a replayed plan inside
-##   [code]missed_events[/code] can never revive it.
+## - The mesh is torn down on [signal room_joined] (fresh baseline),
+##   [signal room_left], [signal player_left], [signal disconnected],
+##   [signal connection_failed], [signal reconnected], and
+##   [code]_exit_tree[/code]; a replayed plan inside [code]missed_events
+##   [/code] can never revive it.
 ##
 ## Peer ids: [method uuid_to_peer_id] maps each player UUID to a deterministic
 ## positive integer (FNV-1a), so every mesh member derives the same
@@ -34,7 +39,8 @@ extends Node
 ## Platform notes: Godot 4 ships WebRTC on every platform (built-in
 ## libdatachannel module); browser exports use the browser's own WebRTC. Data
 ## channels come from [code]WebRTCMultiplayerPeer.initialize_mesh[/code]
-## defaults (one reliable ordered channel).
+## defaults (one reliable ordered channel); relayed ICE candidates carry the
+## candidate string only, which matches that single default channel.
 ##
 ## Tests inject [member peer_connection_factory] and
 ## [member multiplayer_peer_factory] instead of real engine objects (PLAN §8).
@@ -58,6 +64,10 @@ var peer_connection_factory: Callable = Callable()
 var multiplayer_peer_factory: Callable = Callable()
 
 var _client: SignalFishClientScript = null
+# Distinguishes "never attached / detached" from "the attached client node was
+# freed": Godot reads a freed object held by a script-typed variable as null,
+# so the vanished-client case must be detected by the flag, not the reference.
+var _attached := false
 var _plan = null
 var _ice_servers: Array = []
 var _peers: Dictionary = {}
@@ -74,6 +84,7 @@ func attach(client: SignalFishClientScript) -> Error:
 	if _client != null:
 		return ERR_BUSY
 	_client = client
+	_attached = true
 	client.room_joined.connect(_on_client_room_joined)
 	client.session_plan.connect(_on_client_session_plan)
 	client.signal_received.connect(_on_client_signal_received)
@@ -81,6 +92,7 @@ func attach(client: SignalFishClientScript) -> Error:
 	client.player_left.connect(_on_client_player_left)
 	client.room_left.connect(_on_client_room_left)
 	client.disconnected.connect(_on_client_disconnected)
+	client.connection_failed.connect(_on_client_connection_failed)
 	client.reconnected.connect(_on_client_reconnected)
 	return OK
 
@@ -96,15 +108,21 @@ func detach() -> void:
 	_client.player_left.disconnect(_on_client_player_left)
 	_client.room_left.disconnect(_on_client_room_left)
 	_client.disconnected.disconnect(_on_client_disconnected)
+	_client.connection_failed.disconnect(_on_client_connection_failed)
 	_client.reconnected.disconnect(_on_client_reconnected)
 	_client = null
+	_attached = false
 	_reset_mesh()
 
 
 ## Pumps every peer connection and reports connected-count boundaries. Called
 ## from [code]_process[/code]; call manually when driving without the tree.
 func poll() -> void:
-	for uuid: String in _peers:
+	if not _client_is_live():
+		return
+	# Iterate a keys copy: a real connection's poll() can pump callbacks that
+	# end in consumer handlers, which may legally mutate the mesh re-entrantly.
+	for uuid: String in _peers.keys():
 		_peers[uuid].connection.poll()
 	_update_transport_status()
 
@@ -125,23 +143,42 @@ func get_peer_ids() -> Array:
 
 
 ## Deterministic, platform-stable player UUID → [MultiplayerAPI] peer id
-## (FNV-1a over the UUID string, forced positive; nonzero so the id is always
-## a valid non-server id).
+## (FNV-1a over the UUID string). The result is forced into the valid
+## non-server id range [2, 2^31): 0 is invalid and 1 is the reserved server
+## id, and both would make [code]initialize_mesh[/code] fail.
 static func uuid_to_peer_id(uuid: String) -> int:
 	var digest := _FNV1A_OFFSET_BASIS
 	for index: int in uuid.length():
 		digest = ((digest ^ uuid.unicode_at(index)) * _FNV1A_PRIME) & 0x7FFFFFFFFFFFFFFF
-	return maxi(digest, 1)
+	var id := digest & 0x7FFFFFFF
+	return id + 2 if id < 2 else id
 
 
 func _process(_delta: float) -> void:
-	if _client == null:
-		return
 	poll()
 
 
 func _exit_tree() -> void:
 	detach()
+
+
+## Drops a client that was freed without a detach (legal: the nodes are
+## independent) instead of keeping a zombie mesh, and reports liveness for
+## the poll paths.
+func _client_is_live() -> bool:
+	if _client == null:
+		if _attached:
+			# The attached client node was freed; Godot reads the typed
+			# reference as null. Tear the mesh down with it.
+			_attached = false
+			_reset_mesh()
+		return false
+	if not is_instance_valid(_client):
+		_attached = false
+		_client = null
+		_reset_mesh()
+		return false
+	return true
 
 
 func _on_client_room_joined(info) -> void:
@@ -199,9 +236,16 @@ func _on_client_disconnected(_code: int, _reason: String) -> void:
 	_reset_mesh()
 
 
+func _on_client_connection_failed(_error: String) -> void:
+	# A transport failure kills the session without a close frame (no
+	# `disconnected` fires): the mesh must not outlive it.
+	_reset_mesh()
+
+
 func _on_client_reconnected(_info, _missed_events: Array) -> void:
 	# Replay delivers the missed events through this signal only, so the old
-	# mesh cannot be revived by a replayed plan.
+	# mesh cannot be revived by a replayed plan. No peer reopens until the
+	# next plan arrives, and that plan's ICE list governs new connections.
 	_reset_mesh()
 
 
@@ -241,6 +285,9 @@ func _open_peer(uuid: String, initiate: bool) -> void:
 		connection.close()
 		return
 	var multiplayer_peer = _multiplayer_peer()
+	if multiplayer_peer == null:
+		connection.close()
+		return
 	var entry := _MeshPeer.new()
 	entry.uuid = uuid
 	entry.peer_id = uuid_to_peer_id(uuid)
@@ -348,7 +395,11 @@ func _multiplayer_peer():
 	if _mp_peer == null:
 		_mp_peer = _make_multiplayer_peer()
 		var my_id := uuid_to_peer_id(_client.get_player_id() if _client != null else "")
-		_mp_peer.initialize_mesh(my_id)
+		var error: Error = _mp_peer.initialize_mesh(my_id)
+		if error != OK:
+			SFLogScript.error("mesh: initialize_mesh refused (%d)" % error)
+			_mp_peer.close()
+			_mp_peer = null
 	return _mp_peer
 
 
