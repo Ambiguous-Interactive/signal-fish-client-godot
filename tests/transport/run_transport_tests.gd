@@ -52,7 +52,7 @@ func _run() -> void:
 
 
 func _test_fake_connect_open_send_receive_and_close() -> void:
-	var transport = SFFakeTransportScript.new()
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var opened_count := [0]
 	var closed_events: Array = []
 	var packets: Array = []
@@ -99,7 +99,7 @@ func _test_fake_fail_on_send_mirrors_real_cascade() -> void:
 	# Issue #24 send-failure parity: the fake must kill the session exactly
 	# like the real transport's synchronous send failure — `failed` emitted
 	# once, ERR_CONNECTION_ERROR returned, nothing recorded as sent.
-	var transport = SFFakeTransportScript.new()
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var failures: Array = []
 	transport.failed.connect(func(error: String) -> void: failures.append(error))
 	_assert_equal(OK, transport.connect_to_url("ws://example.test/socket"), "fake connect")
@@ -124,7 +124,7 @@ func _test_fake_fail_on_send_mirrors_real_cascade() -> void:
 
 
 func _test_fake_reconnect_resets_terminal_flags() -> void:
-	var transport = SFFakeTransportScript.new()
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var opened_count := [0]
 	var closed_events: Array = []
 	var failures: Array = []
@@ -158,7 +158,7 @@ func _test_fake_reconnect_resets_terminal_flags() -> void:
 
 
 func _test_fake_failure_and_backpressure_getter() -> void:
-	var connect_failure_transport = SFFakeTransportScript.new()
+	var connect_failure_transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var failures: Array = []
 	connect_failure_transport.failed.connect(func(error: String) -> void: failures.append(error))
 	connect_failure_transport.fail_on_connect = true
@@ -170,7 +170,7 @@ func _test_fake_failure_and_backpressure_getter() -> void:
 	_assert_equal(1, failures.size(), "fake connect failure count")
 	_assert_string_contains(failures[0], "connect failure", "fake connect failure message")
 
-	var transport = SFFakeTransportScript.new()
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	transport.failed.connect(func(error: String) -> void: failures.append(error))
 	_assert_equal(OK, transport.connect_to_url("ws://example.test/socket"), "fake connect")
 	transport.inject_open()
@@ -183,7 +183,7 @@ func _test_fake_failure_and_backpressure_getter() -> void:
 
 
 func _test_fake_fail_on_connect_close_does_not_emit_closed() -> void:
-	var transport = SFFakeTransportScript.new()
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var terminal_events: Array = []
 	transport.failed.connect(func(_error: String) -> void: terminal_events.append("failed"))
 	transport.closed.connect(
@@ -202,7 +202,7 @@ func _test_fake_fail_on_connect_close_does_not_emit_closed() -> void:
 
 
 func _test_fake_inject_failure_close_does_not_emit_closed() -> void:
-	var transport = SFFakeTransportScript.new()
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var terminal_events: Array = []
 	transport.failed.connect(func(_error: String) -> void: terminal_events.append("failed"))
 	transport.closed.connect(
@@ -217,7 +217,7 @@ func _test_fake_inject_failure_close_does_not_emit_closed() -> void:
 
 
 func _test_fake_connecting_close_fails_without_closed() -> void:
-	var transport = SFFakeTransportScript.new()
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var terminal_events: Array = []
 	var failures: Array = []
 	transport.failed.connect(
@@ -242,7 +242,7 @@ func _test_fake_connecting_close_fails_without_closed() -> void:
 
 
 func _test_fake_reconnect_clears_sent_history() -> void:
-	var transport = SFFakeTransportScript.new()
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	_assert_equal(OK, transport.connect_to_url("ws://example.test/one"), "fake first connect")
 	transport.inject_open()
 	transport.send_text("first session")
@@ -263,7 +263,7 @@ func _test_fake_reconnect_clears_sent_history() -> void:
 
 
 func _test_fake_terminal_sessions_do_not_reopen_or_emit_packets() -> void:
-	var failed_transport = SFFakeTransportScript.new()
+	var failed_transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var failed_events: Array = []
 	var failed_packets: Array = []
 	failed_transport.opened.connect(func() -> void: failed_events.append("opened"))
@@ -290,7 +290,7 @@ func _test_fake_terminal_sessions_do_not_reopen_or_emit_packets() -> void:
 		"fake failed session rejects text send"
 	)
 
-	var closed_transport = SFFakeTransportScript.new()
+	var closed_transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var closed_events: Array = []
 	var closed_packets: Array = []
 	closed_transport.opened.connect(func() -> void: closed_events.append("opened"))
@@ -318,7 +318,7 @@ func _test_fake_terminal_sessions_do_not_reopen_or_emit_packets() -> void:
 
 
 func _test_websocket_invalid_scheme_and_send_error_without_network() -> void:
-	var transport = SFWebSocketTransportScript.new()
+	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
 	var failures: Array = []
 	transport.failed.connect(func(error: String) -> void: failures.append(error))
 	var token := "sf_token_secret_123"
@@ -344,14 +344,14 @@ func _test_websocket_invalid_scheme_and_send_error_without_network() -> void:
 
 
 func _test_websocket_never_opened_closed_emits_failed_without_closed() -> void:
-	var transport = SFWebSocketTransportScript.new()
+	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
 	var terminal_events: Array = []
 	transport.failed.connect(func(_error: String) -> void: terminal_events.append("failed"))
 	transport.closed.connect(
 		func(_code: int, _reason: String) -> void: terminal_events.append("closed")
 	)
 
-	var peer = TestWebSocketPeerAdapterScript.new()
+	var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
 	peer.ready_state = WebSocketPeer.STATE_CLOSED
 	transport._peer = peer
 	transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
@@ -362,7 +362,7 @@ func _test_websocket_never_opened_closed_emits_failed_without_closed() -> void:
 
 
 func _test_websocket_case_insensitive_scheme_validation() -> void:
-	var transport = SFWebSocketTransportScript.new()
+	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
 
 	_assert(transport._is_valid_websocket_url("WS://example.test/socket"), "uppercase ws scheme")
 	_assert(transport._is_valid_websocket_url("WSS://example.test/socket"), "uppercase wss scheme")
@@ -371,8 +371,8 @@ func _test_websocket_case_insensitive_scheme_validation() -> void:
 
 
 func _test_websocket_connect_resets_close_active_peer() -> void:
-	var transport = SFWebSocketTransportScript.new()
-	var peer = TestWebSocketPeerAdapterScript.new()
+	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
 	peer.ready_state = WebSocketPeer.STATE_OPEN
 	transport._peer = peer
 	transport._opened_emitted = true
@@ -403,8 +403,8 @@ func _test_websocket_connect_resets_close_active_peer() -> void:
 
 
 func _test_websocket_connecting_close_fails_without_closed() -> void:
-	var transport = SFWebSocketTransportScript.new()
-	var peer = TestWebSocketPeerAdapterScript.new()
+	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
 	peer.ready_state = WebSocketPeer.STATE_CONNECTING
 	transport._peer = peer
 	var terminal_events: Array = []
@@ -430,8 +430,8 @@ func _test_websocket_connecting_close_fails_without_closed() -> void:
 
 
 func _test_websocket_connecting_close_surfaces_caller_reason() -> void:
-	var transport = SFWebSocketTransportScript.new()
-	var peer = TestWebSocketPeerAdapterScript.new()
+	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
 	peer.ready_state = WebSocketPeer.STATE_CONNECTING
 	transport._peer = peer
 	var failures: Array = []
@@ -443,8 +443,8 @@ func _test_websocket_connecting_close_surfaces_caller_reason() -> void:
 	_assert_string_contains(failures[0], "custom abort", "websocket custom abort reason")
 	_assert_equal([[4321, "custom abort"]], peer.close_calls, "websocket custom abort close args")
 
-	var retry_transport = SFWebSocketTransportScript.new()
-	var retry_peer = TestWebSocketPeerAdapterScript.new()
+	var retry_transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	var retry_peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
 	retry_peer.ready_state = WebSocketPeer.STATE_CONNECTING
 	retry_transport._peer = retry_peer
 	retry_transport.failed.connect(func(error: String) -> void: failures.append(error))
@@ -454,8 +454,8 @@ func _test_websocket_connecting_close_surfaces_caller_reason() -> void:
 
 
 func _test_websocket_read_error_is_terminal_once() -> void:
-	var transport = SFWebSocketTransportScript.new()
-	var peer = TestWebSocketPeerAdapterScript.new()
+	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
 	peer.ready_state = WebSocketPeer.STATE_OPEN
 	peer.packets.append(PackedByteArray([1, 2, 3]))
 	peer.packet_errors.append(ERR_FILE_CORRUPT)

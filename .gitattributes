@@ -46,3 +46,14 @@ Dockerfile  text eol=lf
 *.otf       binary
 *.woff      binary
 *.woff2     binary
+
+# Dev/test-only paths stay out of git archives (Asset Library downloads a
+# ref-generated archive; the addon must stay self-contained under addons/).
+/.claude       export-ignore
+/.devcontainer export-ignore
+/.github       export-ignore
+/.githooks     export-ignore
+/.llm          export-ignore
+/progress      export-ignore
+/scripts       export-ignore
+/tests         export-ignore
