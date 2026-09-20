@@ -9,9 +9,8 @@ const TestWebSocketPeerAdapterScript = preload(
 )
 
 var _failures: Array = []
-# Completion sentinel: a runtime abort inside _run() unwinds before
-# quit() is reached, which would otherwise leave the process hanging
-# until CI kills it instead of reporting a red result.
+# Completion sentinel: a runtime abort inside _run() would otherwise leave
+# the process hanging until CI kills it.
 var _run_completed := false
 
 
@@ -82,9 +81,11 @@ func _test_fake_connect_open_send_receive_and_close() -> void:
 	transport.inject_server_message({"type": "Pong"})
 	transport.inject_binary(PackedByteArray([202, 254]))
 	_assert_equal(3, packets.size(), "fake packet count")
+	var first_payload: PackedByteArray = packets[0]["payload"]
+	var server_payload: PackedByteArray = packets[1]["payload"]
 	_assert_equal(true, packets[0]["is_text"], "fake text packet flag")
-	_assert_equal("server text", packets[0]["payload"].get_string_from_utf8(), "fake text packet")
-	_assert_equal('{"type":"Pong"}', packets[1]["payload"].get_string_from_utf8(), "server message")
+	_assert_equal("server text", first_payload.get_string_from_utf8(), "fake text packet")
+	_assert_equal('{"type":"Pong"}', server_payload.get_string_from_utf8(), "server message")
 	_assert_equal(false, packets[2]["is_text"], "fake binary packet flag")
 	_assert_equal(PackedByteArray([202, 254]), packets[2]["payload"], "fake binary packet")
 
@@ -97,8 +98,7 @@ func _test_fake_connect_open_send_receive_and_close() -> void:
 
 func _test_fake_fail_on_send_mirrors_real_cascade() -> void:
 	# Issue #24 send-failure parity: the fake must kill the session exactly
-	# like the real transport's synchronous send failure — `failed` emitted
-	# once, ERR_CONNECTION_ERROR returned, nothing recorded as sent.
+	# like the real transport's synchronous send failure.
 	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var failures: Array = []
 	transport.failed.connect(func(error: String) -> void: failures.append(error))
@@ -114,7 +114,8 @@ func _test_fake_fail_on_send_mirrors_real_cascade() -> void:
 		"post-failure binary send refused"
 	)
 	_assert_equal(1, failures.size(), "failed emitted once")
-	_assert_string_contains(failures[0], "failed to send", "failure names the send")
+	var send_failure: String = failures[0]
+	_assert_string_contains(send_failure, "failed to send", "failure names the send")
 	_assert_equal([], transport.sent_text, "failed text not recorded")
 	_assert_equal([], transport.sent_binary, "failed binary not recorded")
 	_assert_equal(WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "session dead")
@@ -168,7 +169,8 @@ func _test_fake_failure_and_backpressure_getter() -> void:
 		"fake fail on connect"
 	)
 	_assert_equal(1, failures.size(), "fake connect failure count")
-	_assert_string_contains(failures[0], "connect failure", "fake connect failure message")
+	var connect_failure: String = failures[0]
+	_assert_string_contains(connect_failure, "connect failure", "fake connect failure message")
 
 	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	transport.failed.connect(func(error: String) -> void: failures.append(error))
@@ -235,7 +237,10 @@ func _test_fake_connecting_close_fails_without_closed() -> void:
 	transport.close(1000, "abort")
 
 	_assert_equal(["failed"], terminal_events, "fake connecting close terminal ordering")
-	_assert_string_contains(failures[0], "abort", "fake connecting close surfaces caller reason")
+	var connecting_failure: String = failures[0]
+	_assert_string_contains(
+		connecting_failure, "abort", "fake connecting close surfaces caller reason"
+	)
 	_assert_equal(
 		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "fake connecting close state"
 	)
@@ -329,8 +334,11 @@ func _test_websocket_invalid_scheme_and_send_error_without_network() -> void:
 		"websocket invalid scheme"
 	)
 	_assert_equal(1, failures.size(), "websocket invalid scheme failure count")
-	_assert_string_contains(failures[0], "invalid WebSocket URL scheme", "invalid scheme message")
-	_assert_string_not_contains(failures[0], token, "invalid scheme message redacts query token")
+	var scheme_failure: String = failures[0]
+	_assert_string_contains(
+		scheme_failure, "invalid WebSocket URL scheme", "invalid scheme message"
+	)
+	_assert_string_not_contains(scheme_failure, token, "invalid scheme message redacts query token")
 	_assert_equal(WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "invalid scheme state")
 	_assert_equal(0, transport.get_buffered_amount(), "invalid scheme buffered amount")
 
@@ -422,7 +430,10 @@ func _test_websocket_connecting_close_fails_without_closed() -> void:
 	transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
 
 	_assert_equal(["failed"], terminal_events, "websocket connecting close terminal ordering")
-	_assert_string_contains(failures[0], "abort", "websocket connecting close surfaces reason")
+	var connecting_failure: String = failures[0]
+	_assert_string_contains(
+		connecting_failure, "abort", "websocket connecting close surfaces reason"
+	)
 	_assert_equal([[1000, "abort"]], peer.close_calls, "websocket connecting close closes peer")
 	_assert_equal(
 		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "websocket connecting close state"
@@ -440,7 +451,8 @@ func _test_websocket_connecting_close_surfaces_caller_reason() -> void:
 	transport.close(4321, "custom abort")
 
 	_assert_equal(1, failures.size(), "websocket custom abort failure count")
-	_assert_string_contains(failures[0], "custom abort", "websocket custom abort reason")
+	var abort_failure: String = failures[0]
+	_assert_string_contains(abort_failure, "custom abort", "websocket custom abort reason")
 	_assert_equal([[4321, "custom abort"]], peer.close_calls, "websocket custom abort close args")
 
 	var retry_transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
@@ -449,7 +461,10 @@ func _test_websocket_connecting_close_surfaces_caller_reason() -> void:
 	retry_transport._peer = retry_peer
 	retry_transport.failed.connect(func(error: String) -> void: failures.append(error))
 	retry_transport.close(4321)
-	_assert_string_contains(failures[1], "close code 4321", "websocket abort code-only message")
+	var code_only_failure: String = failures[1]
+	_assert_string_contains(
+		code_only_failure, "close code 4321", "websocket abort code-only message"
+	)
 	_assert_equal([[4321, ""]], retry_peer.close_calls, "websocket code-only close args")
 
 

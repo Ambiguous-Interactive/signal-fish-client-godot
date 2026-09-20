@@ -4,10 +4,13 @@ config_version=5
 config/name="Signal Fish Client Godot"
 config/features=PackedStringArray("4.3")
 
-; GDScript warnings: engine defaults (all warnings visible); missing static
-; types are errors, so untyped code fails CI. unsafe_* Variant-access
-; strictness is a tracked follow-up (issue #42).
+; GDScript warnings: missing static types and unsafe Variant access are
+; errors, so untyped or unsafely-typed code fails CI (issues #35, #42).
 [debug]
 gdscript/warnings/enable=true
 gdscript/warnings/untyped_declaration=2
+gdscript/warnings/unsafe_property_access=2
+gdscript/warnings/unsafe_method_access=2
+gdscript/warnings/unsafe_call_argument=2
+gdscript/warnings/unsafe_cast=2
 

@@ -15,9 +15,8 @@ const SERVER_FIXTURE := "res://tests/fixtures/v2_server_messages.jsonl"
 const MALFORMED_FIXTURE := "res://tests/fixtures/malformed.jsonl"
 
 var _failures: Array = []
-# Completion sentinel: a runtime abort inside _run() unwinds before
-# quit() is reached, which would otherwise leave the process hanging
-# until CI kills it instead of reporting a red result.
+# Completion sentinel: an abort inside _run() skips quit() and would
+# otherwise hang CI instead of reporting a red result.
 var _run_completed := false
 
 
@@ -48,7 +47,8 @@ func _helper_suites_are_loadable() -> bool:
 	]
 	var loadable := true
 	for suite: Array in suites:
-		if not (suite[1] as Script).has_method("run"):
+		var suite_script: Script = suite[1]
+		if not suite_script.has_method("run"):
 			push_error("helper suite failed to load: %s" % suite[0])
 			loadable = false
 	return loadable
@@ -74,11 +74,8 @@ func _run() -> void:
 
 
 func _test_allowed_symbols_widen_parity() -> void:
-	# Issue #12: upstream widened PlayerNameRules.allowed_symbols from
-	# Vec<char> to Vec<String> (rust SDK 0.8.0-era breaking change). Both wire
-	# shapes are JSON string arrays, so the codec must coerce either verbatim:
-	# legacy servers emit one-character strings, current ones may emit
-	# multi-character strings.
+	# Issue #12: upstream widened allowed_symbols to multi-char strings; both
+	# one-char and multi-char wire shapes must coerce verbatim.
 	var shapes := [
 		["legacy one-char symbols", ["_", "-"]],
 		["widened multi-char symbols", ["_-", "SEP"]],
@@ -99,11 +96,12 @@ func _test_allowed_symbols_widen_parity() -> void:
 				}
 			}
 		}
-		var event := SFEventsScript.decode_envelope(envelope)
+		var event: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(envelope)
 		if not _assert_equal("protocol_info", String(event.signal_name), "%s: decodes" % shape[0]):
 			continue
+		var expected_symbols: PackedStringArray = shape[1]
 		_assert_equal(
-			PackedStringArray(shape[1]),
+			expected_symbols,
 			event.args[0].player_name_rules.allowed_symbols,
 			"%s: preserved verbatim" % shape[0]
 		)
@@ -145,7 +143,8 @@ func _test_client_encoders_match_fixtures() -> void:
 	if not _assert_equal(lines.size(), built.size(), "client fixture builder count"):
 		return
 	for index: int in lines.size():
-		var encoded := SFEnvelopeScript.encode(built[index])
+		var message: Dictionary = built[index]
+		var encoded := SFEnvelopeScript.encode(message)
 		_assert_equal(lines[index], encoded, "%s line %d" % [CLIENT_FIXTURE, index + 1])
 
 
@@ -189,10 +188,11 @@ func _test_server_decoders_match_fixtures() -> void:
 	var decoded_events: Array = []
 	var failures_before_fixture_shape_checks := _failures.size()
 	for index: int in lines.size():
-		var decoded := SFEventsScript.decode_text(lines[index])
+		var decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(lines[index])
 		decoded_events.append(decoded)
+		var expected_signal: String = expected_signals[index]
 		if not _assert_decoded_signal(
-			expected_signals[index], decoded, "%s line %d" % [SERVER_FIXTURE, index + 1]
+			expected_signal, decoded, "%s line %d" % [SERVER_FIXTURE, index + 1]
 		):
 			continue
 		_assert_equal(
@@ -269,14 +269,16 @@ func _test_server_decoders_match_fixtures() -> void:
 		room_joined.args[0].reconnection_token,
 		"room join issues the reconnection token"
 	)
-	_assert_equal(1, room_joined.args[0].current_players.size(), "room_joined players")
+	var room_joined_players: Array = room_joined.args[0].current_players
+	_assert_equal(1, room_joined_players.size(), "room_joined players")
 	_assert_equal("Alice", room_joined.args[0].current_players[0].name, "room player name")
 	_assert_equal(true, room_joined.args[0].current_players[0].is_authority, "room player auth")
 	_assert_equal(
 		"direct", room_joined.args[0].current_players[0].connection_info.type, "room conn type"
 	)
 	_assert_equal(7777, room_joined.args[0].current_players[0].connection_info.port, "room port")
-	_assert_equal(1, room_joined.args[0].current_spectators.size(), "room spectators")
+	var room_joined_spectators: Array = room_joined.args[0].current_spectators
+	_assert_equal(1, room_joined_spectators.size(), "room spectators")
 	_assert_equal("Observer", room_joined.args[0].current_spectators[0].name, "room spectator")
 
 	var room_join_failed: SFTypesScript.DecodedEvent = decoded_events[4]
@@ -325,7 +327,7 @@ func _test_server_decoders_match_fixtures() -> void:
 		authority_response.args[2],
 		"authority response code"
 	)
-	var authority_response_null_reason := SFEventsScript.decode_text(
+	var authority_response_null_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(
 		'{"type":"AuthorityResponse","data":{"granted":true,"reason":null}}'
 	)
 	_assert_equal(
@@ -348,7 +350,8 @@ func _test_server_decoders_match_fixtures() -> void:
 	_assert_equal(false, lobby_state_changed.args[2], "lobby all ready")
 
 	var game_starting: SFTypesScript.DecodedEvent = decoded_events[13]
-	_assert_equal(2, game_starting.args[0].size(), "game starting peers")
+	var game_starting_peers: Array = game_starting.args[0]
+	_assert_equal(2, game_starting_peers.size(), "game starting peers")
 	_assert_equal(
 		"10000000-0000-0000-0000-000000000001",
 		game_starting.args[0][0].player_id,
@@ -374,16 +377,19 @@ func _test_server_decoders_match_fixtures() -> void:
 		reconnected.args[0].ready_players,
 		"re ready players"
 	)
-	_assert_equal(2, reconnected.args[1].size(), "reconnected missed event count")
-	_assert_equal("pong", String(reconnected.args[1][0].signal_name), "reconnected missed pong")
-	_assert_equal("player_left", String(reconnected.args[1][1].signal_name), "re missed left")
+	var reconnected_missed_events: Array = reconnected.args[1]
+	_assert_equal(2, reconnected_missed_events.size(), "reconnected missed event count")
+	_assert_equal("pong", str(reconnected.args[1][0].signal_name), "reconnected missed pong")
+	_assert_equal("player_left", str(reconnected.args[1][1].signal_name), "re missed left")
 	_assert_equal(
 		"test-reconnect-token-rotated-not-secret",
 		reconnected.args[0].reconnection_token,
 		"reconnect rotates the reconnection token"
 	)
+	var baseline_reconnection_token: String = room_joined.args[0].reconnection_token
+	var rotated_reconnection_token: String = reconnected.args[0].reconnection_token
 	_assert(
-		room_joined.args[0].reconnection_token != reconnected.args[0].reconnection_token,
+		baseline_reconnection_token != rotated_reconnection_token,
 		"reconnection tokens rotate per baseline"
 	)
 
@@ -407,11 +413,11 @@ func _test_server_decoders_match_fixtures() -> void:
 		spectator_joined.args[0].spectator_id,
 		"spectator joined id"
 	)
-	_assert_equal(1, spectator_joined.args[0].current_players.size(), "spectator joined players")
+	var spectator_joined_players: Array = spectator_joined.args[0].current_players
+	_assert_equal(1, spectator_joined_players.size(), "spectator joined players")
 	_assert_equal("Alice", spectator_joined.args[0].current_players[0].name, "spectator player")
-	_assert_equal(
-		1, spectator_joined.args[0].current_spectators.size(), "spectator joined spectators"
-	)
+	var spectator_joined_spectators: Array = spectator_joined.args[0].current_spectators
+	_assert_equal(1, spectator_joined_spectators.size(), "spectator joined spectators")
 	_assert_equal(
 		SFTypesScript.LobbyState.WAITING, spectator_joined.args[0].lobby_state, "spectator lobby"
 	)
@@ -433,12 +439,14 @@ func _test_server_decoders_match_fixtures() -> void:
 	_assert_equal(
 		SFTypesScript.SpectatorReason.VOLUNTARY_LEAVE, spectator_left.args[2], "sl reason"
 	)
-	_assert_equal(0, spectator_left.args[3].size(), "sl current spectators")
+	var spectator_left_spectators: Array = spectator_left.args[3]
+	_assert_equal(0, spectator_left_spectators.size(), "sl current spectators")
 
 	var new_spectator: SFTypesScript.DecodedEvent = decoded_events[21]
 	_assert_equal("30000000-0000-0000-0000-000000000002", new_spectator.args[0].id, "ns id")
 	_assert_equal("Watcher", new_spectator.args[0].name, "ns name")
-	_assert_equal(1, new_spectator.args[1].size(), "ns current spectators")
+	var new_spectator_spectators: Array = new_spectator.args[1]
+	_assert_equal(1, new_spectator_spectators.size(), "ns current spectators")
 	_assert_equal(SFTypesScript.SpectatorReason.JOINED, new_spectator.args[2], "ns reason")
 
 	var spectator_disconnected: SFTypesScript.DecodedEvent = decoded_events[22]
@@ -446,7 +454,8 @@ func _test_server_decoders_match_fixtures() -> void:
 	_assert_equal(
 		SFTypesScript.SpectatorReason.DISCONNECTED, spectator_disconnected.args[1], "sd reason"
 	)
-	_assert_equal(0, spectator_disconnected.args[2].size(), "sd current spectators")
+	var spectator_disconnected_spectators: Array = spectator_disconnected.args[2]
+	_assert_equal(0, spectator_disconnected_spectators.size(), "sd current spectators")
 
 	var server_error: SFTypesScript.DecodedEvent = decoded_events[23]
 	_assert_equal("message too large", server_error.args[0], "server error message")
@@ -503,11 +512,13 @@ func _test_malformed_inputs_decode_to_protocol_error() -> void:
 		},
 	]
 	for test_case: Dictionary in inline_cases:
-		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
+		var envelope: Dictionary = test_case["envelope"]
+		var label: String = test_case["label"]
+		_assert_protocol_error_envelope(envelope, label)
 
 
 func _test_binary_codec_accepts_base64_payload() -> void:
-	var padded := SFEventsScript.decode_envelope(
+	var padded: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{
 			"type": "GameDataBinary",
 			"data": {"from_player": "p1", "encoding": "message_pack", "payload": "yv4="}
@@ -518,12 +529,14 @@ func _test_binary_codec_accepts_base64_payload() -> void:
 
 
 func _test_upstream_optional_fields_decode() -> void:
-	var protocol_info := SFEventsScript.decode_envelope({"type": "ProtocolInfo", "data": {}})
+	var protocol_info: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "ProtocolInfo", "data": {}}
+	)
 	_assert_equal("protocol_info", String(protocol_info.signal_name), "minimal protocol info")
 	_assert_equal("", protocol_info.args[0].platform, "minimal protocol platform")
 	_assert_equal([], protocol_info.args[0].game_data_formats, "minimal protocol formats")
 
-	var null_player_name_rules := SFEventsScript.decode_envelope(
+	var null_player_name_rules: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "ProtocolInfo", "data": {"player_name_rules": null}}
 	)
 	_assert_equal(
@@ -533,7 +546,7 @@ func _test_upstream_optional_fields_decode() -> void:
 	)
 	_assert_equal(null, null_player_name_rules.args[0].player_name_rules, "null name rules")
 
-	var defaulted_player_name_rules := SFEventsScript.decode_envelope(
+	var defaulted_player_name_rules: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{
 			"type": "ProtocolInfo",
 			"data":
@@ -566,15 +579,16 @@ func _test_upstream_optional_fields_decode() -> void:
 		"defaulted additional characters"
 	)
 
-	var game_starting := SFEventsScript.decode_envelope(
+	var game_starting: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		_game_starting_envelope([_peer_connection({})])
 	)
 	_assert_equal("game_starting", String(game_starting.signal_name), "optional peer connection")
-	_assert_equal(1, game_starting.args[0].size(), "optional peer count")
+	var optional_game_starting_peers: Array = game_starting.args[0]
+	_assert_equal(1, optional_game_starting_peers.size(), "optional peer count")
 	_assert_equal(null, game_starting.args[0][0].connection_info, "peer connection info optional")
 	_assert_equal("regional-relay", game_starting.args[0][0].relay_type, "peer relay label")
 
-	var relay_without_transport := SFEventsScript.decode_envelope(
+	var relay_without_transport: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		_game_starting_envelope([_peer_connection({"connection_info": _relay_connection_info({})})])
 	)
 	_assert_equal(
@@ -587,7 +601,7 @@ func _test_upstream_optional_fields_decode() -> void:
 	)
 	var relay_null_transport_data := _relay_connection_info({})
 	relay_null_transport_data["transport"] = null
-	var relay_null_transport := SFEventsScript.decode_envelope(
+	var relay_null_transport: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		_game_starting_envelope([_peer_connection({"connection_info": relay_null_transport_data})])
 	)
 	_assert_equal("game_starting", String(relay_null_transport.signal_name), "relay null transport")
@@ -597,8 +611,9 @@ func _test_upstream_optional_fields_decode() -> void:
 		"null relay transport defaults to auto"
 	)
 
-	var spectator_joined_without_reason := SFEventsScript.decode_envelope(
-		{"type": "SpectatorJoined", "data": _minimal_spectator_joined_data()}
+	var spectator_joined_without_reason: SFTypesScript.DecodedEvent = (
+		SFEventsScript
+		. decode_envelope({"type": "SpectatorJoined", "data": _minimal_spectator_joined_data()})
 	)
 	_assert_equal(
 		"spectator_joined",
@@ -613,7 +628,7 @@ func _test_upstream_optional_fields_decode() -> void:
 
 	var spectator_joined_null_data := _minimal_spectator_joined_data()
 	spectator_joined_null_data["reason"] = null
-	var spectator_joined_null_reason := SFEventsScript.decode_envelope(
+	var spectator_joined_null_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "SpectatorJoined", "data": spectator_joined_null_data}
 	)
 	_assert_equal(
@@ -629,19 +644,22 @@ func _test_upstream_optional_fields_decode() -> void:
 
 	var webrtc_player := _minimal_player_data()
 	webrtc_player["connection_info"] = {"type": "webrtc", "sdp": null, "ice_candidates": []}
-	var webrtc_null_sdp := SFEventsScript.decode_envelope(
+	var webrtc_null_sdp: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "PlayerJoined", "data": {"player": webrtc_player}}
 	)
 	_assert_equal("player_joined", String(webrtc_null_sdp.signal_name), "webrtc null sdp")
 	_assert_equal("", webrtc_null_sdp.args[0].connection_info.sdp, "webrtc null sdp value")
 
-	var spectator_left := SFEventsScript.decode_envelope({"type": "SpectatorLeft"})
+	var spectator_left: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "SpectatorLeft"}
+	)
 	_assert_equal("spectator_left", String(spectator_left.signal_name), "minimal spectator left")
 	_assert_equal("", spectator_left.args[0], "minimal spectator left room")
 	_assert_equal(SFTypesScript.SpectatorReason.UNKNOWN, spectator_left.args[2], "minimal reason")
-	_assert_equal(0, spectator_left.args[3].size(), "minimal spectator list")
+	var minimal_spectator_left_spectators: Array = spectator_left.args[3]
+	_assert_equal(0, minimal_spectator_left_spectators.size(), "minimal spectator list")
 
-	var spectator_left_null_reason := SFEventsScript.decode_envelope(
+	var spectator_left_null_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "SpectatorLeft", "data": {"reason": null}}
 	)
 	_assert_equal(
@@ -655,7 +673,7 @@ func _test_upstream_optional_fields_decode() -> void:
 		"spectator left null reason value"
 	)
 
-	var new_spectator := SFEventsScript.decode_envelope(
+	var new_spectator: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "NewSpectatorJoined", "data": {"spectator": _minimal_spectator_data()}}
 	)
 	_assert_equal(
@@ -663,7 +681,7 @@ func _test_upstream_optional_fields_decode() -> void:
 	)
 	_assert_equal(SFTypesScript.SpectatorReason.UNKNOWN, new_spectator.args[2], "new reason")
 
-	var new_spectator_null_reason := SFEventsScript.decode_envelope(
+	var new_spectator_null_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{
 			"type": "NewSpectatorJoined",
 			"data": {"spectator": _minimal_spectator_data(), "reason": null}
@@ -680,7 +698,7 @@ func _test_upstream_optional_fields_decode() -> void:
 		"new spectator null reason value"
 	)
 
-	var disconnected := SFEventsScript.decode_envelope(
+	var disconnected: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "SpectatorDisconnected", "data": {"spectator_id": "s1"}}
 	)
 	_assert_equal(
@@ -688,7 +706,7 @@ func _test_upstream_optional_fields_decode() -> void:
 	)
 	_assert_equal(SFTypesScript.SpectatorReason.UNKNOWN, disconnected.args[1], "disconnect reason")
 
-	var disconnected_null_reason := SFEventsScript.decode_envelope(
+	var disconnected_null_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "SpectatorDisconnected", "data": {"spectator_id": "s1", "reason": null}}
 	)
 	_assert_equal(
@@ -704,7 +722,7 @@ func _test_upstream_optional_fields_decode() -> void:
 
 
 func _test_strict_protocol_validation() -> void:
-	var required_unknown_error_code := SFEventsScript.decode_envelope(
+	var required_unknown_error_code: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{
 			"type": "AuthenticationError",
 			"data": {"error": "bad app", "error_code": "NOT_A_REAL_CODE"}
@@ -721,7 +739,7 @@ func _test_strict_protocol_validation() -> void:
 		"required unknown error code value"
 	)
 
-	var optional_unknown_error_code := SFEventsScript.decode_envelope(
+	var optional_unknown_error_code: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "RoomJoinFailed", "data": {"reason": "bad room", "error_code": "NOT_A_REAL_CODE"}}
 	)
 	_assert_equal(
@@ -735,7 +753,7 @@ func _test_strict_protocol_validation() -> void:
 		"optional unknown error code value"
 	)
 
-	var required_numeric_error_code := SFEventsScript.decode_envelope(
+	var required_numeric_error_code: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "AuthenticationError", "data": {"error": "bad app", "error_code": 12}}
 	)
 	_assert_equal(
@@ -744,7 +762,7 @@ func _test_strict_protocol_validation() -> void:
 		"required numeric error code"
 	)
 
-	var optional_numeric_error_code := SFEventsScript.decode_envelope(
+	var optional_numeric_error_code: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "RoomJoinFailed", "data": {"reason": "bad room", "error_code": 12}}
 	)
 	_assert_equal(
@@ -753,7 +771,7 @@ func _test_strict_protocol_validation() -> void:
 		"optional numeric error code"
 	)
 
-	var optional_null_error_code := SFEventsScript.decode_envelope(
+	var optional_null_error_code: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "RoomJoinFailed", "data": {"reason": "bad room", "error_code": null}}
 	)
 	_assert_equal(
@@ -787,7 +805,9 @@ func _test_strict_protocol_validation() -> void:
 		},
 	]
 	for test_case: Dictionary in invalid_spectator_reason_cases:
-		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
+		var envelope: Dictionary = test_case["envelope"]
+		var label: String = test_case["label"]
+		_assert_protocol_error_envelope(envelope, label)
 
 	var room_joined_float_data := _minimal_room_joined_data()
 	room_joined_float_data["max_players"] = 4.5
@@ -819,7 +839,9 @@ func _test_strict_protocol_validation() -> void:
 		},
 	]
 	for test_case: Dictionary in invalid_numeric_cases:
-		_assert_protocol_error_envelope(test_case["envelope"], test_case["label"])
+		var envelope: Dictionary = test_case["envelope"]
+		var label: String = test_case["label"]
+		_assert_protocol_error_envelope(envelope, label)
 
 
 func _test_protocol_error_diagnostics() -> void:
@@ -846,13 +868,15 @@ func _test_protocol_error_diagnostics() -> void:
 
 	var bad_missed_event_data := _minimal_room_joined_data()
 	bad_missed_event_data["missed_events"] = [{"type": "PlayerLeft", "data": {}}]
-	var bad_missed_event := SFEventsScript.decode_envelope(
+	var bad_missed_event: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "Reconnected", "data": bad_missed_event_data}
 	)
 	_assert_equal("reconnected", String(bad_missed_event.signal_name), "missed event diagnostics")
-	_assert_equal(1, bad_missed_event.args[1].size(), "bad missed event count")
+	var bad_missed_events: Array = bad_missed_event.args[1]
+	_assert_equal(1, bad_missed_events.size(), "bad missed event count")
+	var bad_missed_event_decoded: RefCounted = bad_missed_events[0]
 	_assert_protocol_error_contains(
-		bad_missed_event.args[1][0], "missed_events[0]", "missed event index"
+		bad_missed_event_decoded, "missed_events[0]", "missed event index"
 	)
 
 
@@ -900,7 +924,6 @@ func _test_error_code_table() -> void:
 	for token: String in non_emitted:
 		_assert(SFErrorCodesScript.is_known(token), "non-emitted %s stays decodable" % token)
 	var categories := [
-		# authentication
 		["UNAUTHORIZED", "authentication"],
 		["INVALID_TOKEN", "authentication"],
 		["AUTHENTICATION_REQUIRED", "authentication"],
@@ -918,7 +941,6 @@ func _test_error_code_table() -> void:
 		["UNSUPPORTED_PROTOCOL_VERSION", "authentication"],
 		["CONNECT_TOKEN_INVALID", "authentication"],
 		["CONNECT_TOKEN_REQUIRED", "authentication"],
-		# validation
 		["INVALID_INPUT", "validation"],
 		["INVALID_GAME_NAME", "validation"],
 		["INVALID_ROOM_CODE", "validation"],
@@ -926,7 +948,6 @@ func _test_error_code_table() -> void:
 		["INVALID_MAX_PLAYERS", "validation"],
 		["MESSAGE_TOO_LARGE", "validation"],
 		["INVALID_DELIVERY_CLASS", "validation"],
-		# room
 		["ROOM_NOT_FOUND", "room"],
 		["ROOM_FULL", "room"],
 		["ALREADY_IN_ROOM", "room"],
@@ -943,30 +964,24 @@ func _test_error_code_table() -> void:
 		["PASSWORD_REQUIRED", "room"],
 		["BANNED", "room"],
 		["TRANSFER_TARGET_NOT_FOUND", "room"],
-		# authority
 		["AUTHORITY_NOT_SUPPORTED", "authority"],
 		["AUTHORITY_CONFLICT", "authority"],
 		["AUTHORITY_DENIED", "authority"],
-		# ratelimit
 		["RATE_LIMIT_EXCEEDED", "ratelimit"],
 		["TOO_MANY_CONNECTIONS", "ratelimit"],
-		# reconnection
 		["RECONNECTION_FAILED", "reconnection"],
 		["RECONNECTION_TOKEN_INVALID", "reconnection"],
 		["RECONNECTION_EXPIRED", "reconnection"],
 		["PLAYER_ALREADY_CONNECTED", "reconnection"],
-		# spectator
 		["SPECTATOR_NOT_ALLOWED", "spectator"],
 		["TOO_MANY_SPECTATORS", "spectator"],
 		["NOT_A_SPECTATOR", "spectator"],
 		["SPECTATOR_JOIN_FAILED", "spectator"],
-		# signaling
 		["CROSS_ROOM_SIGNAL", "signaling"],
 		["UNSUPPORTED_TRANSPORT", "signaling"],
 		["SIGNAL_TARGET_NOT_FOUND", "signaling"],
 		["SIGNAL_RATE_LIMITED", "signaling"],
 		["SIGNAL_TOO_LARGE", "signaling"],
-		# server
 		["INTERNAL_ERROR", "server"],
 		["STORAGE_ERROR", "server"],
 		["SERVICE_UNAVAILABLE", "server"],
@@ -974,11 +989,8 @@ func _test_error_code_table() -> void:
 		["SERVER_DRAINING", "server"],
 	]
 	for entry: Array in categories:
-		_assert_equal(
-			entry[1],
-			SFErrorCodesScript.category(SFErrorCodesScript.Code[entry[0]]),
-			"%s category" % entry[0]
-		)
+		var entry_code: int = SFErrorCodesScript.Code[entry[0]]
+		_assert_equal(entry[1], SFErrorCodesScript.category(entry_code), "%s category" % entry[0])
 	_assert_equal(
 		SFErrorCodesScript.Code.NONE, SFErrorCodesScript.from_string(null), "absent optional code"
 	)
@@ -1101,7 +1113,7 @@ func _assert_decoded_signal(expected: String, decoded: RefCounted, label: String
 	if decoded == null:
 		_failures.append("%s: expected signal %s, got <null decoded event>" % [label, expected])
 		return false
-	if String(decoded.signal_name) == expected:
+	if str(decoded.get("signal_name")) == expected:
 		return true
 	_failures.append(
 		"%s: expected signal %s, got %s" % [label, expected, _decoded_summary(decoded)]
@@ -1124,10 +1136,11 @@ func _assert_protocol_error_envelope(envelope: Dictionary, label: String) -> Ref
 func _assert_protocol_error(decoded: RefCounted, label: String) -> bool:
 	if not _assert_decoded_signal("protocol_error", decoded, label):
 		return false
-	if not _assert_equal(1, decoded.args.size(), "%s protocol_error args" % label):
+	var args: Array = decoded.get("args")
+	if not _assert_equal(1, args.size(), "%s protocol_error args" % label):
 		return false
 	return _assert(
-		typeof(decoded.args[0]) == TYPE_STRING and not String(decoded.args[0]).is_empty(),
+		typeof(args[0]) == TYPE_STRING and not str(args[0]).is_empty(),
 		"%s protocol_error message must be non-empty" % label
 	)
 
@@ -1137,7 +1150,8 @@ func _assert_protocol_error_contains(
 ) -> bool:
 	if not _assert_protocol_error(decoded, label):
 		return false
-	return _assert_string_contains(String(decoded.args[0]), expected_substring, label)
+	var args: Array = decoded.get("args")
+	return _assert_string_contains(str(args[0]), expected_substring, label)
 
 
 func _assert(condition: bool, label: String) -> bool:
@@ -1173,8 +1187,8 @@ func _decoded_summary(decoded: RefCounted) -> String:
 		return "<null decoded event>"
 	var signal_text := "<missing>"
 	if decoded.get("signal_name") != null:
-		signal_text = String(decoded.signal_name)
+		signal_text = str(decoded.get("signal_name"))
 	var args_text := "<missing>"
 	if decoded.get("args") != null:
-		args_text = var_to_str(decoded.args)
+		args_text = var_to_str(decoded.get("args"))
 	return "%s args=%s" % [signal_text, args_text]

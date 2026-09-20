@@ -9,6 +9,7 @@
 max-public-methods: 30
 
 # max-file-lines: the headless test runners are single-file SceneTree scripts
-# with table-driven cases (protocol suite already neared 1000); 1200 keeps
-# each transport area in one runner without inviting unbounded growth.
-max-file-lines: 1200
+# with table-driven cases; 1250 keeps each transport area in one runner (the
+# unsafe-access typing sweep added mandatory annotations and the largest
+# runner crossed 1200) without inviting unbounded growth.
+max-file-lines: 1250
