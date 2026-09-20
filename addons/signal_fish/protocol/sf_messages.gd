@@ -14,7 +14,8 @@ static func authenticate(
 	protocol_version: Variant = null,
 	supported_transports: Variant = null,
 	supported_topologies: Variant = null,
-	requested_capabilities: Variant = null
+	requested_capabilities: Variant = null,
+	connect_token: Variant = null
 ) -> Dictionary:
 	var data: Dictionary = {}
 	data["app_id"] = app_id
@@ -49,6 +50,11 @@ static func authenticate(
 	if not error.is_empty():
 		return _invalid_message("Authenticate", error, data)
 	error = _add_optional_string_list(data, "requested_capabilities", requested_capabilities)
+	if not error.is_empty():
+		return _invalid_message("Authenticate", error, data)
+	# Tenant credential (upstream `Authenticate.connect_token`, rust SDK
+	# 0.14.0). Secret: set in code only, never logged.
+	error = _add_optional_string(data, "connect_token", connect_token)
 	if not error.is_empty():
 		return _invalid_message("Authenticate", error, data)
 	return SFEnvelopeScript.message("Authenticate", data)

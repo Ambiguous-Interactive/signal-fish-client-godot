@@ -5,8 +5,9 @@ extends Resource
 ## editor or build in code, then pass to [method SignalFishClient.configure].
 ##
 ## ## Credential hygiene (PLAN §12)
-## [member credential] reserves API space for the upstream secret-key decision
-## (issue #14): it is carried as a value only — never stitched into URLs,
+## [member credential] carries the upstream [code]connect_token[/code]
+## tenant credential (rust SDK 0.14.0, upstream issue #517): it is sent only
+## as that [code]Authenticate[/code] wire field — never stitched into URLs,
 ## never included in [method _to_string], and redacted by
 ## [code]sf_log.gd[/code] when the client logs. Do not save a config
 ## Resource containing a credential to a committed file.
@@ -86,11 +87,12 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## the server echoes it in [code]ProtocolInfo.capabilities[/code].
 @export var requested_capabilities: PackedStringArray = PackedStringArray()
 
-## Reserved slot for a secret credential (e.g. an [code]sfk_*[/code] app key)
-## should upstream move to secret-based authentication. Empty = unset.
+## Tenant credential sent as the [code]connect_token[/code] field of
+## [code]Authenticate[/code] (upstream [code]sfct_v1.[/code] Ed25519 tenant
+## token, rust SDK 0.14.0). Empty = omitted from the wire.
 ## Deliberately NOT an [code]@export[/code]: secrets must be set in code only,
 ## so the Resource pipeline (.tres/.tscn saves) can never persist it, and it is
-## excluded from [method _to_string] and redacted by the logger (issue #14).
+## excluded from [method _to_string] and redacted by the logger (issue #33).
 var credential: String = ""
 
 
