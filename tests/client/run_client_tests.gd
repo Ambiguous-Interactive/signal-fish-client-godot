@@ -3,6 +3,7 @@ extends SceneTree
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
+const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
@@ -40,6 +41,7 @@ func _run() -> void:
 	_test_spectator_flow()
 	_test_reconnected_restores_room_state()
 	_test_backpressure_returns_busy_and_drops()
+	_test_binary_game_data_paths()
 	_test_close_surfaces_code_reason_and_cleans_up()
 	_test_process_and_exit_tree_paths()
 	_test_failures_clean_up_and_failed_open_surfaces_reason()
@@ -61,9 +63,9 @@ func _test_configure_validation() -> void:
 	config.game_data_format = "carrier_pigeon"
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "unknown format rejected")
 	config.game_data_format = "message_pack"
-	_assert_equal(ERR_INVALID_DATA, client.configure(config), "binary formats reserved until P2")
+	_assert_equal(OK, client.configure(config), "message_pack format accepted")
 	config.game_data_format = "rkyv"
-	_assert_equal(ERR_INVALID_DATA, client.configure(config), "rkyv reserved until P2")
+	_assert_equal(OK, client.configure(config), "rkyv format accepted")
 	config.game_data_format = "json"
 	config.max_buffered_bytes = 0
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "zero cap rejected")
@@ -670,6 +672,144 @@ func _test_reconnected_restores_room_state() -> void:
 	client.free()
 
 
+func _test_binary_game_data_paths() -> void:
+	# A json negotiation refuses binary sends locally (upstream drops them
+	# server-side with an error); parameters are still validated first.
+	var json_client := _make_in_room_client()
+	var json_errors := _track_protocol_errors(json_client)
+	_assert_equal(
+		ERR_INVALID_PARAMETER,
+		json_client.send_game_data_binary(PackedByteArray()),
+		"empty binary send refused"
+	)
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		json_client.send_game_data_binary(PackedByteArray([0x01])),
+		"binary send refused under json negotiation"
+	)
+	_assert_string_contains(
+		json_errors[json_errors.size() - 1], "message_pack or rkyv", "refusal message"
+	)
+	json_client.free()
+
+	# message_pack negotiation: bytes go out raw and envelopes surface as
+	# bytes by default.
+	var config := _make_config()
+	config.game_data_format = "message_pack"
+	var client := _make_in_room_client_with(config)
+	var events: Array = []
+	client.game_data_received.connect(
+		func(from_player: String, data) -> void: events.append(["data", from_player, data])
+	)
+	client.game_data_binary_received.connect(
+		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
+			events.append(["binary", from_player, encoding, payload])
+	)
+	var errors := _track_protocol_errors(client)
+	var payload := PackedByteArray([0x81, 0xA1, 0x68, 0x2A])
+	_assert_equal(OK, client.send_game_data_binary(payload), "binary send under message_pack")
+	_assert_equal([payload], client.transport.sent_binary, "binary send bytes hit the wire")
+
+	client.transport.inject_binary(_binary_frame(PLAYER_B, "message_pack", payload))
+	_assert_equal(
+		[["binary", PLAYER_B, SFTypesScript.GameDataEncoding.MESSAGE_PACK, payload]],
+		events,
+		"envelope surfaces as bytes by default"
+	)
+	client.transport.inject_binary(
+		_binary_frame(PLAYER_B, "message_pack", payload) + PackedByteArray([0x00])
+	)
+	_assert_equal(1, errors.size(), "hostile envelope emits protocol_error")
+	_assert_equal(1, events.size(), "hostile envelope surfaces nothing")
+	_assert(client.is_connected_to_server(), "hostile envelope keeps the link up")
+	client.free()
+
+	# Opt-in MessagePack payload decode routes decoded values through the
+	# game_data_received signal; undecodable payloads fall back to bytes.
+	var decode_config := _make_config()
+	decode_config.game_data_format = "message_pack"
+	decode_config.decode_msgpack_payloads = true
+	var decode_client := _make_in_room_client_with(decode_config)
+	var decode_events: Array = []
+	decode_client.game_data_received.connect(
+		func(from_player: String, data) -> void: decode_events.append(["data", from_player, data])
+	)
+	decode_client.game_data_binary_received.connect(
+		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
+			decode_events.append(["binary", from_player, encoding, payload])
+	)
+	var decode_errors := _track_protocol_errors(decode_client)
+	decode_client.transport.inject_binary(_binary_frame(PLAYER_B, "message_pack", payload))
+	_assert_equal(
+		[["data", PLAYER_B, {"h": 42}]], decode_events, "opt-in decode emits the decoded value"
+	)
+	decode_client.transport.inject_binary(
+		_binary_frame(PLAYER_B, "message_pack", PackedByteArray([0xC7, 0x01, 0x00, 0x2A]))
+	)
+	_assert_equal(1, decode_errors.size(), "bad payload emits protocol_error")
+	_assert_equal(
+		[
+			["data", PLAYER_B, {"h": 42}],
+			[
+				"binary",
+				PLAYER_B,
+				SFTypesScript.GameDataEncoding.MESSAGE_PACK,
+				PackedByteArray([0xC7, 0x01, 0x00, 0x2A])
+			],
+		],
+		decode_events,
+		"bad payload falls back to raw bytes"
+	)
+	decode_client.free()
+
+	# rkyv negotiation surfaces raw pass-through frames with no sender
+	# identity: upstream sends no envelope for rkyv.
+	var rkyv_config := _make_config()
+	rkyv_config.game_data_format = "rkyv"
+	var rkyv_client := _make_in_room_client_with(rkyv_config)
+	var rkyv_events: Array = []
+	rkyv_client.game_data_binary_received.connect(
+		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
+			rkyv_events.append(["binary", from_player, encoding, payload])
+	)
+	rkyv_client.transport.inject_binary(PackedByteArray([0xDE, 0xAD]))
+	_assert_equal(
+		[["binary", "", SFTypesScript.GameDataEncoding.RKYV, PackedByteArray([0xDE, 0xAD])]],
+		rkyv_events,
+		"rkyv frame passes through raw"
+	)
+	rkyv_client.free()
+
+
+## Builds an in-room client on a custom config (authenticated + RoomJoined).
+func _make_in_room_client_with(config: SignalFishConfigScript) -> SignalFishClientScript:
+	var client := _connect_new_client(config)
+	client.transport.inject_open()
+	client.transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	client.transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	return client
+
+
+## Builds the canonical v2 binary game-data envelope (msgpack map with the
+## 16-byte binary UUID, encoding token, and binary payload).
+func _binary_frame(
+	from_player: String, encoding: String, payload: PackedByteArray
+) -> PackedByteArray:
+	var encoded := SFMsgpackScript.encode(
+		{"from_player": _uuid_bytes(from_player), "encoding": encoding, "payload": payload}
+	)
+	return encoded["bytes"]
+
+
+func _uuid_bytes(uuid: String) -> PackedByteArray:
+	var hex := uuid.replace("-", "")
+	var bytes := PackedByteArray()
+	bytes.resize(16)
+	for index: int in 16:
+		bytes[index] = ("0x" + hex.substr(index * 2, 2)).hex_to_int()
+	return bytes
+
+
 func _test_backpressure_returns_busy_and_drops() -> void:
 	var client := _make_authenticated_client()
 	var errors := _track_protocol_errors(client)
@@ -916,6 +1056,10 @@ func _send_method_cases() -> Array:
 		["join_room", func(client) -> Error: return client.join_room(params)],
 		["leave_room", func(client) -> Error: return client.leave_room()],
 		["send_game_data", func(client) -> Error: return client.send_game_data({})],
+		[
+			"send_game_data_binary",
+			func(client) -> Error: return client.send_game_data_binary(PackedByteArray([0x01]))
+		],
 		["set_ready", func(client) -> Error: return client.set_ready()],
 		["request_authority", func(client) -> Error: return client.request_authority(true)],
 		[

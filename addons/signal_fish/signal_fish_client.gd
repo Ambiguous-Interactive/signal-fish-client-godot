@@ -65,6 +65,8 @@ const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
+const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
+const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
 const SFTransportScript = preload("res://addons/signal_fish/transport/sf_transport.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFWebSocketTransportScript = preload(
@@ -331,6 +333,51 @@ func send_game_data(data) -> Error:
 	return _send_envelope(SFMessagesScript.game_data(data), "send_game_data")
 
 
+## Sends opaque game-data bytes as one WebSocket binary frame. Upstream
+## semantics: the server tags inbound binary with the negotiated format and
+## drops binary on [code]json[/code] connections
+## (server `websocket/connection.rs`), so the client refuses that case
+## locally. Pair with [member SignalFishConfig.game_data_format] =
+## [code]"message_pack"[/code] (build payloads with [code]SFMsgpack.encode
+## [/code]) or [code]"rkyv"[/code] (bring your own reader).
+func send_game_data_binary(bytes: PackedByteArray) -> Error:
+	var guard := _guard_session_send("send_game_data_binary")
+	if guard != OK:
+		return guard
+	if bytes.is_empty():
+		_emit_protocol_error("send_game_data_binary requires non-empty bytes")
+		return ERR_INVALID_PARAMETER
+	var negotiated := _negotiated_game_data_format()
+	if (
+		negotiated != SFTypesScript.GameDataEncoding.MESSAGE_PACK
+		and (negotiated != SFTypesScript.GameDataEncoding.RKYV)
+	):
+		_emit_protocol_error(
+			(
+				"send_game_data_binary requires a message_pack or rkyv game_data_format;"
+				+ " this connection negotiates json"
+			)
+		)
+		return ERR_UNAVAILABLE
+	var buffered: int = transport.get_buffered_amount()
+	if buffered > _config.max_buffered_bytes:
+		_emit_protocol_error(
+			(
+				(
+					"transport backpressure: %d buffered bytes exceeds cap %d;"
+					+ " send_game_data_binary dropped"
+				)
+				% [buffered, _config.max_buffered_bytes]
+			)
+		)
+		return ERR_BUSY
+	var error: Error = transport.send_binary(bytes)
+	if error != OK:
+		# Transport failures also surface as `failed` -> connection_failed.
+		_emit_protocol_error("send_game_data_binary send failed: %s" % error_string(error))
+	return error
+
+
 func set_ready() -> Error:
 	var guard := _guard_session_send("set_ready")
 	if guard != OK:
@@ -502,11 +549,43 @@ func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
 		)
 		return
 	if not is_text:
-		# Binary game-data frames are only meaningful after format negotiation
-		# (MessagePack support, PLAN P2); without it there is nothing to decode.
-		_emit_protocol_error("unexpected binary frame; dropped")
+		_handle_binary_frame(payload)
 		return
 	_handle_event(SFEventsScript.decode_text(payload.get_string_from_utf8()))
+
+
+## Binary frames carry game data once a binary format is negotiated
+## (PLAN P2): [code]message_pack[/code] frames are strict envelopes decoded
+## via [code]SFBinaryFrames[/code]; [code]rkyv[/code] frames are raw payload
+## pass-through (upstream sends no envelope for them, so the sender is
+## unknowable). Anything else is dropped with a protocol error — the link
+## stays up, matching the text-path hardening.
+func _handle_binary_frame(payload: PackedByteArray) -> void:
+	var negotiated := _negotiated_game_data_format()
+	if negotiated == SFTypesScript.GameDataEncoding.MESSAGE_PACK:
+		var frame: Dictionary = SFBinaryFramesScript.decode_envelope(payload)
+		if not frame["ok"]:
+			_emit_protocol_error(frame["error"])
+			return
+		if _config.decode_msgpack_payloads:
+			var decoded: Dictionary = SFMsgpackScript.decode(frame["payload"])
+			if decoded["ok"]:
+				game_data_received.emit(frame["from_player"], decoded["value"])
+				return
+			_emit_protocol_error(
+				"message_pack payload decode failed (%s); surfacing raw bytes" % decoded["error"]
+			)
+		game_data_binary_received.emit(frame["from_player"], frame["encoding"], frame["payload"])
+	elif negotiated == SFTypesScript.GameDataEncoding.RKYV:
+		game_data_binary_received.emit("", SFTypesScript.GameDataEncoding.RKYV, payload)
+	else:
+		_emit_protocol_error("unexpected binary frame; dropped")
+
+
+func _negotiated_game_data_format() -> int:
+	if _config == null:
+		return SFTypesScript.GameDataEncoding.UNKNOWN
+	return SFTypesScript.game_data_encoding_from_string(_config.game_data_format)
 
 
 func _on_transport_closed(code: int, reason: String) -> void:
