@@ -107,6 +107,22 @@ and aggregated into one PR per the session rules.
   `Authenticate` fixture against rust SDK 0.14.0 remains open because serde is
   key-order-insensitive and no upstream credentialed fixture exists to pin.
 
+### PR review round (Cursor Bugbot findings, all three real)
+
+- **HIGH, real: the mesh called a nonexistent engine method.** Godot 4.3's
+  `WebRTCMultiplayerPeer` has `create_mesh`, not `initialize_mesh` — a false pass through
+  the duck-typed fake (the exact trap session 013's harness hardening warns about).
+  Verified against the local engine's ClassDB; the suite now carries an
+  `_test_engine_api_parity` guard asserting every engine method the mesh calls exists, so
+  API drift fails loudly instead of silently (the whole failure class, not one instance).
+  The real `create_mesh` path was additionally sanity-checked headless (mapped id accepted).
+- **MEDIUM, real: non-webrtc plans opened peers.** `_apply_plan` now empties the mesh for
+  any plan whose transport is not `webrtc` (relay floor, or host+direct) instead of opening
+  connections whose signals would be gated away; host+direct-with-peers test added.
+- **MEDIUM, real: re-entrant stale key in `poll()`.** A connection callback can tear the
+  mesh down mid-poll (consumer handler → `connection_failed` → reset); the poll loop now
+  skips peers dropped after the keys snapshot instead of indexing a missing key.
+
 ## Deferred (tracked in PLAN.md)
 
 - P3 remainder: P2P example in the demo (lands with the P4 demo work; PLAN updated).

@@ -35,6 +35,7 @@ static func run(runner) -> Array:
 
 
 func run_all() -> void:
+	_test_engine_api_parity()
 	_test_uuid_mapping_is_deterministic()
 	_test_attach_and_detach_guards()
 	_test_plan_opens_peers_and_reports_boundaries()
@@ -44,6 +45,31 @@ func run_all() -> void:
 	_test_new_peer_event_obey_flag()
 	_test_teardown_paths()
 	_test_mesh_survives_engine_hostility()
+
+
+func _test_engine_api_parity() -> void:
+	# The fakes duck-type the engine classes, so a renamed engine method would
+	# silently false-pass (this exact trap: create_mesh was once asserted as
+	# initialize_mesh). Fail loudly if the API the mesh calls drifts.
+	for method: String in ["create_mesh", "add_peer", "remove_peer", "close"]:
+		_assert(
+			ClassDB.class_has_method("WebRTCMultiplayerPeer", method),
+			"WebRTCMultiplayerPeer.%s exists" % method
+		)
+	for method: String in [
+		"initialize",
+		"create_offer",
+		"set_local_description",
+		"set_remote_description",
+		"add_ice_candidate",
+		"poll",
+		"close",
+		"get_connection_state",
+	]:
+		_assert(
+			ClassDB.class_has_method("WebRTCPeerConnection", method),
+			"WebRTCPeerConnection.%s exists" % method
+		)
 
 
 func _make_mesh() -> SFWebRTCMeshScript:
@@ -85,11 +111,12 @@ func _inject_plan(
 	peers: Array,
 	generation: String = "gen-1",
 	transport: String = "webrtc",
-	ice_servers: Variant = null
+	ice_servers: Variant = null,
+	topology: String = "mesh"
 ) -> void:
 	var data: Dictionary = {
 		"generation": generation,
-		"topology": "mesh",
+		"topology": topology,
 		"transport": transport,
 		"peers": peers,
 		"fallback": "relay",
@@ -314,6 +341,12 @@ func _test_plan_replaces_fully() -> void:
 	_assert_equal(0, mesh.get_peer_count(), "relay plan empties the mesh")
 	_assert(rebuilt[0].closed, "B closed on relay reset")
 	_assert(not multiplayer.closed, "multiplayer peer survives plan churn until teardown")
+
+	# A host+direct plan carries peers but no WebRTC data path for this mesh:
+	# it must not open connections whose signals would be gated away.
+	_inject_plan(client, [_peer(PLAYER_C, true)], "gen-4", "direct", null, "host")
+	_assert_equal(0, mesh.get_peer_count(), "non-webrtc plan with peers stays empty")
+	_assert_equal(5, multiplayer.added.size(), "no peer opened for the direct plan")
 	mesh.free()
 	client.free()
 
@@ -520,9 +553,9 @@ func _test_mesh_survives_engine_hostility() -> void:
 	_assert_equal(null, mesh.get_multiplayer_peer(), "freed client releases the peer")
 	mesh.free()
 
-	# A refused initialize_mesh leaves no half-built mesh: peers stay closed.
+	# A refused create_mesh leaves no half-built mesh: peers stay closed.
 	var refused := _make_mesh()
-	(_mesh_multiplayer(refused) as FakeMultiplayerPeer).initialize_mesh_result = ERR_UNAVAILABLE
+	(_mesh_multiplayer(refused) as FakeMultiplayerPeer).create_mesh_result = ERR_UNAVAILABLE
 	var refused_client := _make_in_room_client()
 	var refused_errors := _track_protocol_errors(refused_client)
 	_attach(refused, refused_client)
@@ -632,15 +665,15 @@ class FakeMultiplayerPeer:
 	## Duck-typed WebRTCMultiplayerPeer double.
 
 	var mesh_id := 0
-	var initialize_mesh_result: Error = OK
+	var create_mesh_result: Error = OK
 	var added: Array = []
 	var removed: Array = []
 	var closed := false
 
-	func initialize_mesh(unique_id: int) -> Error:
-		if initialize_mesh_result == OK:
+	func create_mesh(unique_id: int) -> Error:
+		if create_mesh_result == OK:
 			mesh_id = unique_id
-		return initialize_mesh_result
+		return create_mesh_result
 
 	func add_peer(connection, unique_id: int) -> Error:
 		added.append([connection, unique_id])

@@ -38,9 +38,9 @@ extends Node
 ##
 ## Platform notes: Godot 4 ships WebRTC on every platform (built-in
 ## libdatachannel module); browser exports use the browser's own WebRTC. Data
-## channels come from [code]WebRTCMultiplayerPeer.initialize_mesh[/code]
-## defaults (one reliable ordered channel); relayed ICE candidates carry the
-## candidate string only, which matches that single default channel.
+## channels come from [code]WebRTCMultiplayerPeer.create_mesh[/code] defaults
+## (one reliable ordered channel); relayed ICE candidates carry the candidate
+## string only, which matches that single default channel.
 ##
 ## Tests inject [member peer_connection_factory] and
 ## [member multiplayer_peer_factory] instead of real engine objects (PLAN §8).
@@ -127,9 +127,13 @@ func poll() -> void:
 	if not _client_is_live():
 		return
 	# Iterate a keys copy: a real connection's poll() can pump callbacks that
-	# end in consumer handlers, which may legally mutate the mesh re-entrantly.
+	# end in consumer handlers, which may legally mutate the mesh re-entrantly
+	# (a peer dropped mid-poll is simply skipped).
 	for uuid: String in _peers.keys():
-		_peers[uuid].connection.poll()
+		var entry = _peers.get(uuid)
+		if entry == null:
+			continue
+		entry.connection.poll()
 	_update_transport_status()
 
 
@@ -151,7 +155,7 @@ func get_peer_ids() -> Array:
 ## Deterministic, platform-stable player UUID → [MultiplayerAPI] peer id
 ## (FNV-1a over the UUID string). The result is forced into the valid
 ## non-server id range [2, 2^31): 0 is invalid and 1 is the reserved server
-## id, and both would make [code]initialize_mesh[/code] fail. The range
+## id, and both would make [code]create_mesh[/code] fail. The range
 ## squeeze is shared by every mesh member, so ids stay collision-consistent.
 static func uuid_to_peer_id(uuid: String) -> int:
 	var digest := _FNV1A_OFFSET_BASIS
@@ -261,6 +265,13 @@ func _apply_plan(plan) -> void:
 	# Replace, never merge: the plan's list governs connections opened from
 	# here on, and an empty list is an authoritative clear.
 	_ice_servers = plan.ice_servers.duplicate()
+	if plan.transport != SFSessionTypesScript.TransportKind.WEBRTC:
+		# Only a webrtc plan carries peer connections for this mesh. A relay
+		# floor or a host+direct plan empties it — opening connections whose
+		# signals would be gated away could never complete a handshake.
+		for uuid: String in _peers.keys():
+			_drop_peer(uuid)
+		return
 	var wanted: Dictionary = {}
 	for peer in plan.peers:
 		wanted[peer.player_id] = peer
@@ -407,9 +418,9 @@ func _multiplayer_peer():
 	if _mp_peer == null:
 		_mp_peer = _make_multiplayer_peer()
 		var my_id := uuid_to_peer_id(_client.get_player_id() if _client != null else "")
-		var error: Error = _mp_peer.initialize_mesh(my_id)
+		var error: Error = _mp_peer.create_mesh(my_id)
 		if error != OK:
-			SFLogScript.error("mesh: initialize_mesh refused (%d)" % error)
+			SFLogScript.error("mesh: create_mesh refused (%d)" % error)
 			_mp_peer.close()
 			_mp_peer = null
 	return _mp_peer
