@@ -99,16 +99,27 @@ blank lines and lines beginning with `#`.
   - Server→client v2-route `message_pack` frames are a MessagePack named map:
     `from_player` (16-byte binary UUID; `PlayerId = uuid::Uuid` serializes as
     bytes in non-human-readable formats), `encoding` (`"message_pack"`), and
-    `payload` (binary). v2-route `json`/`rkyv` frames are the raw payload
-    bytes with no envelope, so the sender is unknowable for them.
+    `payload` (binary). v2-route `rkyv` frames are the raw payload bytes with
+    no envelope, so the sender is unknowable for them. The v2 cohort match
+    (`encoding == recipient_format`) also admits json-encoded binary frames
+    to json recipients, but that path cannot originate: the server drops
+    binary from json senders, and any other encoding relayed to a json
+    recipient falls back to a text `GameData` frame (`BinaryFallbackV2`).
+    The Godot client therefore treats binary on a json connection as
+    hostile/buggy input: `protocol_error`, frame dropped, link stays up.
+  - The server may downgrade an unsupported `game_data_format` preference to
+    JSON at Authenticate (`Error{UnsupportedGameDataFormat}` and/or the
+    requested format missing from `ProtocolInfo.game_data_formats`); the
+    client tracks the effective format and gates binary send/receive on it.
   - v3 (separate v3 WebSocket route only) adds mandatory non-zero `seq` (u64)
     and `epoch` (u32) stamps and allows `json`/`message_pack`/`rkyv` encoding
     tokens (`V3BinaryGameDataFrame`).
   - Strictness (rust `decode_v2/v3_binary_game_data` parity): map keys are
     strings, fields appear at most once, unknown fields and trailing bytes are
     rejected, and integer stamps may use any unsigned marker width. The
-    Godot decoder (`sf_binary_frames.gd`) accepts v2 and v3; a v2 envelope can
-    never parse as v3 and vice versa under these rules.
+    Godot decoder (`sf_binary_frames.gd`) accepts v2 and v3; for well-formed
+    frames a v2 envelope can never parse as v3 and vice versa (v3 requires
+    both stamps, v2 forbids them).
 - Relay `ConnectionInfo.transport` defaults to `auto` upstream when omitted or
   null. Outbound builders should reject typo strings, while inbound decoding
   should map unknown future transport strings to `RelayTransport.UNKNOWN`.

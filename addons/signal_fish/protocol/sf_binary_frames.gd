@@ -84,10 +84,12 @@ static func _validate_fields(fields: Dictionary, result: Dictionary) -> Dictiona
 		result["error"] = "binary game-data encoding %s is not allowed here" % fields["encoding"]
 		return result
 	if is_v3:
-		if int(fields["seq"]) <= 0:
+		# _read_unsigned only accepts unsigned marker forms, so a wrapped
+		# negative here means a u64 stamp above i64 max — huge, never zero.
+		if fields["seq"] == 0:
 			result["error"] = "v3 binary game-data seq must be non-zero"
 			return result
-		if int(fields["epoch"]) <= 0:
+		if fields["epoch"] == 0:
 			result["error"] = "v3 binary game-data epoch must be non-zero"
 			return result
 	result["ok"] = true
@@ -152,6 +154,8 @@ static func _read_field(peer: StreamPeerBuffer, key: String) -> Dictionary:
 
 ## Returns the unsigned integer value, or [code]null[/code] when the marker is
 ## not an unsigned integer form (negative/stamped integers are rejected).
+## u64 values above i64 max wrap negative in Godot; callers treat any non-zero
+## value (including wrapped ones) as a valid huge stamp.
 static func _read_unsigned(peer: StreamPeerBuffer, marker: int) -> Variant:
 	if marker <= 0x7F:
 		return marker
@@ -212,20 +216,23 @@ static func _binary_length(peer: StreamPeerBuffer, marker: int) -> int:
 	return peer.get_u32()
 
 
-## Returns the map entry count, or -1 when the frame is not a map.
+## Returns the map entry count, or -1 when the frame is not a readable map.
 static func _read_map_header(peer: StreamPeerBuffer) -> int:
 	if peer.get_available_bytes() < 1:
 		return -1
 	var marker := peer.get_u8()
 	if marker >= 0x80 and marker <= 0x8F:
 		return marker & 0x0F
-	if peer.get_available_bytes() < 2:
-		return -1
+	var width := 0
 	if marker == 0xDE:
-		return peer.get_u16()
-	if marker == 0xDF:
-		return peer.get_u32()
-	return -1
+		width = 2
+	elif marker == 0xDF:
+		width = 4
+	else:
+		return -1
+	if peer.get_available_bytes() < width:
+		return -1
+	return peer.get_u16() if width == 2 else peer.get_u32()
 
 
 ## Formats 16 UUID bytes as the canonical lowercase 8-4-4-4-12 string.

@@ -378,6 +378,12 @@ func close(code := 1000, reason := "") -> void
   no trailing bytes, any unsigned marker width for stamps. Wire format has
   been stable since server v0.4.0; v3 frames only arrive on the separate v3
   WebSocket route, and the decoder accepts both for forward compatibility.
+  The effective negotiation is tracked: an unsupported preference downgraded
+  to JSON by the server (`Error{UnsupportedGameDataFormat}` and/or absence
+  from `ProtocolInfo.game_data_formats`) gates binary send/receive to the
+  effective format, not the request. Binary frames are also subject to the
+  same CLOSING guard as text events, so late frames cannot surface game data
+  after a user close.
 
 ### 4.7 Performance & reliability (web-safe)
 

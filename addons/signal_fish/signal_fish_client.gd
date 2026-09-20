@@ -117,6 +117,12 @@ var _reconnect_timer_running := false
 var _reconnect_delay_remaining := 0.0
 var _user_close_requested := false
 var _reconnect_rng := RandomNumberGenerator.new()
+# Effective negotiated game-data format. UNKNOWN = follow the configured
+# preference; the server may downgrade an unsupported preference to JSON at
+# Authenticate (an `Error{UnsupportedGameDataFormat}` event and/or an absence
+# from `ProtocolInfo.game_data_formats`), and binary sends/receives must
+# follow the effective format, not the request.
+var _effective_game_data_format: int = SFTypesScript.GameDataEncoding.UNKNOWN
 
 
 func configure(config: SignalFishConfigScript) -> Error:
@@ -135,6 +141,7 @@ func configure(config: SignalFishConfigScript) -> Error:
 		return ERR_INVALID_DATA
 	_config = config
 	_secrets = PackedStringArray()
+	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
 	if not config.credential.is_empty():
 		_secrets.append(config.credential)
 	# Retained reconnect identities may outlive configure() (it is allowed
@@ -339,7 +346,9 @@ func send_game_data(data) -> Error:
 ## (server `websocket/connection.rs`), so the client refuses that case
 ## locally. Pair with [member SignalFishConfig.game_data_format] =
 ## [code]"message_pack"[/code] (build payloads with [code]SFMsgpack.encode
-## [/code]) or [code]"rkyv"[/code] (bring your own reader).
+## [/code]) or [code]"rkyv"[/code] (bring your own reader). If the server
+## downgraded the requested format (see [signal protocol_info]), the
+## effective negotiation rules.
 func send_game_data_binary(bytes: PackedByteArray) -> Error:
 	var guard := _guard_session_send("send_game_data_binary")
 	if guard != OK:
@@ -355,7 +364,7 @@ func send_game_data_binary(bytes: PackedByteArray) -> Error:
 		_emit_protocol_error(
 			(
 				"send_game_data_binary requires a message_pack or rkyv game_data_format;"
-				+ " this connection negotiates json"
+				+ " this connection negotiates %s" % _game_data_format_label(negotiated)
 			)
 		)
 		return ERR_UNAVAILABLE
@@ -475,6 +484,9 @@ func _open_transport(target: String) -> Error:
 	# endpoint even when the session started with an explicit override.
 	_last_dial_url = target
 	_user_close_requested = false
+	# Each dial renegotiates the game-data format from the configured
+	# preference.
+	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
 	# A fresh dial supersedes any armed retry timer. The retry budget is NOT
 	# reset here: it resets only when a session actually re-establishes (a
 	# RoomJoined/Reconnected baseline), so exhaustion can terminate.
@@ -559,15 +571,27 @@ func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
 ## via [code]SFBinaryFrames[/code]; [code]rkyv[/code] frames are raw payload
 ## pass-through (upstream sends no envelope for them, so the sender is
 ## unknowable). Anything else is dropped with a protocol error — the link
-## stays up, matching the text-path hardening.
+## stays up, matching the text-path hardening. Upstream parity note: a
+## json-negotiated v2 recipient only ever receives game data as TEXT
+## (`BinaryFallbackV2`); json senders cannot originate binary frames because
+## the server drops them, so binary on a json connection is hostile or
+## buggy, never lost game data.
 func _handle_binary_frame(payload: PackedByteArray) -> void:
+	if _connection_state != ConnectionState.CONNECTED:
+		# Mirror the text path: while CLOSING the client only polls for the
+		# close frame; late binary frames must not surface game data (or
+		# re-arm anything) after a user close.
+		return
 	var negotiated := _negotiated_game_data_format()
 	if negotiated == SFTypesScript.GameDataEncoding.MESSAGE_PACK:
 		var frame: Dictionary = SFBinaryFramesScript.decode_envelope(payload)
 		if not frame["ok"]:
 			_emit_protocol_error(frame["error"])
 			return
-		if _config.decode_msgpack_payloads:
+		if (
+			_config.decode_msgpack_payloads
+			and (frame["encoding"] == SFTypesScript.GameDataEncoding.MESSAGE_PACK)
+		):
 			var decoded: Dictionary = SFMsgpackScript.decode(frame["payload"])
 			if decoded["ok"]:
 				game_data_received.emit(frame["from_player"], decoded["value"])
@@ -579,13 +603,58 @@ func _handle_binary_frame(payload: PackedByteArray) -> void:
 	elif negotiated == SFTypesScript.GameDataEncoding.RKYV:
 		game_data_binary_received.emit("", SFTypesScript.GameDataEncoding.RKYV, payload)
 	else:
-		_emit_protocol_error("unexpected binary frame; dropped")
+		_emit_protocol_error(
+			(
+				"binary frame on a %s-negotiated connection; dropped"
+				% _game_data_format_label(negotiated)
+			)
+		)
 
 
+## The requested format drives the wire until the server says otherwise: an
+## unsupported preference is downgraded to JSON at Authenticate (an
+## `Error{UnsupportedGameDataFormat}` event and/or absence from
+## `ProtocolInfo.game_data_formats`; server `websocket/connection.rs`).
 func _negotiated_game_data_format() -> int:
 	if _config == null:
 		return SFTypesScript.GameDataEncoding.UNKNOWN
+	if _effective_game_data_format != SFTypesScript.GameDataEncoding.UNKNOWN:
+		return _effective_game_data_format
 	return SFTypesScript.game_data_encoding_from_string(_config.game_data_format)
+
+
+func _reconcile_game_data_format(supported_formats: Array) -> void:
+	if supported_formats.is_empty():
+		# No server statement; keep following the configured preference.
+		return
+	var requested := SFTypesScript.game_data_encoding_from_string(_config.game_data_format)
+	if (
+		requested == SFTypesScript.GameDataEncoding.UNKNOWN
+		or (requested == SFTypesScript.GameDataEncoding.JSON)
+	):
+		return
+	if requested in supported_formats:
+		return
+	_downgrade_game_data_format(
+		"server game_data_formats %s does not include the requested format" % supported_formats
+	)
+
+
+## Pins the effective negotiation to JSON and explains why once. The server
+## still answers the preference mismatch itself (an `Error` event surfaces
+## through [signal server_error]); this only stops the client from sending
+## binary the server would drop.
+func _downgrade_game_data_format(reason: String) -> void:
+	if _effective_game_data_format == SFTypesScript.GameDataEncoding.JSON:
+		return
+	_effective_game_data_format = SFTypesScript.GameDataEncoding.JSON
+	SFLogScript.info("%s; falling back to json" % reason, _secrets)
+
+
+func _game_data_format_label(encoding: int) -> String:
+	if encoding == SFTypesScript.GameDataEncoding.UNKNOWN:
+		return "server-default json"
+	return SFTypesScript.game_data_encoding_to_string(encoding)
 
 
 func _on_transport_closed(code: int, reason: String) -> void:
@@ -639,6 +708,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 				# (or `reconnection_failed`) next.
 				_send_reconnect()
 		&"protocol_info":
+			_reconcile_game_data_format(event.args[0].game_data_formats)
 			protocol_info.emit(event.args[0])
 		&"authentication_error":
 			_session_state = SessionState.UNAUTHENTICATED
@@ -740,6 +810,8 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			_remove_spectator(event.args[0])
 			spectator_disconnected.emit(event.args[0], event.args[1], event.args[2])
 		&"server_error":
+			if event.args[1] == SFErrorCodesScript.Code.UNSUPPORTED_GAME_DATA_FORMAT:
+				_downgrade_game_data_format("server rejected the requested game_data_format")
 			server_error.emit(event.args[0], event.args[1])
 		_:
 			_emit_protocol_error("client has no handler for decoded event %s" % event.type_name)

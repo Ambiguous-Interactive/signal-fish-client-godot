@@ -105,10 +105,20 @@ func _test_msgpack_hostile_vectors() -> void:
 		deep = [deep]
 	var deep_encode := SFMsgpackScript.encode(deep)
 	_assert(deep_encode["ok"], false, "deep encode is rejected")
-	var deep_decode := SFMsgpackScript.decode(
-		deep_encode["bytes"] if deep_encode["ok"] else PackedByteArray()
-	)
+	# Decode-side cap: hand-crafted nest-of-arrays (fixarray markers) one
+	# level deeper than allowed.
+	var deep_bytes := PackedByteArray()
+	for _index: int in SFMsgpackScript.MAX_DEPTH + 1:
+		deep_bytes.append(0x91)
+	deep_bytes.append(0x01)
+	var deep_decode := SFMsgpackScript.decode(deep_bytes)
 	_assert(deep_decode["ok"], false, "deep decode is rejected")
+	var at_cap_bytes := PackedByteArray()
+	for _index: int in SFMsgpackScript.MAX_DEPTH:
+		at_cap_bytes.append(0x91)
+	at_cap_bytes.append(0x01)
+	var at_cap_decode := SFMsgpackScript.decode(at_cap_bytes)
+	_assert(at_cap_decode["ok"], true, "nesting at the cap decodes")
 
 
 func _test_msgpack_encode_widths() -> void:
@@ -362,6 +372,29 @@ func _test_envelope_hostile_matrix() -> void:
 				[0x85]
 			),
 		},
+		{
+			"label": "v3 float seq",
+			"bytes":
+			_envelope(
+				(
+					v2_fields
+					+ [_field("seq", _raw([0xCB, 0x3F, 0xF0, 0, 0, 0, 0, 0, 0]))]
+					+ [_field("epoch", _raw([0x2A]))]
+				),
+				[0x85]
+			),
+		},
+		{
+			"label": "v3 epoch as bin",
+			"bytes":
+			_envelope(
+				(
+					v2_fields
+					+ [_field("seq", _raw([0x2A])), _field("epoch", _raw([0xC4, 0x01, 0x2A]))]
+				),
+				[0x85]
+			),
+		},
 	]
 	for case: Dictionary in cases:
 		var result := SFBinaryFramesScript.decode_envelope(case["bytes"])
@@ -406,6 +439,27 @@ func _test_v3_envelope_matrix() -> void:
 			SFTypesScript.game_data_encoding_from_string(case["encoding"]),
 			result["encoding"],
 			"v3 %s encoding" % case["label"]
+		)
+	# A u64 stamp above i64 max wraps negative in Godot but must stay valid
+	# (rust reads u64 natively); a str8-form encoding token must be accepted.
+	var huge_stamp: Array = [0xCF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+	var str8_encoding: Array = (
+		[0xA8] + _string_codepoints("encoding") + [0xD9, 0x0C] + _string_codepoints("message_pack")
+	)
+	var bytes := _envelope(
+		[
+			_uuid_field(),
+			_raw(str8_encoding),
+			payload,
+			_field("seq", _raw(huge_stamp)),
+			_field("epoch", _raw([0xCE, 0, 0, 0, 0x2A])),
+		],
+		[0x85]
+	)
+	var result := SFBinaryFramesScript.decode_envelope(bytes)
+	if _assert(result["ok"], true, "u64-max seq and str8 token decode"):
+		_assert_equal(
+			SFTypesScript.GameDataEncoding.MESSAGE_PACK, result["encoding"], "str8 token encoding"
 		)
 
 

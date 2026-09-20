@@ -75,8 +75,31 @@ Date: 2026-09-20
 ## Verification
 
 - `bash scripts/run-runtime-checks.sh all` green (private-helpers guard,
-  gdformat, gdlint, all 4 Godot suites), including the cold-project path.
+  gdformat, gdlint, all 5 Godot suites), including the cold-project path.
 - `pwsh -NoProfile -File scripts/agent-check.ps1` green after `.llm` edits.
+- Adversarial review round 1 (zero-knowledge sub-agent, upstream-verified):
+  1 P1 / 5 P2 / 6 P3 findings, all addressed:
+  - P1 (json binary frames): verified against current server `sending.rs`
+    cohort match - a json-negotiated v2 recipient only receives game data as
+    TEXT (`BinaryFallbackV2`), and json senders cannot originate binary (the
+    server drops it), so binary on a json connection is hostile input, not
+    lost game data. Behavior kept (drop + `protocol_error`, link stays up);
+    the wire note and refusal diagnostics were made precise instead.
+  - P2: u64 stamps above i64 max no longer mis-rejected (wrapped-negative is
+    a valid huge stamp); binary frames now honor the CLOSING/CONNECTED guard
+    like text events; effective game-data format is tracked and reconciled
+    against `ProtocolInfo.game_data_formats` + `Error{
+    UnsupportedGameDataFormat}` so a server-downgraded negotiation refuses
+    binary sends/drops frames instead of dead-sending; the vacuous deep-decode
+    assertion was replaced with crafted byte vectors exercising the decode
+    depth cap; binary-send backpressure is now covered.
+  - P3: opt-in MessagePack decode gated on `encoding == message_pack`;
+    refusal/label messages precise for unset formats; truncated map32
+    headers report cleanly; str8-form encoding tokens, u64-max stamps,
+    float/bin stamp rejection covered by vectors; strictness claim scoped to
+    well-formed frames; UTF-8 leniency documented in `sf_msgpack.gd`.
+- Client binary tests moved to their own suite `tests/client/run_binary_tests.gd`
+  (gdlint 1200-line cap) wired into `scripts/run-runtime-checks.sh`.
 
 ## Follow-ups / deferred
 

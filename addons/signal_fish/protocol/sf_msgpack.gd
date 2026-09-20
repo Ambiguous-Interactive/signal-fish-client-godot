@@ -14,7 +14,11 @@ extends RefCounted
 ## map -> [code]Dictionary[/code]. Extension types are rejected (upstream
 ## game data is JSON-compatible via serde), and encode map keys must be
 ## strings because the server decodes payloads as JSON values
-## (server `websocket/sending.rs` `decode_binary_to_json`).
+## (server `websocket/sending.rs` `decode_binary_to_json`). Godot string
+## decoding is UTF-8-lenient: unlike the rust strict decoder, invalid UTF-8
+## in a hostile frame surfaces as replacement characters in decoded values
+## instead of a decode error — benign for game data, and tokens (envelope
+## keys, encoding names) still fail their exact-match checks.
 
 ## Mirrors SFEvents.MAX_MESSAGE_DEPTH: a hostile payload cannot overflow the
 ## script stack during recursive decode/encode.
