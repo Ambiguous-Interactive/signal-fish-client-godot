@@ -584,12 +584,15 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       policy (issue #29). Remaining: `addons/signal_fish/plugin.cfg`
       (`version` = git tag, validated in CI); `icon.png` square ≥128² served
       from `raw.githubusercontent.com`.
-- [ ] `.gitattributes` `export-ignore` for `/.llm /.devcontainer /.github /scripts tests/`; keep addon
-      self-contained under `addons/signal_fish/`.
-- [ ] `.github/workflows/release.yml` on `release: published`: validate `plugin.cfg version == tag` →
-      package addon zip (addons/ at root, exclude dev/test) → GitHub Release →
-      `deep-entertainment/godot-asset-lib-action@v0.6.0` with `.asset-template.json.hb` (committed
-      curl fallback). `permissions: contents: write` only on the release job.
+- [x] `.gitattributes` `export-ignore` for dev/test-only paths (`.llm`,
+      `.devcontainer`, `.github`, `scripts`, `tests`, plus `.claude`,
+      `.githooks`, `progress`); addon stays self-contained under
+      `addons/signal_fish/`.
+- [x] `.github/workflows/release.yml` (landed, issue #28; `workflow_dispatch`
+      with a `version` input): validates `vMAJOR.MINOR.PATCH`, cuts release
+      notes from the matching `CHANGELOG.md` section, packages the addon zip
+      (addons/ at root), and publishes the GitHub Release. Asset-store
+      auto-publish stays gated on the one-time Asset Library bootstrap (§10).
 - [ ] Add `.llm/skills/asset-library-release.md` documenting **one-time manual first submission +
       moderation** and the secrets (regenerate index + `agent-check.ps1`).
 - [ ] User adds secrets `GODOT_ASSET_LIBRARY_USERNAME` + `GODOT_ASSET_LIBRARY_PASSWORD` and var
@@ -691,7 +694,10 @@ WebSocketPeer smoke (network-gated, opt-in).
 
 Runner: `godot --headless --script` custom `SceneTree` suites over
 `tests/` (locked decision #4, issue #15 item 5). Codec (F) tests need no
-SceneTree.
+SceneTree. All GDScript is fully explicitly typed and CI-enforced:
+`project.godot` promotes `untyped_declaration` to error, so any untyped
+declaration fails the existing Godot suite steps (issue #35; the `unsafe_*`
+Variant-access family is a tracked follow-up).
 
 ---
 
