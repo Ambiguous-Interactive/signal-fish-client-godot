@@ -45,11 +45,10 @@ DEVCONTAINER_GROUP_KEYS = {
 # project.godot is the single source for the Godot version (read via
 # extract_godot_pin_version, so any feature list is accepted); every other
 # pin site must repeat it verbatim so a bump cannot leave one site behind.
-# The ci.yml matrix lists every tested Godot version, so the guard only
-# requires the pinned version to appear there.
+# The ci.yml test matrix lists every tested Godot version, so the guard
+# requires the pinned version to be a matrix leg (see ci_matrix_error).
 GODOT_PIN_SOURCE = "project.godot"
 GODOT_PIN_SITES = (
-    (".github/workflows/ci.yml", "{version}-stable"),
     (".devcontainer/devcontainer.json", '"GODOT_VERSION": "{version}-stable"'),
     (".devcontainer/devcontainer.json", '"GODOT_RELEASE_LABEL": "{version}"'),
     (".devcontainer/Dockerfile", "ARG GODOT_VERSION={version}-stable"),
@@ -484,6 +483,24 @@ def extract_godot_pin_version(project_text: str) -> str | None:
     return match.group(1) if match else None
 
 
+def ci_matrix_error(ci_text: str, version: str) -> str:
+    token = f"{version}-stable"
+    try:
+        data = load_yaml_text(ci_text)
+    except ConfigError:
+        return f"Godot version pin drift: .github/workflows/ci.yml does not parse as YAML"
+    node: Any = data
+    for key in ("jobs", "test", "strategy", "matrix", "godot"):
+        node = node.get(key) if isinstance(node, dict) else None
+    legs = [str(item) for item in node] if isinstance(node, list) else []
+    if token not in legs:
+        return (
+            "Godot version pin drift: .github/workflows/ci.yml test matrix must include "
+            f"{token!r} (project.godot pins {version})"
+        )
+    return ""
+
+
 def godot_pin_errors(source_texts: dict[str, str]) -> list[str]:
     version = extract_godot_pin_version(source_texts.get("project.godot", ""))
     if version is None:
@@ -496,6 +513,9 @@ def godot_pin_errors(source_texts: dict[str, str]) -> list[str]:
                 f"Godot version pin drift: {site} must contain {token!r} "
                 f"(project.godot pins {version})"
             )
+    ci_error = ci_matrix_error(source_texts.get(".github/workflows/ci.yml", ""), version)
+    if ci_error:
+        errors.append(ci_error)
     return errors
 
 
@@ -505,7 +525,9 @@ def validate_godot_pin(repo_root: Path, reporter: Reporter) -> None:
         reporter.error(f"{source_path}: missing file required for the Godot version pin check")
         return
     source_texts = {GODOT_PIN_SOURCE: source_path.read_text(encoding="utf-8")}
-    for site, _template in GODOT_PIN_SITES:
+    pin_sites = [site for site, _template in GODOT_PIN_SITES]
+    pin_sites.append(".github/workflows/ci.yml")
+    for site in pin_sites:
         path = repo_root / site
         if not path.is_file():
             reporter.error(f"{path}: missing file required for the Godot version pin check")
@@ -615,9 +637,16 @@ updates:
         if not ok:
             reporter.error("self-test: bash -n smoke check failed")
 
+        ci_matrix_yaml = (
+            "jobs:\n"
+            "    test:\n"
+            "        strategy:\n"
+            "            matrix:\n"
+            '                godot: ["4.3-stable", "4.4.1-stable"]\n'
+        )
         pin_sources = {
             "project.godot": 'config/features=PackedStringArray("4.3", "GL Compatibility")\n',
-            ".github/workflows/ci.yml": 'godot: ["4.3-stable"]\n',
+            ".github/workflows/ci.yml": ci_matrix_yaml,
             ".devcontainer/devcontainer.json": (
                 '"GODOT_VERSION": "4.3-stable",\n"GODOT_RELEASE_LABEL": "4.3"\n'
             ),
@@ -627,8 +656,18 @@ updates:
         }
         if godot_pin_errors(pin_sources):
             reporter.error("self-test: consistent Godot version pins were rejected")
+        matrix_missing = dict(pin_sources)
+        matrix_missing[".github/workflows/ci.yml"] = ci_matrix_yaml.replace(
+            '"4.3-stable", ', ""
+        )
+        matrix_errors = godot_pin_errors(matrix_missing)
+        if not any("4.3-stable" in error for error in matrix_errors):
+            reporter.error("self-test: ci.yml matrix missing the pinned Godot was not reported")
+        unparsed = dict(pin_sources)
+        unparsed[".github/workflows/ci.yml"] = "\t: :\n"
+        if not any("does not parse as YAML" in error for error in godot_pin_errors(unparsed)):
+            reporter.error("self-test: unparseable ci.yml was not reported")
         for drift_site, drifted_token in (
-            (".github/workflows/ci.yml", "4.4"),
             (".devcontainer/devcontainer.json", "4.4"),
             (".devcontainer/Dockerfile", "4.4-stable"),
         ):

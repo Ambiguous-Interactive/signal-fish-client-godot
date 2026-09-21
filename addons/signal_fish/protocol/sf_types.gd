@@ -548,9 +548,10 @@ class DecodedEvent:
 	var signal_name: StringName = &""
 	var args: Array = []
 	## Read-only view aliasing the freshly parsed wire envelope (issue #48):
-	## the client never mutates decode output, and events delivered together
-	## (e.g. entries of [code]missed_events[/code]) may share structure. Use
-	## [code]to_dict()[/code] for an independent mutable copy.
+	## the client never mutates decode output, and all decode output from one
+	## envelope shares its tree (e.g. a missed_events entry's raw is visible
+	## through the parent event's raw). Use [code]to_dict()[/code] for an
+	## independent mutable copy.
 	var raw: Dictionary = {}
 
 	func _init(

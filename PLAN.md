@@ -362,14 +362,14 @@ func close(code := 1000, reason := "") -> void
   or non-Dictionary → `protocol_error`; missing/unknown `type` → `protocol_error` (forward-compat,
   logged not fatal); per-variant builder reads `data` (default `{}`), builds typed payload via
   `from_dict` with `dict.get(key, default)` coercion. Returns `SFDecodedEvent{signal_name: StringName,
-   args: Array}`; the client updates cache then `emit_signal(...)`. Same decoder processes `missed_events`.
-   **Decode recursion is depth-bounded** (`MAX_MESSAGE_DEPTH`), and nested `Reconnected` entries inside
-   `missed_events` are rejected as non-replayable (matching the Rust client) — a hostile server cannot
-   overflow the script stack.
-   **Decode output aliases the freshly parsed envelope** (issue #48): `raw` on `DecodedEvent` and typed
-   payloads is a read-only view and may share structure across events delivered together (e.g.
-   `missed_events` entries); `to_dict()` returns the independent mutable copy. The outbound
-   user-authored `ConnectionInfo` alone keeps a construction-time snapshot.
+  args: Array}`; the client updates cache then `emit_signal(...)`. Same decoder processes `missed_events`.
+  **Decode recursion is depth-bounded** (`MAX_MESSAGE_DEPTH`), and nested `Reconnected` entries inside
+  `missed_events` are rejected as non-replayable (matching the Rust client) — a hostile server cannot
+  overflow the script stack.
+  **Decode output aliases the freshly parsed envelope** (issue #48): `raw` on `DecodedEvent` and typed
+  payloads is a read-only view; all decode output from one envelope shares its tree (e.g. a
+  `missed_events` entry's raw is visible through the parent event's raw). `to_dict()` returns the
+  independent mutable copy. The outbound user-authored `ConnectionInfo` alone keeps a snapshot.
 - **Error codes (`sf_error_codes.gd`):** single source — `enum Code` (62 upstream
   codes + the cloud-only `DATABASE_ERROR` alias, string lookups derived from the
   enum) + `from_string()`/`to_wire_string()`/`is_known()`/`category()` (per-code

@@ -8,6 +8,9 @@ CI, tests, and internal tooling are not listed.
 
 ### Changed
 
+- Decoded events and typed payloads no longer deep-copy the parsed wire
+  data: `raw` is a read-only view that may share structure across
+  `missed_events`, and `to_dict()` remains the independent mutable copy.
 - Lower steady-state and per-message allocations: idle mesh polling no longer
   allocates, and MessagePack/binary game-data decode reuses constant tables
   instead of rebuilding lookups per frame.

@@ -746,12 +746,18 @@ func _test_decode_raw_aliasing() -> void:
 	)
 	var missed: SFTypesScript.DecodedEvent = event.args[1][0]
 	_assert(is_same(missed.raw, envelope["data"]["missed_events"][0]), "missed raw aliases subtree")
+	_assert(is_same(room.raw["missed_events"][0], missed.raw), "parent raw exposes missed subtree")
 	var snapshot: Dictionary = room.to_dict()
 	snapshot["room_id"] = "mutated"
 	_assert_equal("r1", room.raw["room_id"], "to_dict copy is independent")
-	var source := {"type": "direct", "host": "127.0.0.1", "port": 7777}
-	var info := SFTypesScript.ConnectionInfo.new(source)
-	_assert(not is_same(info.raw, source), "outbound ConnectionInfo keeps its snapshot")
+	var info_source := {"type": "direct", "host": "127.0.0.1", "port": 7777}
+	var nested_player_data := _minimal_player_data()
+	nested_player_data["connection_info"] = info_source
+	var nested_player := SFTypesScript.PlayerInfo.new(nested_player_data)
+	_assert(
+		not is_same(nested_player.connection_info.raw, info_source),
+		"outbound ConnectionInfo keeps its snapshot"
+	)
 
 
 func _minimal_room_joined_data() -> Dictionary:
