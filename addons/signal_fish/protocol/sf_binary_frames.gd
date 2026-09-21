@@ -34,6 +34,12 @@ const _KNOWN_FIELDS := {
 }
 const _REQUIRED_FIELDS := ["from_player", "encoding", "payload"]
 
+## Canonical UUID strings repeat across frames from the same sender; the cache
+## trades a bounded string-build for one lookup. Cleared when full so a
+## hostile peer cannot grow it without limit.
+const _UUID_CACHE_LIMIT := 256
+static var _uuid_cache: Dictionary = {}
+
 
 ## Decodes one binary game-data envelope. Returns
 ## [code]{ok: bool, from_player: String, encoding: int, payload: PackedByteArray,
@@ -245,8 +251,11 @@ static func _read_map_header(peer: StreamPeerBuffer) -> int:
 
 ## Formats 16 UUID bytes as the canonical lowercase 8-4-4-4-12 string.
 static func _uuid_string(bytes: PackedByteArray) -> String:
+	var cached: Variant = _uuid_cache.get(bytes)
+	if cached != null:
+		return cached
 	var hex := bytes.hex_encode()
-	return (
+	var value := (
 		"%s-%s-%s-%s-%s"
 		% [
 			hex.substr(0, 8),
@@ -256,3 +265,7 @@ static func _uuid_string(bytes: PackedByteArray) -> String:
 			hex.substr(20, 12)
 		]
 	)
+	if _uuid_cache.size() >= _UUID_CACHE_LIMIT:
+		_uuid_cache.clear()
+	_uuid_cache[bytes] = value
+	return value

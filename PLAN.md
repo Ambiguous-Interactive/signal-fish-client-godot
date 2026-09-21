@@ -706,8 +706,9 @@ code fails the existing Godot suite steps (issues #35, #42).
 
 **Two sibling workflows; the harness one is never modified.**
 
-`ci.yml` (triggers: `pull_request`, `push:[main]`; `permissions: contents: read`; no concurrency
-gate needed at one job):
+`ci.yml` (triggers: `pull_request`, `push:[main]`; `permissions: contents: read`; a concurrency
+group cancels superseded `pull_request` runs so commit churn does not queue redundant runs — `push`
+runs on main are never canceled because merge checks depend on them):
 - `protocol` (single job) → `actions/checkout`, `actions/setup-python@v5` (pip cache keyed on
   `requirements-ci.txt`), apt Godot deps, venv + `gdtoolkit==4.5.0`, then
   `scripts/run-runtime-checks.sh` steps: `static` (private-helpers + `gdformat --check` +

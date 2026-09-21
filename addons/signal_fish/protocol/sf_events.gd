@@ -451,6 +451,7 @@ static func _decode_lobby_state_changed(
 		)
 	if typeof(data["ready_players"]) != TYPE_ARRAY or not _has_bool(data, "all_ready"):
 		return _protocol_error("LobbyStateChanged has invalid field types", envelope)
+	var ready_players: Array = data["ready_players"]
 	if (
 		typeof(data["lobby_state"]) != TYPE_STRING
 		or (
@@ -459,14 +460,14 @@ static func _decode_lobby_state_changed(
 		)
 	):
 		return _protocol_error("LobbyStateChanged lobby_state is unknown", envelope)
-	if not _array_contains_only_strings(data["ready_players"]):
+	if not _array_contains_only_strings(ready_players):
 		return _protocol_error("LobbyStateChanged ready_players must be strings", envelope)
 	return _event(
 		type_name,
 		&"lobby_state_changed",
 		[
 			SFTypesScript.lobby_state_from_string(data["lobby_state"]),
-			_strings_from_array(data["ready_players"]),
+			_strings_from_array(ready_players),
 			bool(data["all_ready"])
 		],
 		envelope
@@ -478,15 +479,16 @@ static func _decode_reconnected(
 ) -> RefCounted:
 	if not data.has("missed_events") or typeof(data["missed_events"]) != TYPE_ARRAY:
 		return _protocol_error("Reconnected requires missed_events", envelope)
+	var missed_source: Array = data["missed_events"]
 	var room_event := _decode_room_joined(type_name, data, envelope)
 	if room_event.signal_name == &"protocol_error":
 		return room_event
 	var missed_events: Array = []
-	var missed_count: int = data["missed_events"].size()
+	var missed_count: int = missed_source.size()
 	if missed_count > MAX_MISSED_EVENTS:
 		missed_count = MAX_MISSED_EVENTS
 	for index: int in missed_count:
-		var missed: Variant = data["missed_events"][index]
+		var missed: Variant = missed_source[index]
 		if typeof(missed) != TYPE_DICTIONARY:
 			missed_events.append(
 				_protocol_error("Reconnected missed_events[%d] must be an object" % index, missed)
@@ -515,7 +517,7 @@ static func _decode_reconnected(
 			)
 			continue
 		missed_events.append(decoded_missed)
-	if data["missed_events"].size() > MAX_MISSED_EVENTS:
+	if missed_source.size() > MAX_MISSED_EVENTS:
 		missed_events.append(
 			_protocol_error(
 				(

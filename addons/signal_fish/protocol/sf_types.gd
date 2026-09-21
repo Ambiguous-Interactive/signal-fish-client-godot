@@ -193,15 +193,9 @@ class ProtocolInfo:
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
-			match String(value):
-				"json":
-					result.append(GameDataEncoding.JSON)
-				"message_pack":
-					result.append(GameDataEncoding.MESSAGE_PACK)
-				"rkyv":
-					result.append(GameDataEncoding.RKYV)
-				_:
-					result.append(GameDataEncoding.UNKNOWN)
+			result.append(
+				int(GAME_DATA_ENCODING_FROM_STRING.get(String(value), GameDataEncoding.UNKNOWN))
+			)
 		return result
 
 	func _nonnegative_int_or_zero(value: Variant) -> int:
@@ -436,7 +430,9 @@ class RoomJoinedInfo:
 		supports_authority = bool(data.get("supports_authority", false))
 		current_players = _coerce_players(data.get("current_players", []))
 		is_authority = bool(data.get("is_authority", false))
-		lobby_state = _coerce_lobby_state(data.get("lobby_state", ""))
+		lobby_state = TypeUtils.enum_value(
+			LOBBY_STATE_FROM_STRING, data.get("lobby_state", ""), LobbyState.UNKNOWN
+		)
 		ready_players = _coerce_strings(data.get("ready_players", []))
 		relay_type = String(data.get("relay_type", ""))
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
@@ -485,19 +481,6 @@ class RoomJoinedInfo:
 			result.append(String(value))
 		return result
 
-	func _coerce_lobby_state(value: Variant) -> int:
-		if value == null:
-			return LobbyState.UNKNOWN
-		match String(value):
-			"waiting":
-				return LobbyState.WAITING
-			"lobby":
-				return LobbyState.LOBBY
-			"finalized":
-				return LobbyState.FINALIZED
-			_:
-				return LobbyState.UNKNOWN
-
 	func _string_or_empty(value: Variant) -> String:
 		if value == null:
 			return ""
@@ -524,7 +507,9 @@ class SpectatorJoinedInfo:
 		game_name = String(data.get("game_name", ""))
 		current_players = _coerce_players(data.get("current_players", []))
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
-		lobby_state = _coerce_lobby_state(data.get("lobby_state", ""))
+		lobby_state = TypeUtils.enum_value(
+			LOBBY_STATE_FROM_STRING, data.get("lobby_state", ""), LobbyState.UNKNOWN
+		)
 		reason = _coerce_spectator_reason(data.get("reason", ""))
 
 	func to_dict() -> Dictionary:
@@ -550,19 +535,6 @@ class SpectatorJoinedInfo:
 			if typeof(value) == TYPE_DICTIONARY:
 				result.append(SpectatorInfo.new(value))
 		return result
-
-	func _coerce_lobby_state(value: Variant) -> int:
-		if value == null:
-			return LobbyState.UNKNOWN
-		match String(value):
-			"waiting":
-				return LobbyState.WAITING
-			"lobby":
-				return LobbyState.LOBBY
-			"finalized":
-				return LobbyState.FINALIZED
-			_:
-				return LobbyState.UNKNOWN
 
 	func _coerce_spectator_reason(value: Variant) -> int:
 		if value == null:
@@ -1061,7 +1033,7 @@ static func _is_optional_string(data: Dictionary, key: String) -> bool:
 
 
 static func _is_nonnegative_integer(value: Variant) -> bool:
-	if not _is_integral_number(value):
+	if not TypeUtils.is_integral_number(value):
 		return false
 	return float(value) >= 0.0
 
@@ -1071,7 +1043,7 @@ static func _has_known_lobby_state(data: Dictionary, key: String) -> bool:
 
 
 static func _is_integer_value_at_least(value: Variant, min_value: int) -> bool:
-	if not _is_integral_number(value):
+	if not TypeUtils.is_integral_number(value):
 		return false
 	return float(value) >= float(min_value)
 
@@ -1080,13 +1052,6 @@ static func _is_integer_value_in_range(value: Variant, min_value: int, max_value
 	if not _is_integer_value_at_least(value, min_value):
 		return false
 	return float(value) <= float(max_value)
-
-
-static func _is_integral_number(value: Variant) -> bool:
-	if typeof(value) != TYPE_INT and typeof(value) != TYPE_FLOAT:
-		return false
-	var number := float(value)
-	return number == floor(number)
 
 
 static func _is_string_array_value(value: Variant) -> bool:

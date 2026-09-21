@@ -42,6 +42,17 @@ DEVCONTAINER_GROUP_KEYS = {
     "multi-ecosystem-group",
     "update-types",
 }
+# project.godot is the single source for the Godot version (read via
+# extract_godot_pin_version, so any feature list is accepted); every other
+# pin site must repeat it verbatim so a bump cannot leave one site behind.
+GODOT_PIN_SOURCE = "project.godot"
+GODOT_PIN_SITES = (
+    (".github/workflows/ci.yml", "GODOT_VERSION: {version}-stable"),
+    (".devcontainer/devcontainer.json", '"GODOT_VERSION": "{version}-stable"'),
+    (".devcontainer/devcontainer.json", '"GODOT_RELEASE_LABEL": "{version}"'),
+    (".devcontainer/Dockerfile", "ARG GODOT_VERSION={version}-stable"),
+    (".devcontainer/Dockerfile", "ARG GODOT_RELEASE_LABEL={version}"),
+)
 
 
 class ConfigError(Exception):
@@ -466,11 +477,48 @@ def validate_dependabot(repo_root: Path, reporter: Reporter) -> None:
     validate_dependabot_data(data, str(path), reporter)
 
 
+def extract_godot_pin_version(project_text: str) -> str | None:
+    match = re.search(r'config/features=PackedStringArray\("(\d+\.\d+)"', project_text)
+    return match.group(1) if match else None
+
+
+def godot_pin_errors(source_texts: dict[str, str]) -> list[str]:
+    version = extract_godot_pin_version(source_texts.get("project.godot", ""))
+    if version is None:
+        return ["project.godot: could not read the config/features Godot version pin"]
+    errors: list[str] = []
+    for site, template in GODOT_PIN_SITES:
+        token = template.format(version=version)
+        if token not in source_texts.get(site, ""):
+            errors.append(
+                f"Godot version pin drift: {site} must contain {token!r} "
+                f"(project.godot pins {version})"
+            )
+    return errors
+
+
+def validate_godot_pin(repo_root: Path, reporter: Reporter) -> None:
+    source_path = repo_root / GODOT_PIN_SOURCE
+    if not source_path.is_file():
+        reporter.error(f"{source_path}: missing file required for the Godot version pin check")
+        return
+    source_texts = {GODOT_PIN_SOURCE: source_path.read_text(encoding="utf-8")}
+    for site, _template in GODOT_PIN_SITES:
+        path = repo_root / site
+        if not path.is_file():
+            reporter.error(f"{path}: missing file required for the Godot version pin check")
+            return
+        source_texts[site] = path.read_text(encoding="utf-8")
+    for error in godot_pin_errors(source_texts):
+        reporter.error(error)
+
+
 def validate_repo(repo_root: Path) -> Reporter:
     reporter = Reporter()
     workflows = validate_workflows(repo_root, reporter)
     validate_auto_merge(repo_root, workflows, reporter)
     validate_dependabot(repo_root, reporter)
+    validate_godot_pin(repo_root, reporter)
     return reporter
 
 
@@ -564,6 +612,38 @@ updates:
         ok, _ = bash_syntax_check(script)
         if not ok:
             reporter.error("self-test: bash -n smoke check failed")
+
+        pin_sources = {
+            "project.godot": 'config/features=PackedStringArray("4.3", "GL Compatibility")\n',
+            ".github/workflows/ci.yml": "env:\n    GODOT_VERSION: 4.3-stable\n",
+            ".devcontainer/devcontainer.json": (
+                '"GODOT_VERSION": "4.3-stable",\n"GODOT_RELEASE_LABEL": "4.3"\n'
+            ),
+            ".devcontainer/Dockerfile": (
+                "ARG GODOT_VERSION=4.3-stable\nARG GODOT_RELEASE_LABEL=4.3\n"
+            ),
+        }
+        if godot_pin_errors(pin_sources):
+            reporter.error("self-test: consistent Godot version pins were rejected")
+        for drift_site, drifted_token in (
+            (".github/workflows/ci.yml", "4.4-stable"),
+            (".devcontainer/devcontainer.json", "4.4"),
+            (".devcontainer/Dockerfile", "4.4-stable"),
+        ):
+            drifted_sources = dict(pin_sources)
+            drifted_sources[drift_site] = pin_sources[drift_site].replace("4.3", drifted_token)
+            drifted = godot_pin_errors(drifted_sources)
+            for site, template in GODOT_PIN_SITES:
+                if site != drift_site:
+                    continue
+                token = template.format(version="4.3")
+                if not any(token in error for error in drifted):
+                    reporter.error(
+                        f"self-test: Godot version drift for {token!r} was not reported"
+                    )
+        missing_pin = godot_pin_errors({"project.godot": "no pin here\n"})
+        if not any("could not read" in error for error in missing_pin):
+            reporter.error("self-test: unreadable project.godot pin was not reported")
 
         shebang_cases = [
             ("lf", b"#!/usr/bin/env bash\nexit 0\n", None),

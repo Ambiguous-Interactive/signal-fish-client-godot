@@ -272,7 +272,7 @@ static func _add_optional_relay_transport(data: Dictionary, key: String, value: 
 static func _add_optional_u8(
 	data: Dictionary, key: String, value: Variant, min_value: int = 0
 ) -> String:
-	if not _is_integral_number(value):
+	if not SFTypeUtils.is_integral_number(value):
 		return "%s must be an integer" % key
 	var int_value := int(value)
 	if int_value < min_value or int_value > SFTypesScript.U8_MAX:
@@ -284,7 +284,7 @@ static func _add_optional_u8(
 static func _add_optional_u16(data: Dictionary, key: String, value: Variant) -> String:
 	if value == null:
 		return ""
-	if not _is_integral_number(value):
+	if not SFTypeUtils.is_integral_number(value):
 		return "%s must be an integer" % key
 	var int_value := int(value)
 	if int_value < 0 or int_value > SFTypesScript.U16_MAX:
@@ -337,7 +337,7 @@ static func _add_optional_string_list(data: Dictionary, key: String, values: Var
 
 static func _enum_token(value: Variant, from_string: Dictionary) -> String:
 	if typeof(value) == TYPE_INT or typeof(value) == TYPE_FLOAT:
-		if not _is_integral_number(value):
+		if not SFTypeUtils.is_integral_number(value):
 			return ""
 		for token: String in from_string:
 			if int(from_string[token]) == int(value):
@@ -395,10 +395,3 @@ static func _add_optional_bool(data: Dictionary, key: String, value: Variant) ->
 
 static func _invalid_message(type_name: String, error: String, data: Dictionary) -> Dictionary:
 	return SFEnvelopeScript.invalid_message(type_name, error, data)
-
-
-static func _is_integral_number(value: Variant) -> bool:
-	if typeof(value) != TYPE_INT and typeof(value) != TYPE_FLOAT:
-		return false
-	var number := float(value)
-	return number == floor(number)
