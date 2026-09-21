@@ -6,9 +6,11 @@
 > decode, raw pass-through for rkyv). Root README + auth primer shipped (#13). The v3 session-plan
 > signaling surface (capabilities in `Authenticate`, `SessionPlan`/`Signal`/`NewPeer`/
 > `PeerTransportStatus`, ICE pre-gather) has landed, and the P3 WebRTC mesh node that consumes those
-> plans is in (#32); remaining P3 is only the demo P2P example, which lands with the P4 demo.
-> Remaining after that: P4 demo + web-export smoke + full docs; remaining #15 item (Godot matrix)
-> is P5 work.
+> plans is in (#32). The P4 demo project (connect→join→game-data→leave) and the Web export preset +
+> scheduled export-smoke CI (#51-adjacent P5) have landed; remaining P4 is the network-gated headless
+> smoke test, the browser-export manual checklist, and full docs. Remaining P3 is only the demo P2P
+> example. The Godot matrix covers 4.3/4.4.1/4.7.2 (issue #51); remaining #15 item (Godot 3) is P5/P7
+> work.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -559,7 +561,9 @@ loop and exits only on its consensus criteria. Fan-out points noted.
   (Demo example tracked under P4.)
 
 ### P4 — Demo + web-export smoke + docs  *(→ context.md "first usable client" DoD met)*
-- [ ] `demo/` Godot 4 project: connect→join→game-data→leave (+ optional P2P scene).
+- [x] `demo/` Godot 4 project: `demo/main.tscn` connect→join→game-data→leave UI over the
+      shipped client API; set as the project main scene so the "Web" export preset builds the demo.
+      (Optional P2P scene still pending — tracked under P3.)
 - [ ] Headless `WebSocketPeer` smoke test (network-gated/opt-in).
 - [ ] **Browser-export manual checklist** executed & recorded: HTTPS host, `wss://`, `Origin`,
       mixed-content (`ws://` from HTTPS) rejection, single-thread export, no native-only sockets.
@@ -573,13 +577,19 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 - [x] New `.github/workflows/ci.yml` (landed during P1 and grown with the suites; custom runners via
       `scripts/run-runtime-checks.sh`). Two parallel jobs: `static` (private-helpers + gdformat +
       gdlint; no Godot install) and `test` (apt deps + cached Godot + the SceneTree suites), so
-      wall clock is max(jobs) instead of their sum. Remaining P5 work: the **web-export-smoke** job
-      (`chickensoft-games/setup-godot@v2.4.1` `use-dotnet:false include-templates:true`; `--import`;
-      `--export-release "Web"`; assert artifacts).
-- [x] **Godot version matrix** (issue #15, item 6): `test` runs 4.3-stable + 4.4.1-stable as
-      concurrent legs (full suite verified on both); wall clock stays flat because the legs run
-      in parallel. The pin-drift guard now requires the `project.godot` version to appear in the
-      matrix rather than in a single env literal.
+      wall clock is max(jobs) instead of their sum.
+- [x] **Godot version matrix** (issue #15, item 6): `test` runs 4.3-stable + 4.4.1-stable +
+      4.7.2-stable (issue #51) as concurrent legs (full suite verified on all); wall clock stays flat
+      because the legs run in parallel. The pin-drift guard requires the `project.godot` version to
+      appear in the matrix rather than in a single env literal. The apt dependency list was cut to the
+      libraries headless Godot actually loads (`libfontconfig1`, `libfreetype6`, `libudev1`;
+      verified via `/proc/<pid>/maps`), trimming ~10s off the wall-clock-critical test job. The
+      `godot` target also boots the demo scene headless on every leg.
+- [x] **Web-export smoke** (moved out of the fast gate): `.github/workflows/web-export-smoke.yml`
+      runs weekly + `workflow_dispatch`, so template-download minutes never touch pull_request/push
+      runs (same pattern as `protocol-sync.yml`). It imports the project, exports the "Web" preset
+      (the demo), asserts `index.html` + `index.wasm`, and uploads the build as an artifact. The
+      export was verified end-to-end locally against real 4.3-stable templates.
 - [x] `permissions: contents: read`; pip + Godot binary caching (`actions/setup-python` pip cache,
       `actions/cache` on `/usr/local/bin/godot` keyed by version); GDScript tooling installs via
       `uv` (issue #27; ~4× faster than the pip venv path, same pinned gdtoolkit).
@@ -723,10 +733,14 @@ runs on main are never canceled because merge checks depend on them):
     `static` (private-helpers + `gdformat --check` + `gdlint`).
   - `test` (Godot matrix) → `actions/checkout`, apt Godot deps, Godot install (cached via
     `actions/cache` on `/usr/local/bin/godot`, keyed by version), and the custom SceneTree
-    suites (`run-runtime-checks.sh godot`). Legs: 4.3-stable + 4.4.1-stable (issue #15 item 6).
-- `web-export-smoke` (pending) → `chickensoft-games/setup-godot@v2.4.1` (`use-dotnet:false`,
-  `include-templates:true`), `godot --headless --path . --import`, `godot --headless --path .
-  --export-release "Web" build/web/index.html`, assert `index.html`+`index.wasm`, upload artifact.
+    suites (`run-runtime-checks.sh godot`). Legs: 4.3-stable + 4.4.1-stable + 4.7.2-stable
+    (issue #15 item 6; issue #51).
+
+`web-export-smoke.yml` (scheduled weekly cron + `workflow_dispatch`; never on push/PR, so fast-gate
+CI time is untouched): installs Godot 4.3-stable with templates
+(`chickensoft-games/setup-godot` pinned to SHA; `use-dotnet:false`, `include-templates:true`),
+runs `godot --headless --import`, exports `--export-release "Web" build/web/index.html`
+(target folder pre-created), asserts `index.html`+`index.wasm`, and uploads the build artifact.
 
 `protocol-sync.yml` (scheduled weekly cron + `workflow_dispatch`; never on push/PR, so fast-gate
 CI time is untouched): runs `scripts/check-protocol-sync.py` to fail loudly when the upstream

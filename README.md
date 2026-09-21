@@ -106,6 +106,13 @@ Godot 4 ships WebRTC on every platform (browser exports use the browser's own),
 so the mesh needs no extra dependencies. The core server-relayed client stays
 zero-native either way.
 
+## Demo
+
+`demo/main.tscn` is a runnable connect → join → game data → leave scene. Open
+this project in the editor, press Play, fill in your server endpoint and app
+id, then Connect → Join room. It is also the target of the "Web" export preset,
+so it exports straight to a browser build.
+
 ## Development
 
 ```bash

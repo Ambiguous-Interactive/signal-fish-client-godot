@@ -50,13 +50,16 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                godot: ["4.3-stable", "4.4.1-stable"]
+                godot: ["4.3-stable", "4.4.1-stable", "4.7.2-stable"]
         env:
             GODOT_VERSION: ${{ matrix.godot }}
         steps:
             - name: Check out repository
               uses: actions/checkout@v7
 
+            # Headless Godot loads only fontconfig, freetype, and udev
+            # (verified via /proc/<pid>/maps); the X11/GL/audio stack is never
+            # loaded, so installing it only wastes CI minutes.
             - name: Install Godot runtime dependencies
               run: |
                   sudo apt-get update
@@ -66,17 +69,6 @@ jobs:
                     unzip \
                     libfontconfig1 \
                     libfreetype6 \
-                    libx11-6 \
-                    libxcursor1 \
-                    libxext6 \
-                    libxi6 \
-                    libxinerama1 \
-                    libxrandr2 \
-                    libgl1 \
-                    libglu1-mesa \
-                    libasound2t64 \
-                    libpulse0 \
-                    libdbus-1-3 \
                     libudev1
 
             - name: Cache Godot binary
