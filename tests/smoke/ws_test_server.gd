@@ -189,7 +189,7 @@ func _parse_frame() -> Dictionary:
 		for i in range(2, 10):
 			length = (length << 8) | _buffer[i]
 		offset = 10
-	if length > MAX_BUFFER_BYTES:
+	if length < 0 or length > MAX_BUFFER_BYTES:
 		_drop_connection()
 		return {}
 	var mask := PackedByteArray()

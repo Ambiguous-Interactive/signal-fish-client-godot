@@ -66,12 +66,17 @@ func get_buffered_amount() -> int
 ```
 
 `is_connected()` is `is_connected_to_server()`: Godot's `Object.is_connected`
-cannot be shadowed.
+cannot be shadowed. The static `insecure_scheme_error(url, is_web_platform,
+secure_page)` predials `ws://`-from-HTTPS checks so browser mixed-content is a
+loud local error.
 
-## Send methods (1:1 with client messages)
+## Send methods
 
 Each returns `Error`; room commands require authentication (pre-auth emits
-`protocol_error` and returns `ERR_UNAUTHORIZED`, nothing is sent).
+`protocol_error` and returns `ERR_UNAUTHORIZED`, nothing is sent). The 12 v2
+client messages map to these (Authenticate is sent automatically on open);
+`send_signal`/`send_transport_status` are the v3 additions, and
+`send_game_data_binary` rides the negotiated binary-frame route.
 
 ```gdscript
 func join_room(params: JoinRoomParams) -> Error

@@ -20,9 +20,11 @@ addons/signal_fish/
   plugin.cfg / plugin.gd / icon.png / README.md / LICENSE
   protocol/                 # PURE static; no Node, no transport imports
     sf_envelope.gd          #   {type,data} <-> JSON
-    sf_messages.gd          #   builders for the 12 client messages
+    sf_messages.gd          #   builders for the client messages (12 v2 + v3
+                            #   signal/transport-status)
     sf_events.gd            #   server Dictionary -> SFDecodedEvent (malformed-safe)
     sf_types.gd             #   typed value objects + enums
+    sf_type_utils.gd        #   shared decode depth cap + Variant coercion helpers
     sf_session_types.gd     #   v3 session-plan value objects + enums
     sf_game_data_format.gd  #   pure game-data-format negotiation
     sf_error_codes.gd       #   enum Code + string<->code + category()
