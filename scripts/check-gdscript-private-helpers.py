@@ -68,6 +68,7 @@ GODOT_PRIVATE_ROOTS = {
     "_export_begin",
     "_export_end",
     "_export_file",
+    "_finalize",
     "_forward_3d_draw_over_viewport",
     "_forward_3d_force_draw_over_viewport",
     "_forward_3d_gui_input",
@@ -107,6 +108,7 @@ GODOT_PRIVATE_ROOTS = {
     "_has_main_screen",
     "_has_point",
     "_init",
+    "_initialize",
     "_input",
     "_input_event",
     "_integrate_forces",
@@ -690,6 +692,23 @@ def run_self_tests() -> None:
             "custom _run is not a root",
             "func public():\n\tpass\n\nfunc _run():\n\tpass\n",
             {"_run"},
+        ),
+        (
+            "mainloop _initialize root reaches awaited chain",
+            (
+                "func _initialize():\n"
+                "\t_run()\n\n"
+                "func _run():\n"
+                "\tawait _wait()\n\n"
+                "func _wait():\n"
+                "\tpass\n"
+            ),
+            set(),
+        ),
+        (
+            "mainloop _finalize root reaches private",
+            "func _finalize():\n\t_teardown()\n\nfunc _teardown():\n\tpass\n",
+            set(),
         ),
         (
             "dynamic call edge",

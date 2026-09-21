@@ -7,8 +7,9 @@
 > signaling surface (capabilities in `Authenticate`, `SessionPlan`/`Signal`/`NewPeer`/
 > `PeerTransportStatus`, ICE pre-gather) has landed, and the P3 WebRTC mesh node that consumes those
 > plans is in (#32). The P4 demo project (connect→join→game-data→leave) and the Web export preset +
-> scheduled export-smoke CI (#51-adjacent P5) have landed; remaining P4 is the network-gated headless
-> smoke test, the browser-export manual checklist, and full docs. P3 is complete (demo P2P example
+> scheduled export-smoke CI (#51-adjacent P5) have landed; the network-gated headless
+> `WebSocketPeer` smoke test landed as opt-in `run-runtime-checks.sh smoke`. Remaining P4 is the
+> browser-export manual checklist and the full API reference. P3 is complete (demo P2P example
 > landed). P6 store automation is in: addon packaging (plugin.cfg/plugin.gd/icon) + release.yml
 > Asset Library submission, credential-gated (#57); the store entry waits on the one-time manual
 > bootstrap (see `.llm/skills/asset-library-release.md`). The Godot matrix covers 4.3/4.4.1/4.7.2
@@ -314,8 +315,10 @@ enum SessionState   { UNAUTHENTICATED, AUTHENTICATING, AUTHENTICATED,
                       IN_ROOM_WAITING, IN_ROOM_LOBBY, IN_ROOM_FINALIZED, SPECTATING }
 ```
 
-- **Connection** matches the `.llm/code-samples/gdscript-client-shape.md` sketch (DISCONNECTED idle,
-  CLOSED = observed close frame, FAILED = client abstraction). Keep polling while CLOSING to read
+- **Connection** matches the shipped `ConnectionState` (DISCONNECTED idle,
+  CLOSED = observed close frame, FAILED = client abstraction); the
+  `.llm/code-samples/gdscript-client-shape.md` page now mirrors the shipped
+  API. Keep polling while CLOSING to read
   `get_close_code()`/`get_close_reason()`; map `-1` (abnormal/no close frame) through as-is.
 - **Session** layers the protocol on top (independent of connection). Lobby transitions are
   **server-driven** (from `RoomJoined`/`LobbyStateChanged`/`Reconnected`); the client never
@@ -570,12 +573,15 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 - [x] `demo/` Godot 4 project: `demo/main.tscn` connect→join→game-data→leave UI over the
       shipped client API; set as the project main scene so the "Web" export preset builds the demo.
       The P3 P2P example scene lives in `demo/p2p.tscn`.
-- [ ] Headless `WebSocketPeer` smoke test (network-gated/opt-in).
+- [x] Headless `WebSocketPeer` smoke test (network-gated/opt-in): `tests/smoke/` runs a local
+      RFC 6455 server (text/binary echo, close handshakes both directions) and drives the real
+      `SFWebSocketTransport` — open, echo round-trips, client+server close code/reason surfacing,
+      refused-dial terminal failure. Opt-in via `run-runtime-checks.sh smoke`, never in fast gates.
 - [ ] **Browser-export manual checklist** executed & recorded: HTTPS host, `wss://`, `Origin`,
       mixed-content (`ws://` from HTTPS) rejection, single-thread export, no native-only sockets.
 - [x] `README.md` + quickstart + auth primer shipped early (issue #13; snippets verified against
-      the shipped API). Remaining: full API reference and `icon.png`.
-- [ ] Update `.llm/code-samples/gdscript-client-shape.md` to the shipped API; add
+      the shipped API). Remaining: full API reference (`icon.png` landed with #57).
+- [x] Update `.llm/code-samples/gdscript-client-shape.md` to the shipped API; add
       `.llm/skills/runtime-architecture.md` (regenerate index + `agent-check.ps1`).
 - **DoD:** demo runs in editor + exports to web; docs accurate; all five context.md DoD items met.
 
@@ -680,7 +686,7 @@ decision (architectural-planning Decision Gates) rather than looping forever.
   3. Commit regenerated `.llm/index.md` + `.llm/context.md` **with** the source edit (CI does
      `git diff --exit-code` on them).
 - New `.llm` files by phase: `research/protocol-fixtures.md` (P0); `skills/reconnection-replay.md` (P2);
-  `skills/runtime-architecture.md` + update `code-samples/gdscript-client-shape.md` (P4);
+  `skills/runtime-architecture.md` + update `code-samples/gdscript-client-shape.md` (P4, landed);
   `skills/asset-library-release.md` (P6).
 - Don't edit `scripts/lib/LlmHarness.psm1` / hook scripts during runtime phases; if unavoidable, run
   `run-llm-hooks.ps1 -Mode Full -Profile` first. Stop-hook preflight + PostToolUse parse-checks fire only

@@ -107,6 +107,16 @@ copy_cold_project() {
 	printf '%s\n' "${cold_project}"
 }
 
+run_godot_script() {
+	local script_path="$1"
+	local cold_parent cold_project
+	cold_parent="$(make_cold_parent)"
+	# Register cleanup in this shell; copy_cold_project returns the project path via stdout.
+	cleanup_paths+=("${cold_parent}")
+	cold_project="$(copy_cold_project "${cold_parent}")"
+	godot --headless --path "${cold_project}" --script "${script_path}"
+}
+
 run_godot() {
 	local cold_parent cold_project
 	cold_parent="$(make_cold_parent)"
@@ -120,6 +130,10 @@ run_godot() {
 	godot --headless --path "${cold_project}" --script tests/client/run_reconnect_tests.gd
 	godot --headless --path "${cold_project}" --quit-after 3
 	godot --headless --path "${cold_project}" res://demo/p2p.tscn --quit-after 3
+}
+
+run_smoke() {
+	run_godot_script tests/smoke/run_websocket_smoke.gd
 }
 
 case "${target}" in
@@ -142,8 +156,11 @@ case "${target}" in
 	godot)
 		run_godot
 		;;
+	smoke)
+		run_smoke
+		;;
 	*)
-		echo "usage: $0 [all|static|private-helpers|format|lint|godot]" >&2
+		echo "usage: $0 [all|static|private-helpers|format|lint|godot|smoke]" >&2
 		exit 2
 		;;
 esac
