@@ -53,8 +53,26 @@ run_lint() {
 
 run_static() {
 	run_private_helpers
-	run_format
-	run_lint
+	# gdformat and gdlint are independent; run both concurrently and report
+	# each tool's output verbatim after both finish.
+	local format_output lint_output format_rc lint_rc
+	format_output="$(mktemp)"
+	lint_output="$(mktemp)"
+	run_format >"${format_output}" 2>&1 &
+	local format_pid=$!
+	run_lint >"${lint_output}" 2>&1 &
+	local lint_pid=$!
+	format_rc=0
+	wait "${format_pid}" || format_rc=$?
+	lint_rc=0
+	wait "${lint_pid}" || lint_rc=$?
+	cat "${format_output}"
+	rm -f "${format_output}"
+	cat "${lint_output}"
+	rm -f "${lint_output}"
+	if [[ "${format_rc}" -ne 0 || "${lint_rc}" -ne 0 ]]; then
+		return 1
+	fi
 }
 
 make_cold_parent() {

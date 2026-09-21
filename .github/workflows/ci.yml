@@ -25,13 +25,26 @@ jobs:
               uses: actions/checkout@v7
 
             - name: Set up Python (with pip cache)
+              id: setup-python
               uses: actions/setup-python@v5
               with:
                   python-version: "3.x"
                   cache: pip
                   cache-dependency-path: requirements-ci.txt
 
+            # The venv is rebuilt only when the pinned tooling or the resolved
+            # Python version changes; otherwise restore and run directly.
+            - name: Cache GDScript tooling venv
+              id: venv-cache
+              uses: actions/cache@v4
+              with:
+                  path: .venv-ci
+                  key:
+                      venv-ci-${{ runner.os }}-${{ steps.setup-python.outputs.python-version
+                      }}-${{ hashFiles('requirements-ci.txt') }}
+
             - name: Install GDScript tooling
+              if: steps.venv-cache.outputs.cache-hit != 'true'
               run: |
                   python3 -m pip install uv
                   python3 -m uv venv .venv-ci
@@ -59,17 +72,21 @@ jobs:
 
             # Headless Godot loads only fontconfig, freetype, and udev
             # (verified via /proc/<pid>/maps); the X11/GL/audio stack is never
-            # loaded, so installing it only wastes CI minutes.
+            # loaded, so installing it only wastes CI minutes. Runner images
+            # often already carry the three libraries, so skip apt entirely
+            # when dpkg confirms they are present.
             - name: Install Godot runtime dependencies
               run: |
-                  sudo apt-get update
-                  sudo apt-get install -y --no-install-recommends \
-                    ca-certificates \
-                    curl \
-                    unzip \
-                    libfontconfig1 \
-                    libfreetype6 \
-                    libudev1
+                  if ! dpkg -s libfontconfig1 libfreetype6 libudev1 >/dev/null 2>&1; then
+                    sudo apt-get update
+                    sudo apt-get install -y --no-install-recommends \
+                      ca-certificates \
+                      curl \
+                      unzip \
+                      libfontconfig1 \
+                      libfreetype6 \
+                      libudev1
+                  fi
 
             - name: Cache Godot binary
               id: godot-cache
