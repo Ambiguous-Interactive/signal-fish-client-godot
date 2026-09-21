@@ -16,15 +16,10 @@ concurrency:
     cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-    protocol:
-        name: Protocol checks
+    static:
+        name: Static checks
         runs-on: ubuntu-24.04
-        # The whole matrix historically finishes in ~1 minute; a hang (e.g. a
-        # test runner crashing without quit()) must fail fast, not idle into
-        # the 360-minute GitHub default.
         timeout-minutes: 10
-        env:
-            GODOT_VERSION: 4.3-stable
         steps:
             - name: Check out repository
               uses: actions/checkout@v7
@@ -35,6 +30,32 @@ jobs:
                   python-version: "3.x"
                   cache: pip
                   cache-dependency-path: requirements-ci.txt
+
+            - name: Install GDScript tooling
+              run: |
+                  python3 -m pip install uv
+                  python3 -m uv venv .venv-ci
+                  python3 -m uv pip install --python .venv-ci/bin/python -r requirements-ci.txt
+
+            - name: Check GDScript (helpers, format, lint)
+              run: bash scripts/run-runtime-checks.sh static
+
+    test:
+        name: Godot ${{ matrix.godot }} tests
+        runs-on: ubuntu-24.04
+        # The whole matrix historically finishes in ~1 minute; a hang (e.g. a
+        # test runner crashing without quit()) must fail fast, not idle into
+        # the 360-minute GitHub default.
+        timeout-minutes: 10
+        strategy:
+            fail-fast: false
+            matrix:
+                godot: ["4.3-stable", "4.4.1-stable"]
+        env:
+            GODOT_VERSION: ${{ matrix.godot }}
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
 
             - name: Install Godot runtime dependencies
               run: |
@@ -57,15 +78,6 @@ jobs:
                     libpulse0 \
                     libdbus-1-3 \
                     libudev1
-
-            - name: Install GDScript tooling
-              run: |
-                  python3 -m pip install uv
-                  python3 -m uv venv .venv-ci
-                  python3 -m uv pip install --python .venv-ci/bin/python -r requirements-ci.txt
-
-            - name: Check GDScript (helpers, format, lint)
-              run: bash scripts/run-runtime-checks.sh static
 
             - name: Cache Godot binary
               id: godot-cache

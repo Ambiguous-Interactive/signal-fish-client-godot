@@ -45,9 +45,11 @@ DEVCONTAINER_GROUP_KEYS = {
 # project.godot is the single source for the Godot version (read via
 # extract_godot_pin_version, so any feature list is accepted); every other
 # pin site must repeat it verbatim so a bump cannot leave one site behind.
+# The ci.yml matrix lists every tested Godot version, so the guard only
+# requires the pinned version to appear there.
 GODOT_PIN_SOURCE = "project.godot"
 GODOT_PIN_SITES = (
-    (".github/workflows/ci.yml", "GODOT_VERSION: {version}-stable"),
+    (".github/workflows/ci.yml", "{version}-stable"),
     (".devcontainer/devcontainer.json", '"GODOT_VERSION": "{version}-stable"'),
     (".devcontainer/devcontainer.json", '"GODOT_RELEASE_LABEL": "{version}"'),
     (".devcontainer/Dockerfile", "ARG GODOT_VERSION={version}-stable"),
@@ -615,7 +617,7 @@ updates:
 
         pin_sources = {
             "project.godot": 'config/features=PackedStringArray("4.3", "GL Compatibility")\n',
-            ".github/workflows/ci.yml": "env:\n    GODOT_VERSION: 4.3-stable\n",
+            ".github/workflows/ci.yml": 'godot: ["4.3-stable"]\n',
             ".devcontainer/devcontainer.json": (
                 '"GODOT_VERSION": "4.3-stable",\n"GODOT_RELEASE_LABEL": "4.3"\n'
             ),
@@ -626,7 +628,7 @@ updates:
         if godot_pin_errors(pin_sources):
             reporter.error("self-test: consistent Godot version pins were rejected")
         for drift_site, drifted_token in (
-            (".github/workflows/ci.yml", "4.4-stable"),
+            (".github/workflows/ci.yml", "4.4"),
             (".devcontainer/devcontainer.json", "4.4"),
             (".devcontainer/Dockerfile", "4.4-stable"),
         ):
