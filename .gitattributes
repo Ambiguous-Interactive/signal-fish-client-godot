@@ -57,3 +57,4 @@ Dockerfile  text eol=lf
 /progress      export-ignore
 /scripts       export-ignore
 /tests         export-ignore
+/.asset-template.json.hb export-ignore

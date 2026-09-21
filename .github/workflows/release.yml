@@ -89,3 +89,39 @@ jobs:
                       --title "$VERSION" \
                       --notes-file release-notes.md \
                       "signal-fish-godot-${VERSION}.zip"
+
+    publish-asset-store:
+        name: Submit Asset Library edit
+        needs: release
+        runs-on: ubuntu-24.04
+        permissions:
+            contents: read
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Gate on Asset Library credentials
+              id: gate
+              env:
+                  ASSET_USERNAME: ${{ secrets.GODOT_ASSET_LIBRARY_USERNAME }}
+                  ASSET_PASSWORD: ${{ secrets.GODOT_ASSET_LIBRARY_PASSWORD }}
+                  ASSET_ID: ${{ vars.GODOT_ASSET_LIBRARY_ASSET_ID }}
+                  VERSION: ${{ inputs.version }}
+              run: |
+                  if [ -z "$ASSET_USERNAME" ] || [ -z "$ASSET_PASSWORD" ] || [ -z "$ASSET_ID" ]; then
+                      echo "Asset Library credentials not configured; skipping the store submission (see .llm/skills/asset-library-release.md)."
+                      echo "available=false" >> "$GITHUB_OUTPUT"
+                      exit 0
+                  fi
+                  echo "available=true" >> "$GITHUB_OUTPUT"
+                  echo "RELEASE_VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+                  echo "RELEASE_TAG=$VERSION" >> "$GITHUB_ENV"
+
+            - name: Submit Asset Library edit
+              if: steps.gate.outputs.available == 'true'
+              uses: deep-entertainment/godot-asset-lib-action@056fa4060f062a8b209a5a6744a2726ad48d6bb0 # v0.6.0
+              with:
+                  username: ${{ secrets.GODOT_ASSET_LIBRARY_USERNAME }}
+                  password: ${{ secrets.GODOT_ASSET_LIBRARY_PASSWORD }}
+                  assetId: ${{ vars.GODOT_ASSET_LIBRARY_ASSET_ID }}
+                  assetTemplate: .asset-template.json.hb
