@@ -22,6 +22,8 @@ CI, tests, and internal tooling are not listed.
 
 ### Added
 
+- Documentation site: release runbook for the Godot Asset Library (one-time
+  first submission, secrets setup, automated per-release updates).
 - Documentation site: branded MkDocs Material site published to GitHub
   Pages on every push to main. Covers quick start, the full client API
   reference, events, errors, game data, reconnection, web export,

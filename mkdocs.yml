@@ -129,4 +129,5 @@ nav:
   - Multiplayer Choices:
       - Mesh (v3): mesh-guide.md
   - Advanced Reference:
+      - Release Operations: releasing.md
       - Brand & Font Attribution: attributions.md

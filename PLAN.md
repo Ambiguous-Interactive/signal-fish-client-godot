@@ -595,6 +595,11 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       `--strict` and deploys on main; `docs-validation.yml` gates PRs with
       markdownlint, lychee link check, and a strict render + nav-page check.
       Repo-wide markdownlint config landed with the lint debt fixed.
+      PRs are additionally gated by Playwright accessibility checks (ported
+      from the rust client, issue #67): keyboard focus traps, drawer/search
+      ARIA behavior, and responsive boundaries run against the built site
+      (`scripts/check-docs-accessibility.cjs` in `docs-validation.yml`).
+      A release-operations runbook (issue #65) lives at `docs/releasing.md`.
 - [x] Update `.llm/code-samples/gdscript-client-shape.md` to the shipped API; add
       `.llm/skills/runtime-architecture.md` (regenerate index + `agent-check.ps1`).
 - **DoD:** demo runs in editor + exports to web; docs accurate; all five context.md DoD items met.
