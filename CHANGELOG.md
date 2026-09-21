@@ -22,6 +22,9 @@ CI, tests, and internal tooling are not listed.
 
 ### Added
 
+- `demo/main.tscn`: runnable demo scene (connect → join → game data → leave)
+  with a log of client events, set as the project main scene. A "Web" export
+  preset builds the demo straight to a browser build.
 - `SFWebRTCMesh` node (opt-in): turns negotiated v3 session plans into a
   `WebRTCMultiplayerPeer` mesh for high-level multiplayer RPCs. The server
   decides who offers; ICE lists are replaced on every plan; peers are rebuilt

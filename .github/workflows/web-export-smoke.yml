@@ -1,0 +1,52 @@
+name: Web Export Smoke
+
+# Kept off the fast gate (pull_request/push): template downloads make this
+# job minutes long, while the fast gate stays seconds. A weekly run plus
+# on-demand dispatch catches export breakage without slowing every PR.
+on:
+    schedule:
+        # Mondays 07:00 UTC, after Protocol Sync. GitHub disables schedule
+        # triggers after ~60 days without repo activity; dispatch runs keep
+        # it recoverable.
+        - cron: "0 7 * * 1"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    web-export:
+        name: Export demo to web
+        runs-on: ubuntu-24.04
+        timeout-minutes: 15
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Install Godot with export templates
+              uses: chickensoft-games/setup-godot@f166999204a4f2722c6fe042fbaa3b3ea0d9c789 # v2.4.1
+              with:
+                  godot-version: 4.3-stable
+                  include-templates: true
+                  use-dotnet: false
+
+            - name: Import project
+              run: godot --headless --import --path .
+
+            - name: Export web build
+              # The exporter refuses a missing target folder on a fresh checkout.
+              run: |
+                  mkdir -p build/web
+                  godot --headless --path . --export-release "Web" build/web/index.html
+
+            - name: Verify artifacts
+              run: |
+                  test -f build/web/index.html
+                  test -f build/web/index.wasm
+                  ls -la build/web
+
+            - name: Upload web build
+              uses: actions/upload-artifact@v4
+              with:
+                  name: web-export
+                  path: build/web

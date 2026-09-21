@@ -6,6 +6,7 @@ __pycache__/
 
 # Godot-specific ignores
 .import/
+build/
 export.cfg
 export_credentials.cfg
 *.tmp

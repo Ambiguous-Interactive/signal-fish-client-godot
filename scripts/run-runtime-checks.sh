@@ -40,15 +40,15 @@ python_bin="${PYTHON:-python3}"
 target="${1:-all}"
 
 run_private_helpers() {
-	"${python_bin}" scripts/check-gdscript-private-helpers.py --self-test addons/signal_fish tests
+	"${python_bin}" scripts/check-gdscript-private-helpers.py --self-test addons/signal_fish tests demo
 }
 
 run_format() {
-	gdformat --diff --check addons/signal_fish tests
+	gdformat --diff --check addons/signal_fish tests demo
 }
 
 run_lint() {
-	gdlint addons/signal_fish tests
+	gdlint addons/signal_fish tests demo
 }
 
 run_static() {
