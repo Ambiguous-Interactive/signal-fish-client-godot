@@ -104,4 +104,5 @@ func _on_game_data_received(from_player: String, data: Variant) -> void:
 
 
 func _log_line(line: String) -> void:
-	_log.append_text(line + "\n")
+	# Raw text: peer-supplied strings must not parse as BBCode or forge lines.
+	_log.add_text(line + "\n")
