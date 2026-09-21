@@ -78,4 +78,3 @@ Every plan should leave the implementer with a verification checklist:
 - `.llm/skills/web-export.md` for browser export constraints.
 - `.llm/skills/testing-automation.md` for validation and CI guidance.
 - `.llm/code-samples/gdscript-client-shape.md` for the current API sketch.
-

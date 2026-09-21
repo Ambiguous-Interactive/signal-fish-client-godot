@@ -15,9 +15,9 @@ state, authentication, reconnection, or upstream compatibility.
 
 Check upstream before guessing:
 
-- Server: https://github.com/Ambiguous-Interactive/signal-fish-server
-- Rust client: https://github.com/Ambiguous-Interactive/signal-fish-client-rust
-- Cloud: https://github.com/Ambiguous-Interactive/signal-fish-cloud
+- Server: <https://github.com/Ambiguous-Interactive/signal-fish-server>
+- Rust client: <https://github.com/Ambiguous-Interactive/signal-fish-client-rust>
+- Cloud: <https://github.com/Ambiguous-Interactive/signal-fish-cloud>
 - Curated notes: `.llm/research/protocol-links.md`
 
 ## Implementation Rules
@@ -55,4 +55,3 @@ Check upstream before guessing:
 - Add integration tests only after deterministic unit coverage exists.
 - Use fake transport adapters for reconnect, close, and backpressure tests
   before adding live WebSocket tests.
-

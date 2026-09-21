@@ -13,7 +13,7 @@ Node is the only place protocol and transport meet. Everything is driven from
 
 ## Layer map
 
-```
+```text
 addons/signal_fish/
   signal_fish_client.gd     # class_name SignalFishClient (Node) — PUBLIC API
   signal_fish_config.gd     # class_name SignalFishConfig (Resource)

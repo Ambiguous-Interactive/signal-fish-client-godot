@@ -13,25 +13,25 @@ docs. When pinning implementation behavior, cite versioned docs for the target
 engine line, such as Godot 4.x `WebSocketPeer` or Godot 3.6 `WebSocketClient`.
 
 - Godot high-level multiplayer:
-  https://docs.godotengine.org/en/stable/tutorials/networking/high_level_multiplayer.html
+  <https://docs.godotengine.org/en/stable/tutorials/networking/high_level_multiplayer.html>
 - Godot WebSocket tutorial:
-  https://docs.godotengine.org/en/stable/tutorials/networking/websocket.html
+  <https://docs.godotengine.org/en/stable/tutorials/networking/websocket.html>
 - Godot `WebSocketPeer`:
-  https://docs.godotengine.org/en/stable/classes/class_websocketpeer.html
+  <https://docs.godotengine.org/en/stable/classes/class_websocketpeer.html>
 - Godot `WebSocketMultiplayerPeer`:
-  https://docs.godotengine.org/en/stable/classes/class_websocketmultiplayerpeer.html
+  <https://docs.godotengine.org/en/stable/classes/class_websocketmultiplayerpeer.html>
 - Godot WebRTC tutorial:
-  https://docs.godotengine.org/en/stable/tutorials/networking/webrtc.html
+  <https://docs.godotengine.org/en/stable/tutorials/networking/webrtc.html>
 - Godot `WebRTCMultiplayerPeer`:
-  https://docs.godotengine.org/en/stable/classes/class_webrtcmultiplayerpeer.html
+  <https://docs.godotengine.org/en/stable/classes/class_webrtcmultiplayerpeer.html>
 - Godot web export docs:
-  https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_web.html
+  <https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_web.html>
 - Godot 4.3 web export progress:
-  https://godotengine.org/article/progress-report-web-export-in-4-3/
+  <https://godotengine.org/article/progress-report-web-export-in-4-3/>
 - Godot WebRTC article:
-  https://evanwildenha.in/posts/godot_webrtc/
+  <https://evanwildenha.in/posts/godot_webrtc/>
 - Godot WebRTC native extension:
-  https://github.com/godotengine/webrtc-native
+  <https://github.com/godotengine/webrtc-native>
 
 ## Current Conclusions
 

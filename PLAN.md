@@ -8,8 +8,10 @@
 > `PeerTransportStatus`, ICE pre-gather) has landed, and the P3 WebRTC mesh node that consumes those
 > plans is in (#32). The P4 demo project (connect→join→game-data→leave) and the Web export preset +
 > scheduled export-smoke CI (#51-adjacent P5) have landed; the network-gated headless
-> `WebSocketPeer` smoke test landed as opt-in `run-runtime-checks.sh smoke`. Remaining P4 is the
-> browser-export manual checklist and the full API reference. P3 is complete (demo P2P example
+> `WebSocketPeer` smoke test landed as opt-in `run-runtime-checks.sh smoke`. A branded MkDocs
+> Material docs site (issue #64) is published to GitHub Pages on every push to main (`docs/`,
+> `mkdocs.yml`, `docs-deploy.yml`, `docs-validation.yml`). Remaining P4 is the
+> browser-export manual checklist. P3 is complete (demo P2P example
 > landed). P6 store automation is in: addon packaging (plugin.cfg/plugin.gd/icon) + release.yml
 > Asset Library submission, credential-gated (#57); the store entry waits on the one-time manual
 > bootstrap (see `.llm/skills/asset-library-release.md`). The Godot matrix covers 4.3/4.4.1/4.7.2
@@ -156,7 +158,7 @@ client Node is the only place protocol and transport meet. Polling model: everyt
 
 ### 4.1 File layout
 
-```
+```text
 addons/signal_fish/
   plugin.cfg                      # name, version(==git tag), author, script=plugin.gd, icon
   plugin.gd                       # @tool EditorPlugin (editor convenience only)
@@ -287,7 +289,8 @@ signal peer_transport_status(peer_id: String, transport: SFSessionTypes.Transpor
 
 - **Inbound structured payloads → typed `RefCounted` value objects** (`PlayerInfo`, `SpectatorInfo`,
   `RoomJoinedInfo`, `SpectatorJoinedInfo`, `PeerConnectionInfo`, `RateLimitInfo`, `ConnectionInfo`,
-  `ProtocolInfo`) with `from_dict()` / `to_dict()`. Gives autocomplete + typo safety; not `Resource`
+  `ProtocolInfo`) built from the wire dictionary on decode, with `to_dict()`.
+  Gives autocomplete + typo safety; not `Resource`
   (avoid `.tres`/editor baggage for transient data).
 - **Closed sets → GDScript `enum`** (`LobbyState`, `GameDataEncoding`, `RelayTransport`,
   `SpectatorReason`, `SFErrorCodes.Code`) + string⇄enum tables in the owning class.
@@ -370,8 +373,10 @@ func close(code := 1000, reason := "") -> void
   `SFBinaryCodec`.
 - **Decode (never crash):** non-text frame → `protocol_error`, keep alive; `JSON.parse_string` failure
   or non-Dictionary → `protocol_error`; missing/unknown `type` → `protocol_error` (forward-compat,
-  logged not fatal); per-variant builder reads `data` (default `{}`), builds typed payload via
-  `from_dict` with `dict.get(key, default)` coercion. Returns `SFDecodedEvent{signal_name: StringName,
+  logged not fatal); per-variant builder reads `data` (default `{}`) with
+  `dict.get(key, default)` coercion and builds the typed payload in its
+  `_init` (shipped shape; `to_dict()` is the mutable copy). Returns
+  `SFDecodedEvent{signal_name: StringName,
   args: Array}`; the client updates cache then `emit_signal(...)`. Same decoder processes `missed_events`.
   **Decode recursion is depth-bounded** (`MAX_MESSAGE_DEPTH`), and nested `Reconnected` entries inside
   `missed_events` are rejected as non-replayable (matching the Rust client) — a hostile server cannot
@@ -580,7 +585,16 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 - [ ] **Browser-export manual checklist** executed & recorded: HTTPS host, `wss://`, `Origin`,
       mixed-content (`ws://` from HTTPS) rejection, single-thread export, no native-only sockets.
 - [x] `README.md` + quickstart + auth primer shipped early (issue #13; snippets verified against
-      the shipped API). Remaining: full API reference (`icon.png` landed with #57).
+      the shipped API). The full API reference lives in the docs site (issue #64;
+      `icon.png` landed with #57).
+- [x] Branded docs site on GitHub Pages (issue #64): MkDocs Material with the
+      shared Signal Fish branding (fonts, vector banner, oceanic palette,
+      accessibility overrides), quick start, client API reference, events,
+      errors, game data, reconnection, web export, testing, and mesh guides;
+      `llms.txt` published at the site root. `docs-deploy.yml` builds
+      `--strict` and deploys on main; `docs-validation.yml` gates PRs with
+      markdownlint, lychee link check, and a strict render + nav-page check.
+      Repo-wide markdownlint config landed with the lint debt fixed.
 - [x] Update `.llm/code-samples/gdscript-client-shape.md` to the shipped API; add
       `.llm/skills/runtime-architecture.md` (regenerate index + `agent-check.ps1`).
 - **DoD:** demo runs in editor + exports to web; docs accurate; all five context.md DoD items met.
@@ -884,7 +898,7 @@ Resolve each by reading the cited upstream file at a specific commit during impl
 4. **Unit-variant serialization** — confirm server accepts both `{"type":"Ping"}` and
    `{"type":"Ping","data":null}` (decoder tolerates both regardless).
 5. **`RoomJoinedPayload` / `ReconnectedPayload` / `SpectatorJoinedPayload`** full field lists +
-   `rename_all` so `from_dict` keys match the wire exactly.
+   `rename_all` so payload field keys match the wire exactly.
 6. **`ConnectionInfo` variant field names** (`direct`/`unity_relay`/`relay`/`webrtc`/`custom`) for
    `ProvideConnectionInfo` round-trip.
 7. **`error_code` presence rules** — which events carry mandatory vs optional `error_code` (sets the

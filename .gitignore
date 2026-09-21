@@ -4,6 +4,9 @@
 .venv-ci/
 __pycache__/
 
+# MkDocs build output
+site/
+
 # Godot-specific ignores
 .import/
 build/

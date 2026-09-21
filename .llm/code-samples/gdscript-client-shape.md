@@ -133,8 +133,9 @@ peer_transport_status(peer_id, transport, connected)
 ## Value objects & enums
 
 - Typed `RefCounted` payloads in `SFTypes`/`SFSessionTypes` (`PlayerInfo`,
-  `RoomJoinedInfo`, `ConnectionInfo`, `SessionPlanInfo`, ...) with
-  `from_dict()`/`to_dict()` and a `raw` dictionary for exact wire details.
+  `RoomJoinedInfo`, `ConnectionInfo`, `SessionPlanInfo`, ...) built from the
+  wire dictionary on decode, with `to_dict()` and a `raw` dictionary for
+  exact wire details.
 - Closed sets are enums: `SFTypes.LobbyState`, `GameDataEncoding`,
   `RelayTransport`, `SpectatorReason`; `SFErrorCodes.Code`;
   `SFSessionTypes.Topology`/`TransportKind`.

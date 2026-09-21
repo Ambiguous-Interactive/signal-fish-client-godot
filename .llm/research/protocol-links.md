@@ -12,11 +12,11 @@ over assumptions when implementing message semantics.
 ## Repositories
 
 - Signal Fish Cloud:
-  https://github.com/Ambiguous-Interactive/signal-fish-cloud
+  <https://github.com/Ambiguous-Interactive/signal-fish-cloud>
 - Signal Fish Server:
-  https://github.com/Ambiguous-Interactive/signal-fish-server
+  <https://github.com/Ambiguous-Interactive/signal-fish-server>
 - Signal Fish Rust Client:
-  https://github.com/Ambiguous-Interactive/signal-fish-client-rust
+  <https://github.com/Ambiguous-Interactive/signal-fish-client-rust>
 
 ## Current Notes
 
@@ -46,4 +46,3 @@ over assumptions when implementing message semantics.
 - Reconnect behavior and session resumption rules.
 - Error payload shape and close code semantics.
 - Ordering, deduplication, and retry expectations.
-

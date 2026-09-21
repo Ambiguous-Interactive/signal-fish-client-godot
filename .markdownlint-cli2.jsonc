@@ -1,0 +1,18 @@
+// Configuration for markdownlint-cli2
+// See: https://github.com/DavidAnson/markdownlint-cli2#configuration
+//
+// Rule configuration lives in .markdownlint.json (auto-discovered by
+// markdownlint-cli2 when present in the same directory).
+{
+  // Directories excluded from linting: generated site output, session logs,
+  // and the long-form planning record.
+  "ignores": [
+    "**/site/**",
+    ".git/**",
+    ".venv/**",
+    ".venv-ci/**",
+    "node_modules/**",
+    "progress/**",
+    "PLAN.md"
+  ]
+}

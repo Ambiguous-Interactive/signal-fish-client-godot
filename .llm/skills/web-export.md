@@ -65,4 +65,3 @@ runtime behavior that must work in Godot browser exports.
 - Are secrets protected from logs and unnecessary persistence?
 - Does it avoid assuming native-only socket features in browser exports?
 - Are WebSocket `Origin`, mixed-content, and HTTP CORS concerns separated?
-

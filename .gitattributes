@@ -54,7 +54,16 @@ Dockerfile  text eol=lf
 /.github       export-ignore
 /.githooks     export-ignore
 /.llm          export-ignore
+/docs          export-ignore
+/hooks         export-ignore
+/overrides     export-ignore
 /progress      export-ignore
 /scripts       export-ignore
 /tests         export-ignore
 /.asset-template.json.hb export-ignore
+/.lychee.toml            export-ignore
+/.markdownlint.json      export-ignore
+/.markdownlint-cli2.jsonc export-ignore
+/llms.txt                export-ignore
+/mkdocs.yml              export-ignore
+/requirements-docs.txt   export-ignore

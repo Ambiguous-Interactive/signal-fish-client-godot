@@ -67,4 +67,3 @@ addons/signal_fish/
 - `.llm/code-samples/gdscript-client-shape.md` for the current public API sketch.
 - `.llm/skills/godot-transport.md` for WebSocket, WebRTC, polling, and adapter
   rules.
-

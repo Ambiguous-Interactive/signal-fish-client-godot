@@ -65,4 +65,3 @@ tests prove the `WebSocketClient` path.
 - Godot stable WebSocket and WebRTC docs define the current Godot 4 API shape.
 - Godot 3.6 docs are the compatibility reference for `WebSocketClient`.
 - See `.llm/research/godot-networking-web.md` for transport and browser links.
-
