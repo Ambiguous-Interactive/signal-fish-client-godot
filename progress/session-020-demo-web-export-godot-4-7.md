@@ -66,6 +66,21 @@ on a version the fast gate covers.
 - Headless demo boot (import + 3 frames) clean on both binaries.
 - Local web export with real templates produces the expected artifacts.
 
+## PR outcome (#54)
+
+- All Runtime CI legs green (4.3: 17s, 4.4.1: 18s, 4.7.2: 14s — cold Godot
+  cache on the new leg and still fastest; apt step measured 6s vs 10-15s
+  before the trim). LLM Harness green (untouched). Bugbot pass.
+- Bugbot caught one real bug: the setup-godot input is `version` (full
+  `major.minor.patch`), not `godot-version`; unknown keys are silently
+  ignored, so the pin would never have applied. Fixed and verified against
+  the action's `src/utils.ts` at the pinned SHA (normalizes to the
+  `4.3-stable` tag and the `4.3.stable` template path).
+- Dispatch-run of the export smoke is impossible pre-merge (GitHub needs
+  the workflow on the default branch); the scheduled Monday 07:00 UTC run
+  exercises it.
+- Closes #51, #52, #53.
+
 ## Leftovers / follow-ups
 
 - Headless `WebSocketPeer` smoke test (network-gated/opt-in) — PLAN P4.
