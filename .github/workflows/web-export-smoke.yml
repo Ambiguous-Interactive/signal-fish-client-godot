@@ -14,6 +14,9 @@ on:
 permissions:
     contents: read
 
+env:
+    PLAYWRIGHT_VERSION: "1.61.1"
+
 # Scheduled and dispatched runs export the same tree; superseded runs are
 # redundant template downloads.
 concurrency:
@@ -24,7 +27,7 @@ jobs:
     web-export:
         name: Export demo to web
         runs-on: ubuntu-24.04
-        timeout-minutes: 15
+        timeout-minutes: 20
         steps:
             - name: Check out repository
               uses: actions/checkout@v7
@@ -50,6 +53,60 @@ jobs:
                   test -f build/web/index.html
                   test -f build/web/index.wasm
                   ls -la build/web
+
+            - name: Generate smoke TLS certificate
+              run: |
+                  mkdir -p build/smoke-certs
+                  openssl req -x509 -newkey rsa:2048 -days 1 -nodes \
+                      -keyout build/smoke-certs/key.pem \
+                      -out build/smoke-certs/cert.pem \
+                      -subj "/CN=localhost" \
+                      -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+
+            - name: Cache Playwright Chromium
+              id: playwright-cache
+              uses: actions/cache@v6
+              with:
+                  path: |
+                      ~/.cache/ms-playwright
+                      node_modules
+                  # v2: the entry now also carries node_modules; a fresh key
+                  # avoids restoring the pre-node_modules cache and skipping
+                  # the npm install step against a missing package.
+                  key: playwright-chromium-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.PLAYWRIGHT_VERSION }}
+
+            - name: Install pinned Playwright package
+              if: steps.playwright-cache.outputs.cache-hit != 'true'
+              run: npm install --no-save --no-package-lock "playwright@${PLAYWRIGHT_VERSION}"
+
+            - name: Install pinned Chromium
+              if: steps.playwright-cache.outputs.cache-hit != 'true'
+              run: npx playwright install chromium
+
+            # Fresh runners always need the system libraries; the google-chrome
+            # apt source is dropped because it can be mid-publish (same
+            # workaround as docs-validation.yml).
+            - name: Install Chromium system dependencies
+              run: |
+                  sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
+                  for attempt in 1 2 3; do
+                      if npx playwright install-deps chromium; then
+                          break
+                      fi
+                      if [ "${attempt}" -eq 3 ]; then
+                          printf 'playwright install-deps failed after %d attempts\n' "${attempt}" >&2
+                          exit 1
+                      fi
+                      printf 'playwright install-deps attempt %d failed; retrying\n' "${attempt}" >&2
+                      sleep 20
+                  done
+
+            - name: Browser-export checklist
+              run: |
+                  node scripts/check-web-export-browser.cjs \
+                      --web-root build/web \
+                      --key build/smoke-certs/key.pem \
+                      --cert build/smoke-certs/cert.pem
 
             - name: Upload web build
               uses: actions/upload-artifact@v4

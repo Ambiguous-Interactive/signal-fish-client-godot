@@ -44,3 +44,6 @@ logs_*.zip
 .env*
 !.env.example
 GOAL.md
+
+# Node packages for local browser-check runs.
+node_modules/

@@ -10,8 +10,9 @@
 > scheduled export-smoke CI (#51-adjacent P5) have landed; the network-gated headless
 > `WebSocketPeer` smoke test landed as opt-in `run-runtime-checks.sh smoke`. A branded MkDocs
 > Material docs site (issue #64) is published to GitHub Pages on every push to main (`docs/`,
-> `mkdocs.yml`, `docs-deploy.yml`, `docs-validation.yml`). Remaining P4 is the
-> browser-export manual checklist. P3 is complete (demo P2P example
+> `mkdocs.yml`, `docs-deploy.yml`, `docs-validation.yml`). The P4 browser-export checklist is now
+> automated in the weekly Web Export Smoke (headless Chromium; this fixed a broken export pack —
+> see P4). P3 is complete (demo P2P example
 > landed). P6 store automation is in: addon packaging (plugin.cfg/plugin.gd/icon) + release.yml
 > Asset Library submission, credential-gated (#57); the store entry waits on the one-time manual
 > bootstrap (see `.llm/skills/asset-library-release.md`). The Godot matrix covers 4.3/4.4.1/4.7.2
@@ -582,8 +583,18 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       RFC 6455 server (text/binary echo, close handshakes both directions) and drives the real
       `SFWebSocketTransport` — open, echo round-trips, client+server close code/reason surfacing,
       refused-dial terminal failure. Opt-in via `run-runtime-checks.sh smoke`, never in fast gates.
-- [ ] **Browser-export manual checklist** executed & recorded: HTTPS host, `wss://`, `Origin`,
-      mixed-content (`ws://` from HTTPS) rejection, single-thread export, no native-only sockets.
+- [x] **Browser-export checklist automated** (was manual): the weekly Web
+      Export Smoke boots the exported demo in headless Chromium over local
+      HTTPS and verifies engine boot, a real `wss://` dial with the
+      browser-set `Origin` asserted server-side, `Authenticate`/`Ping`
+      round-trips, and `ws://` mixed-content refusal through the client
+      predial check (loopback is exempt from browser mixed-content
+      blocking, so the browser-level block applies to production hosts).
+      This caught
+      a real export bug: scene-only exports skip `preload()` chains, so the
+      packed page failed at boot; the preset now exports all resources with
+      dev trees excluded. Remaining manual checks are host-specific only
+      (trusted cert, server Origin allow-list).
 - [x] `README.md` + quickstart + auth primer shipped early (issue #13; snippets verified against
       the shipped API). The full API reference lives in the docs site (issue #64;
       `icon.png` landed with #57).
@@ -743,7 +754,7 @@ WebSocketPeer smoke (network-gated, opt-in).
 | Backpressure | — | buffered>max → `ERR_BUSY`+`protocol_error`, nothing sent | — |
 | Auto-reconnect backoff/limits | — | injected delta; N attempts; exhaustion→connection_failed; clean close→no retry | — |
 | Cleanup on close | — | transport nulled; roster/ids cleared; UNAUTHENTICATED | — |
-| Web export | — | — | wss://, Origin, mixed-content (manual checklist) |
+| Web export | — | — | weekly browser smoke: HTTPS boot, wss+Origin, ws:// refusal (host certs/Origin remain manual) |
 
 Runner: `godot --headless --script` custom `SceneTree` suites over
 `tests/` (locked decision #4, issue #15 item 5). Codec (F) tests need no
