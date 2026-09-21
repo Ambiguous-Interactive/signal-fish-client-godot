@@ -50,7 +50,7 @@ class IceServerInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		urls = _coerce_strings(data.get("urls", []))
 		username = _string_or_empty(data.get("username"))
 		credential = _string_or_empty(data.get("credential"))
@@ -87,7 +87,7 @@ class SessionPeerInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		player_id = String(data.get("player_id", ""))
 		player_name = String(data.get("player_name", ""))
 		is_authority = bool(data.get("is_authority", false))
@@ -107,7 +107,7 @@ class DirectEndpointInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		host = String(data.get("host", ""))
 		port = int(data.get("port", 0))
 
@@ -135,7 +135,7 @@ class SessionPlanInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		generation = _string_or_empty(data.get("generation"))
 		topology = _topology_token(data.get("topology"))
 		transport = _transport_kind_token(data.get("transport"))
@@ -201,7 +201,7 @@ class NewPeerInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		peer_id = String(data.get("peer_id", ""))
 		you_initiate = bool(data.get("you_initiate", false))
 
@@ -220,7 +220,7 @@ class PeerTransportStatusInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		peer_id = String(data.get("peer_id", ""))
 		transport = _transport_kind_token(data.get("transport"))
 		connected = bool(data.get("connected", false))

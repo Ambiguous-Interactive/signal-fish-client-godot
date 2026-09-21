@@ -23,6 +23,7 @@ func run_all() -> void:
 	_test_non_empty_wire_strings()
 	_test_reconnected_missed_events_nonfatal()
 	_test_reconnected_missed_events_depth_hardening()
+	_test_decode_raw_aliasing()
 
 
 func _test_client_message_validation() -> void:
@@ -725,6 +726,32 @@ func _test_reconnected_missed_events_depth_hardening() -> void:
 		"exceeds %d entries" % SFEventsScript.MAX_MISSED_EVENTS,
 		"oversized missed events truncated"
 	)
+
+
+func _test_decode_raw_aliasing() -> void:
+	# Issue #48: decode output aliases the freshly parsed envelope; to_dict()
+	# is the independent mutable copy.
+	var room_data := _minimal_room_joined_data()
+	room_data["current_players"] = [_minimal_player_data()]
+	room_data["missed_events"] = [{"type": "Pong"}]
+	var envelope := {"type": "Reconnected", "data": room_data}
+	var event: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(envelope)
+	_assert_equal("reconnected", String(event.signal_name), "aliasing decode")
+	_assert(is_same(event.raw, envelope), "event raw aliases envelope")
+	var room: SFTypesScript.RoomJoinedInfo = event.args[0]
+	_assert(is_same(room.raw, envelope["data"]), "baseline raw aliases data")
+	_assert(
+		is_same(room.current_players[0].raw, envelope["data"]["current_players"][0]),
+		"player raw aliases subtree"
+	)
+	var missed: SFTypesScript.DecodedEvent = event.args[1][0]
+	_assert(is_same(missed.raw, envelope["data"]["missed_events"][0]), "missed raw aliases subtree")
+	var snapshot: Dictionary = room.to_dict()
+	snapshot["room_id"] = "mutated"
+	_assert_equal("r1", room.raw["room_id"], "to_dict copy is independent")
+	var source := {"type": "direct", "host": "127.0.0.1", "port": 7777}
+	var info := SFTypesScript.ConnectionInfo.new(source)
+	_assert(not is_same(info.raw, source), "outbound ConnectionInfo keeps its snapshot")
 
 
 func _minimal_room_joined_data() -> Dictionary:
