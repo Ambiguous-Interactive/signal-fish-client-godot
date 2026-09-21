@@ -217,6 +217,8 @@ Do not edit the section below manually. Regenerate it with
   Triggers: agent harness, llm, context, skills, index, hooks, ci, automation
 - [Architectural Planning](skills/architectural-planning.md) (`Planning`) - Use when planning runtime architecture, protocol boundaries, state machines, or multi-file features.
   Triggers: planning, architecture, design doc, state machine, data flow, feature plan, technical plan
+- [Asset Library Release](skills/asset-library-release.md) (`Release`) - Use when releasing to the Godot Asset Library, configuring its secrets, or changing the store submission automation or template.
+  Triggers: asset library, asset store, publish, release, store submission, moderation, godot-asset-lib-action, asset-template, plugin.cfg, icon
 - [Dev Container Tooling](skills/devcontainer-tooling.md) (`Tooling`) - Use when changing the VS Code dev container, installed tools, shell profiles, or post-create/post-start setup.
   Triggers: devcontainer, container, codex, opencode, nanocoder, claude, agent cli, cli, post-create, postcreate, post-start, poststart, powershell profile, pwsh profile, PSReadLine, toolchain
 - [Godot GDScript Bindings](skills/godot-gdscript.md) (`Godot`) - Use when writing or reviewing Godot addon code, GDScript APIs, scenes, resources, or exports.
