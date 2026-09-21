@@ -88,7 +88,7 @@ class RateLimitInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		per_minute = int(data.get("per_minute", 0))
 		per_hour = int(data.get("per_hour", 0))
 		per_day = int(data.get("per_day", 0))
@@ -109,7 +109,7 @@ class PlayerNameRules:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		max_length = int(data.get("max_length", 0))
 		min_length = int(data.get("min_length", 0))
 		allow_unicode_alphanumeric = bool(data.get("allow_unicode_alphanumeric", false))
@@ -158,7 +158,7 @@ class ProtocolInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		platform = _string_or_empty(data.get("platform"))
 		sdk_version = _string_or_empty(data.get("sdk_version"))
 		minimum_version = _string_or_empty(data.get("minimum_version"))
@@ -327,7 +327,7 @@ class PlayerInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		id = String(data.get("id", ""))
 		name = String(data.get("name", ""))
 		is_authority = bool(data.get("is_authority", false))
@@ -356,7 +356,7 @@ class SpectatorInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		id = String(data.get("id", ""))
 		name = String(data.get("name", ""))
 		connected_at = _string_or_empty(data.get("connected_at"))
@@ -380,7 +380,7 @@ class PeerConnectionInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		player_id = String(data.get("player_id", ""))
 		player_name = String(data.get("player_name", ""))
 		is_authority = bool(data.get("is_authority", false))
@@ -421,7 +421,7 @@ class RoomJoinedInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		room_id = String(data.get("room_id", ""))
 		room_code = String(data.get("room_code", ""))
 		player_id = String(data.get("player_id", ""))
@@ -500,7 +500,7 @@ class SpectatorJoinedInfo:
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
-		raw = data.duplicate(true)
+		raw = data
 		room_id = String(data.get("room_id", ""))
 		room_code = String(data.get("room_code", ""))
 		spectator_id = String(data.get("spectator_id", ""))
@@ -547,6 +547,11 @@ class DecodedEvent:
 	var type_name: String = ""
 	var signal_name: StringName = &""
 	var args: Array = []
+	## Read-only view aliasing the freshly parsed wire envelope (issue #48):
+	## the client never mutates decode output, and all decode output from one
+	## envelope shares its tree (e.g. a missed_events entry's raw is visible
+	## through the parent event's raw). Use [code]to_dict()[/code] for an
+	## independent mutable copy.
 	var raw: Dictionary = {}
 
 	func _init(
@@ -558,7 +563,7 @@ class DecodedEvent:
 		type_name = p_type_name
 		signal_name = p_signal_name
 		args = p_args
-		raw = p_raw.duplicate(true)
+		raw = p_raw
 
 
 static func game_data_encoding_from_string(value: Variant) -> int:

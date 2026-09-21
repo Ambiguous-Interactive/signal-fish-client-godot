@@ -366,6 +366,10 @@ func close(code := 1000, reason := "") -> void
   **Decode recursion is depth-bounded** (`MAX_MESSAGE_DEPTH`), and nested `Reconnected` entries inside
   `missed_events` are rejected as non-replayable (matching the Rust client) — a hostile server cannot
   overflow the script stack.
+  **Decode output aliases the freshly parsed envelope** (issue #48): `raw` on `DecodedEvent` and typed
+  payloads is a read-only view; all decode output from one envelope shares its tree (e.g. a
+  `missed_events` entry's raw is visible through the parent event's raw). `to_dict()` returns the
+  independent mutable copy. The outbound user-authored `ConnectionInfo` alone keeps a snapshot.
 - **Error codes (`sf_error_codes.gd`):** single source — `enum Code` (62 upstream
   codes + the cloud-only `DATABASE_ERROR` alias, string lookups derived from the
   enum) + `from_string()`/`to_wire_string()`/`is_known()`/`category()` (per-code
@@ -566,12 +570,16 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 - **DoD:** demo runs in editor + exports to web; docs accurate; all five context.md DoD items met.
 
 ### P5 — CI/CD  *(separate from llm-harness.yml)*
-- [x] New `.github/workflows/ci.yml` (landed during P1 and grown with the suites; single `protocol`
-      job running the custom runners via `scripts/run-runtime-checks.sh`). Remaining P5 work:
-      a **Godot version matrix** (issue #15, item 6 — add 4.4.x as a second parallel job before the
-      API freeze; wall-clock stays flat because the jobs run concurrently) and the
-      **web-export-smoke** job (`chickensoft-games/setup-godot@v2.4.1` `use-dotnet:false
-      include-templates:true`; `--import`; `--export-release "Web"`; assert artifacts).
+- [x] New `.github/workflows/ci.yml` (landed during P1 and grown with the suites; custom runners via
+      `scripts/run-runtime-checks.sh`). Two parallel jobs: `static` (private-helpers + gdformat +
+      gdlint; no Godot install) and `test` (apt deps + cached Godot + the SceneTree suites), so
+      wall clock is max(jobs) instead of their sum. Remaining P5 work: the **web-export-smoke** job
+      (`chickensoft-games/setup-godot@v2.4.1` `use-dotnet:false include-templates:true`; `--import`;
+      `--export-release "Web"`; assert artifacts).
+- [x] **Godot version matrix** (issue #15, item 6): `test` runs 4.3-stable + 4.4.1-stable as
+      concurrent legs (full suite verified on both); wall clock stays flat because the legs run
+      in parallel. The pin-drift guard now requires the `project.godot` version to appear in the
+      matrix rather than in a single env literal.
 - [x] `permissions: contents: read`; pip + Godot binary caching (`actions/setup-python` pip cache,
       `actions/cache` on `/usr/local/bin/godot` keyed by version); GDScript tooling installs via
       `uv` (issue #27; ~4× faster than the pip venv path, same pinned gdtoolkit).
@@ -709,13 +717,13 @@ code fails the existing Godot suite steps (issues #35, #42).
 `ci.yml` (triggers: `pull_request`, `push:[main]`; `permissions: contents: read`; a concurrency
 group cancels superseded `pull_request` runs so commit churn does not queue redundant runs — `push`
 runs on main are never canceled because merge checks depend on them):
-- `protocol` (single job) → `actions/checkout`, `actions/setup-python@v5` (pip cache keyed on
-  `requirements-ci.txt`), apt Godot deps, venv + `gdtoolkit==4.5.0`, then
-  `scripts/run-runtime-checks.sh` steps: `static` (private-helpers + `gdformat --check` +
-  `gdlint`, merged into one CI step), Godot install (cached via `actions/cache` on
-  `/usr/local/bin/godot`, keyed by version), and the custom SceneTree suites (`godot`).
-- **Godot matrix** (pending, issue #15 item 6): add 4.4.x as a second parallel `protocol` job
-  before the API freeze; wall-clock stays flat because jobs run concurrently.
+- `static` + `test` jobs (parallel; wall clock is max instead of sum):
+  - `static` → `actions/checkout`, `actions/setup-python@v5` (pip cache keyed on
+    `requirements-ci.txt`), venv + `gdtoolkit==4.5.0` via `uv`, then `run-runtime-checks.sh`
+    `static` (private-helpers + `gdformat --check` + `gdlint`).
+  - `test` (Godot matrix) → `actions/checkout`, apt Godot deps, Godot install (cached via
+    `actions/cache` on `/usr/local/bin/godot`, keyed by version), and the custom SceneTree
+    suites (`run-runtime-checks.sh godot`). Legs: 4.3-stable + 4.4.1-stable (issue #15 item 6).
 - `web-export-smoke` (pending) → `chickensoft-games/setup-godot@v2.4.1` (`use-dotnet:false`,
   `include-templates:true`), `godot --headless --path . --import`, `godot --headless --path .
   --export-release "Web" build/web/index.html`, assert `index.html`+`index.wasm`, upload artifact.
