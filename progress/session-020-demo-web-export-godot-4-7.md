@@ -49,12 +49,15 @@ party action pinned to commit SHA.
 
 ### CI wall-clock decrease (coverage unchanged)
 
-Sampled `/proc/<pid>/maps` across full headless suite runs: Godot dlopens
+Sampled `/proc/<pid>/maps` across full headless suite runs: Godot loads
 only `libfontconfig`, `libfreetype`, and `libudev`; the X11/GL/audio/dbus
 stack is never loaded. The `test` job's apt list dropped 11 packages
-(15s → expected ~5-7s on the wall-clock-critical leg). `ca-certificates`,
-`curl`, `unzip` stay (install-script requirements; no-ops on runners).
-Static-check scope grew to include `demo/` at negligible cost.
+(the apt step measured 10-15s on recent runs; fewer packages should cut
+it to the apt-get update floor). `ca-certificates`, `curl`, `unzip` stay
+(install-script requirements; no-ops on runners). Static-check scope grew
+to include `demo/`, and the `godot` target now boots the demo scene
+(`--quit-after 3`) on every matrix leg, so demo regressions cannot hide
+on a version the fast gate covers.
 
 ## Verification
 

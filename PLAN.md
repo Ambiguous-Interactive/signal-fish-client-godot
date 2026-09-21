@@ -582,8 +582,9 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       4.7.2-stable (issue #51) as concurrent legs (full suite verified on all); wall clock stays flat
       because the legs run in parallel. The pin-drift guard requires the `project.godot` version to
       appear in the matrix rather than in a single env literal. The apt dependency list was cut to the
-      three libs headless Godot actually dlopens (`libfontconfig1`, `libfreetype6`, `libudev1`;
-      verified via `/proc/<pid>/maps`), trimming ~10s off the wall-clock-critical test job.
+      libraries headless Godot actually loads (`libfontconfig1`, `libfreetype6`, `libudev1`;
+      verified via `/proc/<pid>/maps`), trimming ~10s off the wall-clock-critical test job. The
+      `godot` target also boots the demo scene headless on every leg.
 - [x] **Web-export smoke** (moved out of the fast gate): `.github/workflows/web-export-smoke.yml`
       runs weekly + `workflow_dispatch`, so template-download minutes never touch pull_request/push
       runs (same pattern as `protocol-sync.yml`). It imports the project, exports the "Web" preset

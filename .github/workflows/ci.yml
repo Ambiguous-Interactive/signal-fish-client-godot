@@ -57,7 +57,7 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v7
 
-            # Headless Godot only dlopens fontconfig, freetype, and udev
+            # Headless Godot loads only fontconfig, freetype, and udev
             # (verified via /proc/<pid>/maps); the X11/GL/audio stack is never
             # loaded, so installing it only wastes CI minutes.
             - name: Install Godot runtime dependencies
