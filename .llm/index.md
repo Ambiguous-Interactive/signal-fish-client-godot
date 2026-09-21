@@ -22,6 +22,8 @@ Generated Markdown inventory by `scripts/generate-llm-index.ps1`; do not edit by
   Triggers: reconnection, reconnect, replay, missed_events, reconnection_token, auth_token, auto-reconnect, backoff, reconnection-replay, retry
 - [Review And Debugging](skills/review-debugging.md) (`Quality`) - Use when reviewing code, investigating bugs, or validating fixes before merge.
   Triggers: review, code review, debug, investigate, root cause, bug, regression, production risk
+- [Runtime Architecture](skills/runtime-architecture.md) (`Core`) - Use when planning or reviewing the runtime addon architecture, layer boundaries, state machines, polling model, or decode policy.
+  Triggers: runtime architecture, layers, state machine, polling, transport seam, decode, backpressure, cleanup, addon layout, web-safe
 - [Security And Privacy](skills/security-privacy.md) (`Protocol`) - Use when handling tokens, user identifiers, logs, persistence, networking, or dependency decisions.
   Triggers: security, privacy, token, secret, logging, storage, tls, dependency
 - [Signal Fish Protocol](skills/signal-fish-protocol.md) (`Protocol`) - Use when implementing protocol messages, transports, sessions, auth, or compatibility with upstream Signal Fish projects.
@@ -33,7 +35,7 @@ Generated Markdown inventory by `scripts/generate-llm-index.ps1`; do not edit by
 
 ## Other LLM Files
 
-- [GDScript Client Shape](code-samples/gdscript-client-shape.md) - Sketch of the intended GDScript-facing Signal Fish client shape.
+- [GDScript Client Shape](code-samples/gdscript-client-shape.md) - Map of the shipped GDScript-facing Signal Fish client API (mirrors the runtime addon).
 - [LLM Context Organization](README.md) - Organization guide for repo-specific AI context files.
 - [Godot Networking And Web Notes](research/godot-networking-web.md) - Source-backed notes for Godot WebSocket, WebRTC, browser export, and cross-platform networking decisions.
 - [Godot Target Notes](research/godot-targets.md) - Compatibility notes for targeting major Godot versions from a GDScript Signal Fish addon.

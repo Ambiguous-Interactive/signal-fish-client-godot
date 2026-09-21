@@ -13,3 +13,8 @@ max-public-methods: 30
 # unsafe-access typing sweep added mandatory annotations and the largest
 # runner crossed 1200) without inviting unbounded growth.
 max-file-lines: 1250
+
+# max-returns: the headless smoke runner sequences async waits with
+# early-return guards so a timed-out step skips every dependent step; the
+# echo phase needs 8 returns for that chain (see tests/smoke).
+max-returns: 8

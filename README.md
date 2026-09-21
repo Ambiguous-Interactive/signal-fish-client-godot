@@ -121,7 +121,8 @@ the current scene) joining the same room to see the peer connection form.
 ## Development
 
 ```bash
-bash scripts/run-runtime-checks.sh all   # private-helper guard, format, lint, 5 Godot suites
+bash scripts/run-runtime-checks.sh all    # private-helper guard, format, lint, 5 Godot suites
+bash scripts/run-runtime-checks.sh smoke  # opt-in: real WebSocketPeer round-trip vs a local test server
 ```
 
 Requires Godot 4.3+ and Python 3 with `requirements-ci.txt` (`gdtoolkit`). AI/agent

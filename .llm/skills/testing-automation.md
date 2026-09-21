@@ -113,11 +113,19 @@ isolated.
 
 `scripts/run-runtime-checks.sh` is the shared local/CI entry point. It sets a
 writable deterministic `HOME`, activates `.venv-ci` when present, and exposes
-`private-helpers`, `format`, `lint`, `godot`, and `all` subcommands so CI can
-keep separate step names without drifting from local reproduction commands.
-The `godot` subcommand copies the current source tree into a fresh temporary
-project without `.godot/`, which prevents local editor/global-class caches from
-masking failures that would appear in a clean CI checkout.
+`private-helpers`, `format`, `lint`, `godot`, `all`, and `smoke` subcommands so
+CI can keep separate step names without drifting from local reproduction
+commands. The `godot` subcommand copies the current source tree into a fresh
+temporary project without `.godot/`, which prevents local editor/global-class
+caches from masking failures that would appear in a clean CI checkout.
+
+The `smoke` subcommand is opt-in (never part of `all`) and runs
+`tests/smoke/run_websocket_smoke.gd`: a local RFC 6455 server
+(`tests/smoke/ws_test_server.gd`, text/binary echo plus close handshakes in
+both directions) driven from a `SceneTree` `_process` loop, exercising the real
+`SFWebSocketTransport` open/echo/close paths and a refused dial. Frame pumping
+lives in `SceneTree._process` with per-wait timeouts and a watchdog, so a
+broken phase fails loudly instead of hanging.
 
 `scripts/check-gdscript-private-helpers.py` uses gdtoolkit's parser and treats
 public methods, constructors, Godot callbacks, and `_on_*` handlers as
@@ -158,7 +166,8 @@ integration tests:
   paths and commits before runtime semantics are implemented.
 - Fake transport adapter tests covering connect, receive, send, close, error,
   reconnect, and backpressure before live network tests.
-- Godot 4 smoke test for the `WebSocketPeer` adapter path.
+- Godot 4 smoke test for the `WebSocketPeer` adapter path (landed:
+  `bash scripts/run-runtime-checks.sh smoke`).
 - Browser export manual check covering HTTPS hosting, `wss://`, WebSocket
   `Origin`, mixed-content rejection, and no native-only socket assumptions.
 - Godot 3 smoke tests only after a separate compatibility decision, focused on

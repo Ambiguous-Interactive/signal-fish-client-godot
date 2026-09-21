@@ -121,7 +121,8 @@ Definition of done for the first usable client:
   tool caches, activates `.venv-ci` when present, and runs Godot from a
   temporary project copy that excludes `.godot` so local runs exercise the same
   cold-cache path as CI. Subcommands are `all`, `static`, `private-helpers`,
-  `format`, `lint`, and `godot`.
+  `format`, `lint`, and `godot`, plus opt-in `smoke` (real `WebSocketPeer`
+  round-trip against a local RFC 6455 test server; never part of `all`).
 - `scripts/validate-github-config.py`: deterministic local validator for
   GitHub workflows and Dependabot config. It rejects duplicate YAML keys,
   `gh api --slurp` combined with `--jq`, unsafe workflow triggers or
@@ -229,6 +230,8 @@ Do not edit the section below manually. Regenerate it with
   Triggers: reconnection, reconnect, replay, missed_events, reconnection_token, auth_token, auto-reconnect, backoff, reconnection-replay, retry
 - [Review And Debugging](skills/review-debugging.md) (`Quality`) - Use when reviewing code, investigating bugs, or validating fixes before merge.
   Triggers: review, code review, debug, investigate, root cause, bug, regression, production risk
+- [Runtime Architecture](skills/runtime-architecture.md) (`Core`) - Use when planning or reviewing the runtime addon architecture, layer boundaries, state machines, polling model, or decode policy.
+  Triggers: runtime architecture, layers, state machine, polling, transport seam, decode, backpressure, cleanup, addon layout, web-safe
 - [Security And Privacy](skills/security-privacy.md) (`Protocol`) - Use when handling tokens, user identifiers, logs, persistence, networking, or dependency decisions.
   Triggers: security, privacy, token, secret, logging, storage, tls, dependency
 - [Signal Fish Protocol](skills/signal-fish-protocol.md) (`Protocol`) - Use when implementing protocol messages, transports, sessions, auth, or compatibility with upstream Signal Fish projects.
@@ -240,7 +243,7 @@ Do not edit the section below manually. Regenerate it with
 
 ## Other LLM Files
 
-- [GDScript Client Shape](code-samples/gdscript-client-shape.md) - Sketch of the intended GDScript-facing Signal Fish client shape.
+- [GDScript Client Shape](code-samples/gdscript-client-shape.md) - Map of the shipped GDScript-facing Signal Fish client API (mirrors the runtime addon).
 - [LLM Context Organization](README.md) - Organization guide for repo-specific AI context files.
 - [Godot Networking And Web Notes](research/godot-networking-web.md) - Source-backed notes for Godot WebSocket, WebRTC, browser export, and cross-platform networking decisions.
 - [Godot Target Notes](research/godot-targets.md) - Compatibility notes for targeting major Godot versions from a GDScript Signal Fish addon.
