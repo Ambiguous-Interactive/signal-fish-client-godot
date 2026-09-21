@@ -8,9 +8,11 @@
 > `PeerTransportStatus`, ICE pre-gather) has landed, and the P3 WebRTC mesh node that consumes those
 > plans is in (#32). The P4 demo project (connect→join→game-data→leave) and the Web export preset +
 > scheduled export-smoke CI (#51-adjacent P5) have landed; remaining P4 is the network-gated headless
-> smoke test, the browser-export manual checklist, and full docs. Remaining P3 is only the demo P2P
-> example. The Godot matrix covers 4.3/4.4.1/4.7.2 (issue #51); remaining #15 item (Godot 3) is P5/P7
-> work.
+> smoke test, the browser-export manual checklist, and full docs. P3 is complete (demo P2P example
+> landed). P6 store automation is in: addon packaging (plugin.cfg/plugin.gd/icon) + release.yml
+> Asset Library submission, credential-gated (#57); the store entry waits on the one-time manual
+> bootstrap (see `.llm/skills/asset-library-release.md`). The Godot matrix covers 4.3/4.4.1/4.7.2
+> (issue #51); remaining #15 item (Godot 3) is P5/P7 work.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -603,22 +605,26 @@ loop and exits only on its consensus criteria. Fan-out points noted.
 
 ### P6 — Asset Library release + first publish
 - [x] `CHANGELOG.md` (Keep-a-Changelog; user-facing changes only) + SemVer
-      policy (issue #29). Remaining: `addons/signal_fish/plugin.cfg`
-      (`version` = git tag, validated in CI); `icon.png` square ≥128² served
-      from `raw.githubusercontent.com`.
+      policy (issue #29). `addons/signal_fish/plugin.cfg` (`version` = git
+      tag, validated in CI) + `plugin.gd` + `icon.png` (128²) + addon
+      README/LICENSE landed (issue #57).
 - [x] `.gitattributes` `export-ignore` for dev/test-only paths (`.llm`,
       `.devcontainer`, `.github`, `scripts`, `tests`, plus `.claude`,
-      `.githooks`, `progress`); addon stays self-contained under
-      `addons/signal_fish/`.
+      `.githooks`, `progress`, `.asset-template.json.hb`); addon stays
+      self-contained under `addons/signal_fish/`.
 - [x] `.github/workflows/release.yml` (landed, issue #28; `workflow_dispatch`
       with a `version` input): validates `vMAJOR.MINOR.PATCH`, cuts release
       notes from the matching `CHANGELOG.md` section, packages the addon zip
-      (addons/ at root), and publishes the GitHub Release. Asset-store
-      auto-publish stays gated on the one-time Asset Library bootstrap (§10).
-- [ ] Add `.llm/skills/asset-library-release.md` documenting **one-time manual first submission +
+      (addons/ at root), and publishes the GitHub Release. A
+      `publish-asset-store` job then submits the Asset Library edit via
+      `deep-entertainment/godot-asset-lib-action` (SHA-pinned v0.6.0,
+      `.asset-template.json.hb`); it skips cleanly until the one-time
+      bootstrap below (issue #57).
+- [x] Add `.llm/skills/asset-library-release.md` documenting **one-time manual first submission +
       moderation** and the secrets (regenerate index + `agent-check.ps1`).
 - [ ] User adds secrets `GODOT_ASSET_LIBRARY_USERNAME` + `GODOT_ASSET_LIBRARY_PASSWORD` and var
       `GODOT_ASSET_LIBRARY_ASSET_ID` (after first submission); pin third-party actions to commit SHA.
+      (Action pin landed; only the human bootstrap + credentials remain.)
 - **DoD:** first Asset Library entry live; subsequent tags auto-submit a pending edit.
 
 ### P7 — Post-v1 (deferred, each gated)
