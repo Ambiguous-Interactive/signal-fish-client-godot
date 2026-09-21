@@ -88,4 +88,3 @@ simulated, or explicitly called out as manually verified.
 - `.llm/skills/security-privacy.md` for secrets, logs, storage, and TLS review.
 - `.llm/skills/web-export.md` for browser-specific failure modes.
 - `.llm/skills/godot-gdscript.md` for public API and Godot version review.
-

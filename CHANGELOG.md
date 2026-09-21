@@ -22,6 +22,11 @@ CI, tests, and internal tooling are not listed.
 
 ### Added
 
+- Documentation site: branded MkDocs Material site published to GitHub
+  Pages on every push to main. Covers quick start, the full client API
+  reference, events, errors, game data, reconnection, web export,
+  deterministic testing, and the WebRTC mesh guide, plus a machine-readable
+  `llms.txt`.
 - Addon packaging: `plugin.cfg`, `plugin.gd`, `icon.png`, and an addon-level
   README + LICENSE. The addon now registers as a Godot editor plugin and is
   Asset Library-ready.

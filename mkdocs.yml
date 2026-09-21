@@ -1,0 +1,132 @@
+site_name: Signal Fish Godot Client
+site_description: "Connect Godot 4 games to the Signal Fish multiplayer signaling service"
+site_url: https://ambiguous-interactive.github.io/signal-fish-client-godot/
+repo_url: https://github.com/Ambiguous-Interactive/signal-fish-client-godot
+repo_name: signal-fish-client-godot
+edit_uri: edit/main/docs/
+copyright: © 2026 Ambiguous Interactive
+
+hooks:
+  - hooks/llms_txt.py
+
+theme:
+  name: material
+  custom_dir: overrides
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.action.edit
+    - content.action.view
+    - header.autohide
+  icon:
+    repo: fontawesome/brands/github
+  font: false
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      permalink_title: Anchor link to this section
+      toc_depth: 3
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.keys
+  - pymdownx.smartsymbols
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+      auto_title: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: Ambiguous-Interactive
+      repo: signal-fish-client-godot
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Ambiguous-Interactive/signal-fish-client-godot
+  generator: false
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/accessibility.js
+
+validation:
+  nav:
+    omitted_files: warn
+  links:
+    not_found: warn
+    unrecognized_links: warn
+
+nav:
+  - Home: index.md
+  - Start Here:
+      - Installation & Quick Start: getting-started.md
+  - Use the SDK:
+      - Client API Reference: client.md
+      - Events: events.md
+      - Errors: errors.md
+      - Game Data: game-data.md
+      - Reconnection & Replay: reconnection.md
+      - Web Export: web-export.md
+      - Deterministic Testing: testing.md
+  - Multiplayer Choices:
+      - Mesh (v3): mesh-guide.md
+  - Advanced Reference:
+      - Brand & Font Attribution: attributions.md

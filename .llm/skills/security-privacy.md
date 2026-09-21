@@ -42,4 +42,3 @@ transport security, or dependency choices.
   audit or update?
 - Are insecure local endpoints and `ws://` examples clearly labeled as local
   development only?
-

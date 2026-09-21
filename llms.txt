@@ -1,17 +1,31 @@
 # Signal Fish Godot Client
 
-> Godot bindings for the Signal Fish protocol, focused on GDScript support
-> across major Godot versions and Godot 4 web exports.
+> Pure-GDScript Signal Fish protocol client for Godot 4. Drop-in addon: no C#,
+> no GDExtension, nothing to compile. Runs everywhere Godot runs, including
+> web exports.
 
 ## Core Context
 
-- [Canonical AI Context](./.llm/context.md): Required starting point for agents.
-- [Generated LLM Index](./.llm/index.md): Inventory of available skills,
-  samples, and research notes.
+- [Canonical AI Context](./.llm/context.md): required starting point for agents.
+- [Generated LLM Index](./.llm/index.md): inventory of skills, samples, and
+  research notes.
 
-## Upstream Protocol References
+## Docs
 
-- [Signal Fish Cloud](https://github.com/Ambiguous-Interactive/signal-fish-cloud)
-- [Signal Fish Server](https://github.com/Ambiguous-Interactive/signal-fish-server)
-- [Signal Fish Rust Client](https://github.com/Ambiguous-Interactive/signal-fish-client-rust)
+Published site: <https://ambiguous-interactive.github.io/signal-fish-client-godot/>
 
+- [Installation & Quick Start](https://ambiguous-interactive.github.io/signal-fish-client-godot/getting-started/): install the addon, configure, connect, join a room.
+- [Client API Reference](https://ambiguous-interactive.github.io/signal-fish-client-godot/client/): config fields, lifecycle methods, send methods, state machines.
+- [Events](https://ambiguous-interactive.github.io/signal-fish-client-godot/events/): the signal surface and typed payload objects.
+- [Errors](https://ambiguous-interactive.github.io/signal-fish-client-godot/errors/): the error-code enum and where errors surface.
+- [Game Data](https://ambiguous-interactive.github.io/signal-fish-client-godot/game-data/): JSON, MessagePack, binary frames, and rkyv pass-through.
+- [Reconnection & Replay](https://ambiguous-interactive.github.io/signal-fish-client-godot/reconnection/): tokens, missed-event replay, auto-reconnect backoff.
+- [Web Export](https://ambiguous-interactive.github.io/signal-fish-client-godot/web-export/): browser rules for wss, Origin, storage, and polling.
+- [Deterministic Testing](https://ambiguous-interactive.github.io/signal-fish-client-godot/testing/): fixture suites and the runtime check entry point.
+- [Mesh (v3)](https://ambiguous-interactive.github.io/signal-fish-client-godot/mesh-guide/): WebRTC session plans and the `SFWebRTCMesh` node.
+- [Brand & Font Attribution](https://ambiguous-interactive.github.io/signal-fish-client-godot/attributions/): logo and font licenses.
+
+## Source
+
+- [Repository](https://github.com/Ambiguous-Interactive/signal-fish-client-godot)
+- [Upstream protocol](https://github.com/Ambiguous-Interactive/signal-fish-server)

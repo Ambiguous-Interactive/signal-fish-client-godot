@@ -6,7 +6,7 @@ category: Research
 
 # GStack Adaptation Notes
 
-Source analyzed: https://github.com/garrytan/gstack
+Source analyzed: <https://github.com/garrytan/gstack>
 
 These notes capture practical practices worth adapting without importing
 gstack's large command system or Claude-specific installation model.
@@ -61,4 +61,3 @@ gstack's large command system or Claude-specific installation model.
 - Add Godot smoke projects after the addon structure exists.
 - Add security-specific checks if credentials, persistence, or live endpoints are
   introduced.
-

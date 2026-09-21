@@ -32,4 +32,3 @@ This folder holds concise, repo-specific context for AI coding agents.
 pwsh -NoProfile -File scripts/generate-llm-index.ps1
 pwsh -NoProfile -File scripts/lint-llm.ps1
 ```
-
