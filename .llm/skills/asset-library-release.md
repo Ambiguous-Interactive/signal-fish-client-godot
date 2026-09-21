@@ -35,6 +35,10 @@ configured, so releases stay usable before the one-time bootstrap.
    - secret `GODOT_ASSET_LIBRARY_PASSWORD`
    - var `GODOT_ASSET_LIBRARY_ASSET_ID`
 
+Use an Asset Library password without quotes, backslashes, or control
+characters: the action logs its render env, and GitHub's secret masking only
+covers the plain value.
+
 After this, every release run submits a store edit automatically.
 
 ## Template contract (`.asset-template.json.hb`)
