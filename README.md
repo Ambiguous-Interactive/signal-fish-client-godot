@@ -113,6 +113,11 @@ this project in the editor, press Play, fill in your server endpoint and app
 id, then Connect → Join room. It is also the target of the "Web" export preset,
 so it exports straight to a browser build.
 
+`demo/p2p.tscn` is the same flow over the opt-in WebRTC mesh: it connects with
+a v3 config, attaches `SFWebRTCMesh`, and chats over mesh RPCs once a webrtc
+session plan lands. Run two instances (open the scene in the editor and play
+the current scene) joining the same room to see the peer connection form.
+
 ## Development
 
 ```bash

@@ -119,6 +119,7 @@ run_godot() {
 	godot --headless --path "${cold_project}" --script tests/client/run_binary_tests.gd
 	godot --headless --path "${cold_project}" --script tests/client/run_reconnect_tests.gd
 	godot --headless --path "${cold_project}" --quit-after 3
+	godot --headless --path "${cold_project}" res://demo/p2p.tscn --quit-after 3
 }
 
 case "${target}" in

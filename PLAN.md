@@ -559,14 +559,15 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       platform via the built-in libdatachannel module; browser exports use the browser's own
       WebRTC. (The old "native needs the WebRTC GDExtension" note was Godot-3-era.) The core
       server-relayed client stays zero-native and the mesh layer is opt-in.
-- [ ] P2P example in the demo (lands with the P4 demo work).
+- [x] P2P example in the demo: `demo/p2p.tscn` negotiates a v3 session plan,
+      attaches the mesh, and chats over mesh RPCs; booted headless in CI.
 - **DoD:** opt-in layer; server-relayed users pay nothing; platform story documented.
-  (Demo example tracked under P4.)
+  (Demo example landed in `demo/p2p.tscn`.)
 
 ### P4 — Demo + web-export smoke + docs  *(→ context.md "first usable client" DoD met)*
 - [x] `demo/` Godot 4 project: `demo/main.tscn` connect→join→game-data→leave UI over the
       shipped client API; set as the project main scene so the "Web" export preset builds the demo.
-      (Optional P2P scene still pending — tracked under P3.)
+      The P3 P2P example scene lives in `demo/p2p.tscn`.
 - [ ] Headless `WebSocketPeer` smoke test (network-gated/opt-in).
 - [ ] **Browser-export manual checklist** executed & recorded: HTTPS host, `wss://`, `Origin`,
       mixed-content (`ws://` from HTTPS) rejection, single-thread export, no native-only sockets.
@@ -587,7 +588,7 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       appear in the matrix rather than in a single env literal. The apt dependency list was cut to the
       libraries headless Godot actually loads (`libfontconfig1`, `libfreetype6`, `libudev1`;
       verified via `/proc/<pid>/maps`), trimming ~10s off the wall-clock-critical test job. The
-      `godot` target also boots the demo scene headless on every leg.
+      `godot` target also boots the demo scenes (relay + P2P) headless on every leg.
 - [x] **Web-export smoke** (moved out of the fast gate): `.github/workflows/web-export-smoke.yml`
       runs weekly + `workflow_dispatch`, so template-download minutes never touch pull_request/push
       runs (same pattern as `protocol-sync.yml`). It imports the project, exports the "Web" preset
