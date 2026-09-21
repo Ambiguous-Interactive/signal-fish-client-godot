@@ -22,6 +22,8 @@ CI, tests, and internal tooling are not listed.
 
 ### Added
 
+- `demo/p2p.tscn`: P2P example that negotiates a v3 session plan, attaches
+  `SFWebRTCMesh`, and chats over mesh RPCs once peers connect.
 - `demo/main.tscn`: runnable demo scene (connect → join → game data → leave)
   with a log of client events, set as the project main scene. A "Web" export
   preset builds the demo straight to a browser build.
