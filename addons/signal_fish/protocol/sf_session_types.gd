@@ -11,6 +11,8 @@ extends RefCounted
 enum Topology { UNKNOWN = -1, RELAY, HOST, MESH }
 enum TransportKind { UNKNOWN = -1, RELAY, DIRECT, WEBRTC }
 
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
+
 const U16_MAX := 65535
 const U32_MAX := 4294967295
 
@@ -372,9 +374,7 @@ static func _has_dict_array(data: Dictionary, key: String) -> bool:
 
 
 static func _is_integer_value_in_range(value: Variant, min_value: int, max_value: int) -> bool:
-	if typeof(value) != TYPE_INT and typeof(value) != TYPE_FLOAT:
+	if not SFTypeUtils.is_integral_number(value):
 		return false
 	var number := float(value)
-	if number != floor(number):
-		return false
 	return number >= float(min_value) and number <= float(max_value)

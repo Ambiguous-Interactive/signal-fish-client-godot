@@ -9,6 +9,12 @@ on:
 permissions:
     contents: read
 
+# Superseded PR runs are canceled so pushed-through commits do not queue
+# redundant runs; runs on main are never canceled (merge checks depend on them).
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
     protocol:
         name: Protocol checks

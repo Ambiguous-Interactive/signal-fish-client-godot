@@ -427,6 +427,12 @@ foreach ($rel in $sources) {
         if ($VerboseOutput) { Write-PreLine "parse OK: $rel" }
         continue
     }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+        # Vanished between the existence gate and the parse (TOCTOU); same as
+        # tracked-but-deleted: nothing to parse or recover.
+        if ($VerboseOutput) { Write-PreLine "skipped (vanished before parse): $rel" }
+        continue
+    }
     Write-PreLine "Parse error in ${rel}:" 'Red'
     foreach ($msg in $result.Errors) { Write-PreLine "  ${rel}:$msg" 'Red' }
     if (-not $autoFixEnabled) {
@@ -459,6 +465,11 @@ foreach ($rel in $sources) {
         [System.IO.File]::WriteAllBytes($backupPath, $corruptBytes)
         Write-PreLine "AutoFix: backed up corrupt $rel to $backupPath" 'Yellow'
     } catch {
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+            # Vanished between the parse and the backup read; skip, not fatal.
+            if ($VerboseOutput) { Write-PreLine "skipped (vanished before backup): $rel" }
+            continue
+        }
         Write-PreLine "AutoFix: failed to write recovery backup for $rel`: $($_.Exception.Message). Refusing to overwrite WIP." 'Red'
         $corruptedFatal.Add($rel)
         continue
