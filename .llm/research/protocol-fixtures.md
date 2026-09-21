@@ -136,8 +136,8 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
   issue #55) are byte-identical copies of the upstream v0.9.2 concrete
   sample corpus with a provenance header; the sample digests above pin
   the upstream bytes. `tests/protocol/upstream_samples_tests.gd` decodes
-  every server line and checks every client line against the builder
-  type set.
+  every server line and checks every client line against the client
+  message type set.
 - Upstream v3 signaling anchors: server `docs/concepts/protocol-versions.md`
   (v2-vs-v3 mental model, capability negotiation, selection ladder),
   rust `src/webrtc.rs` + `src/mesh.rs` (signaling choreography: obey the

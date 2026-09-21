@@ -135,7 +135,7 @@ func _test_published_shape_pins(server_events: Array) -> void:
 		_assert_equal(
 			SFTypesScript.LobbyState.LOBBY, lobby_state_changed.args[0], "upstream lobby state"
 		)
-		var ready_players: Array = lobby_state_changed.args[1]
+		var ready_players: PackedStringArray = lobby_state_changed.args[1]
 		_assert_equal(1, ready_players.size(), "upstream ready players")
 
 	var spectator_left := _first_event(server_events, "spectator_left")

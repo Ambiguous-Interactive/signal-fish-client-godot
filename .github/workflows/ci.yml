@@ -39,9 +39,7 @@ jobs:
               uses: actions/cache@v4
               with:
                   path: .venv-ci
-                  key:
-                      venv-ci-${{ runner.os }}-${{ steps.setup-python.outputs.python-version
-                      }}-${{ hashFiles('requirements-ci.txt') }}
+                  key: venv-ci-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-ci.txt') }}
 
             - name: Install GDScript tooling
               if: steps.venv-cache.outputs.cache-hit != 'true'

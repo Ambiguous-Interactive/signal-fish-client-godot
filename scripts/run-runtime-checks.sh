@@ -58,6 +58,7 @@ run_static() {
 	local format_output lint_output format_rc lint_rc
 	format_output="$(mktemp)"
 	lint_output="$(mktemp)"
+	cleanup_paths+=("${format_output}" "${lint_output}")
 	run_format >"${format_output}" 2>&1 &
 	local format_pid=$!
 	run_lint >"${lint_output}" 2>&1 &
