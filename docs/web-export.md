@@ -11,8 +11,9 @@ it with no native code and no extra build steps.
 
 - Use `wss://` in production.
 - Dialing `ws://` from a secure page fails loudly with
-  `ERR_INVALID_PARAMETER` before any dial. The mixed-content check is
-  local, and the client never silently downgrades. The static
+  `ERR_INVALID_PARAMETER` before any dial, and browsers themselves block
+  insecure `ws://` dials to non-loopback hosts from HTTPS pages. The client
+  never silently downgrades. The static
   `insecure_scheme_error(url, is_web_platform, secure_page)` predial check
   produces this error.
 
@@ -39,20 +40,29 @@ Treat browser `localStorage` and query strings as user-visible. Keep
 reconnection tokens in memory. Persist them only with an explicit,
 documented decision, and never log them.
 
-## Manual checklist
+## Checklist automation
 
-Before shipping a browser build, verify:
+The browser checklist runs automatically in the weekly Web Export Smoke
+workflow: the exported demo boots in headless Chromium over local HTTPS,
+dials a local `wss://` server (the browser-set `Origin` is asserted server
+side), round-trips `Authenticate`/`Ping`, and dials `ws://` from the secure
+page, which the client refuses before any network traffic (the predial
+check; loopback hosts are exempt from browser mixed-content blocking, so
+that browser-level block only applies to production hosts). No manual
+steps remain for the standard build.
 
-- The page is hosted over HTTPS.
-- The client dials `wss://`.
-- The server accepts your page's `Origin`.
-- A `ws://` dial from the HTTPS page fails loudly instead of silently
-  downgrading.
-- Nothing in the build assumes threads or native sockets.
+Before shipping to production, still verify the host-specific items:
+
+- Your HTTPS certificate is trusted by players' browsers.
+- Your server accepts your page's `Origin`.
 
 ## Export preset and CI
 
-The demo project ships a "Web" export preset that builds `demo/main.tscn`
-straight to a browser build. CI runs a scheduled web-export smoke: it
-imports the project, exports the preset, and asserts that the build
-produces `index.html` and `index.wasm`.
+The demo project ships a "Web" export preset that builds the demo straight
+to a browser build. The preset exports all project resources (dev trees
+excluded): scene-only exports do not follow `preload()` chains in scripts,
+which left addon scripts out of the pack and broke the page at boot.
+
+CI runs the scheduled web-export smoke: it imports the project, exports the
+preset, asserts that the build produces `index.html` and `index.wasm`, and
+runs the automated browser checklist above.

@@ -4,6 +4,8 @@ const SignalFishClientScript := preload("res://addons/signal_fish/signal_fish_cl
 const SignalFishConfigScript := preload("res://addons/signal_fish/signal_fish_config.gd")
 const SFTypesScript := preload("res://addons/signal_fish/protocol/sf_types.gd")
 
+var _web_smoke := false
+
 @onready var _endpoint: LineEdit = %EndpointEdit
 @onready var _app_id: LineEdit = %AppIdEdit
 @onready var _game_name: LineEdit = %GameEdit
@@ -43,6 +45,8 @@ func _ready() -> void:
 	_client.server_error.connect(
 		func(message: String, _error_code: int) -> void: _log_line("server error: " + message)
 	)
+	if OS.has_feature("web"):
+		_apply_web_smoke_query()
 	_log_line("fill in endpoint + app id, then Connect")
 
 
@@ -93,6 +97,8 @@ func _on_disconnected(code: int, reason: String) -> void:
 
 func _on_authenticated(app_name: String, organization: String, _rate_limits: Variant) -> void:
 	_log_line("authenticated as app '%s' (%s); join or create a room" % [app_name, organization])
+	if _web_smoke:
+		_on_ping_pressed()
 
 
 func _on_room_joined(info: SFTypesScript.RoomJoinedInfo) -> void:
@@ -106,3 +112,31 @@ func _on_game_data_received(from_player: String, data: Variant) -> void:
 func _log_line(line: String) -> void:
 	# Raw text: peer-supplied strings must not parse as BBCode or forge lines.
 	_log.add_text(line + "\n")
+	# Same-origin JS mirroring only during a smoke run, never in normal use.
+	if _web_smoke:
+		JavaScriptBridge.eval(
+			"if (window.__sfSmokeLog) window.__sfSmokeLog(%s);" % JSON.stringify(line), true
+		)
+
+
+# Web-export smoke hook for the weekly CI browser check: query params drive a
+# real dial through the exported engine; inert without explicit parameters.
+func _apply_web_smoke_query() -> void:
+	var params := _parse_query(str(JavaScriptBridge.eval("window.location.search", true)))
+	var endpoint := str(params.get("sf_smoke_endpoint", ""))
+	if endpoint.is_empty():
+		return
+	_web_smoke = true
+	_endpoint.text = endpoint
+	_app_id.text = str(params.get("sf_smoke_app_id", "web-smoke"))
+	_on_connect_pressed()
+
+
+func _parse_query(search: String) -> Dictionary:
+	var params := {}
+	for pair in search.trim_prefix("?").split("&", false):
+		var key_value := pair.split("=", true, 1)
+		if key_value.size() != 2:
+			continue
+		params[key_value[0].uri_decode()] = key_value[1].uri_decode()
+	return params
