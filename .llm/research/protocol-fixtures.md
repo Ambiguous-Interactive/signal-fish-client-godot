@@ -24,6 +24,25 @@ Re-pinned 2026-09-20 (issue #12). Prior pins (read 2026-05-29): server
 binding is checked by `scripts/check-protocol-sync.py` (weekly scheduled
 workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
 
+- v0.9.2 spec refresh (2026-09-21, issue #55): server tag `v0.9.2` is
+  `6b76d665f32f2af4acc64dee8a5239f93bd5b784`. It changed no protocol
+  surface (`messages.rs`/`types.rs`/`error_codes.rs` untouched; only
+  server-internal bus routing and dependency bumps), so the codec pin
+  above stays at the v0.9.1 wire commit while the rust binding still
+  pins it. What v0.9.2 did change is the published wire samples: the
+  `.llm/code-samples/protocol` v2 files are now concrete, complete,
+  round-trip-guarded frames (server PRs #612/#613) instead of elided
+  shapes. They are vendored byte-identically (plus a provenance header)
+  under `tests/fixtures/upstream/` and pinned to the codec by
+  `tests/protocol/upstream_samples_tests.gd`; sample digests:
+  - `v2-client-messages.jsonl`
+    `b1e1bbfb3df2603fd8bf4630d49ddbf3fa65708200a2b1e8f081631c49f2025a`
+  - `v2-server-messages.jsonl`
+    `58272c29fef10f2eaa865f935a9e832bc601127890242a7c30b30bbaf8828407`
+  Upstream notes the v2 corpus is complete for text envelopes:
+  `GameDataBinary` has no `{type, data}` JSON form, and `StartGame`
+  refusals arrive as `Error{GAME_START_NOT_READY}` frames.
+
 - v2 wire bytes are frozen upstream: no legacy message variant, error code,
   or field was renamed or removed; all new surface is additive. `StartGame`
   and `password` on JoinRoom/JoinAsSpectator are v2-reachable (both present
@@ -60,12 +79,14 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
     `5f6e92f550e7bb0b2ea4be02dea30f5b09677ecf4e01b5451d41d824f405b4cb`
   - `v3-server-messages.jsonl`
     `a175151b8b4dffa95818b11d41651551d499f9388e00309c95e0ba12159bbfce`
-  The vendored v2 samples are byte-identical to the server repo's
-  `.llm/code-samples/protocol` copies at the pinned commit. The Godot
-  fixtures deliberately stay hand-built supersets (all 24 server variants,
-  full-field shapes, fake-placeholder tokens) rather than byte-copies of the
-  elided upstream samples; the digests pin the upstream bytes they were
-  cross-checked against.
+  The v0.9.1-era note that the upstream v2 samples were elided
+  `"..."` shapes is obsolete: since server v0.9.2 they are concrete
+  frames (see the spec-refresh bullet above). The Godot fixtures remain
+  hand-built supersets (all 24 server variants, full-field shapes,
+  fake-placeholder tokens, byte-pinned to the Godot builders); the
+  concrete upstream samples are additionally vendored and decoded
+  end-to-end by `tests/protocol/upstream_samples_tests.gd`, so both the
+  hand-built corpus and the published spec bytes guard the codec.
 
 ## Source Paths
 
@@ -85,7 +106,8 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
 | Rust client event set | client-rust | `src/event.rs` |
 | Rust client API/config defaults | client-rust | `src/client.rs`, `src/polling_client.rs` |
 | Rust client docs | client-rust | `docs/protocol.md`, `docs/events.md`, `docs/client.md`, `docs/wasm.md` |
-| Upstream illustrative fixtures | server | `.llm/code-samples/protocol/v2-client-messages.jsonl`, `.llm/code-samples/protocol/v2-server-messages.jsonl` |
+| Upstream illustrative fixtures | server | `.llm/code-samples/protocol/v2-client-messages.jsonl`, `.llm/code-samples/protocol/v2-server-messages.jsonl` (concrete frames since v0.9.2) |
+| Vendored upstream v2 samples | server | `tests/fixtures/upstream/v2_client_messages.jsonl`, `tests/fixtures/upstream/v2_server_messages.jsonl` |
 | Cloud protocol cross-check | cloud | `src/protocol/messages.rs`, `src/protocol/types.rs`, `src/protocol/error_codes.rs` |
 
 ## Fixture Files
@@ -109,6 +131,13 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
   (answer), `PeerTransportStatus`, `RoomJoined` ICE pre-gather, and the
   extended `ProtocolInfo` (negotiated/min/max version, `transports`,
   `max_outbound_message_size`).
+- `tests/fixtures/upstream/v2_client_messages.jsonl` and
+  `tests/fixtures/upstream/v2_server_messages.jsonl` (added 2026-09-21,
+  issue #55) are byte-identical copies of the upstream v0.9.2 concrete
+  sample corpus with a provenance header; the sample digests above pin
+  the upstream bytes. `tests/protocol/upstream_samples_tests.gd` decodes
+  every server line and checks every client line against the client
+  message type set.
 - Upstream v3 signaling anchors: server `docs/concepts/protocol-versions.md`
   (v2-vs-v3 mental model, capability negotiation, selection ladder),
   rust `src/webrtc.rs` + `src/mesh.rs` (signaling choreography: obey the

@@ -110,10 +110,13 @@ file **and commit SHA** before implementing — never invent protocol details (c
 | Client event set (26 variants) | client `src/event.rs`; `docs/events.md` |
 | Client method set + config + params + defaults | client `src/polling_client.rs`, `src/client.rs`; `docs/client.md` |
 
-> ⚠️ The upstream JSONL samples use **elided values** (`"..."`, partial fields). They are
-> shape-illustrative, not byte-complete. Vendor our own **complete** fixtures derived from the Rust
-> structs; cross-check each field against `messages.rs`/`types.rs`. Each fixture file gets a header
-> comment recording source repo + path + commit SHA.
+> The upstream v2 JSONL samples are **concrete, complete, round-trip-guarded
+> frames** since server v0.9.2 (upstream PRs #612/#613). They are vendored
+> byte-identically under `tests/fixtures/upstream/` and the codec is pinned to
+> them by `tests/protocol/upstream_samples_tests.gd` (issue #55). The Godot
+> fixtures in `tests/fixtures/` remain hand-built supersets (all 24 server
+> variants, full-field shapes, fake-placeholder tokens). Each fixture file gets
+> a header comment recording source repo + path + commit SHA.
 
 ### Confirmed facts
 
