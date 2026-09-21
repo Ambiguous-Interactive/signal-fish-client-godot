@@ -22,6 +22,9 @@ CI, tests, and internal tooling are not listed.
 
 ### Added
 
+- Addon packaging: `plugin.cfg`, `plugin.gd`, `icon.png`, and an addon-level
+  README + LICENSE. The addon now registers as a Godot editor plugin and is
+  Asset Library-ready.
 - `demo/p2p.tscn`: P2P example that negotiates a v3 session plan, attaches
   `SFWebRTCMesh`, and chats over mesh RPCs once peers connect.
 - `demo/main.tscn`: runnable demo scene (connect → join → game data → leave)
