@@ -69,6 +69,22 @@ Previous wall clock: ~31s, static job critical path (~26s of it).
 - `validate-github-config.py --self-test` + repo validation green.
 - `agent-check.ps1` green after the `.llm` edit; index regenerated.
 
+## PR outcome (#56)
+
+- All checks green on both runs (Runtime CI legs + LLM Harness + Cursor
+  Bugbot).
+- CI wall clock: ~31s → ~16s, coverage unchanged (one suite added).
+  Verified mechanisms on real runs: `Install GDScript tooling: skipped`
+  on the venv-cache hit path; test legs dropped 18-21s → 7-13s via the
+  dpkg skip (the three libraries ship on the ubuntu-24.04 runner image);
+  static parallel format+lint verified red-propagating in a sandbox.
+- Adversarial loop: round 1 (zero-knowledge red team) returned zero
+  P1/P2 + five P3 nits; four accepted and fixed (PackedStringArray
+  annotation, mktemp trap cleanup, doc wording, single-line cache key),
+  one declined per "simplify aggressively" (dpkg-query Status hardening —
+  the failure mode is loud one step later). Round-2 re-review of the
+  delta: all four DONE, zero remaining findings.
+
 ## Leftovers / follow-ups
 
 - Watch the first CI runs: venv-cache hit path and dpkg-skip path both
