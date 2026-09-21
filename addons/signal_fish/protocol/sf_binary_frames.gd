@@ -25,6 +25,14 @@ extends RefCounted
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 
 const _UUID_BYTES := 16
+const _KNOWN_FIELDS := {
+	"from_player": true,
+	"encoding": true,
+	"payload": true,
+	"seq": true,
+	"epoch": true,
+}
+const _REQUIRED_FIELDS := ["from_player", "encoding", "payload"]
 
 
 ## Decodes one binary game-data envelope. Returns
@@ -56,7 +64,7 @@ static func decode_envelope(bytes: PackedByteArray) -> Dictionary:
 		if fields.has(key):
 			result["error"] = "binary game-data envelope contains duplicate field %s" % key
 			return result
-		if not key in ["from_player", "encoding", "payload", "seq", "epoch"]:
+		if not _KNOWN_FIELDS.has(key):
 			result["error"] = "binary game-data envelope contains unknown field %s" % key
 			return result
 		var read := _read_field(peer, key)
@@ -71,7 +79,7 @@ static func decode_envelope(bytes: PackedByteArray) -> Dictionary:
 
 
 static func _validate_fields(fields: Dictionary, result: Dictionary) -> Dictionary:
-	for required: String in ["from_player", "encoding", "payload"]:
+	for required: String in _REQUIRED_FIELDS:
 		if not fields.has(required):
 			result["error"] = "binary game-data envelope is missing field %s" % required
 			return result

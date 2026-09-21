@@ -1,5 +1,10 @@
 extends RefCounted
 
+## Shared nesting cap for recursive protocol decode/encode: a hostile payload
+## cannot overflow the script stack. Single source for the text envelope,
+## MessagePack codec, and send-side JSON-shape checks.
+const MAX_MESSAGE_DEPTH := 16
+
 
 static func enum_value(mapping: Dictionary, value: Variant, unknown_value: int) -> int:
 	if value == null:

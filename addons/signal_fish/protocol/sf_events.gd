@@ -1,12 +1,13 @@
 class_name SFEvents
 extends RefCounted
 
-## Maximum nesting depth for decoded envelopes. Wire-reachable inputs are
+## Maximum nesting depth for decoded envelopes, sourced from the shared
+## protocol cap (SFTypeUtils.MAX_MESSAGE_DEPTH). Wire-reachable inputs are
 ## already bounded (the engine's JSON parser rejects overly deep documents,
 ## and nested Reconnected entries are rejected as non-replayable below); this
 ## cap is defense in depth for any future recursive message variant, matching
 ## the spirit of serde's 128-level recursion cap in the Rust client.
-const MAX_MESSAGE_DEPTH := 16
+const MAX_MESSAGE_DEPTH := SFTypeUtils.MAX_MESSAGE_DEPTH
 
 ## Maximum number of Reconnected.missed_events entries decoded per envelope.
 ## Bounds decode work and the number of per-entry decoded objects against a
@@ -17,6 +18,7 @@ const MAX_MISSED_EVENTS := 256
 const SFBinaryCodecScript = preload("res://addons/signal_fish/protocol/sf_binary_codec.gd")
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 

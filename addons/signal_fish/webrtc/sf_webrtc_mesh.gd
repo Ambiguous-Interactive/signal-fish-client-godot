@@ -126,6 +126,9 @@ func detach() -> void:
 func poll() -> void:
 	if not _client_is_live():
 		return
+	if _peers.is_empty():
+		_update_transport_status()
+		return
 	# Iterate a keys copy: a real connection's poll() can pump callbacks that
 	# end in consumer handlers, which may legally mutate the mesh re-entrantly
 	# (a peer dropped mid-poll is simply skipped).
@@ -367,7 +370,7 @@ func _update_transport_status() -> void:
 
 func _count_connected_peers() -> int:
 	var connected := 0
-	for uuid: String in _peers.keys():
+	for uuid: String in _peers:
 		if _peers[uuid].connection.get_connection_state() == WebRTCPeerConnection.STATE_CONNECTED:
 			connected += 1
 	return connected

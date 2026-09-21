@@ -10,10 +10,11 @@ const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
+const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 
-const PLAYER_A := "10000000-0000-0000-0000-000000000001"
-const PLAYER_B := "10000000-0000-0000-0000-000000000002"
-const ROOM_ID := "20000000-0000-0000-0000-000000000001"
+const PLAYER_A := ClientFixtures.PLAYER_A
+const PLAYER_B := ClientFixtures.PLAYER_B
+const ROOM_ID := ClientFixtures.ROOM_ID
 const TOKEN_V1 := "test-reconnect-token-not-secret"
 const TOKEN_V2 := "test-reconnect-token-rotated-not-secret"
 
@@ -948,41 +949,15 @@ func _wait_open(client: SignalFishClientScript) -> Error:
 
 
 func _authenticated_data() -> Dictionary:
-	return {
-		"app_name": "Reef Rally",
-		"organization": "",
-		"rate_limits": {"per_minute": 60, "per_hour": 1000, "per_day": 10000},
-	}
+	return ClientFixtures.authenticated_data()
 
 
 func _room_joined_data(overrides: Dictionary = {}) -> Dictionary:
-	var data := {
-		"room_id": ROOM_ID,
-		"room_code": "ABC123",
-		"player_id": PLAYER_A,
-		"game_name": "reef-rally",
-		"max_players": 4,
-		"supports_authority": true,
-		"current_players": [_player(PLAYER_A, "Alice")],
-		"is_authority": true,
-		"lobby_state": "waiting",
-		"ready_players": [],
-		"relay_type": "websocket",
-		"current_spectators": [],
-	}
-	for key: String in overrides:
-		data[key] = overrides[key]
-	return data
-
-
-func _player(id: String, display_name: String) -> Dictionary:
-	return {
-		"id": id,
-		"name": display_name,
-		"is_authority": id == PLAYER_A,
-		"is_ready": false,
-		"connected_at": "2026-05-29T00:00:00Z"
-	}
+	# This suite joins as a lone authority; the shared fixture ships a
+	# spectator, so shape it away here.
+	var shaped := {"current_spectators": []}
+	shaped.merge(overrides, true)
+	return ClientFixtures.room_joined_data(shaped)
 
 
 func _assert(condition: bool, label: String) -> bool:
