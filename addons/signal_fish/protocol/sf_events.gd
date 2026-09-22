@@ -358,6 +358,12 @@ static func _decode_authenticated(
 	var rate_limits_error := SFTypesScript.validate_rate_limit_info(data["rate_limits"])
 	if not rate_limits_error.is_empty():
 		return _protocol_error(rate_limits_error, envelope)
+	if (
+		data.has("organization")
+		and data["organization"] != null
+		and typeof(data["organization"]) != TYPE_STRING
+	):
+		return _protocol_error("Authenticated organization must be a string", envelope)
 	return _event(
 		type_name,
 		&"authenticated",
@@ -388,7 +394,9 @@ static func _decode_room_joined(
 	]
 	for key: String in required:
 		if not data.has(key):
-			return _protocol_error("RoomJoined requires %s" % key, envelope)
+			# type_name is RoomJoined or Reconnected: both share the payload
+			# shape, so diagnostics must name the envelope they came from.
+			return _protocol_error("%s requires %s" % [type_name, key], envelope)
 	var room_error := SFTypesScript.validate_room_joined_info(data)
 	if not room_error.is_empty():
 		return _protocol_error(room_error, envelope)

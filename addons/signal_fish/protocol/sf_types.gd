@@ -764,6 +764,10 @@ static func validate_room_joined_info(data: Variant) -> String:
 		return "RoomJoinedInfo current_players: %s" % players_error
 	if not _has_string_array(dict, "ready_players"):
 		return "RoomJoinedInfo requires string array ready_players"
+	# Server-issued on RoomJoined/Reconnected baselines; the client echoes it
+	# back on Reconnect, so a present value must be a string (issue #72).
+	if not _is_optional_string(dict, "reconnection_token"):
+		return "RoomJoinedInfo reconnection_token must be a string"
 	if dict.has("current_spectators"):
 		var spectators_error := validate_spectators_array(dict["current_spectators"])
 		if not spectators_error.is_empty():
