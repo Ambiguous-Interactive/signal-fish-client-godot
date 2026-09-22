@@ -105,6 +105,33 @@ runner line caps.
 - `gdformat`/`gdlint` clean; `agent-check.ps1` green;
   `validate-github-config.py` self-test + repo check green.
 
+## Adversarial loop
+
+A zero-knowledge red-team sub-agent reviewed the full session diff and
+**executed** the suites on both HEAD and the base commit (grafting the new
+leak test onto the old mesh to confirm the red independently). Verdict:
+zero P1, one P2, five P3s — all addressed:
+
+- **P2 (fixed + red-verified):** the #86 fix itself traded in a narrower
+  regression — a mesh `free()`d while outside the tree (no `_exit_tree`)
+  could not run `_drop_peer`, so the new entry-lambda cluster outlived the
+  node where the base was clean. Fix: `NOTIFICATION_PREDELETE` now calls
+  `_reset_mesh()`; the new `_test_out_of_tree_free_does_not_leak` fails on
+  the disabled-handler variant (verified) and passes with it.
+- **P3s (fixed):** the CI dpkg fast path now uses
+  `dpkg-query -F='${db:Status-Status}'` (exact; `dpkg -s` succeeds for
+  removed-but-configured packages); the CHANGELOG #88 bullet no longer
+  implies the binary raw-bytes fallback path refuses payloads; the heartbeat
+  docs (client.md + config field) now state it runs from `_process` and
+  needs the node in the tree; the depth-boundary pin walks a populated
+  container (`[[1]]` with the leaf exactly at the cap accepted, one deeper
+  refused) instead of an empty array; `_tick_heartbeat` documents the
+  sustained-backpressure tradeoff (no pong deadline arms there, but every
+  consumer send already fails loudly with `ERR_BUSY`).
+
+All suites, smoke, static checks, and the harness validators re-run green
+after the fixes.
+
 ## Leftovers / follow-ups
 
 - #92 duplicate-key strictness (design + decision gate in the issue).

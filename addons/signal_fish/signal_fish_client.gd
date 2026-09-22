@@ -559,7 +559,9 @@ func _tick_heartbeat(delta: float) -> void:
 		return
 	# Retry only after a full interval when the send is refused (e.g.
 	# backpressure): a per-frame retry would spam protocol_error on a
-	# congested link.
+	# congested link. Tradeoff: a permanently backpressured link never arms
+	# a pong deadline, but every consumer send already fails loudly with
+	# ERR_BUSY there, so the dead-link question is moot in that state.
 	_heartbeat_elapsed = 0.0
 	if ping() == OK:
 		_awaiting_pong = true

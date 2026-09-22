@@ -24,7 +24,8 @@ CI, tests, and internal tooling are not listed.
 - Inbound `GameData.data` and `Signal` payloads now reject over-deep nesting
   (past the shared 16-level decode cap) and non-finite numbers (`1e400`
   decoded to `inf`; MessagePack `nan`/`inf` was accepted) with
-  `protocol_error` instead of handing them to game code (#88).
+  `protocol_error` instead of surfacing them as decoded game data. Binary
+  frames keep their documented raw-bytes fallback path (#88).
 - A fractional `ConnectionInfo.client_id` (e.g. `1.5`) no longer truncates to
   a different relay slot through `to_dict()`; it fails closed like a direct
   wire refusal (#89).

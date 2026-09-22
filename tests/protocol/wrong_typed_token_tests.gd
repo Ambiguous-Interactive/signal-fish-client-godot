@@ -87,16 +87,21 @@ func _test_passthrough_payload_guard() -> void:
 	_assert_equal(
 		"game_data_received", String(deep_legal.signal_name), "deep-but-legal passthrough decodes"
 	)
-	# Exact depth boundary on the shared helper: depth == cap accepted,
-	# cap + 1 refused.
+	# Exact depth boundary on the shared helper, through a populated
+	# container: the leaf sitting exactly at the cap is accepted, one level
+	# deeper is refused.
 	_assert_equal(
 		"",
-		SFTypeUtils.passthrough_payload_error([], SFTypeUtils.MAX_MESSAGE_DEPTH),
-		"passthrough depth at the cap accepted"
+		SFTypeUtils.passthrough_payload_error([[1]], SFTypeUtils.MAX_MESSAGE_DEPTH - 2),
+		"passthrough leaf at the cap accepted"
 	)
 	_assert(
-		not SFTypeUtils.passthrough_payload_error([], SFTypeUtils.MAX_MESSAGE_DEPTH + 1).is_empty(),
-		"passthrough depth past the cap refused"
+		not (
+			SFTypeUtils
+			. passthrough_payload_error([[1]], SFTypeUtils.MAX_MESSAGE_DEPTH - 1)
+			. is_empty()
+		),
+		"passthrough leaf past the cap refused"
 	)
 
 

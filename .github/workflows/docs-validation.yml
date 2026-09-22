@@ -147,7 +147,10 @@ jobs:
                   if [ -n "$pkgs" ]; then
                       missing=0
                       for pkg in $pkgs; do
-                          if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+                          # Exact status (not `dpkg -s`, which succeeds for
+                          # removed-but-rc packages whose files are gone).
+                          status=$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null)
+                          if [ "$status" != "installed" ]; then
                               missing=1
                               break
                           fi

@@ -68,6 +68,8 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## [code]0[/code] (default) disables the heartbeat entirely. Silent link
 ## death (NAT rebinding, radio loss) produces no WebSocket close, so without
 ## this the client stays "connected" forever and auto-reconnect never fires.
+## Runs from [code]_process[/code] like the reconnect backoff: the client
+## node must be in the tree (or the ticks driven manually).
 @export var heartbeat_interval_sec: float = 0.0
 
 ## Grace period for a [signal SignalFishClient.pong] reply after a heartbeat

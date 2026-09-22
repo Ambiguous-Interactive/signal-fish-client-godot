@@ -177,6 +177,15 @@ func _exit_tree() -> void:
 	detach()
 
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		# A mesh discarded without a teardown path (freed while outside the
+		# tree, so _exit_tree never runs) must still break the peer clusters:
+		# the entry-lambda cycle (issue #86) would otherwise outlive the node
+		# and leak every live peer connection.
+		_reset_mesh()
+
+
 ## Drops a client that was freed without a detach (legal: the nodes are
 ## independent) instead of keeping a zombie mesh, and reports liveness for
 ## the poll paths.
