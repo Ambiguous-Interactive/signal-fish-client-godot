@@ -34,7 +34,15 @@
 > the dial's handshake), and `SFMsgpack.encode` refuses NaN/±Inf. The
 > llm-harness workflow now runs validate and behavioral self-tests as
 > parallel jobs (deps cached), cutting its wall clock ~30% with unchanged
-> coverage.
+> coverage. Session 034 (issues #86-#91) shipped the last §4.7 reliability
+> item — an opt-in heartbeat/pong-timeout dead-link detector wired into the
+> transport-failure path so auto-reconnect engages on silent link death —
+> plus roster-accessor isolation (#87), a WebRTC mesh peer-connection leak
+> fix (#86), consumer-facing passthrough payloads now bounded by the depth
+> cap and refusing non-finite numbers (#88), a `ConnectionInfo.client_id`
+> truncation hole (#89), and API-doc drift fixes (#90); the docs
+> accessibility gate skips apt when Chromium's libraries are already
+> present, cutting its longest step from ~29s to ~1s on cache-hit runs.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -450,8 +458,11 @@ func close(code := 1000, reason := "") -> void
 - **Backpressure:** before each send, if `get_buffered_amount() > config.max_buffered_bytes` (default
   ~256 KiB), do not send → return `ERR_BUSY` + emit `protocol_error("transport backpressure")`. No silent
   queue growth.
-- **Heartbeat:** optional (`config.heartbeat_interval_sec`, default 0 = off); accumulate delta in
-  `_process` (no timer thread); `pong_timeout_sec` → treat as dead link.
+- **Heartbeat (landed, issue #91):** optional (`config.heartbeat_interval_sec`, default 0 = off);
+  accumulate delta in `_process` (no timer thread); a ping goes out once the session is connected +
+  authenticated, and a missing `pong` within `pong_timeout_sec` ends the link through the
+  transport-failure path (`connection_failed`), so auto-reconnect engages on silent link death.
+  Backpressured beats retry after a full interval instead of per frame.
 - **Auto-reconnect:** OFF by default. When on: exponential backoff + jitter (`base 0.5s`, `factor 2`,
   `cap 15s`, `max_attempts` default 5) via accumulated `_process` delta (**no `OS.delay`/threads**); only
   on abnormal termination (a non-user-initiated close or transport failure — a dead dial must

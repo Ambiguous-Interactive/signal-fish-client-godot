@@ -89,11 +89,19 @@ static func _decode_value(peer: StreamPeerBuffer, depth: int, failure: Array[Str
 		0xCA:
 			if peer.get_available_bytes() < 4:
 				return _fail(failure, "truncated MessagePack float")
-			return peer.get_float()
+			# NaN/±Inf mirror the encode refusal (issue #83): upstream cannot
+			# represent them, and game code must never receive them (issue #88).
+			var single := peer.get_float()
+			if not is_finite(single):
+				return _fail(failure, "MessagePack float is non-finite")
+			return single
 		0xCB:
 			if peer.get_available_bytes() < 8:
 				return _fail(failure, "truncated MessagePack float")
-			return peer.get_double()
+			var double := peer.get_double()
+			if not is_finite(double):
+				return _fail(failure, "MessagePack float is non-finite")
+			return double
 		0xCC:
 			return _read_uint(peer, 1, failure)
 		0xCD:

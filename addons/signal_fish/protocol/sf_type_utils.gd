@@ -21,6 +21,31 @@ static func is_integral_number(value: Variant) -> bool:
 	return is_finite(number) and number == floor(number)
 
 
+## Inbound open payloads (`GameData.data`, `Signal.signal`) are handed to
+## consumers verbatim: bound their nesting by the shared cap and refuse
+## non-finite numbers (the engine's JSON parser maps `1e400` to inf, and the
+## MessagePack float markers can carry NaN/±Inf — upstream serde rejects both
+## classes outright). Fail closed via `protocol_error`; JSON null stays legal.
+## Returns "" when the tree is acceptable (issue #88).
+static func passthrough_payload_error(value: Variant, depth := 0) -> String:
+	if depth > MAX_MESSAGE_DEPTH:
+		return "passthrough payload nesting exceeds depth %d" % MAX_MESSAGE_DEPTH
+	var kind := typeof(value)
+	if kind == TYPE_FLOAT and not is_finite(value):
+		return "passthrough payload contains a non-finite number"
+	if kind == TYPE_ARRAY:
+		for item: Variant in value:
+			var item_error := passthrough_payload_error(item, depth + 1)
+			if not item_error.is_empty():
+				return item_error
+	elif kind == TYPE_DICTIONARY:
+		for key: Variant in value:
+			var value_error := passthrough_payload_error(value[key], depth + 1)
+			if not value_error.is_empty():
+				return value_error
+	return ""
+
+
 static func objects_to_dicts(values: Array) -> Array:
 	var result: Array = []
 	for value: Variant in values:

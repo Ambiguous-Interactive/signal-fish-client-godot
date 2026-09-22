@@ -472,6 +472,28 @@ func _test_connection_info_to_dict_resend_canonicalization() -> void:
 		SFMessagesScript.provide_connection_info(relay_dict), "resend relay to_dict"
 	)
 
+	# Issue #89: a fractional client_id must fail closed in the constructor —
+	# int() truncation used to launder it into a different (valid) relay slot
+	# through the documented to_dict() resend path.
+	var fractional_info := SFTypesScript.ConnectionInfo.new(
+		_relay_connection_info({"client_id": 1.5})
+	)
+	var fractional_dict := fractional_info.to_dict()
+	_assert_equal(-1, fractional_info.client_id, "relay fractional client_id fails closed")
+	_assert(not fractional_dict.has("client_id"), "relay fractional client_id omitted")
+	_assert_valid_message(
+		SFMessagesScript.provide_connection_info(fractional_dict),
+		"resend fractional-client_id to_dict"
+	)
+	var integral_float_info := SFTypesScript.ConnectionInfo.new(
+		_relay_connection_info({"client_id": 7.0})
+	)
+	_assert_equal(7, integral_float_info.client_id, "relay integral float client_id accepted")
+	_assert_valid_message(
+		SFMessagesScript.provide_connection_info(integral_float_info.to_dict()),
+		"resend integral-float client_id to_dict"
+	)
+
 	var future_transport_info := SFTypesScript.ConnectionInfo.new(
 		_relay_connection_info({"transport": "future_transport"})
 	)

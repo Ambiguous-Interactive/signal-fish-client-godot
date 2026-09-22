@@ -63,6 +63,22 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## [method SignalFishClient.reconnect] calls ignore this.
 @export var reconnect_max_attempts: int = 5
 
+## Optional dead-link heartbeat (PLAN §4.7): seconds between automatic
+## [code]Ping[/code]s while the session is authenticated and connected.
+## [code]0[/code] (default) disables the heartbeat entirely. Silent link
+## death (NAT rebinding, radio loss) produces no WebSocket close, so without
+## this the client stays "connected" forever and auto-reconnect never fires.
+## Runs from [code]_process[/code] like the reconnect backoff: the client
+## node must be in the tree (or the ticks driven manually).
+@export var heartbeat_interval_sec: float = 0.0
+
+## Grace period for a [signal SignalFishClient.pong] reply after a heartbeat
+## ping. A silent link past this deadline is treated as dead: the client
+## tears the link down through the transport-failure path
+## ([signal SignalFishClient.connection_failed]), so opt-in auto-reconnect
+## engages. Used only when [member heartbeat_interval_sec] is on.
+@export var pong_timeout_sec: float = 10.0
+
 ## Highest protocol version advertised with [code]Authenticate[/code]
 ## (upstream `Authenticate.protocol_version`). [code]0[/code] = omit: the
 ## client stays on the v2 relay floor and v3-only messages never appear.
@@ -122,6 +138,10 @@ func validation_error() -> String:
 	]:
 		if cap[1] <= 0:
 			return "%s must be positive" % cap[0]
+	if heartbeat_interval_sec < 0.0:
+		return "heartbeat_interval_sec must not be negative"
+	if heartbeat_interval_sec > 0.0 and pong_timeout_sec <= 0.0:
+		return "pong_timeout_sec must be positive when the heartbeat is on"
 	return _v3_capabilities_error()
 
 

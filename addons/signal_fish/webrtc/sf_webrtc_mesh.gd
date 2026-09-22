@@ -27,10 +27,11 @@ extends Node
 ## - [method SignalFishClient.send_transport_status] is reported only at the
 ##   aggregate 0↔1 connected-peer boundaries.
 ## - The mesh is torn down on [signal room_joined] (fresh baseline),
-##   [signal room_left], [signal player_left], [signal disconnected],
+##   [signal room_left], [signal disconnected],
 ##   [signal connection_failed], [signal reconnected], and
 ##   [code]_exit_tree[/code]; a replayed plan inside [code]missed_events
-##   [/code] can never revive it.
+##   [/code] can never revive it. [signal player_left] drops only the leaving
+##   peer — the rest of the mesh survives.
 ##
 ## Peer ids: [method uuid_to_peer_id] maps each player UUID to a deterministic
 ## positive integer (FNV-1a), so every mesh member derives the same
@@ -174,6 +175,15 @@ func _process(_delta: float) -> void:
 
 func _exit_tree() -> void:
 	detach()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		# A mesh discarded without a teardown path (freed while outside the
+		# tree, so _exit_tree never runs) must still break the peer clusters:
+		# the entry-lambda cycle (issue #86) would otherwise outlive the node
+		# and leak every live peer connection.
+		_reset_mesh()
 
 
 ## Drops a client that was freed without a detach (legal: the nodes are
@@ -320,13 +330,16 @@ func _open_peer(uuid: String, initiate: bool) -> void:
 		SFLogScript.error("mesh: add_peer refused (%d)" % error)
 		connection.close()
 		return
-	connection.session_description_created.connect(
-		func(type: String, sdp: String) -> void: _on_peer_session_description(entry, type, sdp)
-	)
-	connection.ice_candidate_created.connect(
-		func(media: String, index: int, candidate: String) -> void:
-			_on_peer_ice_candidate(entry, media, index, candidate)
-	)
+	# The callables are kept on the entry so `_drop_peer` can disconnect
+	# them: each lambda captures `entry`, and `entry.connection` holds the
+	# connection, so an undisconnected signal is a RefCounted cycle that
+	# leaks every rebuilt peer (issue #86).
+	entry.session_cb = func(type: String, sdp: String) -> void:
+		_on_peer_session_description(entry, type, sdp)
+	connection.session_description_created.connect(entry.session_cb)
+	entry.ice_cb = func(media: String, index: int, candidate: String) -> void:
+		_on_peer_ice_candidate(entry, media, index, candidate)
+	connection.ice_candidate_created.connect(entry.ice_cb)
 	_peers[uuid] = entry
 	if initiate:
 		connection.create_offer()
@@ -339,6 +352,12 @@ func _drop_peer(uuid: String) -> void:
 	_peers.erase(uuid)
 	if _mp_peer != null:
 		_mp_peer.remove_peer(entry.peer_id)
+	if entry.session_cb.is_valid():
+		entry.connection.session_description_created.disconnect(entry.session_cb)
+	if entry.ice_cb.is_valid():
+		entry.connection.ice_candidate_created.disconnect(entry.ice_cb)
+	entry.session_cb = Callable()
+	entry.ice_cb = Callable()
 	entry.connection.close()
 
 
@@ -459,3 +478,5 @@ class _MeshPeer:
 	var connection = null
 	var initiate: bool = false
 	var generation: String = ""
+	var session_cb: Callable = Callable()
+	var ice_cb: Callable = Callable()

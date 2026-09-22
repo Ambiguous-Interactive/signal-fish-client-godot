@@ -23,10 +23,14 @@ add_child(client)
 client.room_joined.connect(func(info) -> void: print("joined ", info.room_id))
 client.game_data_received.connect(func(from_player, data) -> void: handle(data))
 client.connect_to_server()  # dials endpoint_url, auto-sends Authenticate on open
-var params := SignalFishClient.JoinRoomParams.new()
-params.game_name = "checkers"
-params.player_name = "ana"
-client.join_room(params)
+# Room commands are refused until the server answers Authenticate: join from
+# the `authenticated` signal, not synchronously after the dial.
+client.authenticated.connect(func(_app, _org, _limits) -> void:
+    var params := SignalFishClient.JoinRoomParams.new()
+    params.game_name = "checkers"
+    params.player_name = "ana"
+    client.join_room(params)
+)
 ```
 
 ## Config (`SignalFishConfig`)
@@ -38,6 +42,9 @@ client.join_room(params)
 - Limits: `max_inbound_frame_bytes`, `max_buffered_bytes` (backpressure),
   `max_inbound_packets_per_poll` (all default ~256 KiB / 64).
 - Reconnect: `reconnect_max_attempts` (default 5).
+- Heartbeat (off by default): `heartbeat_interval_sec` (0 = off),
+  `pong_timeout_sec` — a silent link past the deadline is torn down as a
+  transport failure, so opt-in auto-reconnect can engage.
 - v3 session plan (omit to keep v2 wire bytes identical): `protocol_version`,
   `supported_transports`, `supported_topologies`, `requested_capabilities`.
 - `credential`: set in code only (never exported/persisted/serialized); rides
@@ -91,7 +98,7 @@ func ping() -> Error
 func join_as_spectator(game_name: String, room_code: String, spectator_name: String, password := "") -> Error
 func leave_spectator() -> Error
 func send_signal(to_peer: String, generation: String, signal_payload) -> Error
-func send_transport_status(transport: int, connected: bool) -> Error
+func send_transport_status(transport_kind: int, connected: bool) -> Error
 ```
 
 ## Signals (one per server event)
@@ -154,4 +161,7 @@ peer_transport_status(peer_id, transport, connected)
 - Auto-reconnect (opt-in) retries abnormal terminations with exponential
   backoff + jitter; terminal codes stop retrying; a `ReconnectionFailed` tears
   the link down so consumers always observe a terminal disconnect.
+- The optional heartbeat (`heartbeat_interval_sec`) pings while connected +
+  authenticated; a missing `pong` past `pong_timeout_sec` is treated as a
+  dead link (silent link death produces no WebSocket close).
 - Logs redact tokens/ids by default (`sf_log.gd`).

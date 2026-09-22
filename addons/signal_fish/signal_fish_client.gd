@@ -145,6 +145,13 @@ var _reconnect_timer_running := false
 var _reconnect_delay_remaining := 0.0
 var _user_close_requested := false
 var _reconnect_rng := RandomNumberGenerator.new()
+# Dead-link detection (PLAN §4.7, issue #91): delta-accumulated heartbeat.
+# A silent link produces no FIN/RST on NAT rebinding or radio loss, so
+# without a pong deadline the client sits CONNECTED forever and
+# auto-reconnect can never engage.
+var _heartbeat_elapsed := 0.0
+var _awaiting_pong := false
+var _pong_elapsed := 0.0
 # Effective negotiated game-data format. UNKNOWN = follow the configured
 # preference; the server may downgrade an unsupported preference to JSON at
 # Authenticate (an `Error{UnsupportedGameDataFormat}` event and/or an absence
@@ -326,11 +333,14 @@ func get_lobby_state() -> int:
 
 
 func get_players() -> Array:
-	return _players
+	# Defensive copy (issue #87): the internal rosters are mutated in place by
+	# presence handling, so handing out live arrays would let a caller's
+	# mutation (or a long-held reference) corrupt session state.
+	return _players.duplicate()
 
 
 func get_spectators() -> Array:
-	return _spectators
+	return _spectators.duplicate()
 
 
 func get_buffered_amount() -> int:
@@ -514,14 +524,54 @@ func send_transport_status(transport_kind: int, connected: bool) -> Error:
 	)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _reconnect_timer_running:
-		_reconnect_delay_remaining -= _delta
+		_reconnect_delay_remaining -= delta
 		if _reconnect_delay_remaining <= 0.0:
 			_reconnect_timer_running = false
 			_start_auto_reconnect()
+	_tick_heartbeat(delta)
 	if _config != null and _config.auto_poll:
 		poll()
+
+
+## Optional dead-link detection (PLAN §4.7): with
+## [member SignalFishConfig.heartbeat_interval_sec] on, a [code]Ping[/code]
+## goes out every interval once the session is authenticated and connected;
+## a missing [signal pong] within
+## [member SignalFishConfig.pong_timeout_sec] ends the link through the
+## transport-failure path, so consumers observe [signal connection_failed]
+## and opt-in auto-reconnect engages exactly like any other abnormal
+## termination. Delta-accumulated (no timers, no threads); off by default.
+func _tick_heartbeat(delta: float) -> void:
+	if _config == null or _config.heartbeat_interval_sec <= 0.0:
+		return
+	if _connection_state != ConnectionState.CONNECTED or not is_authenticated():
+		_reset_heartbeat()
+		return
+	if _awaiting_pong:
+		_pong_elapsed += delta
+		if _pong_elapsed >= _config.pong_timeout_sec:
+			_on_transport_failed("heartbeat pong timeout")
+		return
+	_heartbeat_elapsed += delta
+	if _heartbeat_elapsed < _config.heartbeat_interval_sec:
+		return
+	# Retry only after a full interval when the send is refused (e.g.
+	# backpressure): a per-frame retry would spam protocol_error on a
+	# congested link. Tradeoff: a permanently backpressured link never arms
+	# a pong deadline, but every consumer send already fails loudly with
+	# ERR_BUSY there, so the dead-link question is moot in that state.
+	_heartbeat_elapsed = 0.0
+	if ping() == OK:
+		_awaiting_pong = true
+		_pong_elapsed = 0.0
+
+
+func _reset_heartbeat() -> void:
+	_heartbeat_elapsed = 0.0
+	_awaiting_pong = false
+	_pong_elapsed = 0.0
 
 
 func _exit_tree() -> void:
@@ -616,6 +666,10 @@ func _on_transport_opened() -> void:
 		return
 	_connection_state = ConnectionState.CONNECTED
 	_session_state = SessionState.AUTHENTICATING
+	# The heartbeat clock belongs to this link alone: a synchronous redial
+	# (fake transports, failed dials) can skip the idle ticks that would
+	# otherwise reset a pending pong deadline from the previous link.
+	_reset_heartbeat()
 	connected.emit()
 	if _connection_state != ConnectionState.CONNECTED:
 		return
@@ -886,6 +940,9 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# One-shot instruction event; session state stays FINALIZED.
 			game_starting.emit(event.args[0])
 		&"pong":
+			# Any pong proves the link alive, solicited or not.
+			_awaiting_pong = false
+			_pong_elapsed = 0.0
 			pong.emit()
 		&"signal_received":
 			signal_received.emit(event.args[0], event.args[1], event.args[2])

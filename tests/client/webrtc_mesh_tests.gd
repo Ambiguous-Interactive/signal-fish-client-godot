@@ -46,6 +46,8 @@ func run_all() -> void:
 	_test_new_peer_event_obey_flag()
 	_test_closing_window_suppresses_sends()
 	_test_teardown_paths()
+	_test_dropped_peer_connections_are_freed()
+	_test_out_of_tree_free_does_not_leak()
 	_test_mesh_survives_engine_hostility()
 
 
@@ -585,6 +587,55 @@ func _test_teardown_paths() -> void:
 	_assert_equal(0, exit_mesh.get_peer_count(), "detached mesh ignores later plans")
 	exit_mesh.free()
 	exit_client.free()
+
+
+## Issue #86: the signal lambdas capture the mesh entry and the entry holds
+## the connection, so an undisconnected signal is a RefCounted cycle — every
+## rebuilt peer used to leak its WebRTCPeerConnection. Godot frees RefCounted
+## at zero refs, so a weakref must go dead immediately after the drop.
+func _test_dropped_peer_connections_are_freed() -> void:
+	var mesh := _make_mesh()
+	var client := _make_in_room_client()
+	_attach(mesh, client)
+	_inject_plan(client, [_peer(PLAYER_B, true)])
+	var created: Array = _mesh_peers(mesh)
+	_assert_equal(1, created.size(), "the leak check opens one peer")
+	var connection: FakePeerConnection = created[0]
+	var witness: WeakRef = weakref(connection)
+	_inject_plan(client, [])
+	_assert_equal(0, mesh.get_peer_count(), "the empty plan drops the peer")
+	# Release every harness-held reference: the factory's creation log and
+	# the fake multiplayer peer's add log both hold strong references.
+	created.clear()
+	mesh.set_meta("created", [])
+	var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(mesh)
+	multiplayer.added.clear()
+	connection = null
+	_assert(witness.get_ref() == null, "the dropped peer connection is freed")
+	mesh.free()
+	client.free()
+
+
+## The #86 cycle must also die when a mesh holding live peers is discarded
+## without a teardown path: freed while outside the tree, so `_exit_tree`
+## never runs and only `NOTIFICATION_PREDELETE` can reset the mesh.
+func _test_out_of_tree_free_does_not_leak() -> void:
+	var mesh := _make_mesh()
+	var client := _make_in_room_client()
+	_attach(mesh, client)
+	_inject_plan(client, [_peer(PLAYER_B, true)])
+	var created: Array = _mesh_peers(mesh)
+	_assert_equal(1, created.size(), "the discard check opens one peer")
+	var connection: FakePeerConnection = created[0]
+	var witness: WeakRef = weakref(connection)
+	created.clear()
+	mesh.set_meta("created", [])
+	var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(mesh)
+	multiplayer.added.clear()
+	connection = null
+	mesh.free()
+	_assert(witness.get_ref() == null, "an out-of-tree free releases the peer cluster")
+	client.free()
 
 
 func _test_mesh_survives_engine_hostility() -> void:

@@ -22,6 +22,110 @@ static func run() -> Array:
 
 func run_all() -> void:
 	_test_wrong_typed_enum_tokens_fail_closed()
+	_test_passthrough_payload_guard()
+
+
+## Issue #88: `GameData.data` and `Signal.signal` are handed to consumers
+## verbatim, so the shared depth cap must hold for them too, and non-finite
+## numbers (the engine's JSON parser maps `1e400` to inf) must fail closed
+## instead of reaching game code.
+func _test_passthrough_payload_guard() -> void:
+	for case: Array in [
+		[
+			"GameData inf",
+			{"type": "GameData", "data": {"from_player": "p1", "data": {"hp": 1e400}}}
+		],
+		["GameData -inf", {"type": "GameData", "data": {"from_player": "p1", "data": [-INF]}}],
+		[
+			"Signal NaN",
+			{"type": "Signal", "data": {"from": "p2", "generation": "g", "signal": {"x": NAN}}},
+		],
+		[
+			"GameData over-deep",
+			{"type": "GameData", "data": {"from_player": "p1", "data": _nested_arrays(64)}},
+		],
+		[
+			"Signal over-deep",
+			{
+				"type": "Signal",
+				"data": {"from": "p2", "generation": "g", "signal": _nested_arrays(64)}
+			},
+		],
+	]:
+		var envelope: Dictionary = case[1]
+		_assert_protocol_error_envelope(envelope, "%s fails closed" % case[0])
+	# A hostile GameData replayed through `missed_events` cannot smuggle the
+	# same shapes past the replay decoder either.
+	var replay_data := _minimal_reconnected_data()
+	replay_data["missed_events"] = [
+		{"type": "GameData", "data": {"from_player": "p1", "data": {"hp": 1e400}}}
+	]
+	var replayed: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "Reconnected", "data": replay_data}
+	)
+	_assert_equal("reconnected", String(replayed.signal_name), "replay hostile outer decodes")
+	var replayed_entries: Array = replayed.args[1]
+	_assert_equal(1, replayed_entries.size(), "replay hostile entry decoded")
+	var replayed_entry: SFTypesScript.DecodedEvent = replayed_entries[0]
+	var replay_detail: String = replayed_entry.args[0]
+	_assert(
+		(
+			String(replayed_entry.signal_name) == "protocol_error"
+			and replay_detail.contains("non-finite")
+		),
+		"replay hostile entry refused as non-finite"
+	)
+	# No false positives: finite trees, JSON null, and legal depth decode.
+	var finite: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "GameData", "data": {"from_player": "p1", "data": {"hp": 1.5, "note": null}}}
+	)
+	_assert_equal("game_data_received", String(finite.signal_name), "finite passthrough decodes")
+	_assert_equal(1.5, finite.args[1]["hp"], "finite passthrough value intact")
+	var deep_legal: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "GameData", "data": {"from_player": "p1", "data": _nested_arrays(10)}}
+	)
+	_assert_equal(
+		"game_data_received", String(deep_legal.signal_name), "deep-but-legal passthrough decodes"
+	)
+	# Exact depth boundary on the shared helper, through a populated
+	# container: the leaf sitting exactly at the cap is accepted, one level
+	# deeper is refused.
+	_assert_equal(
+		"",
+		SFTypeUtils.passthrough_payload_error([[1]], SFTypeUtils.MAX_MESSAGE_DEPTH - 2),
+		"passthrough leaf at the cap accepted"
+	)
+	_assert(
+		not (
+			SFTypeUtils
+			. passthrough_payload_error([[1]], SFTypeUtils.MAX_MESSAGE_DEPTH - 1)
+			. is_empty()
+		),
+		"passthrough leaf past the cap refused"
+	)
+
+
+func _nested_arrays(depth: int) -> Variant:
+	var value: Variant = 1
+	for _level: int in depth:
+		value = [value]
+	return value
+
+
+func _minimal_reconnected_data() -> Dictionary:
+	return {
+		"room_id": "r1",
+		"room_code": "ABC123",
+		"player_id": "p1",
+		"game_name": "reef-rally",
+		"max_players": 4,
+		"supports_authority": false,
+		"current_players": [],
+		"is_authority": false,
+		"lobby_state": "waiting",
+		"ready_players": [],
+		"relay_type": "websocket",
+	}
 
 
 func _test_wrong_typed_enum_tokens_fail_closed() -> void:

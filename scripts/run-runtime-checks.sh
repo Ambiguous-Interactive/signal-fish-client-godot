@@ -52,6 +52,12 @@ run_lint() {
 }
 
 run_static() {
+	# gdtoolkit bootstraps its grammar cache ($HOME/.cache/gdtoolkit/<version>)
+	# with a bare `os.makedirs` (parser.py, no exist_ok): concurrent cold
+	# starts race EEXIST and a check fails with "Cannot open file ..." —
+	# CI runners cold-start this home on every run. Pre-create the leaf
+	# sequentially; identical-content pickle writes afterward are benign.
+	mkdir -p "${HOME}/.cache/gdtoolkit/$(gdformat --version | awk '{print $2}')"
 	# All three checks are independent; run them concurrently and report each
 	# tool's output verbatim after all finish.
 	local helper_output format_output lint_output helper_rc format_rc lint_rc

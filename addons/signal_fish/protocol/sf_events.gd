@@ -97,6 +97,11 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 		"GameData":
 			if not _has_string(data, "from_player") or not data.has("data"):
 				return _protocol_error("GameData requires from_player and data", envelope)
+			# The payload tree is consumer-facing passthrough: bound its
+			# nesting and refuse non-finite numbers (issue #88).
+			var game_data_payload_error := SFTypeUtils.passthrough_payload_error(data["data"])
+			if not game_data_payload_error.is_empty():
+				return _protocol_error(game_data_payload_error, envelope)
 			return _event(
 				type_name,
 				&"game_data_received",
@@ -442,6 +447,11 @@ static func _decode_signal(type_name: String, data: Dictionary, envelope: Dictio
 	if data.has("generation") and data["generation"] != null:
 		if typeof(data["generation"]) != TYPE_STRING:
 			return _protocol_error("Signal generation must be a string", envelope)
+	# The relayed payload is consumer-facing passthrough: bound its nesting
+	# and refuse non-finite numbers (issue #88).
+	var signal_payload_error := SFTypeUtils.passthrough_payload_error(data["signal"])
+	if not signal_payload_error.is_empty():
+		return _protocol_error(signal_payload_error, envelope)
 	return _event(
 		type_name,
 		&"signal_received",
