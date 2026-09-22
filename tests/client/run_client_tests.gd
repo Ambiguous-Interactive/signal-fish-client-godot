@@ -780,7 +780,10 @@ func _test_spectator_flow() -> void:
 
 
 func _test_reconnected_restores_room_state() -> void:
-	var client := _make_authenticated_client()
+	# `Reconnected` only arrives in response to the directed handshake
+	# (issue #82), so the test drives a real reconnect dial instead of
+	# injecting the event into a normal-auth session.
+	var client := _make_reconnect_dial_client()
 	var fake: SFFakeTransportScript = client.transport
 	var restored: Array = []
 	var failures: Array = []
@@ -791,6 +794,7 @@ func _test_reconnected_restores_room_state() -> void:
 	client.reconnection_failed.connect(
 		func(reason: String, error_code: int) -> void: failures.append([reason, error_code])
 	)
+	fake.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 
 	var reconnected_data := _room_joined_data({"lobby_state": "lobby", "ready_players": [PLAYER_A]})
 	reconnected_data["missed_events"] = [
@@ -809,6 +813,22 @@ func _test_reconnected_restores_room_state() -> void:
 	_assert_equal(SFTypesScript.LobbyState.LOBBY, client.get_lobby_state(), "lobby state restored")
 	_assert_equal([], failures, "no reconnection_failed")
 	client.free()
+
+
+func _make_reconnect_dial_client() -> SignalFishClientScript:
+	var client := SignalFishClientScript.new()
+	var errors := _track_protocol_errors(client)
+	var config := _make_config()
+	config.endpoint_url = "ws://example.test/socket"
+	_assert_equal(OK, client.configure(config), "configure")
+	client.transport = SFFakeTransportScript.new()
+	_assert_equal(
+		OK, client.reconnect(PLAYER_A, ROOM_ID, "test-reconnect-token-not-secret"), "reconnect dial"
+	)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_open()
+	_assert_equal([], errors, "reconnect dial is error-free")
+	return client
 
 
 func _test_backpressure_returns_busy_and_drops() -> void:

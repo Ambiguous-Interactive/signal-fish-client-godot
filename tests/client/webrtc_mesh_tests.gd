@@ -10,6 +10,7 @@ const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFWebRTCMeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
+const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
@@ -100,6 +101,24 @@ func _attach(mesh: SFWebRTCMeshScript, client: SignalFishClientScript) -> void:
 
 func _make_in_room_client() -> SignalFishClientScript:
 	return _runner.call("_make_in_room_client")
+
+
+func _make_reconnect_dial_client() -> SignalFishClientScript:
+	var client := SignalFishClientScript.new()
+	var errors := _track_protocol_errors(client)
+	var config: SignalFishConfigScript = _runner.call("_make_config")
+	config.endpoint_url = "ws://example.test/socket"
+	_assert_equal(OK, client.configure(config), "configure")
+	client.transport = SFFakeTransportScript.new()
+	_assert_equal(
+		OK,
+		client.reconnect(PLAYER_A, "20000000-0000-0000-0000-000000000001", "dial-token-not-secret"),
+		"reconnect dial"
+	)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_open()
+	_assert_equal([], errors, "reconnect dial is error-free")
+	return client
 
 
 func _track_protocol_errors(client: SignalFishClientScript) -> Array:
@@ -487,7 +506,12 @@ func _test_teardown_paths() -> void:
 		"reconnected",
 		"fresh room_joined",
 	]:
-		var teardown_client := _make_in_room_client()
+		# Upstream only sends `Reconnected` in response to the directed
+		# handshake (issue #82), so that case drives a real reconnect dial
+		# instead of injecting the event into a normal session.
+		var teardown_client := (
+			_make_reconnect_dial_client() if teardown == "reconnected" else _make_in_room_client()
+		)
 		var teardown_mesh := _make_mesh()
 		_attach(teardown_mesh, teardown_client)
 		var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(teardown_mesh)
@@ -504,6 +528,9 @@ func _test_teardown_paths() -> void:
 			"connection_failed":
 				teardown_fake.inject_failure("socket dropped")
 			"reconnected":
+				teardown_fake.inject_server_message(
+					{"type": "Authenticated", "data": _runner.call("_authenticated_data")}
+				)
 				var reconnected_data: Dictionary = _runner.call("_room_joined_data")
 				# Real replay shape carries full events incl. plans: none may revive the torn-down mesh.
 				reconnected_data["missed_events"] = [

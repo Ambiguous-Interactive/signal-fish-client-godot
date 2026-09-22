@@ -78,6 +78,8 @@ func _run() -> void:
 	_test_scheme_refused_reconnect_drops_dial_credentials()
 	_test_duplicate_authenticated_sends_handshake_once()
 	_test_duplicate_reconnected_is_fully_silent()
+	_test_dial_contract_survives_authentication_error()
+	_test_duplicate_protocol_info_is_fully_silent()
 	_test_handshake_send_failure_resolves_attempt()
 	_test_handshake_send_failure_killing_link_cascades()
 	_test_refused_authenticate_resolves_the_dial()
@@ -755,8 +757,81 @@ func _test_duplicate_reconnected_is_fully_silent() -> void:
 	client.free()
 
 
+func _test_dial_contract_survives_authentication_error() -> void:
+	# Issue #82: `AuthenticationError` clears the dial credentials mid-dial;
+	# hostile `Authenticated`/`Reconnected` events after it must not leak the
+	# consumer-silent dial contract or apply a baseline for a handshake that
+	# never went out.
+	var client := _make_reconnect_client(TOKEN_V1)
+	var transport: SFFakeTransportScript = client.transport
+	var auth_events: Array = []
+	var auth_error_events: Array = []
+	var reconnected_events: Array = []
+	client.authenticated.connect(
+		func(_app: String, _org: String, _limits: SFTypesScript.RateLimitInfo) -> void:
+			auth_events.append(1)
+	)
+	client.authentication_error.connect(
+		func(_error: String, _code: SFErrorCodesScript.Code) -> void: auth_error_events.append(1)
+	)
+	client.reconnected.connect(
+		func(_info: SFTypesScript.RoomJoinedInfo, _missed: Array) -> void:
+			reconnected_events.append(1)
+	)
+	transport.inject_server_message(
+		{
+			"type": "AuthenticationError",
+			"data": {"error": "bad token", "error_code": "UNAUTHORIZED"}
+		}
+	)
+	_assert_equal(1, auth_error_events.size(), "authentication_error surfaces once")
+	_assert_equal("", client._reconnect_auth_token, "dial credentials consumed by the error")
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	var reconnected_data := _room_joined_data({"lobby_state": "lobby"})
+	reconnected_data["reconnection_token"] = TOKEN_V2
+	reconnected_data["missed_events"] = []
+	transport.inject_server_message({"type": "Reconnected", "data": reconnected_data})
+	_assert_equal([], auth_events, "post-error Authenticated stays consumer-silent")
+	_assert_equal([], reconnected_events, "post-error Reconnected stays consumer-silent")
+	_assert_equal(
+		SignalFishClientScript.SessionState.UNAUTHENTICATED,
+		client.get_session_state(),
+		"no hostile event restores the session"
+	)
+	_assert_equal(
+		[SFMessagesScript.encode(SFMessagesScript.authenticate("test-app"))],
+		client.transport.sent_text,
+		"no handshake for a dial whose authentication failed"
+	)
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_duplicate_protocol_info_is_fully_silent() -> void:
+	# Issue #82 (#24 precedent): duplicate ProtocolInfo is off-contract; it
+	# must not re-reconcile the game-data format or re-emit.
+	var client := SignalFishClientScript.new()
+	_error_trackers.append(_track_protocol_errors(client))
+	_assert_equal(OK, client.configure(_make_config()), "configure")
+	client.transport = SFFakeTransportScript.new()
+	_assert_equal(OK, client.connect_to_server(), "connect")
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_open()
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	var emissions: Array = []
+	client.protocol_info.connect(
+		func(_info: SFTypesScript.ProtocolInfo) -> void: emissions.append(1)
+	)
+	transport.inject_server_message({"type": "ProtocolInfo", "data": {}})
+	transport.inject_server_message({"type": "ProtocolInfo", "data": {}})
+	_assert_equal(1, emissions[0], "protocol_info emitted once per dial")
+	_assert_no_protocol_errors()
+	client.free()
+
+
 func _test_handshake_send_failure_resolves_attempt() -> void:
-	# Issue #21: a failed handshake send must resolve negatively, not hang authenticated-but-roomless.
+	# Issue #21: a failed handshake send must resolve negatively, not hang
+	# authenticated-but-roomless.
 	var client := _make_reconnect_client(TOKEN_V1, false)
 	var errors := _track_protocol_errors(client)
 	var reconnection_failures: Array = []
