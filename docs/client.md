@@ -118,6 +118,9 @@ session state.
 - Frames over `max_inbound_frame_bytes` are dropped with `protocol_error`.
 - Malformed input never crashes the client. Decode failures emit
   `protocol_error` and keep the connection.
+- Repeated JSON keys in an inbound text frame are rejected with
+  `protocol_error` (the engine's parser silently keeps the last one;
+  upstream rejects duplicates).
 - Logs redact tokens and ids by default (`sf_log.gd`).
 
 ## The `is_connected_to_server()` rename

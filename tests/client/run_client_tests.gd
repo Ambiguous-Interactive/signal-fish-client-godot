@@ -73,6 +73,7 @@ func _run() -> void:
 	_test_roster_accessors_are_copies()
 	_test_failures_clean_up_and_failed_open_surfaces_reason()
 	_test_frame_cap_drops_oversized_and_binary_frames()
+	_test_duplicate_key_frame_fails_closed()
 	_test_mixed_content_guard_is_data_driven()
 	_test_log_redaction_and_level_gate()
 	_test_config_to_string_redacts_credential()
@@ -1004,6 +1005,33 @@ func _test_frame_cap_drops_oversized_and_binary_frames() -> void:
 		SignalFishClientScript.ConnectionState.CONNECTED,
 		client.get_connection_state(),
 		"client stays connected after dropped frames"
+	)
+	client.free()
+
+
+## Issue #92: a repeated envelope key used to silently substitute the decoded
+## event (the engine parser is last-wins) — here the smuggled RoomLeft used
+## to wipe the in-room session while the server still counted the player as
+## joined. The duplicate-key guard fails the frame closed instead: one
+## protocol_error, connection and room state untouched.
+func _test_duplicate_key_frame_fails_closed() -> void:
+	var client := _make_in_room_client()
+	var fake: SFFakeTransportScript = client.transport
+	var errors := _track_protocol_errors(client)
+	fake.inject_text('{"type":"GameData","data":{"from_player":"p1","data":{}},"type":"RoomLeft"}')
+	_assert_equal(1, errors.size(), "duplicate key frame flagged")
+	var duplicate_error: String = errors[0]
+	_assert_string_contains(duplicate_error, "duplicate", "duplicate key message")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTED,
+		client.get_connection_state(),
+		"stays connected after duplicate key frame"
+	)
+	_assert(not client.get_room_id().is_empty(), "room state survives the smuggled RoomLeft")
+	_assert_equal(
+		SignalFishClientScript.SessionState.IN_ROOM_WAITING,
+		client.get_session_state(),
+		"session state survives the smuggled RoomLeft"
 	)
 	client.free()
 

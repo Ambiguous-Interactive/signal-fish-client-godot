@@ -37,6 +37,13 @@ CI, tests, and internal tooling are not listed.
 
 ### Fixed
 
+- Inbound text frames containing a repeated JSON key (for example a second
+  `"type"`) now fail closed with `protocol_error` instead of letting the
+  engine's last-wins parser silently substitute fields — a smuggled
+  duplicate could previously wipe room state or replace the retained
+  reconnection identity. This matches the duplicate rejection upstream
+  applies and the binary envelope path already enforced; keys compare
+  after escape decoding, so `"\u0061"` and `"a"` are the same key (#92).
 - `get_players()` and `get_spectators()` now return copies: the live internal
   rosters let one caller mutation (or a cached reference) silently corrupt
   session state (#87).
