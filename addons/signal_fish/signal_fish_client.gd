@@ -123,6 +123,12 @@ var _authenticated_seen := false
 # Once-per-dial guard for `Reconnected`: a duplicate event on any dial
 # (issue #71) must not re-emit the baseline or replay `missed_events`.
 var _reconnected_seen := false
+# Once-per-dial guard for `ProtocolInfo`: duplicates must not re-reconcile
+# the game-data format or re-emit (issue #82).
+var _protocol_info_seen := false
+# Stable per-dial fact recorded while the dial credentials are still live;
+# handlers consult this, not the credential state `authentication_error` clears.
+var _reconnect_dial := false
 # Last URL a dial was attempted against. Reconnect/auto-reconnect dials reuse
 # it so a session opened with an explicit connect_to_server override rejoins
 # the same endpoint; it falls back to config.endpoint_url when never set.
@@ -566,6 +572,8 @@ func _open_transport(target: String) -> Error:
 	_reconnect_handshake_sent = false
 	_authenticated_seen = false
 	_reconnected_seen = false
+	_protocol_info_seen = false
+	_reconnect_dial = not _reconnect_auth_token.is_empty()
 	# Each dial renegotiates the game-data format from the configured
 	# preference.
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
@@ -795,34 +803,40 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# Once-per-dial: a duplicate `Authenticated` on any dial is
 			# hostile-server input (issue #24) and must stay fully silent —
 			# no second `authenticated` emission and no session-state reset.
-			# On reconnect dials the same guard covers the directed handshake
-			# below, so exactly one goes out per dial.
 			if not _authenticated_seen:
 				_authenticated_seen = true
-				if not _reconnect_handshake_sent:
-					_session_state = SessionState.AUTHENTICATED
-					if _reconnect_auth_token.is_empty():
-						authenticated.emit(event.args[0], event.args[1], event.args[2])
-					elif _connection_state == ConnectionState.CONNECTED:
-						# Reconnect dial: the fresh connection is authenticated,
-						# so the directed handshake goes out now (upstream
-						# `take_auto_reconnect_operation` fires only post-auth).
-						# `authenticated` stays consumer-silent on dials: emitting
-						# it would invite a join-on-auth handler to race the
-						# handshake with a fresh JoinRoom. Consumers observe
-						# `reconnected` (or `reconnection_failed`) next. The send
-						# is once-per-dial: a duplicate Authenticated event must
-						# not resend it, and a failed send resolves the attempt
-						# instead of leaving the session authenticated-but-
-						# roomless. Duplicates after the handshake stay fully
-						# silent above: they must not clobber the restored session
-						# state or leak the consumer-silent dial contract.
+				if _reconnect_dial:
+					# Reconnect dial: the directed handshake goes out once
+					# `Authenticated` arrives (upstream
+					# `take_auto_reconnect_operation` fires only post-auth).
+					# `authenticated` stays consumer-silent on dials: emitting
+					# it would invite a join-on-auth handler to race the
+					# handshake with a fresh JoinRoom; consumers observe
+					# `reconnected` (or `reconnection_failed`) next. The send
+					# is once-per-dial and only while the dial credentials are
+					# live: an `Authenticated` after an `AuthenticationError`
+					# (credentials cleared, issue #82) is hostile input and
+					# stays fully silent. A failed handshake send resolves the
+					# attempt instead of leaving the session authenticated-
+					# but-roomless.
+					if (
+						not _reconnect_handshake_sent
+						and not _reconnect_auth_token.is_empty()
+						and _connection_state == ConnectionState.CONNECTED
+					):
+						_session_state = SessionState.AUTHENTICATED
 						_reconnect_handshake_sent = true
 						if _send_reconnect() != OK:
 							_fail_reconnect_handshake()
+				else:
+					_session_state = SessionState.AUTHENTICATED
+					authenticated.emit(event.args[0], event.args[1], event.args[2])
 		&"protocol_info":
-			_reconcile_game_data_format(event.args[0].game_data_formats)
-			protocol_info.emit(event.args[0])
+			# Upstream issues ProtocolInfo once per connection (issue #82).
+			if not _protocol_info_seen:
+				_protocol_info_seen = true
+				_reconcile_game_data_format(event.args[0].game_data_formats)
+				protocol_info.emit(event.args[0])
 		&"authentication_error":
 			_session_state = SessionState.UNAUTHENTICATED
 			# A failed authentication also kills any pending reconnect
@@ -885,8 +899,12 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# Once-per-dial: a duplicate `Reconnected` on any dial is hostile-
 			# server input (issue #71, #24 precedent) and must stay fully
 			# silent — consumers replay `missed_events`, so a second emission
-			# would double-apply game events.
-			if _reconnected_seen:
+			# would double-apply game events. Upstream only sends `Reconnected`
+			# in response to the directed handshake, so an event arriving
+			# before this dial's handshake went out (e.g. after an
+			# `AuthenticationError`, issue #82) or on a normal-auth dial is
+			# equally hostile.
+			if _reconnected_seen or not _reconnect_handshake_sent:
 				return
 			_reconnected_seen = true
 			_apply_room_info(event.args[0])

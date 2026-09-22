@@ -248,6 +248,11 @@ static func _encode_value(peer: StreamPeerBuffer, value: Variant, depth: int) ->
 		TYPE_INT:
 			_encode_integer(peer, value)
 		TYPE_FLOAT:
+			# Upstream game data is JSON-compatible: the server-side JSON
+			# decode collapses non-finite doubles, so refuse them instead of
+			# putting altered values on the wire (issue #83, #76 precedent).
+			if not is_finite(value):
+				return "non-finite float is not JSON-representable"
 			peer.put_u8(0xCB)
 			peer.put_double(value)
 		TYPE_STRING:

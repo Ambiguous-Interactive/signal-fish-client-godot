@@ -26,6 +26,7 @@ func run_all() -> void:
 	_test_msgpack_decode_vectors()
 	_test_msgpack_hostile_vectors()
 	_test_msgpack_encode_widths()
+	_test_msgpack_non_finite_refusal()
 	_test_msgpack_round_trip_matrix()
 	_test_v2_envelope_canonical_bytes()
 	_test_envelope_variant_matrix()
@@ -160,6 +161,25 @@ func _test_msgpack_encode_widths() -> void:
 	var object_result: Dictionary = SFMsgpackScript.encode(RefCounted.new())
 	var object_result_ok: bool = object_result["ok"]
 	_assert(object_result_ok, false, "objects are rejected")
+
+
+func _test_msgpack_non_finite_refusal() -> void:
+	# Issue #83 (#76 precedent): upstream game data is JSON-compatible and the
+	# server-side JSON decode collapses NaN/Inf, so the encoder refuses them
+	# with a diagnostic instead of putting altered values on the wire.
+	for case: Array in [["NaN", NAN], ["INF", INF], ["-INF", -INF]]:
+		var label: String = case[0]
+		var top_result: Dictionary = SFMsgpackScript.encode(case[1])
+		var top_ok: bool = top_result["ok"]
+		_assert(top_ok, false, "encode %s refused" % label)
+		var top_error: String = top_result["error"]
+		_assert(not top_error.is_empty(), true, "encode %s carries a diagnostic" % label)
+		var nested_result: Dictionary = SFMsgpackScript.encode({"score": case[1]})
+		var nested_ok: bool = nested_result["ok"]
+		_assert(nested_ok, false, "encode nested %s refused" % label)
+	var finite_result: Dictionary = SFMsgpackScript.encode(1.5)
+	var finite_ok: bool = finite_result["ok"]
+	_assert(finite_ok, true, "finite floats still encode")
 
 
 func _test_msgpack_round_trip_matrix() -> void:

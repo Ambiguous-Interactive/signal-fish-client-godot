@@ -17,6 +17,14 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v7
 
+            - name: Set up Python (with pip cache)
+              id: setup-python
+              uses: actions/setup-python@v7
+              with:
+                  python-version: "3.x"
+                  cache: pip
+                  cache-dependency-path: requirements-automation.txt
+
             - name: Install automation validation dependencies
               shell: bash
               run: |
@@ -34,12 +42,15 @@ jobs:
               shell: pwsh
               run: pwsh -NoProfile -File scripts/preflight.ps1 -NoAutoFix -VerboseOutput
 
-            - name: Run LLM harness (regenerate, lint, self-tests)
+            - name: Run LLM harness (regenerate, lint)
               # Single source of truth shared with `.githooks/pre-commit`.
               # `-SkipStagedCheck` because CI validates committed content with
-              # `git diff` below instead of participating in a local staging flow.
+              # `git diff` below instead of participating in a local staging
+              # flow. `-SkipSelfTests` hands the behavioral self-tests to the
+              # parallel `self-tests` job so job wall clock is max(jobs)
+              # instead of the sum (issue #84); coverage is unchanged.
               shell: pwsh
-              run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode CI -SkipStagedCheck -NoAutoFix -VerboseOutput -PreflightAlreadyDone
+              run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode CI -SkipStagedCheck -NoAutoFix -VerboseOutput -PreflightAlreadyDone -SkipSelfTests
 
             - name: Verify generated files are committed
               # CI must additionally catch the case where a contributor forgot to
@@ -69,3 +80,22 @@ jobs:
                     Write-Host "::error::Fast hook median runtime $median ms exceeds 5000 ms budget."
                     exit 1
                   }
+
+    self-tests:
+        name: LLM harness self-tests
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Preflight (parse-check toolkit sources)
+              # Same loud corruption gate as the validate job: behavioral
+              # self-tests must not run against a corrupted toolkit.
+              shell: pwsh
+              run: pwsh -NoProfile -File scripts/preflight.ps1 -NoAutoFix -VerboseOutput
+
+            - name: Run behavioral self-tests
+              # Dependency-free suite; invoked directly (same as the hook
+              # runner's self-tests stage does).
+              shell: pwsh
+              run: pwsh -NoProfile -File scripts/test-llm-harness.ps1 -VerboseOutput

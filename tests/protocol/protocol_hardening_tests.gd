@@ -4,6 +4,7 @@ const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFGameDataFormatScript = preload("res://addons/signal_fish/protocol/sf_game_data_format.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
+const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 
