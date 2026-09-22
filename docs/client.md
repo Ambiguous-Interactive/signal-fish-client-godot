@@ -86,7 +86,7 @@ func ping() -> Error
 func join_as_spectator(game_name: String, room_code: String, spectator_name: String, password := "") -> Error
 func leave_spectator() -> Error
 func send_signal(to_peer: String, generation: String, signal_payload) -> Error
-func send_transport_status(transport: int, connected: bool) -> Error
+func send_transport_status(transport_kind: int, connected: bool) -> Error
 ```
 
 Room commands require an authenticated session. Sending one before

@@ -9,14 +9,32 @@ client never inspects or wraps it.
 
 ## JSON game data
 
-`send_game_data(data)` accepts any `Variant` and sends it as the JSON
-`GameData` message:
+`send_game_data(data)` sends your payload as the JSON `GameData`
+message:
 
 ```gdscript
 client.send_game_data({"action": "move", "x": 30, "y": 40})
 ```
 
 Receive it on `game_data_received(from_player, data)`.
+
+### Outbound payload rules
+
+The client serializes your payload to JSON exactly as given: floats are
+written with full round-trip precision, and JSON `null` passes through
+verbatim. Values that cannot be represented losslessly are refused with
+`protocol_error` (and nothing is sent) rather than corrupted:
+
+- Engine-only Variants (`Vector2`, `Color`, objects, ...) — including
+  the Godot conveniences `StringName` and `Packed*Array` values.
+  Convert them to plain JSON data at the call site.
+- Non-finite floats (`nan`, `inf`) — no JSON parser accepts them.
+- Floats the engine's own JSON formatters cannot round-trip (observed
+  only for very small magnitudes, which come back re-rounded or
+  flattened rather than preserved).
+
+A payload nested more than 14 levels deep is also refused, mirroring
+the inbound decode bound measured from the message envelope.
 
 ## Binary game data
 

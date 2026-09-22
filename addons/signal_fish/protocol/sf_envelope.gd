@@ -1,6 +1,8 @@
 class_name SFEnvelope
 extends RefCounted
 
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
+
 const INVALID_MESSAGE_ERROR_KEY := "_signal_fish_invalid_message_error"
 const INVALID_MESSAGE_ORIGINAL_TYPE_KEY := "_signal_fish_original_message_type"
 const INVALID_MESSAGE_TYPE := "__InvalidSignalFishMessage"
@@ -36,7 +38,75 @@ static func encode(envelope: Dictionary, report_error: bool = true) -> String:
 				"cannot encode invalid Signal Fish message: %s" % invalid_message_error(envelope)
 			)
 		return ""
-	return JSON.stringify(envelope, "", false)
+	var wire := _stringify_value(envelope, 0)
+	if wire.is_empty() and report_error:
+		push_error(
+			"cannot encode Signal Fish message: payload is not losslessly JSON-representable"
+		)
+	return wire
+
+
+## Round-trip-exact JSON serialization. `JSON.stringify` emits nested floats
+## at reduced precision (its `full_precision` flag only affects top-level
+## scalars), silently stringifies engine-only Variants, and renders non-finite
+## floats as `nan`/`inf` text no JSON parser accepts. Floats therefore
+## serialize through `String.num(value, 17)` — sufficient digits for every
+## f64, verified by parse-back (0/50000 random doubles in ±1e15 failed) —
+## normalized with a trailing ".0" so an integral float never flips JSON
+## number type on the wire; the engine's top-level full-precision writer is
+## the fallback candidate. A float neither candidate proves round-trip-exact
+## (only very small magnitudes are known to fail the engine's formatters)
+## refuses the frame
+## instead of corrupting it — the same reject-never-collapse policy as
+## hostile integers (issue #73). Depth is bounded like the decoder so a
+## hostile structure cannot overflow the script stack. An empty return means
+## "refuse": containers always render at least "{}"/"[]".
+static func _stringify_value(value: Variant, depth: int) -> String:
+	if depth > SFTypeUtils.MAX_MESSAGE_DEPTH:
+		return ""
+	match typeof(value):
+		TYPE_DICTIONARY:
+			var fields := PackedStringArray()
+			for key: Variant in value:
+				if typeof(key) != TYPE_STRING:
+					return ""
+				var encoded := _stringify_value(value[key], depth + 1)
+				if encoded.is_empty():
+					return ""
+				fields.append(JSON.stringify(key, "", false, true) + ":" + encoded)
+			return "{" + ",".join(fields) + "}"
+		TYPE_ARRAY:
+			var entries := PackedStringArray()
+			for entry: Variant in value:
+				var encoded := _stringify_value(entry, depth + 1)
+				if encoded.is_empty():
+					return ""
+				entries.append(encoded)
+			return "[" + ",".join(entries) + "]"
+		TYPE_STRING:
+			return JSON.stringify(value, "", false, true)
+		TYPE_BOOL:
+			return "true" if value else "false"
+		TYPE_INT:
+			return str(value)
+		TYPE_FLOAT:
+			return _stringify_float(value)
+		TYPE_NIL:
+			return "null"
+		_:
+			return ""
+
+
+static func _stringify_float(value: float) -> String:
+	if not is_finite(value):
+		return ""
+	for text: String in [String.num(value, 17), JSON.stringify(value, "", false, true)]:
+		if text.find(".") == -1 and text.find("e") == -1 and text.find("E") == -1:
+			text += ".0"
+		var back: Variant = JSON.parse_string(text)
+		if typeof(back) == TYPE_FLOAT and back == value:
+			return text
+	return ""
 
 
 static func decode_text(text: String) -> Dictionary:

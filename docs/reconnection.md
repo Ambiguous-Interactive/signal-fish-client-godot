@@ -27,6 +27,12 @@ The client authenticates first and sends the `Reconnect` message once
 `Authenticated` arrives. Enforcing servers reject any pre-auth message, so
 this handshake order is not optional.
 
+Two dial details matter when you rotate tokens:
+
+- The dial retargets the **last-dialed URL**, not `config.endpoint_url`.
+- The dialed credentials become the retained auto-reconnect identity, so a
+  rotated token always wins over a stale one if auto-reconnect later fires.
+
 ## Replay
 
 On success the client emits `reconnected(info, missed_events)`:

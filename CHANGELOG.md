@@ -14,9 +14,32 @@ CI, tests, and internal tooling are not listed.
 - Lower steady-state and per-message allocations: idle mesh polling no longer
   allocates, and MessagePack/binary game-data decode reuses constant tables
   instead of rebuilding lookups per frame.
+- Outbound JSON game/signal payloads now round-trip exactly: nested
+  floats keep full precision (integral floats stay `2.0` on the wire,
+  never integer text) instead of being rounded to fewer digits by the
+  engine's JSON writer. Floats the engine cannot round-trip through
+  JSON (some very small magnitudes) are refused with a diagnostic
+  rather than silently altered.
+- `send_game_data` and `send_signal` now refuse non-finite floats
+  (`nan`/`inf`) and values JSON cannot represent — engine-only Variants
+  such as `Vector2`, `StringName`, or `Packed*Array` values — with
+  `protocol_error` + `ERR_INVALID_DATA` instead of putting corrupted or
+  unparseable frames on the wire. This also applies at the encode
+  boundary to payloads that skip builder validation, such as
+  `ConnectionInfo.custom.data`. `send_game_data` accepts JSON `null`
+  anywhere in the payload; the `send_signal` matchbox payload keeps
+  refusing it.
+- `send_transport_status`'s first parameter is renamed
+  `transport_kind` (it shadowed the client's `transport` member);
+  positional calls are unaffected.
+- A game-data-format downgrade diagnostic now names the server's formats
+  as wire tokens (`[json, unknown]`) instead of coerced enum integers.
 
 ### Fixed
 
+- A `ProtocolInfo.player_name_rules` length beyond the platform integer
+  range is rejected with `protocol_error` instead of collapsing to a
+  platform-dependent value (#78).
 - `SFWebRTCMesh` no longer sends signals or transport-status reports while the
   client is closing: those sends were refused with a spurious
   `protocol_error` and lost the final "disconnected" report.

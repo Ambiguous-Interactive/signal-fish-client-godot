@@ -2,7 +2,9 @@ extends RefCounted
 
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
+const SFGameDataFormatScript = preload("res://addons/signal_fish/protocol/sf_game_data_format.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 
 var _failures: Array = []
@@ -26,6 +28,187 @@ func run_all() -> void:
 	_test_reconnected_missed_events_depth_hardening()
 	_test_decode_raw_aliasing()
 	_test_optional_string_field_strictness()
+	_test_wire_payload_fidelity()
+	_test_encode_boundary_refusals()
+	_test_format_downgrade_diagnostics()
+
+
+## Issue #76: nested floats used to serialize at reduced precision
+## (JSON.stringify's full_precision flag does not reach container values),
+## so the wire text failed to round-trip. The encoder now proves every
+## float bit-exact by parse-back, keeps integral floats on the wire as
+## floats ("2.0", never integer text), and refuses what it cannot
+## represent losslessly.
+func _test_wire_payload_fidelity() -> void:
+	var vectors := [
+		{"label": "guard digits", "value": 0.30000000000000004},
+		{"label": "short value", "value": 0.5},
+		{"label": "integral float", "value": 2.0, "wire": "2.0"},
+		{"label": "negative magnitude", "value": -7.3e12},
+		{"label": "large id double", "value": 9007199254740993.0},
+		{"label": "negative zero", "value": -0.0},
+	]
+	for vector: Dictionary in vectors:
+		var value: float = vector["value"]
+		var label: String = vector["label"]
+		var envelope := SFMessagesScript.game_data({"score": value})
+		_assert_valid_message(envelope, "fidelity %s builds" % label)
+		var wire := SFMessagesScript.encode(envelope)
+		if not _assert(not wire.is_empty(), "fidelity %s encodes" % label):
+			continue
+		var back: Variant = JSON.parse_string(wire)
+		if not _assert(typeof(back) == TYPE_DICTIONARY, "fidelity %s wire parses" % label):
+			continue
+		var wire_dict: Dictionary = back
+		var payload: Variant = wire_dict["data"]["data"]["score"]
+		_assert(typeof(payload) == TYPE_FLOAT, "fidelity %s stays float on the wire" % label)
+		var round_trips: bool = payload == value
+		_assert(round_trips, "fidelity %s round-trips" % label)
+		if vector.has("wire"):
+			_assert_string_contains(
+				wire, '"score":%s' % vector["wire"], "fidelity %s wire text" % label
+			)
+	var null_envelope := SFMessagesScript.game_data(null)
+	_assert_valid_message(null_envelope, "top-level null game data stays valid")
+	_assert_equal(
+		'{"type":"GameData","data":{"data":null}}',
+		SFMessagesScript.encode(null_envelope),
+		"top-level null wire bytes unchanged"
+	)
+	# Nested JSON null is upstream `Value::Null`: the decoder preserves it,
+	# so the outbound guard must not refuse what a peer could send back.
+	var nested_null := SFMessagesScript.game_data({"hp": null, "tags": [null]})
+	_assert_valid_message(nested_null, "nested null game data stays valid")
+	_assert_equal(
+		'{"type":"GameData","data":{"data":{"hp":null,"tags":[null]}}}',
+		SFMessagesScript.encode(nested_null),
+		"nested null wire bytes verbatim"
+	)
+	# The matchbox Signal payload keeps its documented nested-null refusal.
+	_assert_invalid_message(
+		SFMessagesScript.peer_signal("peer-b", null, {"Offer": null}),
+		"must be JSON data",
+		"peer_signal nested null refused"
+	)
+	var non_finite := [{"label": "NaN", "value": NAN}, {"label": "INF", "value": INF}]
+	for case: Dictionary in non_finite:
+		var payload: Dictionary = {"x": case["value"]}
+		_assert_invalid_message(
+			SFMessagesScript.game_data(payload),
+			"must be JSON data",
+			"game_data %s refused" % case["label"]
+		)
+		_assert_invalid_message(
+			SFMessagesScript.peer_signal("peer-b", null, payload),
+			"must be JSON data",
+			"peer_signal %s refused" % case["label"]
+		)
+	# Sibling parity with peer_signal's pinned engine-Variant refusal.
+	_assert_invalid_message(
+		SFMessagesScript.game_data({"pos": Vector2(1, 2)}),
+		"must be JSON data",
+		"game_data engine Variant refused"
+	)
+	# Godot convenience types the old bare JSON.stringify serialized silently:
+	# StringName values and Packed*Array payloads are refused like any other
+	# non-JSON Variant (fail closed, convert at the call site).
+	_assert_invalid_message(
+		SFMessagesScript.game_data({"name": &"reef"}),
+		"must be JSON data",
+		"game_data StringName value refused"
+	)
+	_assert_invalid_message(
+		SFMessagesScript.game_data(PackedStringArray(["a", "b"])),
+		"must be JSON data",
+		"game_data packed array refused"
+	)
+	# The builder depth bound matches the encoder's envelope-relative bound:
+	# the payload sits two levels below the root, so a leaf value at depth 16
+	# still encodes and one more wrap is refused with the payload-level
+	# diagnostic.
+	var nest: Variant = {"leaf": true}
+	for _level: int in SFTypeUtils.MAX_MESSAGE_DEPTH - 3:
+		nest = {"inner": nest}
+	var at_bound := SFMessagesScript.game_data(nest)
+	_assert_valid_message(at_bound, "depth-bound game data builds")
+	_assert(not SFMessagesScript.encode(at_bound).is_empty(), "depth-bound game data encodes")
+	var over_nest: Variant = {"inner": nest}
+	var over_bound := SFMessagesScript.game_data(over_nest)
+	_assert_invalid_message(
+		over_bound, "must be JSON data", "over-deep game data refused at the builder"
+	)
+
+
+## The encode boundary is the last-resort net for payloads that skip the
+## builder whitelist (ConnectionInfo.custom.data): unserializable values
+## refuse the frame — empty wire, never JSON.stringify's silent
+## stringification, `nan` literals, or coerced dict keys.
+func _test_encode_boundary_refusals() -> void:
+	var cases := [
+		{"label": "engine Variant", "payload": {"deep": Vector2(1, 2)}},
+		{"label": "non-finite float", "payload": {"deep": NAN}},
+		{"label": "Object Variant", "payload": {"deep": RefCounted.new()}},
+		{"label": "non-string key", "payload": {"deep": {1: "a"}}},
+	]
+	for case: Dictionary in cases:
+		var envelope := SFEnvelopeScript.message("GameData", {"data": {"custom": case["payload"]}})
+		_assert_equal(
+			true, SFMessagesScript.is_valid_message(envelope), "%s passes builders" % case["label"]
+		)
+		# report_error off: the refusal itself is the assertion; the reported
+		# path is covered by the client-level boundary test.
+		_assert_equal(
+			"",
+			SFEnvelopeScript.encode(envelope, false),
+			"%s refuses at the boundary" % case["label"]
+		)
+	# Three envelope levels precede the payload, so 13 nested arrays put the
+	# leaf exactly at the encoder's MAX_MESSAGE_DEPTH bound: in passes, one
+	# more wrap refuses.
+	var deep: Variant = "leaf"
+	for _level: int in SFTypeUtils.MAX_MESSAGE_DEPTH - 3:
+		deep = [deep]
+	var deep_envelope := SFEnvelopeScript.message("GameData", {"data": {"custom": deep}})
+	_assert_equal(
+		true,
+		SFMessagesScript.is_valid_message(deep_envelope),
+		"depth-bound payload passes builders"
+	)
+	_assert(not SFMessagesScript.encode(deep_envelope).is_empty(), "depth-bound payload encodes")
+	var over_deep: Variant = [deep]
+	var over_envelope := SFEnvelopeScript.message("GameData", {"data": {"custom": over_deep}})
+	_assert_equal("", SFEnvelopeScript.encode(over_envelope, false), "over-deep payload refuses")
+
+
+## Issue #79: the downgrade diagnostic renders the server's statement as
+## wire tokens, not coerced enum ints (unknown becomes "-1" today).
+func _test_format_downgrade_diagnostics() -> void:
+	var cases := [
+		{
+			"label": "int array renders tokens",
+			"supported": [SFTypesScript.GameDataEncoding.JSON, -1],
+			"expected": "[json, unknown]",
+		},
+		{
+			"label": "string array renders verbatim",
+			"supported": ["json", "weird"],
+			"expected": "[json, weird]",
+		},
+	]
+	for case: Dictionary in cases:
+		var supported: Array = case["supported"]
+		var expected: String = case["expected"]
+		var reason := SFGameDataFormatScript.downgrade_reason("message_pack", supported)
+		_assert_string_contains(reason, expected, "downgrade %s" % case["label"])
+		_assert_string_contains(
+			reason, "does not include the requested format", "downgrade %s explains" % case["label"]
+		)
+	_assert_equal(
+		"", SFGameDataFormatScript.downgrade_reason("rkyv", [0, 2]), "supported preference silent"
+	)
+	_assert_equal(
+		"", SFGameDataFormatScript.downgrade_reason("message_pack", []), "empty statement silent"
+	)
 
 
 func _test_client_message_validation() -> void:

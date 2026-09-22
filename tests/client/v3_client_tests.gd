@@ -6,6 +6,7 @@ extends RefCounted
 
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
+const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
@@ -28,6 +29,7 @@ func run_all() -> void:
 	_test_v3_events_surface()
 	_test_v3_send_methods()
 	_test_connect_token_reaches_wire()
+	_test_encode_boundary_refuses_unserializable_payload()
 
 
 func _make_config() -> SignalFishConfigScript:
@@ -327,6 +329,32 @@ func _test_connect_token_reaches_wire() -> void:
 	_assert_string_contains(
 		SFMessagesScript.validation_error(wrong_type), "connect_token", "error names the field"
 	)
+
+
+## Issue #76: the encode boundary is the last-resort JSON-shape net. A
+## payload that skips the builder whitelist (ConnectionInfo.custom.data)
+## must surface as ERR_INVALID_DATA + protocol_error with nothing on the
+## wire — never as an empty text frame.
+func _test_encode_boundary_refuses_unserializable_payload() -> void:
+	var client := _make_authenticated_client()
+	var fake: SFFakeTransportScript = client.transport
+	var errors: Array = _track_protocol_errors(client)
+	var info: SFTypesScript.ConnectionInfo = SFTypesScript.ConnectionInfo.new(
+		{"type": "custom", "data": {"deep": Vector2(1, 2)}}
+	)
+	var baseline: int = fake.sent_text.size()
+	_assert_equal(
+		ERR_INVALID_DATA, client.provide_connection_info(info), "unserializable custom data refused"
+	)
+	_assert_equal(baseline, fake.sent_text.size(), "refused payload sends nothing")
+	_assert_equal(1, errors.size(), "boundary refusal emits one protocol_error")
+	_assert_string_contains(
+		str(errors[0]), "not losslessly JSON-representable", "protocol_error names the cause"
+	)
+	var stringy := SFTypesScript.ConnectionInfo.new({"type": "custom", "data": {"deep": "ok"}})
+	_assert_equal(OK, client.provide_connection_info(stringy), "JSON custom data accepted")
+	_assert_equal(baseline + 1, fake.sent_text.size(), "accepted payload sends exactly one frame")
+	client.free()
 
 
 func _assert_string_contains(actual: String, expected_substring: String, label: String) -> bool:

@@ -691,7 +691,10 @@ static func validate_player_name_rules(data: Variant) -> String:
 		return "player_name_rules must be an object"
 	var dict: Dictionary = data
 	for key: String in ["max_length", "min_length"]:
-		if not _has_nonnegative_integer(dict, key):
+		# Strict i64 representability (issue #73 policy): a present-as-float
+		# value at or above 2^63 is hostile, never a real length cap —
+		# int() would collapse it platform-dependently.
+		if not _has_i64_integer(dict, key):
 			return "player_name_rules requires nonnegative integer %s" % key
 	for key: String in [
 		"allow_unicode_alphanumeric", "allow_spaces", "allow_leading_trailing_whitespace"
@@ -1034,8 +1037,8 @@ static func _has_bool(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_BOOL
 
 
-static func _has_nonnegative_integer(data: Dictionary, key: String) -> bool:
-	return data.has(key) and _is_integer_value_at_least(data[key], 0)
+static func _has_i64_integer(data: Dictionary, key: String) -> bool:
+	return data.has(key) and _is_i64_integer(data[key])
 
 
 static func _has_integer_in_range(

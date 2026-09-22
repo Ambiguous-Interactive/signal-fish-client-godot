@@ -498,12 +498,13 @@ func send_signal(to_peer: String, generation: String, signal_payload) -> Error:
 
 
 ## Report the current data-path transport state (protocol v3; informational).
-func send_transport_status(transport: int, connected: bool) -> Error:
+## [param transport_kind] takes a [enum SFSessionTypes.TransportKind] value.
+func send_transport_status(transport_kind: int, connected: bool) -> Error:
 	var guard := _guard_session_send("send_transport_status")
 	if guard != OK:
 		return guard
 	return _send_envelope(
-		SFMessagesScript.transport_status(transport, connected), "send_transport_status"
+		SFMessagesScript.transport_status(transport_kind, connected), "send_transport_status"
 	)
 
 
@@ -966,7 +967,15 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 			)
 		)
 		return ERR_BUSY
-	var error: Error = transport.send_text(SFMessagesScript.encode(envelope))
+	# The encode boundary is the last-resort JSON-shape net: a payload that
+	# passed builder validation but cannot be serialized losslessly (an
+	# engine-only Variant deep inside ConnectionInfo.custom.data, a
+	# non-finite float) must surface here, never as an empty text frame.
+	var wire := SFMessagesScript.encode(envelope)
+	if wire.is_empty():
+		_emit_protocol_error("%s: payload is not losslessly JSON-representable" % action)
+		return ERR_INVALID_DATA
+	var error: Error = transport.send_text(wire)
 	if error != OK:
 		# Transport failures also surface as `failed` -> connection_failed.
 		_emit_protocol_error("%s send failed: %s" % [action, error_string(error)])

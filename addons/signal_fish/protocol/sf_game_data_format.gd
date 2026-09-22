@@ -29,6 +29,8 @@ static func label(encoding: int) -> String:
 ## Returns the downgrade reason when the server's supported-format statement
 ## contradicts the requested binary preference, or "" when the preference can
 ## stand. An empty statement means "no server opinion": keep the preference.
+## Formats are rendered as wire tokens, not coerced enum ints, so the
+## diagnostic stays readable (unknown tokens surface as "unknown").
 static func downgrade_reason(config_format: String, supported_formats: Array) -> String:
 	if supported_formats.is_empty():
 		return ""
@@ -39,4 +41,13 @@ static func downgrade_reason(config_format: String, supported_formats: Array) ->
 		return ""
 	if requested in supported_formats:
 		return ""
-	return "server game_data_formats %s does not include the requested format" % supported_formats
+	var labels := PackedStringArray()
+	for value: Variant in supported_formats:
+		match typeof(value):
+			TYPE_INT:
+				labels.append(SFTypesScript.game_data_encoding_to_string(int(value)))
+			TYPE_STRING:
+				labels.append(String(value))
+			_:
+				labels.append(str(value))
+	return "server game_data_formats [%s] does not include the requested format" % ", ".join(labels)

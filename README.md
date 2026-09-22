@@ -5,7 +5,7 @@ protocol. Drop the `addons/signal_fish` folder into any Godot 4 project — no C
 GDExtension, no compilation — and it runs everywhere Godot runs, including web exports.
 
 - **Protocol codec** for the Signal Fish v2 wire plus the v3 session-plan
-  signaling surface: 12 client messages, 24 server events, the full v0.9.1
+  signaling surface: 14 client messages, 28 server events, the full v0.9.1
   error-code table (62 codes), MessagePack game data, strict binary game-data
   frames, and opt-in v3 peer-to-peer session plans — all pinned to upstream
   commits and covered by deterministic fixture tests.

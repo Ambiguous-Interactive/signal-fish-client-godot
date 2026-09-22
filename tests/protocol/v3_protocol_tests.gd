@@ -385,6 +385,52 @@ func _test_v3_validation_and_sentinels() -> void:
 		"max_outbound_message_size must be a non-negative integer",
 		"2^63 float cap rejected"
 	)
+	# Issue #78: player_name_rules lengths obey the same reject-never-collapse
+	# policy as the outbound cap (#73.4): a hostile float must not survive
+	# validation and then collapse in the constructor's int().
+	var length_cases := [
+		{"label": "1e30 max_length rejected", "max_length": 1e30},
+		{"label": "2^63 float max_length rejected", "max_length": 9223372036854775808.0},
+		{"label": "1e30 min_length rejected", "min_length": 1e30, "max_length": 32},
+	]
+	for length_case: Dictionary in length_cases:
+		var case_label: String = length_case["label"]
+		var rules := {
+			"max_length": 32,
+			"min_length": 1,
+			"allow_unicode_alphanumeric": true,
+			"allow_spaces": true,
+			"allow_leading_trailing_whitespace": false,
+		}
+		for key: String in ["max_length", "min_length"]:
+			if length_case.has(key):
+				rules[key] = length_case[key]
+		_assert_protocol_error_contains(
+			SFEventsScript.decode_envelope(
+				{"type": "ProtocolInfo", "data": {"player_name_rules": rules}}
+			),
+			"player_name_rules requires nonnegative integer",
+			case_label
+		)
+	var int_ceiling_rules := (
+		SFTypesScript
+		. ProtocolInfo
+		. new(
+			{
+				"player_name_rules":
+				{
+					"max_length": SFTypesScript.I64_MAX,
+					"min_length": 1,
+					"allow_unicode_alphanumeric": true,
+					"allow_spaces": true,
+					"allow_leading_trailing_whitespace": false,
+				}
+			}
+		)
+	)
+	_assert_equal(
+		SFTypesScript.I64_MAX, int_ceiling_rules.player_name_rules.max_length, "i64 ceiling kept"
+	)
 	_assert_protocol_error_contains(
 		SFEventsScript.decode_envelope(
 			{

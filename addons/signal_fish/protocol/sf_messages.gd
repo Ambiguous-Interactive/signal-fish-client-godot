@@ -6,6 +6,12 @@ const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd"
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 
+## Envelope-relative depth where builder payloads live (e.g. GameData data
+## and the Signal matchbox both sit two levels below the root), so the
+## whitelist refuses at the same depth the encoder would — a payload the
+## builder accepts must always encode.
+const _PAYLOAD_DEPTH := 2
+
 
 static func authenticate(
 	app_id: String,
@@ -99,6 +105,12 @@ static func leave_room() -> Dictionary:
 
 static func game_data(data_payload: Variant) -> Dictionary:
 	var data: Dictionary = {}
+	# Null anywhere in the payload is upstream `Value::Null` (the decoder
+	# pins it round-trip verbatim); anything not JSON data is refused — an
+	# engine-only Variant would otherwise be silently stringified onto the
+	# wire by JSON.stringify, exactly the `peer_signal` hazard.
+	if not _is_json_value(data_payload, true):
+		return _invalid_message("GameData", "game data payload must be JSON data", data)
 	data["data"] = data_payload
 	return SFEnvelopeScript.message("GameData", data)
 
@@ -353,14 +365,17 @@ static func _transport_kind_token(value: Variant) -> String:
 	return _enum_token(value, SFSessionTypesScript.TRANSPORT_KIND_FROM_STRING)
 
 
-static func _is_json_value(value: Variant) -> bool:
-	return _is_json_value_depth(value, 0)
+static func _is_json_value(value: Variant, allow_null := false) -> bool:
+	return _is_json_value_depth(value, _PAYLOAD_DEPTH, allow_null)
 
 
 ## Recursive JSON-shape check so a payload containing engine-only Variants
 ## (e.g. a nested Vector2) is refused locally instead of being silently
-## stringified onto the wire by JSON.stringify.
-static func _is_json_value_depth(value: Variant, depth: int) -> bool:
+## stringified onto the wire by JSON.stringify. Nested JSON `null` is valid
+## upstream JSON, so open payloads opt in via [param allow_null]; the
+## matchbox `Signal` payload keeps refusing it (a null offer/candidate is a
+## consumer bug, and an empty-string sentinel or omission is available).
+static func _is_json_value_depth(value: Variant, depth: int, allow_null: bool) -> bool:
 	if depth > SFTypeUtils.MAX_MESSAGE_DEPTH:
 		return false
 	match typeof(value):
@@ -369,19 +384,27 @@ static func _is_json_value_depth(value: Variant, depth: int) -> bool:
 			for key: Variant in dict:
 				if typeof(key) != TYPE_STRING:
 					return false
-				if not _is_json_value_depth(dict[key], depth + 1):
+				if not _is_json_value_depth(dict[key], depth + 1, allow_null):
 					return false
 			return true
 		TYPE_ARRAY:
 			for entry: Variant in value:
-				if not _is_json_value_depth(entry, depth + 1):
+				if not _is_json_value_depth(entry, depth + 1, allow_null):
 					return false
 			return true
 		# Whitelist the JSON-representable scalars; engine-only Variants
 		# (Vector2, Color, ...) would be silently stringified by
-		# JSON.stringify, and null is refused by the caller (required field).
-		TYPE_BOOL, TYPE_INT, TYPE_FLOAT, TYPE_STRING:
+		# JSON.stringify, and null is gated on allow_null (the caller decides
+		# whether a required field or an open payload is being checked).
+		# Non-finite floats are refused too: JSON.stringify would emit
+		# `nan`/`inf`, which no JSON parser accepts. Float representability
+		# (round-trip-exact text) is proven at the encode boundary.
+		TYPE_NIL:
+			return allow_null
+		TYPE_BOOL, TYPE_INT, TYPE_STRING:
 			return true
+		TYPE_FLOAT:
+			return is_finite(value)
 		_:
 			return false
 
