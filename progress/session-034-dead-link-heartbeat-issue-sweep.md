@@ -132,6 +132,14 @@ zero P1, one P2, five P3s — all addressed:
 All suites, smoke, static checks, and the harness validators re-run green
 after the fixes.
 
+A focused re-review of the fix delta (empirical: Godot probes for the
+predelete paths, a simulated dpkg run) confirmed the mesh/test/doc items
+clean and caught one more P2: under GitHub's `bash -e` default,
+`dpkg-query` exiting 1 for a package absent from the dpkg database (the
+normal fresh-runner case) aborted the docs step instead of falling back.
+Fixed with the `|| status=""` guard and verified both branches locally
+(missing → install fallback, all present → apt skipped).
+
 ## Leftovers / follow-ups
 
 - #92 duplicate-key strictness (design + decision gate in the issue).
