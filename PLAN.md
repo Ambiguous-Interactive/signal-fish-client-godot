@@ -43,6 +43,12 @@
 > truncation hole (#89), and API-doc drift fixes (#90); the docs
 > accessibility gate skips apt when Chromium's libraries are already
 > present, cutting its longest step from ~29s to ~1s on cache-hit runs.
+> Session 035 (issue #92) closed the last known text-decode gap: a strict
+> duplicate-key guard scans each inbound text frame before the engine
+> parse, so a repeated key — in any envelope or payload object, however
+> spelled after escape decoding — fails closed to `protocol_error` exactly
+> like upstream serde and the binary path; the scan adds ~0.5 ms at the
+> 256 KiB frame-cap bound.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -193,13 +199,16 @@ addons/signal_fish/
   signal_fish_config.gd           # class_name SignalFishConfig (Resource)
   protocol/                       # PURE static; no Node, no transport import
     sf_envelope.gd                #   {type,data} <-> JSON (stringify/parse_string)
+    sf_json_guard.gd              #   strict duplicate-key pre-scan for text frames
     sf_messages.gd                #   builders for the 12 client messages -> Dictionary envelopes
     sf_events.gd                  #   decoder: server Dictionary -> SFDecodedEvent (malformed-safe)
     sf_types.gd                   #   typed value objects + enums (see 4.3)
+    sf_type_utils.gd              #   shared depth cap + Variant coercion helpers
     sf_session_types.gd           #   v3 session-plan value objects + Topology/TransportKind enums
     sf_game_data_format.gd        #   pure game-data-format negotiation decisions
     sf_error_codes.gd             #   enum Code + string<->code table + category()
     sf_binary_codec.gd            #   byte-array/base64 compatibility <-> PackedByteArray
+    sf_binary_frames.gd           #   strict v2/v3 binary game-data envelope decoder
     sf_msgpack.gd                 #   pure-GDScript MessagePack encode/decode (opt-in)
     sf_log.gd                     #   leveled logger w/ token/id redaction
   transport/                      # byte/text oriented; NO protocol parsing
@@ -407,9 +416,13 @@ func close(code := 1000, reason := "") -> void
   `_init` (shipped shape; `to_dict()` is the mutable copy). Returns
   `SFDecodedEvent{signal_name: StringName,
   args: Array}`; the client updates cache then `emit_signal(...)`. Same decoder processes `missed_events`.
-  **Decode recursion is depth-bounded** (`MAX_MESSAGE_DEPTH`), and nested `Reconnected` entries inside
-  `missed_events` are rejected as non-replayable (matching the Rust client) — a hostile server cannot
-  overflow the script stack.
+   **Decode recursion is depth-bounded** (`MAX_MESSAGE_DEPTH`), and nested `Reconnected` entries inside
+   `missed_events` are rejected as non-replayable (matching the Rust client) — a hostile server cannot
+   overflow the script stack.
+   **Text frames pass a strict duplicate-key guard** (`sf_json_guard.gd`, issue #92) before the engine
+   parse: Godot's parser is last-wins on repeated keys while upstream rejects them, so any key repeated
+   inside one object — compared after JSON escape decoding — fails closed to `protocol_error`. String
+   contents are skipped with the native byte search, keeping the scan sub-millisecond at the frame cap.
   **Decode output aliases the freshly parsed envelope** (issue #48): `raw` on `DecodedEvent` and typed
   payloads is a read-only view; all decode output from one envelope shares its tree (e.g. a
   `missed_events` entry's raw is visible through the parent event's raw). `to_dict()` returns the
@@ -785,7 +798,7 @@ WebSocketPeer smoke (network-gated, opt-in).
 | Spectator suite (5 events + 2 cmds) | encode/decode | SPECTATING; inject events | — |
 | Reconnect + missed_events replay | decode incl. nested | reconnect sends Reconnect not Authenticate; replay array decoded; terminal codes stop retry | end-to-end (manual) |
 | Error codes table | string⇄enum; unknown→UNKNOWN; category | absent code→NONE | — |
-| Malformed never crashes | bad JSON / missing type / unknown type / wrong types / oversize | inject → `protocol_error`, stays connected | — |
+| Malformed never crashes | bad JSON / missing type / unknown type / wrong types / oversize / duplicate keys | inject → `protocol_error`, stays connected | — |
 | Connection state machine | — | connect→connected; close→closed+disconnected; fail→FAILED+connection_failed | real open/close (manual) |
 | Close code/reason | — | inject_close(1000,"bye") & (-1,"") surface | abnormal drop (manual) |
 | Backpressure | — | buffered>max → `ERR_BUSY`+`protocol_error`, nothing sent | — |

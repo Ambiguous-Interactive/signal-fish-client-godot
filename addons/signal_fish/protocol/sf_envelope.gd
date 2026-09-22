@@ -2,6 +2,7 @@ class_name SFEnvelope
 extends RefCounted
 
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
+const SFJsonGuard = preload("res://addons/signal_fish/protocol/sf_json_guard.gd")
 
 const INVALID_MESSAGE_ERROR_KEY := "_signal_fish_invalid_message_error"
 const INVALID_MESSAGE_ORIGINAL_TYPE_KEY := "_signal_fish_original_message_type"
@@ -110,6 +111,12 @@ static func _stringify_float(value: float) -> String:
 
 
 static func decode_text(text: String) -> Dictionary:
+	# Issue #92: the engine parser is last-wins on duplicate keys while
+	# upstream rejects such frames, so the strict pre-scan fails closed
+	# before a repeated key can silently substitute envelope fields.
+	var duplicate_error := SFJsonGuard.duplicate_key_error(text)
+	if not duplicate_error.is_empty():
+		return {"ok": false, "error": duplicate_error, "envelope": {}}
 	var json := JSON.new()
 	var parse_error := json.parse(text)
 	if parse_error != OK:
