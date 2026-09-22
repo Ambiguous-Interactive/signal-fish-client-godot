@@ -123,19 +123,63 @@ run_godot_script() {
 	godot --headless --path "${cold_project}" --script "${script_path}"
 }
 
-run_godot() {
+_godot_worker() {
+	local command_path="$1"
 	local cold_parent cold_project
 	cold_parent="$(make_cold_parent)"
-	# Register cleanup in this shell; copy_cold_project returns the project path via stdout.
-	cleanup_paths+=("${cold_parent}")
+	# The worker owns its cold copy: concurrent Godot boots would race on the
+	# shared .godot caches if they imported one project directory together.
+	# (They still share user://, but nothing in the suites reads it.) The
+	# path is expanded into the trap text at registration time: after a
+	# set -e abort the function frame (and its locals) is gone before the
+	# EXIT trap runs, so a quoted variable reference would clean nothing.
+	trap "rm -rf '${cold_parent}'" EXIT
 	cold_project="$(copy_cold_project "${cold_parent}")"
-	godot --headless --path "${cold_project}" --script tests/protocol/run_protocol_tests.gd
-	godot --headless --path "${cold_project}" --script tests/transport/run_transport_tests.gd
-	godot --headless --path "${cold_project}" --script tests/client/run_client_tests.gd
-	godot --headless --path "${cold_project}" --script tests/client/run_binary_tests.gd
-	godot --headless --path "${cold_project}" --script tests/client/run_reconnect_tests.gd
-	godot --headless --path "${cold_project}" --quit-after 3
-	godot --headless --path "${cold_project}" res://demo/p2p.tscn --quit-after 3
+	if [[ "${command_path}" == @demo ]]; then
+		godot --headless --path "${cold_project}" --quit-after 3
+	elif [[ "${command_path}" == @p2p ]]; then
+		godot --headless --path "${cold_project}" res://demo/p2p.tscn --quit-after 3
+	else
+		godot --headless --path "${cold_project}" --script "${command_path}"
+	fi
+}
+
+run_godot() {
+	# Suites are independent processes; run them concurrently and report each
+	# suite's output verbatim after all finish (same pattern as run_static).
+	# Wall clock drops from the sum of engine boots to the slowest suite.
+	local names=(protocol transport client binary reconnect demo_boot p2p_boot)
+	local commands=(
+		tests/protocol/run_protocol_tests.gd
+		tests/transport/run_transport_tests.gd
+		tests/client/run_client_tests.gd
+		tests/client/run_binary_tests.gd
+		tests/client/run_reconnect_tests.gd
+		@demo
+		@p2p
+	)
+	local outputs=()
+	local pids=()
+	local index
+	for index in "${!names[@]}"; do
+		local output
+		output="$(mktemp)"
+		outputs+=("${output}")
+		cleanup_paths+=("${output}")
+		_godot_worker "${commands[$index]}" >"${output}" 2>&1 &
+		pids+=("${!}")
+	done
+	local failed=0
+	for index in "${!names[@]}"; do
+		local rc=0
+		wait "${pids[$index]}" || rc=$?
+		echo "=== ${names[$index]} ==="
+		cat "${outputs[$index]}"
+		if [[ "${rc}" -ne 0 ]]; then
+			failed=1
+		fi
+	done
+	return "${failed}"
 }
 
 run_smoke() {
