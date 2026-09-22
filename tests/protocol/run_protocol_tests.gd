@@ -7,6 +7,7 @@ const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const ProtocolHardeningTestsScript = preload("res://tests/protocol/protocol_hardening_tests.gd")
+const WrongTypedTokenTestsScript = preload("res://tests/protocol/wrong_typed_token_tests.gd")
 const BinaryFrameTestsScript = preload("res://tests/protocol/binary_frame_tests.gd")
 const V3ProtocolTestsScript = preload("res://tests/protocol/v3_protocol_tests.gd")
 const UpstreamSamplesTestsScript = preload("res://tests/protocol/upstream_samples_tests.gd")
@@ -43,6 +44,7 @@ func _init() -> void:
 func _helper_suites_are_loadable() -> bool:
 	var suites := [
 		["protocol_hardening_tests", ProtocolHardeningTestsScript],
+		["wrong_typed_token_tests", WrongTypedTokenTestsScript],
 		["binary_frame_tests", BinaryFrameTestsScript],
 		["v3_protocol_tests", V3ProtocolTestsScript],
 		["upstream_samples_tests", UpstreamSamplesTestsScript],
@@ -70,6 +72,7 @@ func _run() -> void:
 	_test_protocol_error_diagnostics()
 	_test_error_code_table()
 	_failures.append_array(ProtocolHardeningTestsScript.run())
+	_failures.append_array(WrongTypedTokenTestsScript.run())
 	_failures.append_array(BinaryFrameTestsScript.run())
 	_failures.append_array(V3ProtocolTestsScript.run())
 	_failures.append_array(UpstreamSamplesTestsScript.run())

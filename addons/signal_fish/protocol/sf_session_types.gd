@@ -66,11 +66,12 @@ class IceServerInfo:
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
-			result.append(String(value))
+			if typeof(value) == TYPE_STRING:
+				result.append(String(value))
 		return result
 
 	func _string_or_empty(value: Variant) -> String:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return ""
 		return String(value)
 
@@ -88,13 +89,18 @@ class SessionPeerInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		player_id = String(data.get("player_id", ""))
-		player_name = String(data.get("player_name", ""))
+		player_id = _string_or_empty(data.get("player_id"))
+		player_name = _string_or_empty(data.get("player_name"))
 		is_authority = bool(data.get("is_authority", false))
 		initiate = bool(data.get("initiate", false))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
+
+	func _string_or_empty(value: Variant) -> String:
+		if typeof(value) != TYPE_STRING:
+			return ""
+		return String(value)
 
 
 ## A syntactically usable direct host endpoint for a [code]host + direct[/code]
@@ -108,11 +114,17 @@ class DirectEndpointInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		host = String(data.get("host", ""))
-		port = int(data.get("port", 0))
+		host = _string_or_empty(data.get("host"))
+		var port_value: Variant = data.get("port")
+		port = int(port_value) if SFTypeUtils.is_integral_number(port_value) else 0
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
+
+	func _string_or_empty(value: Variant) -> String:
+		if typeof(value) != TYPE_STRING:
+			return ""
+		return String(value)
 
 
 ## The per-recipient authoritative session directive (upstream
@@ -175,17 +187,17 @@ class SessionPlanInfo:
 		return result
 
 	func _string_or_empty(value: Variant) -> String:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return ""
 		return String(value)
 
 	func _transport_kind_token(value: Variant) -> int:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return TransportKind.UNKNOWN
 		return int(TRANSPORT_KIND_FROM_STRING.get(String(value), TransportKind.UNKNOWN))
 
 	func _topology_token(value: Variant) -> int:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return Topology.UNKNOWN
 		return int(TOPOLOGY_FROM_STRING.get(String(value), Topology.UNKNOWN))
 
@@ -202,11 +214,16 @@ class NewPeerInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		peer_id = String(data.get("peer_id", ""))
+		peer_id = _string_or_empty(data.get("peer_id"))
 		you_initiate = bool(data.get("you_initiate", false))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
+
+	func _string_or_empty(value: Variant) -> String:
+		if typeof(value) != TYPE_STRING:
+			return ""
+		return String(value)
 
 
 ## A same-room peer's data-path transport state change (upstream
@@ -221,7 +238,7 @@ class PeerTransportStatusInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		peer_id = String(data.get("peer_id", ""))
+		peer_id = _string_or_empty(data.get("peer_id"))
 		transport = _transport_kind_token(data.get("transport"))
 		connected = bool(data.get("connected", false))
 
@@ -229,13 +246,18 @@ class PeerTransportStatusInfo:
 		return raw.duplicate(true)
 
 	func _transport_kind_token(value: Variant) -> int:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return TransportKind.UNKNOWN
 		return int(TRANSPORT_KIND_FROM_STRING.get(String(value), TransportKind.UNKNOWN))
 
+	func _string_or_empty(value: Variant) -> String:
+		if typeof(value) != TYPE_STRING:
+			return ""
+		return String(value)
+
 
 static func topology_from_string(value: Variant) -> int:
-	if value == null:
+	if typeof(value) != TYPE_STRING:
 		return Topology.UNKNOWN
 	return int(TOPOLOGY_FROM_STRING.get(String(value), Topology.UNKNOWN))
 
@@ -245,7 +267,7 @@ static func topology_to_string(value: int) -> String:
 
 
 static func transport_kind_from_string(value: Variant) -> int:
-	if value == null:
+	if typeof(value) != TYPE_STRING:
 		return TransportKind.UNKNOWN
 	return int(TRANSPORT_KIND_FROM_STRING.get(String(value), TransportKind.UNKNOWN))
 

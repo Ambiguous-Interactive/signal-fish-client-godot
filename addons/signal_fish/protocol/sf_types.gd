@@ -134,7 +134,8 @@ class PlayerNameRules:
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
-			result.append(String(value))
+			if typeof(value) == TYPE_STRING:
+				result.append(String(value))
 		return result
 
 
@@ -188,7 +189,8 @@ class ProtocolInfo:
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
-			result.append(String(value))
+			if typeof(value) == TYPE_STRING:
+				result.append(String(value))
 		return result
 
 	func _coerce_game_data_encodings(values: Variant) -> Array:
@@ -196,9 +198,10 @@ class ProtocolInfo:
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
-			result.append(
-				int(GAME_DATA_ENCODING_FROM_STRING.get(String(value), GameDataEncoding.UNKNOWN))
-			)
+			if typeof(value) == TYPE_STRING:
+				result.append(
+					int(GAME_DATA_ENCODING_FROM_STRING.get(String(value), GameDataEncoding.UNKNOWN))
+				)
 		return result
 
 	func _nonnegative_int_or_zero(value: Variant) -> int:
@@ -207,7 +210,7 @@ class ProtocolInfo:
 		return maxi(int(value), 0)
 
 	func _string_or_empty(value: Variant) -> String:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return ""
 		return String(value)
 
@@ -232,7 +235,11 @@ class ConnectionInfo:
 		raw = input.duplicate(true)
 		type = _string_or_empty(input.get("type"))
 		host = _string_or_empty(input.get("host"))
-		port = int(input.get("port", 0))
+		# A present-null port must read like an absent one: `int(null)` raises
+		# and would abort the constructor, silently defaulting every field
+		# assigned after it (issue #81).
+		var port_value: Variant = input.get("port")
+		port = int(port_value) if TypeUtils.is_integral_number(port_value) else 0
 		if type == "relay" and (not input.has("transport") or input["transport"] == null):
 			transport = RelayTransport.AUTO
 		else:
@@ -298,7 +305,8 @@ class ConnectionInfo:
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
-			result.append(String(value))
+			if typeof(value) == TYPE_STRING:
+				result.append(String(value))
 		return result
 
 	## Open payloads (JSON null, scalars) pass through verbatim; containers
@@ -326,7 +334,7 @@ class ConnectionInfo:
 				result[key] = int(result[key])
 
 	func _string_or_empty(value: Variant) -> String:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return ""
 		return String(value)
 
@@ -343,8 +351,8 @@ class PlayerInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		id = String(data.get("id", ""))
-		name = String(data.get("name", ""))
+		id = _string_or_empty(data.get("id"))
+		name = _string_or_empty(data.get("name"))
 		is_authority = bool(data.get("is_authority", false))
 		is_ready = bool(data.get("is_ready", false))
 		connected_at = _string_or_empty(data.get("connected_at"))
@@ -358,7 +366,7 @@ class PlayerInfo:
 		return result
 
 	func _string_or_empty(value: Variant) -> String:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return ""
 		return String(value)
 
@@ -372,15 +380,15 @@ class SpectatorInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		id = String(data.get("id", ""))
-		name = String(data.get("name", ""))
+		id = _string_or_empty(data.get("id"))
+		name = _string_or_empty(data.get("name"))
 		connected_at = _string_or_empty(data.get("connected_at"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
 	func _string_or_empty(value: Variant) -> String:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return ""
 		return String(value)
 
@@ -396,10 +404,10 @@ class PeerConnectionInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		player_id = String(data.get("player_id", ""))
-		player_name = String(data.get("player_name", ""))
+		player_id = _string_or_empty(data.get("player_id"))
+		player_name = _string_or_empty(data.get("player_name"))
 		is_authority = bool(data.get("is_authority", false))
-		relay_type = String(data.get("relay_type", ""))
+		relay_type = _string_or_empty(data.get("relay_type"))
 		if data.has("connection_info") and typeof(data.get("connection_info")) == TYPE_DICTIONARY:
 			connection_info = ConnectionInfo.new(data["connection_info"])
 
@@ -408,6 +416,11 @@ class PeerConnectionInfo:
 		if connection_info != null:
 			result["connection_info"] = connection_info.to_dict()
 		return result
+
+	func _string_or_empty(value: Variant) -> String:
+		if typeof(value) != TYPE_STRING:
+			return ""
+		return String(value)
 
 
 class RoomJoinedInfo:
@@ -437,10 +450,10 @@ class RoomJoinedInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		room_id = String(data.get("room_id", ""))
-		room_code = String(data.get("room_code", ""))
+		room_id = _string_or_empty(data.get("room_id"))
+		room_code = _string_or_empty(data.get("room_code"))
 		player_id = String(data.get("player_id", ""))
-		game_name = String(data.get("game_name", ""))
+		game_name = _string_or_empty(data.get("game_name"))
 		max_players = int(data.get("max_players", 0))
 		supports_authority = bool(data.get("supports_authority", false))
 		current_players = _coerce_players(data.get("current_players", []))
@@ -449,7 +462,7 @@ class RoomJoinedInfo:
 			LOBBY_STATE_FROM_STRING, data.get("lobby_state", ""), LobbyState.UNKNOWN
 		)
 		ready_players = _coerce_strings(data.get("ready_players", []))
-		relay_type = String(data.get("relay_type", ""))
+		relay_type = _string_or_empty(data.get("relay_type"))
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
 		ice_servers = _coerce_ice_servers(data.get("ice_servers", []))
 		reconnection_token = _string_or_empty(data.get("reconnection_token"))
@@ -493,11 +506,12 @@ class RoomJoinedInfo:
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
-			result.append(String(value))
+			if typeof(value) == TYPE_STRING:
+				result.append(String(value))
 		return result
 
 	func _string_or_empty(value: Variant) -> String:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return ""
 		return String(value)
 
@@ -516,10 +530,10 @@ class SpectatorJoinedInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		room_id = String(data.get("room_id", ""))
-		room_code = String(data.get("room_code", ""))
-		spectator_id = String(data.get("spectator_id", ""))
-		game_name = String(data.get("game_name", ""))
+		room_id = _string_or_empty(data.get("room_id"))
+		room_code = _string_or_empty(data.get("room_code"))
+		spectator_id = _string_or_empty(data.get("spectator_id"))
+		game_name = _string_or_empty(data.get("game_name"))
 		current_players = _coerce_players(data.get("current_players", []))
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
 		lobby_state = TypeUtils.enum_value(
@@ -552,9 +566,14 @@ class SpectatorJoinedInfo:
 		return result
 
 	func _coerce_spectator_reason(value: Variant) -> int:
-		if value == null:
+		if typeof(value) != TYPE_STRING:
 			return SpectatorReason.UNKNOWN
 		return int(SPECTATOR_REASON_FROM_STRING.get(String(value), SpectatorReason.UNKNOWN))
+
+	func _string_or_empty(value: Variant) -> String:
+		if typeof(value) != TYPE_STRING:
+			return ""
+		return String(value)
 
 
 class DecodedEvent:
@@ -582,7 +601,7 @@ class DecodedEvent:
 
 
 static func game_data_encoding_from_string(value: Variant) -> int:
-	if value == null:
+	if typeof(value) != TYPE_STRING:
 		return GameDataEncoding.UNKNOWN
 	return int(GAME_DATA_ENCODING_FROM_STRING.get(String(value), GameDataEncoding.UNKNOWN))
 
@@ -592,7 +611,7 @@ static func game_data_encoding_to_string(value: int) -> String:
 
 
 static func lobby_state_from_string(value: Variant) -> int:
-	if value == null:
+	if typeof(value) != TYPE_STRING:
 		return LobbyState.UNKNOWN
 	return int(LOBBY_STATE_FROM_STRING.get(String(value), LobbyState.UNKNOWN))
 
@@ -602,7 +621,7 @@ static func lobby_state_to_string(value: int) -> String:
 
 
 static func relay_transport_from_string(value: Variant) -> int:
-	if value == null:
+	if typeof(value) != TYPE_STRING:
 		return RelayTransport.UNKNOWN
 	return int(RELAY_TRANSPORT_FROM_STRING.get(String(value), RelayTransport.UNKNOWN))
 
@@ -612,7 +631,7 @@ static func relay_transport_to_string(value: int) -> String:
 
 
 static func spectator_reason_from_string(value: Variant) -> int:
-	if value == null:
+	if typeof(value) != TYPE_STRING:
 		return SpectatorReason.UNKNOWN
 	return int(SPECTATOR_REASON_FROM_STRING.get(String(value), SpectatorReason.UNKNOWN))
 
