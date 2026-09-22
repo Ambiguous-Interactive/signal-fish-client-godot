@@ -79,6 +79,20 @@ func _test_duplicate_key_frames_fail_closed() -> void:
 		_assert_protocol_error_contains(
 			decoded, "duplicate", "duplicate key %s rejected" % case["label"]
 		)
+	# The engine strips NUL from decoded strings, so a key spelled with a
+	# NUL escape merges with its lookalike neighbour (last-wins) even though
+	# the scan sees distinct keys. Such keys are refused with their own
+	# diagnostic, merged-duplicate class.
+	var nul_type_smuggle: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(
+		'{"type":"GameData","data":{"from_player":"p1","data":{}},"typ\\u0000e":"RoomLeft"}'
+	)
+	_assert_protocol_error_contains(nul_type_smuggle, "NUL", "NUL-escape type smuggle rejected")
+	var nul_merged: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(
+		'{"type":"GameData","data":{"from_player":"p1","data":{"h\\u0000p":1,"hp":2}}}'
+	)
+	_assert_protocol_error_contains(nul_merged, "NUL", "NUL-escape merged keys rejected")
+	var nul_guard := SFJsonGuard.duplicate_key_error('{"a\\u0000b":1,"ab":2}')
+	_assert_string_contains(nul_guard, "NUL", "NUL key guard diagnostic")
 
 
 func _test_clean_frames_still_decode() -> void:

@@ -33,14 +33,25 @@ baseline `run-runtime-checks.sh all` + `smoke` green.
     `type` really does substitute the type today. Upstream parity wins per
     the canonical rule; escaped spellings of genuinely different keys
     never false-positive.
+  - **The one deliberate serde divergence — NUL keys:** the engine strips
+    U+0000 from decoded strings, so `typ\u0000e` merges with a `type`
+    neighbour engine-side even though the scan sees distinct keys (found
+    by the red-team round, probe-verified end-to-end: the smuggled
+    `RoomLeft` still won). serde keeps NUL and would call the keys
+    distinct — but the guard exists to prevent *engine* substitution, so
+    it must match the engine's effective key identity: any key decoding
+    to a NUL-containing string is refused outright with its own
+    diagnostic. Raw NUL bytes cannot reach either parser (the frame
+    string truncates at NUL and fails as unterminated).
   - **Perf (the issue's decision gate), benchmarked on 4.3 headless:** the
     naive per-byte scan cost ~31 ms at the 256 KiB frame cap; skipping
     string contents with the native `PackedByteArray.find` (quote search +
     odd-backslash check) plus Dictionary-backed per-object key sets brings
     the guard's added cost to ~0.02 ms on a small control frame and
-    ~0.5 ms at the cap bound. A pathological many-small-objects frame
-    (~2000 objects) stays ~13 ms — bounded, and Dictionary key sets keep a
-    single-object flood of distinct keys linear.
+    ~0.5 ms at the cap bound for string-dense frames. The expensive legal
+    shape is object-dense frames: 256 KiB of ~32700 tiny objects costs
+    ~86 ms — bounded and linear, documented honestly in the guard
+    docstring; typical control frames sit orders of magnitude below.
   - Unterminated strings also fail closed in the guard (cheaper and
     deterministic); every other malformed-JSON class is left to the engine
     parser, so the guard stays minimal.
@@ -62,6 +73,11 @@ runner registration) + one client-level case in `run_client_tests.gd`:
 - Client level: the smuggled-RoomLeft frame on an in-room session → one
   `protocol_error`, connection CONNECTED, room/session state intact.
 - Guard unit vectors for escape canonicalization and diagnostic truncation.
+- NUL-key class (red-team find): envelope-level `typ\u0000e` type smuggle,
+  payload-level `h\u0000p`/`hp` merge, and the guard-level diagnostic —
+  all refused.
+- Cap-exact acceptance: a frame at exactly `max_inbound_frame_bytes` is
+  accepted and decoded (the cap rejects strictly greater).
 
 ## CI
 
@@ -79,9 +95,29 @@ protocol suite. No coverage removed or weakened — coverage only added.
 
 ## Adversarial loop
 
-Zero-knowledge red-team sub-agent reviewed packet + diff and re-ran the
-suites. Findings and resolutions recorded in the PR review thread; all
-P1/P2 addressed before opening the PR.
+A zero-knowledge red-team sub-agent reviewed packet + diff, hand-traced the
+lexer against 40+ vectors, probed engine behavior empirically, and re-ran
+the suites red-green (guard hook disabled → every hostile vector decoded,
+i.e. the tests pin the behavior). No false positives found; one real false
+negative and two should-fix items, all addressed:
+
+- **P1 (fixed + covered):** `\u0000` escapes in keys — the engine strips
+  NUL from decoded strings, so scan-distinct keys merged engine-side and
+  the smuggled-substitution attack survived end-to-end. Fix: keys decoding
+  to NUL-containing strings are refused outright (see the design note
+  above); three covering tests added.
+- **P2 (fixed):** the perf note understated object-dense frames (~86 ms at
+  the cap for ~32700 tiny objects); the docstring now states the real
+  number and the shape honestly.
+- **P2 (fixed):** missing cap-exact acceptance test from the #92 checklist
+  — a frame at exactly the inbound cap is now proven accepted + decoded.
+- **P3 (superseded by the P1 fix):** NUL keys used to render as `""` in
+  the duplicate diagnostic; the dedicated NUL refusal gives a clear
+  message instead.
+- **P3 (accepted):** the guard re-encodes the frame text to bytes although
+  the transport handed the client raw bytes; avoiding the copy would
+  change the public `decode_text(String)` contract for a micro-win —
+  not worth it.
 
 ## Leftovers / follow-ups
 

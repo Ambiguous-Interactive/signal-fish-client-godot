@@ -995,6 +995,20 @@ func _test_frame_cap_drops_oversized_and_binary_frames() -> void:
 	var oversized_error: String = errors[0]
 	_assert_string_contains(oversized_error, "exceeds cap", "oversized frame message")
 
+	# A frame exactly at the cap is accepted and decoded (the inbound frame
+	# cap in _on_transport_packet rejects strictly greater), so a cap-sized
+	# frame must survive the guard + parse.
+	var pong_events: Array = []
+	client.pong.connect(func() -> void: pong_events.append(true))
+	var exact := '{"type":"Pong"'
+	while exact.length() < 31:
+		exact += " "
+	exact += "}"
+	_assert_equal(32, exact.length(), "cap-exact frame construction")
+	fake.inject_text(exact)
+	_assert_equal(1, errors.size(), "cap-exact frame accepted")
+	_assert_equal(1, pong_events.size(), "cap-exact frame decoded")
+
 	fake.inject_binary(PackedByteArray([0, 1, 2]))
 	_assert_equal(2, errors.size(), "binary frame flagged pre-negotiation")
 	var binary_error: String = errors[1]

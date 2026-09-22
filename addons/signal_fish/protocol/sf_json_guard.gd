@@ -18,17 +18,22 @@ extends RefCounted
 ## decoded per byte. Keys compare after JSON escape decoding —
 ## [code]"\u0061"[/code] and [code]"a"[/code] are the same string, matching
 ## serde's unescaped comparison and the engine's own parse — so lookalike
-## spellings cannot smuggle a second copy of a key past the guard.
-## Unterminated strings fail closed as well; malformed JSON of every other
-## class is left to the engine parser — only the duplicate-key class
-## (plus the unterminated string) is diagnosed here.
+## spellings cannot smuggle a second copy of a key past the guard. The one
+## deliberate divergence from serde: a key whose decoded form contains U+0000
+## is refused outright, because the engine strips NUL from strings and would
+## merge such a key into a lookalike neighbour for a silent last-wins
+## overwrite. Unterminated strings fail closed as well; malformed JSON of
+## every other class is left to the engine parser — only the duplicate-key
+## class (plus unterminated strings and NUL keys) is diagnosed here.
 ##
 ## Cost (issue #92 decision gate, Godot 4.3 headless): the guard adds
 ## ~0.02 ms to a small control frame and ~0.5 ms at the 256 KiB frame-cap
-## bound (string content is skipped natively). A pathological
-## many-small-objects frame (~2000 objects, 23 KiB) stays ~13 ms — dominated
-## by the per-object key sets, which are Dictionary-backed to keep a
-## single-object flood of distinct keys linear.
+## bound when the frame is string-dense (string content is skipped
+## natively). Legal object-dense frames are the expensive shape — 256 KiB of
+## ~32700 tiny objects costs ~100 ms, dominated by the per-object key sets,
+## which are Dictionary-backed to keep a single-object flood of distinct
+## keys linear. Bounded and linear in frame size; typical control frames sit
+## orders of magnitude below the cap.
 
 const _MAX_REPORTED_KEY_BYTES := 32
 
@@ -50,6 +55,11 @@ static func duplicate_key_error(text: String) -> String:
 				return "message contains an unterminated JSON string"
 			if expect_key:
 				var key := _collect_key(bytes, index + 1, close)
+				if key.find(0x00) != -1:
+					# The engine strips NUL from decoded strings, so a NUL key
+					# would merge with a lookalike neighbour (last-wins)
+					# despite being distinct to this scan.
+					return "message contains a NUL character in a JSON key"
 				var keys: Dictionary = key_sets[key_sets.size() - 1]
 				if keys.has(key):
 					return "message contains duplicate JSON key %s" % _render_key(key)
