@@ -125,8 +125,23 @@ func _handle_polled_state(state: int) -> void:
 	if state == WebSocketPeer.STATE_OPEN or state == WebSocketPeer.STATE_CLOSING:
 		if not _drain_packets():
 			return
-
-	if state == WebSocketPeer.STATE_CLOSED:
+	elif state == WebSocketPeer.STATE_CLOSED:
+		# Data frames delivered before a server close can still be queued once
+		# the state flips to CLOSED (issue #70). The web peer keeps them, so
+		# they must drain before `closed` fires; native wslay wipes them when
+		# the close handshake completes inside one poll() — an upstream engine
+		# limitation this layer cannot recover. While the per-poll cap leaves
+		# packets queued, the close emission defers to the next poll; close
+		# code/reason stay readable in the CLOSED state.
+		var drained_peer: SFWebSocketPeerAdapterScript = _peer
+		if not _drain_packets():
+			return
+		if _peer != drained_peer:
+			# A packet handler redialed synchronously mid-drain: this session
+			# is over, and the fresh dial must not be failed in its name.
+			return
+		if _peer.get_available_packet_count() > 0:
+			return
 		_handle_closed_state()
 
 

@@ -76,6 +76,7 @@ func _run() -> void:
 	_test_double_nested_close_cascade_wins_over_retry()
 	_test_scheme_refused_reconnect_drops_dial_credentials()
 	_test_duplicate_authenticated_sends_handshake_once()
+	_test_duplicate_reconnected_is_fully_silent()
 	_test_handshake_send_failure_resolves_attempt()
 	_test_handshake_send_failure_killing_link_cascades()
 	_test_auto_reconnect_exhaustion_emits_connection_failed()
@@ -685,6 +686,32 @@ func _test_duplicate_authenticated_sends_handshake_once() -> void:
 	)
 	_assert_no_protocol_errors()
 	reconnected_client.free()
+
+
+func _test_duplicate_reconnected_is_fully_silent() -> void:
+	# Issue #71 (#24 precedent): duplicate Reconnected is off-contract;
+	# consumers replay missed_events, so a second emission would double-apply
+	# game events. State re-application is idempotent; the emission is not.
+	var client := _make_reconnect_client(TOKEN_V1)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	var emissions := [0]
+	client.reconnected.connect(
+		func(_info: SFTypesScript.RoomJoinedInfo, _missed: Array) -> void: emissions[0] += 1
+	)
+	var data := _room_joined_data({"lobby_state": "lobby"})
+	data["reconnection_token"] = TOKEN_V2
+	data["missed_events"] = [{"type": "Pong"}]
+	transport.inject_server_message({"type": "Reconnected", "data": data})
+	transport.inject_server_message({"type": "Reconnected", "data": data})
+	_assert_equal(1, emissions[0], "reconnected emitted once per dial")
+	_assert_equal(
+		SignalFishClientScript.SessionState.IN_ROOM_LOBBY,
+		client.get_session_state(),
+		"session state untouched by duplicate"
+	)
+	_assert_no_protocol_errors()
+	client.free()
 
 
 func _test_handshake_send_failure_resolves_attempt() -> void:

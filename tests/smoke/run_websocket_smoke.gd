@@ -47,6 +47,8 @@ func _run() -> void:
 	if passed:
 		passed = _phase_ok(await _smoke_server_initiated_close(), "remote close")
 	if passed:
+		passed = _phase_ok(await _smoke_message_then_close_surfaces_both(), "message then close")
+	if passed:
 		passed = _phase_ok(await _smoke_failed_dial_is_terminal(), "refused dial")
 	if _server != null:
 		_server.stop()
@@ -131,6 +133,35 @@ func _smoke_server_initiated_close() -> bool:
 		return false
 	_assert_equal([[4321, "server-bye"]], _closed_events, "remote close code/reason")
 	_assert_equal([], _failure_messages, "remote close phase failures")
+	return _failures.is_empty()
+
+
+func _smoke_message_then_close_surfaces_both() -> bool:
+	# Issue #70 regression: data delivered before a server close must surface
+	# before `closed`. The message is drained while still OPEN, then the close
+	# arrives: native wslay wipes queued packets when the close handshake
+	# completes inside one poll(), so the coalesced single-write case is an
+	# upstream engine limitation (web keeps them queued and the transport
+	# drains them at CLOSED).
+	_reset_transport()
+	_assert_equal(
+		OK, _transport.connect_to_url("ws://127.0.0.1:%d" % _server.get_port()), "smoke redial"
+	)
+	if not await _wait_until(func() -> bool: return _opened_count == 1, "reopen for final message"):
+		return false
+	_server.send_text_frame("final-word")
+	if not await _wait_until(func() -> bool: return _packets.size() == 1, "final message receipt"):
+		return false
+	var final_payload: PackedByteArray = _packets[0]["payload"]
+	_assert_equal(true, _packets[0]["is_text"], "final message is_text flag")
+	_assert_equal("final-word", final_payload.get_string_from_utf8(), "final message content")
+	_server.close_connection(4999, "after-message")
+	if not await _wait_until(
+		func() -> bool: return _closed_events.size() == 1, "post-message close"
+	):
+		return false
+	_assert_equal([[4999, "after-message"]], _closed_events, "close after message code/reason")
+	_assert_equal([], _failure_messages, "message-then-close phase failures")
 	return _failures.is_empty()
 
 

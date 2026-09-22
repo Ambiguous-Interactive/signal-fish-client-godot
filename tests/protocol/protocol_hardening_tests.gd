@@ -24,6 +24,7 @@ func run_all() -> void:
 	_test_reconnected_missed_events_nonfatal()
 	_test_reconnected_missed_events_depth_hardening()
 	_test_decode_raw_aliasing()
+	_test_optional_string_field_strictness()
 
 
 func _test_client_message_validation() -> void:
@@ -758,6 +759,74 @@ func _test_decode_raw_aliasing() -> void:
 		not is_same(nested_player.connection_info.raw, info_source),
 		"outbound ConnectionInfo keeps its snapshot"
 	)
+
+
+func _test_optional_string_field_strictness() -> void:
+	# Issue #72: optional string fields decode absent/null to "" and reject
+	# present non-string values with protocol_error — no silent String()
+	# coercion. Cases: [label, value slots, expected sentinel]; empty slots =
+	# key absent, one slot = the value under the key.
+	var cases := [
+		["absent", [], ""],
+		["null", [null], ""],
+		["string", ["Org"], "Org"],
+	]
+	for case: Array in cases:
+		var data := {"app_name": "app", "rate_limits": _minimal_rate_limits()}
+		var value: Array = case[1]
+		if not value.is_empty():
+			data["organization"] = value[0]
+		var event: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+			{"type": "Authenticated", "data": data}
+		)
+		if not _assert_equal(
+			"authenticated", String(event.signal_name), "organization %s: decodes" % case[0]
+		):
+			continue
+		_assert_equal(case[2], event.args[1], "organization %s: value" % case[0])
+	_assert_protocol_error_envelope(
+		{
+			"type": "Authenticated",
+			"data": {"app_name": "app", "organization": [1], "rate_limits": _minimal_rate_limits()}
+		},
+		"organization wrong type"
+	)
+
+	for envelope_type: String in ["RoomJoined", "Reconnected"]:
+		var expected_signal := &"room_joined" if envelope_type == "RoomJoined" else &"reconnected"
+		for case: Array in cases:
+			var data := _minimal_room_joined_data()
+			if envelope_type == "Reconnected":
+				data["missed_events"] = []
+			var value: Array = case[1]
+			if not value.is_empty():
+				data["reconnection_token"] = value[0]
+			var event: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+				{"type": envelope_type, "data": data}
+			)
+			if not _assert_equal(
+				expected_signal,
+				event.signal_name,
+				"%s reconnection_token %s: decodes" % [envelope_type, case[0]]
+			):
+				continue
+			_assert_equal(
+				case[2],
+				event.args[0].reconnection_token,
+				"%s reconnection_token %s: value" % [envelope_type, case[0]]
+			)
+		var hostile := _minimal_room_joined_data()
+		hostile["reconnection_token"] = 42
+		if envelope_type == "Reconnected":
+			hostile["missed_events"] = []
+		_assert_protocol_error_envelope(
+			{"type": envelope_type, "data": hostile},
+			"%s reconnection_token wrong type" % envelope_type
+		)
+
+
+func _minimal_rate_limits() -> Dictionary:
+	return {"per_minute": 60, "per_hour": 600, "per_day": 6000}
 
 
 func _minimal_room_joined_data() -> Dictionary:

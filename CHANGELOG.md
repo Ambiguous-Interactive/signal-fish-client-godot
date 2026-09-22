@@ -19,6 +19,15 @@ CI, tests, and internal tooling are not listed.
 
 - Closing during the `opened` callback no longer risks a crash when a consumer
   handler fails the session synchronously.
+- Web exports no longer drop server messages that arrive shortly before a
+  close: the transport now drains packets still queued when the socket closes
+  before surfacing the close event (#70).
+- A duplicate `Reconnected` from a hostile or buggy server no longer emits a
+  second `reconnected`, so consumers replaying `missed_events` cannot
+  double-apply game events (#71).
+- Wrong-typed `Authenticated.organization` and `reconnection_token` values now
+  decode to `protocol_error` instead of being silently coerced to strings,
+  matching the strictness of every other field (#72).
 
 ### Added
 

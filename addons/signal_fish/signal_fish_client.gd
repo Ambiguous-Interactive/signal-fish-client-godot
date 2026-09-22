@@ -120,6 +120,9 @@ var _reconnect_handshake_sent := false
 # Once-per-dial guard for `Authenticated` itself: a duplicate event on any
 # dial (issue #24) must not re-emit `authenticated` or re-set session state.
 var _authenticated_seen := false
+# Once-per-dial guard for `Reconnected`: a duplicate event on any dial
+# (issue #71) must not re-emit the baseline or replay `missed_events`.
+var _reconnected_seen := false
 # Last URL a dial was attempted against. Reconnect/auto-reconnect dials reuse
 # it so a session opened with an explicit connect_to_server override rejoins
 # the same endpoint; it falls back to config.endpoint_url when never set.
@@ -555,6 +558,7 @@ func _open_transport(target: String) -> Error:
 	_user_close_requested = false
 	_reconnect_handshake_sent = false
 	_authenticated_seen = false
+	_reconnected_seen = false
 	# Each dial renegotiates the game-data format from the configured
 	# preference.
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
@@ -865,6 +869,13 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"peer_transport_status":
 			peer_transport_status.emit(event.args[0], event.args[1], event.args[2])
 		&"reconnected":
+			# Once-per-dial: a duplicate `Reconnected` on any dial is hostile-
+			# server input (issue #71, #24 precedent) and must stay fully
+			# silent — consumers replay `missed_events`, so a second emission
+			# would double-apply game events.
+			if _reconnected_seen:
+				return
+			_reconnected_seen = true
 			_apply_room_info(event.args[0])
 			_session_state = _session_state_for_lobby(_lobby_state)
 			# The reconnection handshake completed: drop the dial credentials

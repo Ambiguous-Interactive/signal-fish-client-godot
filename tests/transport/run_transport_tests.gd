@@ -12,6 +12,9 @@ var _failures: Array = []
 # Completion sentinel: a runtime abort inside _run() would otherwise leave
 # the process hanging until CI kills it.
 var _run_completed := false
+# Session under test for _redial_packet_handler. The connection binds the
+# long-lived SceneTree instead of a lambda capturing the transport local.
+var _redial_transport: SFWebSocketTransportScript = null
 
 
 func _init() -> void:
@@ -47,6 +50,7 @@ func _run() -> void:
 	_test_websocket_connecting_close_fails_without_closed()
 	_test_websocket_connecting_close_surfaces_caller_reason()
 	_test_websocket_read_error_is_terminal_once()
+	_test_websocket_closed_state_delivers_queued_packets()
 	_run_completed = true
 
 
@@ -497,6 +501,119 @@ func _test_websocket_read_error_is_terminal_once() -> void:
 	_assert_equal(
 		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "websocket read error state"
 	)
+
+
+func _test_websocket_closed_state_delivers_queued_packets() -> void:
+	# Issue #70: packets queued at STATE_CLOSED must surface before `closed`.
+	# The scripted peer models the web peer, which keeps messages received
+	# before the close event queued; native wslay drops them engine-side, so
+	# this drain is the only recovery a transport can offer.
+	# Cases: [label, queued packets, per-poll cap, expected packets after
+	# poll 1, expected events after poll 1, expected packets after poll 2,
+	# expected events after poll 2].
+	var message := "kicked".to_utf8_buffer()
+	var second := "last".to_utf8_buffer()
+	var cases := [
+		[
+			"drains within the cap in one poll",
+			[message],
+			64,
+			1,
+			["opened", ["closed", 1000, "gone"]],
+			null,
+			null
+		],
+		[
+			"defers close while the cap leaves packets queued",
+			[message, second],
+			1,
+			1,
+			["opened"],
+			2,
+			["opened", ["closed", 1000, "gone"]]
+		],
+	]
+	for case: Array in cases:
+		var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+		var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+		transport._peer = peer
+		transport.max_packets_per_poll = case[2]
+		var events: Array = []
+		var packets: Array = []
+		transport.opened.connect(func() -> void: events.append("opened"))
+		transport.failed.connect(func(_error: String) -> void: events.append("failed"))
+		transport.closed.connect(
+			func(code: int, reason: String) -> void: events.append(["closed", code, reason])
+		)
+		transport.packet_received.connect(
+			func(_payload: PackedByteArray, _is_text: bool) -> void: packets.append("packet")
+		)
+
+		peer.ready_state = WebSocketPeer.STATE_OPEN
+		transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
+		peer.ready_state = WebSocketPeer.STATE_CLOSED
+		peer.close_code = 1000
+		peer.close_reason = "gone"
+		var queued: Array = case[1]
+		peer.packets = queued.duplicate()
+		transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+		_assert_equal(case[3], packets.size(), "%s: packets after poll 1" % case[0])
+		_assert_equal(case[4], events, "%s: events after poll 1" % case[0])
+		if case[5] != null:
+			transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+			_assert_equal(case[5], packets.size(), "%s: packets after poll 2" % case[0])
+			_assert_equal(case[6], events, "%s: events after poll 2" % case[0])
+	# A read error on a packet queued at CLOSED fails the session instead of
+	# emitting `closed` — the failure wins, mirroring the OPEN-state path.
+	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+	transport._peer = peer
+	var events: Array = []
+	var packets: Array = []
+	transport.failed.connect(func(_error: String) -> void: events.append("failed"))
+	transport.closed.connect(func(_code: int, _reason: String) -> void: events.append("closed"))
+	transport.packet_received.connect(
+		func(_payload: PackedByteArray, _is_text: bool) -> void: packets.append("packet")
+	)
+	peer.ready_state = WebSocketPeer.STATE_OPEN
+	transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
+	peer.ready_state = WebSocketPeer.STATE_CLOSED
+	peer.packets = [PackedByteArray([1])]
+	peer.packet_errors = [ERR_FILE_CORRUPT]
+	transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+	_assert_equal(["failed"], events, "read error at closed is terminal once")
+	_assert_equal([], packets, "read error at closed suppresses the packet")
+
+	# A synchronous redial from a packet handler during the CLOSED drain must
+	# not fail the fresh dial with the old session's close (review finding).
+	var redial_transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	_redial_transport = redial_transport
+	var redial_peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+	redial_transport._peer = redial_peer
+	var redial_events: Array = []
+	redial_transport.opened.connect(func() -> void: redial_events.append("opened"))
+	redial_transport.failed.connect(func(_error: String) -> void: redial_events.append("failed"))
+	redial_transport.closed.connect(
+		func(_code: int, _reason: String) -> void: redial_events.append("closed")
+	)
+	redial_transport.packet_received.connect(_redial_packet_handler)
+	redial_peer.ready_state = WebSocketPeer.STATE_OPEN
+	redial_transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
+	redial_peer.ready_state = WebSocketPeer.STATE_CLOSED
+	redial_peer.packets = [PackedByteArray([1])]
+	redial_transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+	_assert_equal(["opened"], redial_events, "redial mid-drain survives the old session")
+	_assert_equal(
+		WebSocketPeer.STATE_CONNECTING, redial_transport.get_ready_state(), "redial state intact"
+	)
+
+
+func _redial_packet_handler(_payload: PackedByteArray, _is_text: bool) -> void:
+	# Mimics connect_to_url's session swap synchronously from the packet path.
+	var fresh: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+	fresh.ready_state = WebSocketPeer.STATE_CONNECTING
+	_redial_transport._peer = fresh
+	_redial_transport._reset_session_flags()
 
 
 func _assert(condition: bool, label: String) -> bool:

@@ -357,8 +357,10 @@ func close(code := 1000, reason := "") -> void
 
 - **`SFWebSocketTransport`** (Godot 4 `WebSocketPeer`): validate scheme; `poll()` → drain all available
   packets up to a per-frame cap (`was_string_packet()` distinguishes text/binary); emit `opened` once on
-  CONNECTING→OPEN; on first CLOSED read close code/reason and emit `closed` once; surface handshake/send
-  failures via `failed`; `get_buffered_amount()` for backpressure. No protocol parsing. Web-safe.
+  CONNECTING→OPEN; on first CLOSED drain any packets still queued (web peer keeps pre-close frames;
+  issue #70 — native wslay wipes them engine-side, an upstream limitation) and emit `closed` once;
+  surface handshake/send failures via `failed`; `get_buffered_amount()` for backpressure. No protocol
+  parsing. Web-safe.
 - **`SFFakeTransport`**: in-memory, no network/timers. `inject_open()`, `inject_text()`,
   `inject_server_message(Dictionary)`, `inject_binary()`, `inject_close(code, reason)`,
   `inject_failure(error)`; records `sent_text[]`/`sent_binary[]`; settable `buffered_amount`,
