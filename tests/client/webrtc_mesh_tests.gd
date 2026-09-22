@@ -43,6 +43,7 @@ func run_all() -> void:
 	_test_ice_replace_and_clear()
 	_test_signal_gates()
 	_test_new_peer_event_obey_flag()
+	_test_closing_window_suppresses_sends()
 	_test_teardown_paths()
 	_test_mesh_survives_engine_hostility()
 
@@ -430,6 +431,35 @@ func _test_new_peer_event_obey_flag() -> void:
 		{"type": "NewPeer", "data": {"peer_id": PLAYER_C, "you_initiate": true}}
 	)
 	_assert_equal(0, mesh.get_peer_count(), "relay plan gates new_peer")
+	mesh.free()
+	client.free()
+
+
+func _test_closing_window_suppresses_sends() -> void:
+	# Issue #73: with a user close() in flight the mesh still ticks, but its
+	# sends would be refused with a spurious protocol_error; they stay silent
+	# and teardown resolves the boundary instead.
+	var client := _make_in_room_client()
+	var errors := _track_protocol_errors(client)
+	var mesh := _make_mesh()
+	_attach(mesh, client)
+	_inject_plan(client, [_peer(PLAYER_B, true)])
+	var pc: FakePeerConnection = _mesh_peers(mesh)[0]
+	pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
+	mesh.poll()
+	var fake_transport: SFFakeTransportScript = client.transport
+	var baseline: int = fake_transport.sent_text.size()
+	_assert(baseline > 0, "connected boundary reported before the close")
+
+	# CLOSING: the close frame has not been observed, so the mesh is attached
+	# and its callbacks can still fire.
+	client._connection_state = SignalFishClientScript.ConnectionState.CLOSING
+	pc.state = 4  # WebRTCPeerConnection.STATE_FAILED
+	mesh.poll()
+	pc.emit_session_description_created("answer", "v=late")
+	pc.emit_ice_candidate_created("", 0, "cand:late")
+	_assert_equal(baseline, fake_transport.sent_text.size(), "closing window sends nothing")
+	_assert_equal(0, errors.size(), "closing window emits no spurious protocol errors")
 	mesh.free()
 	client.free()
 

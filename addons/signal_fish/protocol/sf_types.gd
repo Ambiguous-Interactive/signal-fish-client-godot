@@ -13,6 +13,9 @@ const SessionTypes = preload("res://addons/signal_fish/protocol/sf_session_types
 const U8_MAX := 255
 const U16_MAX := 65535
 const U32_MAX := 4294967295
+## Wire integers above the platform int range must be rejected, not collapsed:
+## int(1e30) is platform-dependent (issue #73).
+const I64_MAX := 9223372036854775807
 
 const CONNECTION_INFO_OUTBOUND_NULL_FIELDS := [
 	"host",
@@ -246,7 +249,9 @@ class ConnectionInfo:
 			client_id = -1
 		sdp = _string_or_empty(input.get("sdp"))
 		ice_candidates = _coerce_strings(input.get("ice_candidates", []))
-		data = input.get("data")
+		# `data` views this object's own snapshot (raw), never the caller's
+		# tree: one object must not hold two divergent views (issue #73).
+		data = raw.get("data")
 
 	func to_dict() -> Dictionary:
 		if type.is_empty():
@@ -282,7 +287,7 @@ class ConnectionInfo:
 				else:
 					result["sdp"] = sdp
 			"custom":
-				result["data"] = data
+				result["data"] = _copied_data(data)
 			_:
 				return raw.duplicate(true)
 		_normalize_common_wire_fields(result)
@@ -295,6 +300,16 @@ class ConnectionInfo:
 		for value: Variant in values:
 			result.append(String(value))
 		return result
+
+	## Open payloads (JSON null, scalars) pass through verbatim; containers
+	## are deep-copied so to_dict() never aliases the caller's wire tree
+	## (issue #73).
+	func _copied_data(value: Variant) -> Variant:
+		if typeof(value) == TYPE_DICTIONARY:
+			return (value as Dictionary).duplicate(true)
+		if typeof(value) == TYPE_ARRAY:
+			return (value as Array).duplicate(true)
+		return value
 
 	func _normalize_common_wire_fields(result: Dictionary) -> void:
 		for key: String in CONNECTION_INFO_OUTBOUND_NULL_FIELDS:
@@ -660,7 +675,7 @@ static func validate_protocol_info(data: Variant) -> String:
 			if not _is_integer_value_in_range(dict[key], 0, U16_MAX):
 				return "ProtocolInfo %s must be u16" % key
 	if dict.has("max_outbound_message_size") and dict["max_outbound_message_size"] != null:
-		if not _is_nonnegative_integer(dict["max_outbound_message_size"]):
+		if not _is_i64_integer(dict["max_outbound_message_size"]):
 			return "ProtocolInfo max_outbound_message_size must be a non-negative integer"
 	if dict.has("transports") and dict["transports"] != null:
 		if not _is_string_array_value(dict["transports"]):
@@ -1041,10 +1056,16 @@ static func _is_optional_string(data: Dictionary, key: String) -> bool:
 	return typeof(data[key]) == TYPE_STRING
 
 
-static func _is_nonnegative_integer(value: Variant) -> bool:
-	if not TypeUtils.is_integral_number(value):
+## Wire integers beyond the platform range arrive as floats: require strict
+## i64 representability so a hostile value cannot collapse in int()
+## (issue #73). 2^63 is rejected even though it is the float I64_MAX rounds
+## to — a present-as-float value that large is hostile, never a real cap.
+static func _is_i64_integer(value: Variant) -> bool:
+	if typeof(value) == TYPE_INT:
+		return value >= 0
+	if typeof(value) != TYPE_FLOAT or not TypeUtils.is_integral_number(value):
 		return false
-	return float(value) >= 0.0
+	return float(value) >= 0.0 and float(value) < 9223372036854775808.0
 
 
 static func _has_known_lobby_state(data: Dictionary, key: String) -> bool:

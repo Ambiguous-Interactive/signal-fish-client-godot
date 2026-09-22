@@ -357,7 +357,10 @@ func _reset_mesh() -> void:
 
 
 func _update_transport_status() -> void:
-	if _client == null:
+	# While the client is dialing/closing the send would be refused with a
+	# spurious protocol_error and the report lost (issue #73); teardown
+	# resolves the boundary silently instead.
+	if not _client_connected():
 		return
 	var connected := _count_connected_peers()
 	if connected > 0 and not _reported_connected:
@@ -400,9 +403,15 @@ func _on_peer_ice_candidate(entry, _media: String, _index: int, candidate: Strin
 
 
 func _send_signal_to(entry, payload: Dictionary) -> void:
-	if _client == null:
+	if not _client_connected():
 		return
 	_client.send_signal(entry.uuid, entry.generation, payload)
+
+
+## The mesh may only emit while the client's transport is CONNECTED; CLOSING
+## keeps polling for the close frame, so late peer transitions land here.
+func _client_connected() -> bool:
+	return _client != null and _client.is_connected_to_server()
 
 
 func _make_peer_connection():
