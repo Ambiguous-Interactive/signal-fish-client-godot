@@ -60,7 +60,9 @@ scripts that maintain AI context.
   pre-commit / CI flow. Use `-Mode PreCommit` for the installed hook,
   `-Mode AgentFast` for non-mutating local checks, `-Mode Full` for all
   structural and behavioral tests, and `-Mode CI` for loud generated diff
-  verification.
+  verification. `-SkipSelfTests` is CI-only: the llm-harness workflow runs
+  the behavioral self-tests as a dedicated parallel job (issue #84), so the
+  two jobs' wall clock is max(jobs) instead of the sum; hooks never pass it.
 - `scripts/preflight.ps1` parse-checks itself first, then every tracked
   `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers a corrupt source from the
   index/staged copy first, then falls back to `git checkout HEAD -- <path>`.

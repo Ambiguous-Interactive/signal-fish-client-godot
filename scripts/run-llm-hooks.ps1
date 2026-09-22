@@ -14,7 +14,12 @@ param(
     [switch]$Profile,
     # Used by CI after it has already run scripts/preflight.ps1 as a separate
     # loud -NoAutoFix step.
-    [switch]$PreflightAlreadyDone
+    [switch]$PreflightAlreadyDone,
+    # Skip the behavioral subprocess self-tests. CI-only: the llm-harness
+    # workflow runs them as a dedicated parallel job so job wall clock is
+    # max(validate, self-tests) instead of the sum (issue #84). Hooks and
+    # local validation never pass this.
+    [switch]$SkipSelfTests
 )
 
 Set-StrictMode -Version Latest
@@ -1231,7 +1236,7 @@ try {
         }
     }
 
-    if ($Mode -in @('Full', 'CI')) {
+    if ($Mode -in @('Full', 'CI') -and -not $SkipSelfTests) {
         Invoke-HookStage 'self-tests' {
             Write-HookLine 'Running LLM harness self-tests...'
             $testArgs = @('-NoProfile', '-File', $SelfTests)
@@ -1242,6 +1247,8 @@ try {
                 exit $LASTEXITCODE
             }
         }
+    } elseif ($Mode -in @('Full', 'CI') -and $SkipSelfTests) {
+        Write-HookLine 'Skipping behavioral subprocess self-tests (SkipSelfTests; a parallel CI job owns them).'
     } elseif ($toolingTouched) {
         Write-HookLine 'Skipping behavioral subprocess self-tests in fast mode; in-process static guards already ran. Run agent-check.ps1 -Full or Mode Full for exhaustive validation.'
     }
