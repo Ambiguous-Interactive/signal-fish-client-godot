@@ -349,7 +349,7 @@ func _test_v3_validation_and_sentinels() -> void:
 	var big_outbound: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "ProtocolInfo", "data": {"max_outbound_message_size": 8589934592}}
 	)
-	if _assert_decoded_signal("protocol_info", big_outbound, "u64-range outbound cap decodes"):
+	if _assert_decoded_signal("protocol_info", big_outbound, "large outbound cap decodes"):
 		_assert_equal(
 			8589934592, big_outbound.args[0].max_outbound_message_size, "outbound cap kept"
 		)
@@ -359,6 +359,31 @@ func _test_v3_validation_and_sentinels() -> void:
 		),
 		"max_outbound_message_size must be a non-negative integer",
 		"negative outbound cap rejected"
+	)
+	# Issue #73: an out-of-int-range cap must be rejected loudly, not
+	# platform-dependently collapsed to 0 (which would disable the cap).
+	_assert_protocol_error_contains(
+		SFEventsScript.decode_envelope(
+			{"type": "ProtocolInfo", "data": {"max_outbound_message_size": 1e30}}
+		),
+		"max_outbound_message_size must be a non-negative integer",
+		"out-of-range outbound cap rejected"
+	)
+	# The exact platform ceiling is legitimate; the float 2^63 (I64_MAX rounds
+	# up to it) is hostile and must not collapse either.
+	var ceiling: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "ProtocolInfo", "data": {"max_outbound_message_size": SFTypesScript.I64_MAX}}
+	)
+	if _assert_decoded_signal("protocol_info", ceiling, "i64 ceiling decodes"):
+		_assert_equal(
+			SFTypesScript.I64_MAX, ceiling.args[0].max_outbound_message_size, "ceiling value kept"
+		)
+	_assert_protocol_error_contains(
+		SFEventsScript.decode_envelope(
+			{"type": "ProtocolInfo", "data": {"max_outbound_message_size": 9223372036854775808.0}}
+		),
+		"max_outbound_message_size must be a non-negative integer",
+		"2^63 float cap rejected"
 	)
 	_assert_protocol_error_contains(
 		SFEventsScript.decode_envelope(

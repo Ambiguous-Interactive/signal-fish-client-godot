@@ -52,26 +52,32 @@ run_lint() {
 }
 
 run_static() {
-	run_private_helpers
-	# gdformat and gdlint are independent; run both concurrently and report
-	# each tool's output verbatim after both finish.
-	local format_output lint_output format_rc lint_rc
+	# All three checks are independent; run them concurrently and report each
+	# tool's output verbatim after all finish.
+	local helper_output format_output lint_output helper_rc format_rc lint_rc
+	helper_output="$(mktemp)"
 	format_output="$(mktemp)"
 	lint_output="$(mktemp)"
-	cleanup_paths+=("${format_output}" "${lint_output}")
+	cleanup_paths+=("${helper_output}" "${format_output}" "${lint_output}")
+	run_private_helpers >"${helper_output}" 2>&1 &
+	local helper_pid=$!
 	run_format >"${format_output}" 2>&1 &
 	local format_pid=$!
 	run_lint >"${lint_output}" 2>&1 &
 	local lint_pid=$!
+	helper_rc=0
+	wait "${helper_pid}" || helper_rc=$?
 	format_rc=0
 	wait "${format_pid}" || format_rc=$?
 	lint_rc=0
 	wait "${lint_pid}" || lint_rc=$?
+	cat "${helper_output}"
+	rm -f "${helper_output}"
 	cat "${format_output}"
 	rm -f "${format_output}"
 	cat "${lint_output}"
 	rm -f "${lint_output}"
-	if [[ "${format_rc}" -ne 0 || "${lint_rc}" -ne 0 ]]; then
+	if [[ "${helper_rc}" -ne 0 || "${format_rc}" -ne 0 || "${lint_rc}" -ne 0 ]]; then
 		return 1
 	fi
 }

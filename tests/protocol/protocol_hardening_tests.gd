@@ -17,6 +17,7 @@ static func run() -> Array:
 func run_all() -> void:
 	_test_client_message_validation()
 	_test_connection_info_to_dict_resend_canonicalization()
+	_test_custom_connection_info_data_is_copied()
 	_test_inbound_strict_null_validation()
 	_test_binary_codec_hardening()
 	_test_forward_compatible_inbound_strings()
@@ -351,6 +352,24 @@ func _test_connection_info_to_dict_resend_canonicalization() -> void:
 		typeof(spectator_joined_dict["current_players"][0]["connection_info"]["port"]),
 		"spectator joined to_dict connection port type"
 	)
+
+
+func _test_custom_connection_info_data_is_copied() -> void:
+	# Issue #73: custom.data is an open payload, but to_dict() must hand back
+	# an independent copy instead of aliasing the caller's wire tree.
+	var payload := {"depth": {"hp": 3}}
+	var source := {"type": "custom", "data": payload}
+	var info := SFTypesScript.ConnectionInfo.new(source)
+	var dict := info.to_dict()
+	payload["depth"]["hp"] = 9
+	_assert_equal(3, info.data["depth"]["hp"], "data views the snapshot, not the caller tree")
+	_assert_equal(3, dict["data"]["depth"]["hp"], "to_dict copy survives caller mutation")
+	dict["data"]["depth"]["hp"] = 42
+	_assert_equal(3, info.data["depth"]["hp"], "mutating to_dict leaves data intact")
+	_assert_equal(
+		null, SFTypesScript.ConnectionInfo.new({"type": "custom"}).data, "absent data stays null"
+	)
+	_assert_valid_message(SFMessagesScript.provide_connection_info(dict), "resend custom to_dict")
 
 
 func _test_inbound_strict_null_validation() -> void:

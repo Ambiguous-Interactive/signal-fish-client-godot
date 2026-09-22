@@ -205,8 +205,11 @@ func connect_to_server(url := "") -> Error:
 ## [signal reconnected] fires with the decoded [code]missed_events[/code] for
 ## the consumer to replay. [signal connected] fires on reconnect dials;
 ## [signal authenticated] does not (re-authentication is internal, so a
-## join-on-auth handler cannot race the handshake). Backoff-driven retries
-## need the client in the scene tree so [code]_process[/code] runs.
+## join-on-auth handler cannot race the handshake). The dial's credentials
+## become the retained auto-reconnect identity (issue #73): a rotated token
+## replaces a stale one, so a later retry never reuses the old credential.
+## Backoff-driven retries need the client in the scene tree so
+## [code]_process[/code] runs.
 func reconnect(player_id: String, room_id: String, auth_token: String) -> Error:
 	if _config == null:
 		_emit_protocol_error("reconnect requires configure() first")
@@ -228,7 +231,9 @@ func reconnect(player_id: String, room_id: String, auth_token: String) -> Error:
 			"reconnect requires a configured endpoint_url or a previous connect_to_server url"
 		)
 		return ERR_INVALID_PARAMETER
-	_remember_secret(auth_token)
+	# A manual dial carries the freshest known identity: capture it (and its
+	# secret) so auto-reconnect never re-arms with a stale token (issue #73).
+	_capture_reconnect_context(player_id, room_id, auth_token)
 	_reconnect_player_id = player_id
 	_reconnect_room_id = room_id
 	_reconnect_auth_token = auth_token
@@ -237,12 +242,13 @@ func reconnect(player_id: String, room_id: String, auth_token: String) -> Error:
 
 ## Enables opt-in automatic reconnection after an abnormal termination: a
 ## non-user-initiated close, or a transport failure (including failed dials,
-## even ones you initiate). Uses the last server-issued reconnection token; a
-## clean [method close] or a terminal reconnection error stops it. When the
-## retry budget is exhausted, a final [signal connection_failed]
-## ("auto-reconnect exhausted") is emitted, the retained token is dropped,
-## and retrying stops until a fresh baseline re-establishes a session. Off by
-## default.
+## even ones you initiate). Uses the freshest reconnection identity (the last
+## server-issued token, or a later manual [method reconnect] dial's
+## credentials); a clean [method close] or a terminal reconnection error
+## stops it. When the retry budget is exhausted, a final
+## [signal connection_failed] ("auto-reconnect exhausted") is emitted, the
+## retained token is dropped, and retrying stops until a fresh baseline
+## re-establishes a session. Off by default.
 func set_auto_reconnect(enabled: bool) -> void:
 	_auto_reconnect_enabled = enabled
 	if not enabled:
@@ -606,7 +612,13 @@ func _on_transport_opened() -> void:
 		return
 	# Every dial authenticates first (upstream parity); a reconnect dial sends
 	# its directed `Reconnect` once `Authenticated` arrives.
-	_send_authenticate()
+	var error: Error = _send_authenticate()
+	if error != OK and _connection_state == ConnectionState.CONNECTED:
+		# A refused authenticate (e.g. the backpressure cap) leaves the dial
+		# with nothing in flight (issue #73): resolve it like a transport
+		# failure instead of stalling. A consumer handler that closed inside
+		# the error signal left CLOSING, and its cascade owns the teardown.
+		_on_transport_failed("authenticate send failed")
 
 
 func _send_reconnect() -> Error:
@@ -1119,7 +1131,10 @@ func _schedule_auto_reconnect() -> void:
 func _start_auto_reconnect() -> void:
 	if _context_auth_token.is_empty():
 		return
-	if _connection_state in [ConnectionState.CONNECTING, ConnectionState.CONNECTED]:
+	if (
+		_connection_state
+		in [ConnectionState.CONNECTING, ConnectionState.CONNECTED, ConnectionState.CLOSING]
+	):
 		return
 	var error: Error = reconnect(_context_player_id, _context_room_id, _context_auth_token)
 	if error == OK:

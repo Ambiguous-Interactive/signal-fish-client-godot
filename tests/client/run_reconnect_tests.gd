@@ -57,6 +57,7 @@ func _run() -> void:
 	_test_reconnection_token_decodes_from_baselines()
 	_test_manual_reconnect_guards_and_wire_bytes()
 	_test_manual_reconnect_completes_and_refreshes_context()
+	_test_manual_reconnect_dial_refreshes_auto_reconnect_context()
 	_test_reconnect_reuses_last_dialed_url()
 	_test_auto_reconnect_requires_context_and_not_user_close()
 	_test_spectator_baseline_clears_context()
@@ -79,6 +80,7 @@ func _run() -> void:
 	_test_duplicate_reconnected_is_fully_silent()
 	_test_handshake_send_failure_resolves_attempt()
 	_test_handshake_send_failure_killing_link_cascades()
+	_test_refused_authenticate_resolves_the_dial()
 	_test_auto_reconnect_exhaustion_emits_connection_failed()
 	_test_failure_driven_exhaustion_and_budget_recovery()
 	_test_reconnect_tokens_are_redacted()
@@ -212,6 +214,41 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	_step(client, 1.0)
 	_assert_equal(OK, _wait_open(client), "post-reset dial")
 	_assert_equal(1, client._auto_reconnect_attempts, "budget restarts at 1 after reset")
+	_assert_no_protocol_errors()
+	client.free()
+
+
+func _test_manual_reconnect_dial_refreshes_auto_reconnect_context() -> void:
+	# Issue #73: a manual dial with a rotated token re-arms auto-reconnect with
+	# that token, never the stale retained one.
+	var client := SignalFishClientScript.new()
+	_error_trackers.append(_track_protocol_errors(client))
+	_assert_equal(OK, client.configure(_make_config()), "configure")
+	client.set_auto_reconnect(true)
+	client.transport = SFFakeTransportScript.new()
+	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_open()
+	var data := _room_joined_data()
+	data["reconnection_token"] = TOKEN_V1
+	transport.inject_server_message({"type": "RoomJoined", "data": data})
+	transport.inject_close(4999, "dropped")
+
+	# The consumer manually redials with a rotated token; that dial drops too.
+	client.transport = SFFakeTransportScript.new()
+	_assert_equal(
+		OK, client.reconnect(PLAYER_A, ROOM_ID, TOKEN_V2), "manual dial with rotated token"
+	)
+	_assert_equal(TOKEN_V2, client._context_auth_token, "manual dial captures its credentials")
+	_assert_equal(OK, _wait_open(client), "manual dial authenticates")
+	var dial: SFFakeTransportScript = client.transport
+	dial.inject_close(4999, "dropped")
+
+	client.transport = SFFakeTransportScript.new()
+	_step(client, 30.0)
+	_assert_equal(OK, _wait_open(client), "auto dial after the manual dial dropped")
+	var expected := SFMessagesScript.encode(SFMessagesScript.reconnect(PLAYER_A, ROOM_ID, TOKEN_V2))
+	_assert_equal(expected, client.transport.sent_text[-1], "auto retry uses the rotated token")
 	_assert_no_protocol_errors()
 	client.free()
 
@@ -424,13 +461,17 @@ func _test_late_baseline_while_closing_is_ignored() -> void:
 	data["reconnection_token"] = TOKEN_V2
 	data["missed_events"] = []
 	transport.inject_server_message({"type": "Reconnected", "data": data})
-	_assert(client._context_auth_token.is_empty(), "late baseline cannot restore the identity")
+	# Issue #73: the manual dial's credentials are the retained identity; a
+	# late baseline must not replace them with its own token.
+	_assert_equal(TOKEN_V1, client._context_auth_token, "late baseline cannot replace the identity")
 	_assert_equal("", client.get_room_id(), "late baseline cannot restore the room")
 	_assert_equal(
 		SignalFishClientScript.SessionState.AUTHENTICATED,
 		client.get_session_state(),
 		"session state untouched by late baseline"
 	)
+	_assert_equal(OK, client.close(1000, "bye"), "user close")
+	_assert(client._context_auth_token.is_empty(), "the user close clears the identity")
 	client.free()
 
 
@@ -795,6 +836,49 @@ func _test_handshake_send_failure_killing_link_cascades() -> void:
 	_assert_equal(1, errors.size(), "exactly the send diagnostic")
 	_assert_string_contains(errors[0], "send failed", "send diagnostic")
 	client.free()
+
+
+func _test_refused_authenticate_resolves_the_dial() -> void:
+	# Issue #73: a refused authenticate (e.g. the backpressure cap) must not
+	# stall any dial authenticated-with-nothing-in-flight; it resolves exactly
+	# once, like a transport failure. Twins: the handshake failure tests above.
+	var client := SignalFishClientScript.new()
+	var failures: Array[String] = []
+	var errors := _track_protocol_errors(client)
+	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	_assert_equal(OK, client.configure(_make_config()), "configure")
+	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
+	transport.buffered_amount = client._config.max_buffered_bytes + 1
+	client.transport = transport
+	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
+	transport.inject_open()
+	_assert_equal(1, failures.size(), "refused authenticate resolves the dial")
+	_assert_string_contains(failures[0], "authenticate", "failure names the refused send")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED, client.get_connection_state(), "ends FAILED"
+	)
+	_assert_equal(null, client.transport, "transport released")
+	_assert_equal(1, errors.size(), "exactly the transport diagnostic")
+	_assert_string_contains(errors[0], "backpressure", "diagnostic explains the refusal")
+	client.free()
+
+	# A link-killing send already cascades through the transport's `failed`;
+	# the open handler must not resolve the dial a second time.
+	var killed := SignalFishClientScript.new()
+	var killed_failures: Array[String] = []
+	killed.connection_failed.connect(func(error: String) -> void: killed_failures.append(error))
+	_assert_equal(OK, killed.configure(_make_config()), "configure (dead link)")
+	var killed_transport: SFFakeTransportScript = SFFakeTransportScript.new()
+	killed_transport.fail_on_send = true
+	killed.transport = killed_transport
+	_assert_equal(OK, killed.connect_to_server("ws://example.test/socket"), "connect (dead link)")
+	killed_transport.inject_open()
+	_assert_equal(1, killed_failures.size(), "exactly one connection_failed for the dead send")
+	_assert_string_contains(killed_failures[0], "send", "failure names the dead send")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED, killed.get_connection_state(), "ends FAILED"
+	)
+	killed.free()
 
 
 func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:
