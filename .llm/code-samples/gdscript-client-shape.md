@@ -26,10 +26,10 @@ client.connect_to_server()  # dials endpoint_url, auto-sends Authenticate on ope
 # Room commands are refused until the server answers Authenticate: join from
 # the `authenticated` signal, not synchronously after the dial.
 client.authenticated.connect(func(_app, _org, _limits) -> void:
-	var params := SignalFishClient.JoinRoomParams.new()
-	params.game_name = "checkers"
-	params.player_name = "ana"
-	client.join_room(params)
+    var params := SignalFishClient.JoinRoomParams.new()
+    params.game_name = "checkers"
+    params.player_name = "ana"
+    client.join_room(params)
 )
 ```
 
