@@ -37,6 +37,22 @@ CI, tests, and internal tooling are not listed.
 
 ### Fixed
 
+- Wrong-typed enum values on the wire (e.g. a number where a token string
+  belongs) now decode to `protocol_error` instead of silently decoding as
+  the first enum member: `PeerTransportStatus.transport` no longer reports
+  `relay` for hostile values, and every token-lookup helper fails closed
+  to its `UNKNOWN` member (#81).
+- A `ConnectionInfo` with an explicit `port: null` no longer aborts
+  mid-construction and silently drops later fields (credentials,
+  connection data); a null port now reads like an absent one (#81).
+- Hostile `Authenticated`/`Reconnected`/`ProtocolInfo` events that follow
+  a failed authentication on a reconnect dial no longer leak the
+  consumer-silent dial contract: `authenticated` is never emitted on a
+  dial, a `Reconnected` before the dial's handshake went out is ignored,
+  and duplicate `ProtocolInfo` events stay fully silent (#82).
+- `SFMsgpack.encode` now refuses non-finite floats (`nan`/`inf`) with a
+  diagnostic instead of encoding them, because the server-side JSON
+  decode would collapse them (#83).
 - A `ProtocolInfo.player_name_rules` length beyond the platform integer
   range is rejected with `protocol_error` instead of collapsing to a
   platform-dependent value (#78).

@@ -25,7 +25,16 @@
 > (session 032, issues #76-#79) followed: floats serialize bit-exactly,
 > non-finite/engine-only payloads are refused instead of corrupted, the
 > last #73-class int collapse (`player_name_rules`) is closed, and the
-> godot CI step runs its suites concurrently.
+> godot CI step runs its suites concurrently. Session 033 (issues #81-#84)
+> hardened the decode path: wrong-typed enum tokens fail closed to
+> `UNKNOWN` instead of decoding as the first member (`PeerTransportStatus.transport`),
+> a `ConnectionInfo.port: null` no longer aborts construction and drops
+> later fields, the reconnect dial's consumer-silent contract survives a
+> hostile `AuthenticationError` (per-dial latch; `Reconnected` requires
+> the dial's handshake), and `SFMsgpack.encode` refuses NaN/±Inf. The
+> llm-harness workflow now runs validate and behavioral self-tests as
+> parallel jobs (deps cached), cutting its wall clock ~30% with unchanged
+> coverage.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -649,7 +658,11 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       `actions/cache` on `/usr/local/bin/godot` keyed by version); GDScript tooling installs via
       `uv` (issue #27; ~4× faster than the pip venv path, same pinned gdtoolkit).
 - [x] `.github/dependabot.yml` (github-actions weekly + pip + devcontainers).
-- [ ] **Do not touch `llm-harness.yml`** (preflight, harness, generated-diff, 5000ms guard stay intact).
+- [x] `llm-harness.yml` guard rails intact (preflight, harness, generated-diff,
+      5000ms guard stay untouched in behavior). Session 033 (issue #84) split
+      its single job into parallel `validate` + `self-tests` jobs with cached
+      deps — same stages, same guard, wall clock = max(jobs); never add Godot
+      steps to it.
 - **DoD:** `ci.yml` green across matrix; `llm-harness.yml` still green.
 
 ### P6 — Asset Library release + first publish
