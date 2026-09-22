@@ -180,6 +180,38 @@ func _test_msgpack_non_finite_refusal() -> void:
 	var finite_result: Dictionary = SFMsgpackScript.encode(1.5)
 	var finite_ok: bool = finite_result["ok"]
 	_assert(finite_ok, true, "finite floats still encode")
+	# Issue #88: the decode side must mirror the refusal — a hostile payload
+	# must fail closed instead of handing inf/NaN to game code. Bit patterns:
+	# quiet-bit NaN 0x7FF8000000000000, +Inf 0x7FF0000000000000,
+	# -Inf 0xFFF0000000000000 (f64) and their f32 halves.
+	var non_finite_vectors := [
+		["f64 NaN", [0xCB, 0x7F, 0xF8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]],
+		["f64 +Inf", [0xCB, 0x7F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]],
+		["f64 -Inf", [0xCB, 0xFF, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]],
+		["f32 NaN", [0xCA, 0x7F, 0xC0, 0x00, 0x00]],
+		["f32 +Inf", [0xCA, 0x7F, 0x80, 0x00, 0x00]],
+		["f32 -Inf", [0xCA, 0xFF, 0x80, 0x00, 0x00]],
+		[
+			"nested f64 NaN",
+			[0x81, 0x61, 0xCB, 0x7F, 0xF8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+		],
+	]
+	for vector: Array in non_finite_vectors:
+		var vector_bytes: Array = vector[1]
+		var result: Dictionary = SFMsgpackScript.decode(_packed(vector_bytes))
+		var result_ok: bool = result["ok"]
+		_assert(result_ok, false, "decode %s refused" % vector[0])
+		var result_error: String = result["error"]
+		_assert(not result_error.is_empty(), true, "decode %s carries a diagnostic" % vector[0])
+	var finite_doubles := [
+		["f64 1.0", [0xCB, 0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]],
+		["f32 1.0", [0xCA, 0x3F, 0x80, 0x00, 0x00]],
+	]
+	for vector: Array in finite_doubles:
+		var finite_bytes: Array = vector[1]
+		var finite_decode: Dictionary = SFMsgpackScript.decode(_packed(finite_bytes))
+		var finite_decode_ok: bool = finite_decode["ok"]
+		_assert(finite_decode_ok, true, "decode %s still works" % vector[0])
 
 
 func _test_msgpack_round_trip_matrix() -> void:

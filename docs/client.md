@@ -26,6 +26,8 @@ The runtime addon ships two public classes under `addons/signal_fish/`:
 | Limits | `max_buffered_bytes` | Send backpressure threshold (~256 KiB default). |
 | Limits | `max_inbound_packets_per_poll` | Default `64`; overflow moves to the next tick. |
 | Reconnect | `reconnect_max_attempts` | Default `5`. Budget for auto-reconnect. |
+| Heartbeat | `heartbeat_interval_sec` | Default `0` (off). Seconds between automatic `Ping`s while connected + authenticated. |
+| Heartbeat | `pong_timeout_sec` | Default `10`. A silent link past this after a heartbeat ping is torn down as a failure, so auto-reconnect can engage. |
 | v3 session plan | `protocol_version` | Set to `3` to opt in to the v3 surface. |
 | v3 session plan | `supported_transports` | Capability list. |
 | v3 session plan | `supported_topologies` | Capability list. |

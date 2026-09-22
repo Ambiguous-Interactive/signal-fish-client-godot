@@ -6,6 +6,29 @@ CI, tests, and internal tooling are not listed.
 
 ## [Unreleased]
 
+### Added
+
+- Optional dead-link heartbeat: set `heartbeat_interval_sec` to ping while
+  connected and authenticated; a missing `pong` within `pong_timeout_sec`
+  tears the link down as a failure, so auto-reconnect can engage on silent
+  link death (NAT rebinding, radio loss). Off by default.
+
+### Fixed
+
+- `get_players()` and `get_spectators()` now return copies: the live internal
+  rosters let one caller mutation (or a cached reference) silently corrupt
+  session state (#87).
+- The WebRTC mesh no longer leaks every dropped peer connection: the signaling
+  lambdas are now disconnected on drop, breaking a reference cycle that grew
+  with each plan rebuild (#86).
+- Inbound `GameData.data` and `Signal` payloads now reject over-deep nesting
+  (past the shared 16-level decode cap) and non-finite numbers (`1e400`
+  decoded to `inf`; MessagePack `nan`/`inf` was accepted) with
+  `protocol_error` instead of handing them to game code (#88).
+- A fractional `ConnectionInfo.client_id` (e.g. `1.5`) no longer truncates to
+  a different relay slot through `to_dict()`; it fails closed like a direct
+  wire refusal (#89).
+
 ### Changed
 
 - Decoded events and typed payloads no longer deep-copy the parsed wire

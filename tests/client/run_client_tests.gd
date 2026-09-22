@@ -8,6 +8,7 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
+const HeartbeatTestsScript = preload("res://tests/client/heartbeat_tests.gd")
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
 const WebrtcMeshTestsScript = preload("res://tests/client/webrtc_mesh_tests.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
@@ -69,12 +70,14 @@ func _run() -> void:
 	_test_backpressure_returns_busy_and_drops()
 	_test_close_surfaces_code_reason_and_cleans_up()
 	_test_process_and_exit_tree_paths()
+	_test_roster_accessors_are_copies()
 	_test_failures_clean_up_and_failed_open_surfaces_reason()
 	_test_frame_cap_drops_oversized_and_binary_frames()
 	_test_mixed_content_guard_is_data_driven()
 	_test_log_redaction_and_level_gate()
 	_test_config_to_string_redacts_credential()
 	_failures.append_array(V3ClientTestsScript.run(self))
+	_failures.append_array(HeartbeatTestsScript.run(self))
 	_failures.append_array(WebrtcMeshTestsScript.run(self))
 	_run_completed = true
 
@@ -904,6 +907,27 @@ func _test_process_and_exit_tree_paths() -> void:
 		"tree exit closes the session"
 	)
 	_assert_equal(null, client.transport, "tree exit releases the transport")
+	client.free()
+
+
+## Issue #87: the accessors hand out defensive copies — a live-array
+## reference would let one caller mutation corrupt session state silently.
+func _test_roster_accessors_are_copies() -> void:
+	var client := _make_in_room_client()
+	var roster: Array = client.get_players()
+	var spectators: Array = client.get_spectators()
+	_assert(not is_same(client.get_players(), roster), "get_players returns a copy")
+	_assert(not is_same(client.get_spectators(), spectators), "get_spectators returns a copy")
+	roster.clear()
+	spectators.clear()
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message({"type": "PlayerLeft", "data": {"player_id": PLAYER_A}})
+	_assert_equal(0, client.get_players().size(), "cleared copy left the real roster intact")
+	transport.inject_server_message(
+		{"type": "PlayerJoined", "data": {"player": _player(PLAYER_B, "Bob")}}
+	)
+	_assert_equal(1, client.get_players().size(), "presence lands on the real roster")
+	_assert_equal(PLAYER_B, client.get_players()[0].id, "the joined player is queryable")
 	client.free()
 
 

@@ -258,8 +258,13 @@ class ConnectionInfo:
 		connection_data = _string_or_empty(input.get("connection_data"))
 		key = _string_or_empty(input.get("key"))
 		token = _string_or_empty(input.get("token"))
-		if input.has("client_id") and input["client_id"] != null:
-			client_id = int(input["client_id"])
+		# A present-null client_id must read like an absent one, and a
+		# non-integral value must not launder through int() truncation into a
+		# different relay slot (issue #89) — same gate as `port` above
+		# (issue #81).
+		var client_id_value: Variant = input.get("client_id")
+		if client_id_value != null and TypeUtils.is_integral_number(client_id_value):
+			client_id = int(client_id_value)
 		else:
 			client_id = -1
 		sdp = _string_or_empty(input.get("sdp"))

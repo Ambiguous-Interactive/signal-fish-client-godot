@@ -129,14 +129,34 @@ jobs:
               if: steps.playwright-cache.outputs.cache-hit != 'true'
               run: npx playwright install chromium
 
-            # `install --with-deps` runs `apt-get update` internally, and the
-            # runner image's third-party Google Chrome repo can be mid-publish.
-            # The automation deps come only from Ubuntu's own repos, so drop
-            # the irrelevant source first; the retry covers any other
-            # third-party repo race. System libraries are needed on every
-            # fresh runner even when the browser cache hits.
+            # System libraries are needed on every fresh runner even when the
+            # browser cache hits, but apt-get update (which Playwright's
+            # installer runs internally, and where the runner image's
+            # third-party Google Chrome repo can be mid-publish) is the
+            # slowest step of this job. Ask Playwright for its own package
+            # list and skip apt entirely when dpkg already satisfies it;
+            # any parse surprise falls back to the original install path.
             - name: Install Chromium system dependencies
               run: |
+                  pkgs=$(npx playwright install-deps --dry-run chromium 2>/dev/null \
+                      | tr ' \\\t' '\n\n\n' \
+                      | grep -E '^[a-z0-9][a-z0-9+.~-]*$' \
+                      | grep -vE '^(sudo|apt|apt-get|install|update|cd)$' \
+                      | sort -u) || true
+                  missing=1
+                  if [ -n "$pkgs" ]; then
+                      missing=0
+                      for pkg in $pkgs; do
+                          if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+                              missing=1
+                              break
+                          fi
+                      done
+                  fi
+                  if [ "$missing" -eq 0 ]; then
+                      echo "chromium system dependencies already present"
+                      exit 0
+                  fi
                   sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
                   for attempt in 1 2 3; do
                       if npx playwright install-deps chromium; then
