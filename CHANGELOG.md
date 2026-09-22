@@ -17,6 +17,19 @@ CI, tests, and internal tooling are not listed.
 
 ### Fixed
 
+- `SFWebRTCMesh` no longer sends signals or transport-status reports while the
+  client is closing: those sends were refused with a spurious
+  `protocol_error` and lost the final "disconnected" report.
+- A refused `Authenticate` (e.g. the send backpressure cap) now resolves the
+  dial with `connection_failed` and a clean teardown instead of stalling the
+  session with nothing in flight.
+- Auto-reconnect now retries with the credentials of the most recent manual
+  `reconnect()` dial, so a rotated token is never shadowed by a stale one.
+- A `ProtocolInfo.max_outbound_message_size` beyond the platform integer
+  range is rejected with `protocol_error` instead of silently disabling the
+  outbound cap.
+- `ConnectionInfo.to_dict()` returns an independent copy of `custom.data`
+  instead of aliasing the caller's dictionary.
 - Closing during the `opened` callback no longer risks a crash when a consumer
   handler fails the session synchronously.
 - Web exports no longer drop server messages that arrive shortly before a

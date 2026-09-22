@@ -56,7 +56,10 @@ any test that simulates disconnect/retry timing.
   parity: enforcing servers reject a pre-auth `Reconnect`). The dial target
   is the URL the most recent dial targeted (an explicit `connect_to_server`
   override wins over `endpoint_url`); reconfiguring does not retarget a
-  retained reconnection identity because tokens are endpoint-bound. Guards:
+  retained reconnection identity because tokens are endpoint-bound. The
+  dial's credentials become the retained auto-reconnect identity (issue #73):
+  a manual dial with a rotated token replaces a stale context, so a later
+  retry never reuses the old token. Guards:
   unconfigured, active connection, empty args, no dial target (no prior
   `connect_to_server` URL and empty `endpoint_url`). On dials the
   `authenticated` signal stays consumer-silent (re-authentication is

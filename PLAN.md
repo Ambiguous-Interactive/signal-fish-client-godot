@@ -16,7 +16,12 @@
 > landed). P6 store automation is in: addon packaging (plugin.cfg/plugin.gd/icon) + release.yml
 > Asset Library submission, credential-gated (#57); the store entry waits on the one-time manual
 > bootstrap (see `.llm/skills/asset-library-release.md`). The Godot matrix covers 4.3/4.4.1/4.7.2
-> (issue #51); remaining #15 item (Godot 3) is P5/P7 work.
+> (issue #51); remaining #15 item (Godot 3) is P5/P7 work. The #73 hardening
+> backlog is fully resolved: mesh sends are suppressed during the CLOSING
+> window, a manual `reconnect()` dial refreshes the auto-reconnect context,
+> `ConnectionInfo.custom.data` keeps `to_dict()` copy semantics,
+> out-of-range `max_outbound_message_size` is rejected, and a refused
+> `Authenticate` resolves the dial.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -526,7 +531,9 @@ loop and exits only on its consensus criteria. Fan-out points noted.
       directed handshake is once-per-dial with post-handshake duplicates fully silent, a
       failed handshake send resolves the attempt (`reconnection_failed` with `Code.NONE`,
       terminal teardown, auto-reconnect re-arms from the retained context), and transport
-      teardown closes the socket instead of dropping it live.
+      teardown closes the socket instead of dropping it live. A manual
+      `reconnect()` dial's credentials become the retained auto-reconnect
+      identity (issue #73): a rotated token replaces a stale context.
 - [x] Full v0.9.1 62-code error-code surface mapped through `sf_error_codes.gd`
       (string⇄enum derived from the enum; per-code category map; unknown →
       `UNKNOWN` forward-compat; `NON_EMITTED` annotations) + `StartGame`
