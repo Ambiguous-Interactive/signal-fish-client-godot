@@ -832,7 +832,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 					_session_state = SessionState.AUTHENTICATED
 					authenticated.emit(event.args[0], event.args[1], event.args[2])
 		&"protocol_info":
-			# Once-per-dial: duplicates are hostile (issue #82).
+			# Upstream issues ProtocolInfo once per connection (issue #82).
 			if not _protocol_info_seen:
 				_protocol_info_seen = true
 				_reconcile_game_data_format(event.args[0].game_data_formats)

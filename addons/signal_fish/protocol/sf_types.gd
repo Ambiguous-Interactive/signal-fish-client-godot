@@ -92,9 +92,14 @@ class RateLimitInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		per_minute = int(data.get("per_minute", 0))
-		per_hour = int(data.get("per_hour", 0))
-		per_day = int(data.get("per_day", 0))
+		# Null-safe integer reads: `int(null)` raises and would abort the
+		# constructor, defaulting every field assigned after it (issue #81).
+		per_minute = _int_or_zero(data.get("per_minute"))
+		per_hour = _int_or_zero(data.get("per_hour"))
+		per_day = _int_or_zero(data.get("per_day"))
+
+	func _int_or_zero(value: Variant) -> int:
+		return int(value) if TypeUtils.is_integral_number(value) else 0
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -113,8 +118,8 @@ class PlayerNameRules:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		max_length = int(data.get("max_length", 0))
-		min_length = int(data.get("min_length", 0))
+		max_length = _int_or_zero(data.get("max_length"))
+		min_length = _int_or_zero(data.get("min_length"))
 		allow_unicode_alphanumeric = bool(data.get("allow_unicode_alphanumeric", false))
 		allow_spaces = bool(data.get("allow_spaces", false))
 		allow_leading_trailing_whitespace = bool(
@@ -123,8 +128,11 @@ class PlayerNameRules:
 		allowed_symbols = _coerce_strings(data.get("allowed_symbols", []))
 		var additional_characters: Variant = data.get("additional_allowed_characters", "")
 		additional_allowed_characters = (
-			"" if additional_characters == null else String(additional_characters)
+			String(additional_characters) if typeof(additional_characters) == TYPE_STRING else ""
 		)
+
+	func _int_or_zero(value: Variant) -> int:
+		return int(value) if TypeUtils.is_integral_number(value) else 0
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -452,9 +460,9 @@ class RoomJoinedInfo:
 		raw = data
 		room_id = _string_or_empty(data.get("room_id"))
 		room_code = _string_or_empty(data.get("room_code"))
-		player_id = String(data.get("player_id", ""))
+		player_id = _string_or_empty(data.get("player_id"))
 		game_name = _string_or_empty(data.get("game_name"))
-		max_players = int(data.get("max_players", 0))
+		max_players = _int_or_zero(data.get("max_players"))
 		supports_authority = bool(data.get("supports_authority", false))
 		current_players = _coerce_players(data.get("current_players", []))
 		is_authority = bool(data.get("is_authority", false))
@@ -466,6 +474,9 @@ class RoomJoinedInfo:
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
 		ice_servers = _coerce_ice_servers(data.get("ice_servers", []))
 		reconnection_token = _string_or_empty(data.get("reconnection_token"))
+
+	func _int_or_zero(value: Variant) -> int:
+		return int(value) if TypeUtils.is_integral_number(value) else 0
 
 	func to_dict() -> Dictionary:
 		var result := raw.duplicate(true)

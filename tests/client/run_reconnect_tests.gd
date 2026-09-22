@@ -824,7 +824,7 @@ func _test_duplicate_protocol_info_is_fully_silent() -> void:
 	)
 	transport.inject_server_message({"type": "ProtocolInfo", "data": {}})
 	transport.inject_server_message({"type": "ProtocolInfo", "data": {}})
-	_assert_equal(1, emissions[0], "protocol_info emitted once per dial")
+	_assert_equal(1, emissions.size(), "protocol_info emitted once per dial")
 	_assert_no_protocol_errors()
 	client.free()
 
