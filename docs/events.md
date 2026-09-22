@@ -40,6 +40,13 @@ protocol_info(info)
 authentication_error(error, error_code)
 ```
 
+The `protocol_info` payload (`SFTypes.ProtocolInfo`) carries the server's
+capability statement: `game_data_formats`, `player_name_rules`,
+`capabilities`, the v3 `protocol_version` / `min_protocol_version` /
+`max_protocol_version` / `transports` fields, and
+`max_outbound_message_size` — the maximum complete encoded outbound
+payload in bytes when the server states one (v3+; `0` = absent).
+
 ## Room lifecycle and presence
 
 ```gdscript
@@ -101,7 +108,8 @@ peer_transport_status(peer_id, transport, connected)
 ```
 
 These four signals only fire when `SignalFishConfig.protocol_version` is
-set to `3` and the server negotiates a v3 session plan.
+set to a positive version (opt-in; `0` omits the capabilities and keeps the
+v2 wire bytes) and the server negotiates a v3 session plan.
 
 ## Typed payloads and sentinels
 

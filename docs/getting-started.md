@@ -48,13 +48,17 @@ config.endpoint_url = "wss://signal-fish.example/ws"
 
 var client := SignalFishClient.new()
 add_child(client)
-client.room_joined.connect(func(info) -> void: print("joined ", info.room_id))
 client.game_data_received.connect(func(from_player, data) -> void: print(data))
+# Join only after `authenticated` fires: room commands are refused while the
+# session is still unauthenticated, and the dial + Authenticate round-trip
+# takes at least one poll cycle.
+client.authenticated.connect(func() -> void:
+    var params := SignalFishClient.JoinRoomParams.new()
+    params.game_name = "checkers"
+    params.player_name = "ana"
+    client.join_room(params)
+)
 client.connect_to_server()  # dials endpoint_url, auto-sends Authenticate on open
-var params := SignalFishClient.JoinRoomParams.new()
-params.game_name = "checkers"
-params.player_name = "ana"
-client.join_room(params)
 ```
 
 Once in the room, send game data as plain JSON:

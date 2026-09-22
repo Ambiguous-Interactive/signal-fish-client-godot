@@ -43,9 +43,10 @@ multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
   `RoomJoined`/`Reconnected` (`RoomJoinedInfo.ice_servers`).
 - It rebuilds retained peers on a generation or role change, and drops
   peers absent from the latest plan.
-- It tears down on `room_left`, `player_left`, `disconnected`,
-  `connection_failed`, `reconnected`, and node exit. A replayed plan
-  inside `missed_events` cannot revive an old mesh.
+- It tears down on `room_joined` (a fresh baseline), `room_left`,
+  `player_left`, `disconnected`, `connection_failed`, `reconnected`, and
+  node exit. A replayed plan inside `missed_events` cannot revive an old
+  mesh.
 - It calls `send_transport_status` on the client only at the aggregate
   0↔1 connected-peer boundaries.
 - Peer ids derive deterministically from player UUIDs.
