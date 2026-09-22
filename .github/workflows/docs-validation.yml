@@ -149,7 +149,12 @@ jobs:
                       for pkg in $pkgs; do
                           # Exact status (not `dpkg -s`, which succeeds for
                           # removed-but-rc packages whose files are gone).
-                          status=$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null)
+                          # The `|| status=` guard matters: GitHub runs this
+                          # as `bash -e`, and dpkg-query exits 1 for any
+                          # package absent from the dpkg database — the
+                          # normal case on a fresh runner — which must fall
+                          # through to the install path, not abort the step.
+                          status=$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null) || status=""
                           if [ "$status" != "installed" ]; then
                               missing=1
                               break
