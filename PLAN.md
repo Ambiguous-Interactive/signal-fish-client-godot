@@ -21,7 +21,11 @@
 > window, a manual `reconnect()` dial refreshes the auto-reconnect context,
 > `ConnectionInfo.custom.data` keeps `to_dict()` copy semantics,
 > out-of-range `max_outbound_message_size` is rejected, and a refused
-> `Authenticate` resolves the dial.
+> `Authenticate` resolves the dial. The outbound wire-fidelity sweep
+> (session 032, issues #76-#79) followed: floats serialize bit-exactly,
+> non-finite/engine-only payloads are refused instead of corrupted, the
+> last #73-class int collapse (`player_name_rules`) is closed, and the
+> godot CI step runs its suites concurrently.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
