@@ -78,7 +78,9 @@ func close(code := 1000, reason := "") -> void:
 		return
 	var state: int = _peer.get_ready_state()
 	if state == WebSocketPeer.STATE_CLOSED:
-		_handle_closed_state()
+		# Issue #101: a consumer close must not race queued frames out of the
+		# queue — the same issue-#70 drain the poll path performs applies.
+		_drain_queued_then_close()
 		return
 	if state == WebSocketPeer.STATE_OPEN:
 		_emit_opened_once()
@@ -133,16 +135,22 @@ func _handle_polled_state(state: int) -> void:
 		# limitation this layer cannot recover. While the per-poll cap leaves
 		# packets queued, the close emission defers to the next poll; close
 		# code/reason stay readable in the CLOSED state.
-		var drained_peer: SFWebSocketPeerAdapterScript = _peer
-		if not _drain_packets():
-			return
-		if _peer != drained_peer:
-			# A packet handler redialed synchronously mid-drain: this session
-			# is over, and the fresh dial must not be failed in its name.
-			return
-		if _peer.get_available_packet_count() > 0:
-			return
-		_handle_closed_state()
+		_drain_queued_then_close()
+
+
+## Shared issue-#70 drain sequence: drain queued frames, then emit `closed`
+## only when nothing remains and this session is still the one draining (a
+## packet handler may redial synchronously mid-drain; the fresh dial must not
+## be closed in the old session's name).
+func _drain_queued_then_close() -> void:
+	var drained_peer: SFWebSocketPeerAdapterScript = _peer
+	if not _drain_packets():
+		return
+	if _peer != drained_peer:
+		return
+	if _peer.get_available_packet_count() > 0:
+		return
+	_handle_closed_state()
 
 
 func _drain_packets() -> bool:
