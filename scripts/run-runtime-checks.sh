@@ -427,6 +427,9 @@ collect_changed_files() {
 
 suite_uses_file() {
 	local runner="$1" target="$2"
+	if [[ "${runner}" == "${target}" ]]; then
+		return 0
+	fi
 	local queue=("$runner") seen=""
 	while [[ "${#queue[@]}" -gt 0 ]]; do
 		local current="${queue[0]}"
