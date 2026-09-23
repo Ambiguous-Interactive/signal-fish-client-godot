@@ -103,6 +103,95 @@ run_private_helpers() {
 	"${python_bin}" scripts/check-gdscript-private-helpers.py --self-test "${GD_DIRS[@]}"
 }
 
+# Scoped variants for the agent fast loop: same tools, no analyzer self-test,
+# explicit file set. The full self-test + whole-tree sweep stays the CI and
+# pre-push contract; this only widens what the inner loop may skip.
+run_private_helpers_on() {
+	"${python_bin}" scripts/check-gdscript-private-helpers.py "$@"
+}
+
+# Sharded per-file tool run over an explicit file list:
+#   run_sharded_tool_on <tool> [tool args...] -- <files...>
+run_sharded_tool_on() {
+	local tool="$1"
+	shift
+	local tool_args=() files=() past_separator=""
+	while [[ "$#" -gt 0 ]]; do
+		if [[ -z "${past_separator}" && "${1}" == "--" ]]; then
+			past_separator="1"
+		elif [[ -n "${past_separator}" ]]; then
+			files+=("$1")
+		else
+			tool_args+=("$1")
+		fi
+		shift
+	done
+	if [[ "${#files[@]}" -eq 0 ]]; then
+		return 0
+	fi
+	local tmp_dir
+	tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-shards.XXXXXX")"
+	(
+		trap 'rm -rf "'"$tmp_dir"'"' EXIT
+		local shard_count=4
+		local shard_size=$((( ${#files[@]} + shard_count - 1 ) / shard_count))
+		local pids=() outs=() index=0 shard=0
+		while [[ "${index}" -lt "${#files[@]}" ]]; do
+			local batch=() output
+			while
+				[[ "${#batch[@]}" -lt "${shard_size}" && "${index}" -lt "${#files[@]}" ]]
+			do
+				batch+=("${files[${index}]}")
+				index=$((index + 1))
+			done
+			output="${tmp_dir}/shard-${shard}.out"
+			"${tool}" "${tool_args[@]}" "${batch[@]}" >"${output}" 2>&1 &
+			pids+=("$!")
+			outs+=("${output}")
+			shard=$((shard + 1))
+		done
+		local failed=0 i rc
+		for i in "${!pids[@]}"; do
+			rc=0
+			wait "${pids[${i}]}" || rc=$?
+			cat "${outs[${i}]}"
+			[[ "${rc}" -eq 0 ]] || failed=1
+		done
+		[[ "${failed}" -eq 0 ]] || exit 1
+	)
+}
+
+# Scoped static checks for the agent fast loop: the same three checks over
+# the given files only, skipping the analyzer self-test (a ~2 s guard on the
+# analyzer itself that CI and the full gate still enforce).
+run_static_on() {
+	prepare_gdtoolkit_cache
+	local helper_out format_out lint_out failed=0 rc
+	helper_out="$(mktemp)"
+	format_out="$(mktemp)"
+	lint_out="$(mktemp)"
+	cleanup_paths+=("${helper_out}" "${format_out}" "${lint_out}")
+	run_private_helpers_on "$@" >"${helper_out}" 2>&1 &
+	local helper_pid=$!
+	run_sharded_tool_on gdformat --diff --check -- "$@" >"${format_out}" 2>&1 &
+	local format_pid=$!
+	run_sharded_tool_on gdlint -- "$@" >"${lint_out}" 2>&1 &
+	local lint_pid=$!
+	rc=0
+	wait "${helper_pid}" || failed=1
+	cat "${helper_out}"
+	rc=0
+	wait "${format_pid}" || rc=$?
+	cat "${format_out}"
+	[[ "${rc}" -eq 0 ]] || failed=1
+	rc=0
+	wait "${lint_pid}" || rc=$?
+	cat "${lint_out}"
+	[[ "${rc}" -eq 0 ]] || failed=1
+	return "${failed}"
+}
+
+
 run_format() {
 	prepare_gdtoolkit_cache
 	run_sharded_tool gdformat --diff --check
@@ -385,47 +474,49 @@ run_changed() {
 		return 0
 	fi
 
-	local names=()
 	if [[ "${runtime_changed}" == "full" ]]; then
 		echo "=== changed: production-side edit -> full gate ==="
-	else
-		local runner name
-		for runner in \
-			"protocol tests/protocol/run_protocol_tests.gd" \
-			"transport tests/transport/run_transport_tests.gd" \
-			"client tests/client/run_client_tests.gd" \
-			"binary tests/client/run_binary_tests.gd" \
-			"reconnect tests/client/run_reconnect_tests.gd"; do
-			name="${runner%% *}"
-			runner="${runner#* }"
-			for file in "${gd_suites[@]}"; do
-				if suite_uses_file "${runner}" "${file}"; then
-					names+=("${name}")
-					break
-				fi
-			done
-		done
-		if [[ "${#names[@]}" -eq 0 ]]; then
-			echo "=== changed: unreferenced test file -> full gate ==="
-			names=()
-			runtime_changed="full"
-		else
-			echo "=== changed: suites ${names[*]} ==="
-		fi
+		local static_output godot_rc=0 static_rc=0
+		static_output="$(mktemp)"
+		cleanup_paths+=("${static_output}")
+		run_static >"${static_output}" 2>&1 &
+		local static_pid=$!
+		run_godot || godot_rc=$?
+		wait "${static_pid}" || static_rc=$?
+		cat "${static_output}"
+		[[ "${static_rc}" -eq 0 && "${godot_rc}" -eq 0 ]]
+		return
 	fi
 
-	local static_output godot_rc=0 static_rc=0
-	static_output="$(mktemp)"
-	cleanup_paths+=("${static_output}")
-	run_static >"${static_output}" 2>&1 &
-	local static_pid=$!
-	if [[ "${runtime_changed}" == "full" ]]; then
-		run_godot || godot_rc=$?
-	else
-		run_godot "${names[@]}" || godot_rc=$?
+	local runner name names=()
+	for runner in \
+		"protocol tests/protocol/run_protocol_tests.gd" \
+		"transport tests/transport/run_transport_tests.gd" \
+		"client tests/client/run_client_tests.gd" \
+		"binary tests/client/run_binary_tests.gd" \
+		"reconnect tests/client/run_reconnect_tests.gd"; do
+		name="${runner%% *}"
+		runner="${runner#* }"
+		for file in "${gd_suites[@]}"; do
+			if suite_uses_file "${runner}" "${file}"; then
+				names+=("${name}")
+				break
+			fi
+		done
+	done
+	if [[ "${#names[@]}" -eq 0 ]]; then
+		echo "=== changed: unreferenced test file -> full gate ==="
+		run_static
+		run_godot
+		return
 	fi
+
+	echo "=== changed: suites ${names[*]} ==="
+	local godot_rc=0 static_rc=0
+	run_static_on "${gd_suites[@]}" &
+	local static_pid=$!
+	run_godot "${names[@]}" || godot_rc=$?
 	wait "${static_pid}" || static_rc=$?
-	cat "${static_output}"
 	[[ "${static_rc}" -eq 0 && "${godot_rc}" -eq 0 ]]
 }
 
