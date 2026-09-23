@@ -3,8 +3,10 @@ extends RefCounted
 ## Issue #91 (PLAN §4.7): the optional heartbeat pings while connected +
 ## authenticated, and a silent link past `pong_timeout_sec` is a dead link —
 ## it tears down through the transport-failure path so opt-in auto-reconnect
-## engages. All timing is injected `_process` delta; no wall-clock sleeps.
-## Receives the client runner so config/transport fakes stay in one place.
+## engages. Issue #121: the AUTHENTICATING window cannot send protocol Ping,
+## but silence there past the pong deadline is the same dead link. All timing
+## is injected `_process` delta; no wall-clock sleeps. Receives the client
+## runner so config/transport fakes stay in one place.
 
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
@@ -33,6 +35,8 @@ func run_all() -> void:
 		_test_interval_pong_cycle_and_dead_link,
 		_test_backpressured_beats_retry_quietly,
 		_test_dead_link_arms_auto_reconnect,
+		_test_auth_window_silence_is_a_dead_link,
+		_test_auth_landing_disarms_the_watchdog,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -134,6 +138,115 @@ func _test_dead_link_arms_auto_reconnect() -> void:
 	)
 	client.free()
 	_done()
+
+
+func _test_auth_window_silence_is_a_dead_link() -> void:
+	var config: SignalFishConfigScript = _runner.call("_make_config")
+	config.heartbeat_interval_sec = 10.0
+	config.pong_timeout_sec = 5.0
+	var client: SignalFishClientScript = _runner.call("_connect_new_client", config)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_open()
+	var failures: Array = []
+	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	client._process(4.9)
+	_assert_equal(0, _sent_type_count(transport, "Ping"), "protocol Ping is not sent pre-auth")
+	_assert_connected(client, true, "inside the auth window the link stays up")
+	client._process(0.1)
+	if _assert_equal(1, failures.size(), "silent link through the auth window fails"):
+		var failure: String = failures[0]
+		_assert(failure.contains("heartbeat auth timeout"), "the failure names the auth timeout")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"the stranded auth window ends FAILED"
+	)
+	_assert_equal(null, client.transport, "the dead link is torn down")
+	client.free()
+	_done()
+
+
+func _test_auth_landing_disarms_the_watchdog() -> void:
+	var config: SignalFishConfigScript = _make_config_with_auth_watchdog()
+	var client: SignalFishClientScript = _runner.call("_connect_new_client", config)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_open()
+	client._process(4.9)
+	transport.inject_server_message(
+		{"type": "Authenticated", "data": _runner.call("_authenticated_data")}
+	)
+	client._process(0.2)
+	_assert_connected(client, true, "auth landing inside the window saves the link")
+	client._process(4.9)
+	_assert_equal(1, _sent_type_count(transport, "Ping"), "the ping cycle arms once authenticated")
+	client.free()
+	# A reconnection identity exists (in-room session); kill the live link so
+	# auto-reconnect dials a fresh link whose AUTHENTICATING window the
+	# watchdog now covers.
+	client = _make_auth_watchdog_reconnect_client(config)
+	client._process(10.0)
+	client._process(5.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"the first dead link arms the retry"
+	)
+	client.transport = SFFakeTransportScript.new()
+	client._process(1.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTING,
+		client.get_connection_state(),
+		"the retry redials"
+	)
+	transport = client.transport
+	transport.inject_open()
+	_assert_connected(client, true, "the reconnect dial opens into its auth window")
+	client._process(4.9)
+	_assert_connected(client, true, "the watchdog spares a live reconnect dial")
+	client._process(0.2)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"an auth-window death on the reconnect dial re-arms the retry"
+	)
+	client.transport = SFFakeTransportScript.new()
+	# 1.25 s: the attempt-2 backoff upper bound (0.5 * 2 * 1.25 jitter cap).
+	client._process(1.25)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTING,
+		client.get_connection_state(),
+		"auto-reconnect redials the stranded reconnect dial"
+	)
+	client.free()
+	_done()
+
+
+## An authenticated in-room session (reconnection identity captured).
+func _make_auth_watchdog_reconnect_client(config: SignalFishConfigScript) -> SignalFishClientScript:
+	var client: SignalFishClientScript = _runner.call("_connect_new_client", config)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_open()
+	transport.inject_server_message(
+		{"type": "Authenticated", "data": _runner.call("_authenticated_data")}
+	)
+	(
+		transport
+		. inject_server_message(
+			{
+				"type": "RoomJoined",
+				"data": _runner.call("_room_joined_data", {"reconnection_token": "hb-token"}),
+			}
+		)
+	)
+	client.set_auto_reconnect(true)
+	return client
+
+
+func _make_config_with_auth_watchdog() -> SignalFishConfigScript:
+	var config: SignalFishConfigScript = _runner.call("_make_config")
+	config.heartbeat_interval_sec = 10.0
+	config.pong_timeout_sec = 5.0
+	return config
 
 
 func _authenticated_client(config: SignalFishConfigScript) -> SignalFishClientScript:

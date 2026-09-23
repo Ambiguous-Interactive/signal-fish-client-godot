@@ -37,6 +37,14 @@ CI, tests, and internal tooling are not listed.
 
 ### Fixed
 
+- A `4007` (kicked) close now ends the auto-reconnect episode: the server
+  deletes a kicked player's reconnection record, so retrying could never
+  rejoin. The identity clears before `disconnected`, so a handler redial
+  still captures a fresh identity.
+- Off-contract `RoomLeft`/`SpectatorLeft` frames can no longer wipe room
+  state or erase the retained auto-reconnect identity (#106).
+- An unsolicited `Reconnected` (no reconnect handshake on this dial) now
+  surfaces `protocol_error` instead of being dropped silently (#108).
 - MessagePack strings (opt-in payload decode) and binary-frame string fields
   now decode as real UTF-8: multi-byte strings such as `"héllo"` or emoji
   arrived byte-mapped as mojibake, and the codec's own encode/decode
@@ -139,10 +147,15 @@ CI, tests, and internal tooling are not listed.
 
 ### Added
 
+- v3 `Reconnected` frames now decode the replay status
+  (`complete`/`truncated`/`unavailable`) and per-sender watermarks as typed
+  fields on the room baseline, so a truncated replay is visible instead of
+  silent. v2 sessions decode to the absent sentinels (#114).
 - Optional dead-link heartbeat: set `heartbeat_interval_sec` to ping while
   connected and authenticated; a missing `pong` within `pong_timeout_sec`
   tears the link down as a failure, so auto-reconnect can engage on silent
-  link death (NAT rebinding, radio loss). Off by default.
+  link death (NAT rebinding, radio loss). The same silence deadline covers
+  the authentication window, where pings are not allowed. Off by default.
 - Documentation site: release runbook for the Godot Asset Library (one-time
   first submission, secrets setup, automated per-release updates).
 - Documentation site: branded MkDocs Material site published to GitHub

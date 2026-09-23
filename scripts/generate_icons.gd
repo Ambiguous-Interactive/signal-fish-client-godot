@@ -1,8 +1,9 @@
 extends SceneTree
 
 ## Rasterizes the brand vector mark (docs/assets/logo.svg) into the square
-## PNGs the Godot Asset Library expects (>= 128 px, 1:1). Run from the repo
-## root after editing the SVG:
+## PNGs that need it: the in-editor addon icon (addons/signal_fish/icon.png)
+## and the Asset Library listing art (docs/assets/icon-256.png, >= 128 px,
+## 1:1). Run from the repo root after editing the SVG:
 ##
 ##   godot --headless --script scripts/generate_icons.gd
 ##
@@ -13,7 +14,7 @@ extends SceneTree
 const SOURCE := "res://docs/assets/logo.svg"
 const BASE_SIZE := 64.0
 const OUTPUTS := [
-	[128, "res://docs/assets/icon-128.png"],
+	[128, "res://addons/signal_fish/icon.png"],
 	[256, "res://docs/assets/icon-256.png"],
 ]
 

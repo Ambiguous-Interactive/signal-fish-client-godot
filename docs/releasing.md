@@ -36,7 +36,7 @@ waits in the moderation queue (see *After release* below).
    | Download provider | GitHub |
    | Repository URL | `https://github.com/Ambiguous-Interactive/signal-fish-client-godot` |
    | Issues URL | repository URL + `/issues` |
-   | Icon URL | `https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/addons/signal_fish/icon.png` |
+   | Icon URL | `https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/docs/assets/icon-256.png` |
    | Download commit | the release tag (e.g. `v0.1.0`) |
 
 3. Submit, then wait for moderation.

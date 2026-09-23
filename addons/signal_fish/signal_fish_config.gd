@@ -76,7 +76,10 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## ping. A silent link past this deadline is treated as dead: the client
 ## tears the link down through the transport-failure path
 ## ([signal SignalFishClient.connection_failed]), so opt-in auto-reconnect
-## engages. Used only when [member heartbeat_interval_sec] is on.
+## engages. The same silence deadline covers the AUTHENTICATING window,
+## where protocol Ping is not allowed but a link that never delivers
+## [code]Authenticated[/code] is just as dead (issue #121). Used only when
+## [member heartbeat_interval_sec] is on.
 @export var pong_timeout_sec: float = 10.0
 
 ## Highest protocol version advertised with [code]Authenticate[/code]

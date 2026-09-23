@@ -23,4 +23,6 @@ The fish vector, banner, favicon, and the oceanic color system are shared
 brand artwork from the
 [Signal Fish Client SDK](https://github.com/Ambiguous-Interactive/signal-fish-client-rust)
 docs, licensed MIT together with that repository. This site reuses them so
-all Signal Fish clients read as one product family.
+all Signal Fish clients read as one product family. The addon icon and the
+listing PNG are rendered from the same vector by
+`scripts/generate_icons.gd`, so every shipped mark is one brand asset.

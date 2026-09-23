@@ -11,10 +11,17 @@ on:
 permissions:
     contents: read
 
+# A scheduled run and a manual dispatch do the same check: the newer run
+# wins, and a hung upstream fetch fails instead of idling to the default.
+concurrency:
+    group: ${{ github.workflow }}
+    cancel-in-progress: true
+
 jobs:
     sync:
         name: Check upstream protocol pin
         runs-on: ubuntu-24.04
+        timeout-minutes: 10
         steps:
             - name: Check out repository
               uses: actions/checkout@v7

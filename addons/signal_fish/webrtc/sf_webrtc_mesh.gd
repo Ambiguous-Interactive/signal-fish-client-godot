@@ -221,6 +221,12 @@ func _on_client_room_joined(info) -> void:
 
 
 func _on_client_session_plan(plan) -> void:
+	# A plan is room-scoped (issue #120): a plan landing before any room
+	# baseline is off-contract server input, and applying it would open peer
+	# connections keyed on an empty local player id. The baseline re-arms
+	# the mesh, so dropping the stray plan loses nothing.
+	if _client == null or _client.get_room_id().is_empty():
+		return
 	_apply_plan(plan)
 
 
