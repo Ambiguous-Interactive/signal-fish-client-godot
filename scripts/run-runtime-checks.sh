@@ -145,7 +145,10 @@ run_sharded_tool_on() {
 				index=$((index + 1))
 			done
 			output="${tmp_dir}/shard-${shard}.out"
-			"${tool}" "${tool_args[@]}" "${batch[@]}" >"${output}" 2>&1 &
+			# ${tool_args[@]+...}: the array may be empty (gdlint takes no
+			# args) and bare empty-array expansion aborts under `set -u` on
+			# bash < 4.4 (macOS stock 3.2).
+			"${tool}" ${tool_args[@]+"${tool_args[@]}"} "${batch[@]}" >"${output}" 2>&1 &
 			pids+=("$!")
 			outs+=("${output}")
 			shard=$((shard + 1))
@@ -170,7 +173,10 @@ run_static_on() {
 	helper_out="$(mktemp)"
 	format_out="$(mktemp)"
 	lint_out="$(mktemp)"
-	cleanup_paths+=("${helper_out}" "${format_out}" "${lint_out}")
+	# Always invoked backgrounded (subshell), so cleanup_paths would be a
+	# copy and leak; the EXIT trap self-cleans even on a `set -e` abort,
+	# mirroring the cold-copy workers.
+	trap 'rm -rf "'"${helper_out}"'" "'"${format_out}"'" "'"${lint_out}"'"' EXIT
 	run_private_helpers_on "$@" >"${helper_out}" 2>&1 &
 	local helper_pid=$!
 	run_sharded_tool_on gdformat --diff --check -- "$@" >"${format_out}" 2>&1 &
@@ -417,7 +423,7 @@ run_smoke() {
 # Suite selection is a BFS over the runners' res:// preload strings — a
 # changed test file maps to the suites that (transitively) load it; any
 # production-side or unreferenced change falls back to the full gate, so the
-# mapping can silently under-run. Output states exactly what ran and why.
+# mapping can't silently under-run. Output states exactly what ran and why.
 collect_changed_files() {
 	{
 		git diff --name-only HEAD
@@ -436,7 +442,7 @@ suite_uses_file() {
 		queue=("${queue[@]:1}")
 		case " $seen " in *" ${current} "*) continue ;; esac
 		seen+="${current} "
-		if grep -qF "res://${target}" "${current}"; then
+		if grep -qF "res://${target}" "${current}" 2>/dev/null; then
 			return 0
 		fi
 		while IFS= read -r dep; do
@@ -500,7 +506,9 @@ run_changed() {
 		"reconnect tests/client/run_reconnect_tests.gd"; do
 		name="${runner%% *}"
 		runner="${runner#* }"
-		for file in "${gd_suites[@]}"; do
+		# ${gd_suites[@]+...}: possibly empty; bare expansion aborts under
+		# `set -u` on bash < 4.4 (macOS stock 3.2).
+		for file in ${gd_suites[@]+"${gd_suites[@]}"}; do
 			if suite_uses_file "${runner}" "${file}"; then
 				names+=("${name}")
 				break
@@ -516,7 +524,8 @@ run_changed() {
 
 	echo "=== changed: suites ${names[*]} ==="
 	local godot_rc=0 static_rc=0
-	run_static_on "${gd_suites[@]}" &
+	# Same bash < 4.4 empty-array guard as above.
+	run_static_on ${gd_suites[@]+"${gd_suites[@]}"} &
 	local static_pid=$!
 	run_godot "${names[@]}" || godot_rc=$?
 	wait "${static_pid}" || static_rc=$?
