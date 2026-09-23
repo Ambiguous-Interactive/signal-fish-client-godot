@@ -25,6 +25,7 @@ static func run() -> Array:
 func run_all() -> void:
 	_test_msgpack_decode_vectors()
 	_test_msgpack_hostile_vectors()
+	_test_msgpack_utf8_decode()
 	_test_msgpack_encode_widths()
 	_test_msgpack_non_finite_refusal()
 	_test_msgpack_round_trip_matrix()
@@ -124,6 +125,36 @@ func _test_msgpack_hostile_vectors() -> void:
 	var at_cap_decode: Dictionary = SFMsgpackScript.decode(at_cap_bytes)
 	var at_cap_decode_ok: bool = at_cap_decode["ok"]
 	_assert(at_cap_decode_ok, true, "nesting at the cap decodes")
+
+
+## Issue #99: get_string() maps bytes 1:1 to code points; only the UTF-8
+## variant decodes multi-byte strings and degrades hostile bytes to the
+## replacement character the class doc promises.
+func _test_msgpack_utf8_decode() -> void:
+	var valid := PackedByteArray([0xA6]) + "héllo".to_utf8_buffer()
+	var valid_decode: Dictionary = SFMsgpackScript.decode(valid)
+	var valid_ok: bool = valid_decode["ok"]
+	if _assert(valid_ok, true, "multi-byte UTF-8 string decodes"):
+		_assert_equal("héllo", valid_decode["value"], "multi-byte UTF-8 string value")
+	var hostile := PackedByteArray([0xA2, 0x80, 0xFF])
+	var hostile_decode: Dictionary = SFMsgpackScript.decode(hostile)
+	var hostile_ok: bool = hostile_decode["ok"]
+	if _assert(hostile_ok, true, "invalid UTF-8 degrades instead of failing"):
+		var hostile_value: String = hostile_decode["value"]
+		var replacement := String.chr(0xFFFD)
+		_assert(
+			hostile_value.contains(replacement),
+			true,
+			"invalid UTF-8 surfaces a replacement character"
+		)
+		_assert(
+			(
+				not hostile_value.contains(String.chr(0x80))
+				and not hostile_value.contains(String.chr(0xFF))
+			),
+			true,
+			"invalid UTF-8 does not surface byte-identity code points"
+		)
 
 
 func _test_msgpack_encode_widths() -> void:
@@ -240,6 +271,8 @@ func _test_msgpack_round_trip_matrix() -> void:
 		PackedByteArray(),
 		[1, "two", 3.0, null],
 		{"alpha": 1, "beta": [true, null], "gamma": {"delta": "value"}},
+		"héllo 🦈",
+		{"café": "naïve"},
 	]
 	for value: Variant in values:
 		var encoded: Dictionary = SFMsgpackScript.encode(value)
@@ -387,6 +420,17 @@ func _test_envelope_hostile_matrix() -> void:
 		{
 			"label": "unknown encoding",
 			"bytes": _envelope([_uuid_field(), _encoding_field("proto"), _payload_field([])]),
+		},
+		{
+			"label": "encoding token with hostile UTF-8",
+			"bytes":
+			_envelope(
+				[
+					_uuid_field(),
+					_field("encoding", PackedByteArray([0xA1, 0x80])),
+					_payload_field([])
+				]
+			),
 		},
 		{
 			"label": "v3 seq only",
