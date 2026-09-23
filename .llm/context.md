@@ -151,7 +151,8 @@ Definition of done for the first usable client:
   temporary project copy that excludes `.godot` so local runs exercise the same
   cold-cache path as CI. Subcommands are `all`, `static`, `private-helpers`,
   `format`, `lint`, and `godot`, plus opt-in `smoke` (real `WebSocketPeer`
-  round-trip against a local RFC 6455 test server; never part of `all`).
+  round-trip against a local RFC 6455 test server; never part of `all`) and
+  `changed` (agent fast loop: only what the dirty tree can affect; issue #117).
 - `scripts/validate-github-config.py`: deterministic local validator for
   GitHub workflows and Dependabot config. It rejects duplicate YAML keys,
   `gh api --slurp` combined with `--jq`, unsafe workflow triggers or
@@ -219,6 +220,13 @@ pwsh -NoProfile -File scripts/agent-check.ps1
 python -m pip install -r requirements-automation.txt
 python scripts/validate-github-config.py --self-test
 python scripts/validate-github-config.py --repo-root .
+```
+
+Agent fast loop for runtime code (dirty-tree scoped; full gate stays the
+pre-push contract):
+
+```bash
+bash scripts/run-runtime-checks.sh changed
 ```
 
 Use `-Check` in CI to validate generated files without modifying them:

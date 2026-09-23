@@ -103,6 +103,105 @@ run_private_helpers() {
 	"${python_bin}" scripts/check-gdscript-private-helpers.py --self-test "${GD_DIRS[@]}"
 }
 
+# Scoped variants for the agent fast loop: same tools, no analyzer self-test,
+# explicit file set. The full self-test + whole-tree sweep stays the CI and
+# pre-push contract; this only widens what the inner loop may skip.
+run_private_helpers_on() {
+	"${python_bin}" scripts/check-gdscript-private-helpers.py "$@"
+}
+
+# Sharded per-file tool run over an explicit file list:
+#   run_sharded_tool_on <tool> [tool args...] -- <files...>
+run_sharded_tool_on() {
+	local tool="$1"
+	shift
+	local tool_args=() files=() past_separator=""
+	while [[ "$#" -gt 0 ]]; do
+		if [[ -z "${past_separator}" && "${1}" == "--" ]]; then
+			past_separator="1"
+		elif [[ -n "${past_separator}" ]]; then
+			files+=("$1")
+		else
+			tool_args+=("$1")
+		fi
+		shift
+	done
+	if [[ "${#files[@]}" -eq 0 ]]; then
+		return 0
+	fi
+	local tmp_dir
+	tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-shards.XXXXXX")"
+	(
+		trap 'rm -rf "'"$tmp_dir"'"' EXIT
+		local shard_count=4
+		local shard_size=$((( ${#files[@]} + shard_count - 1 ) / shard_count))
+		local pids=() outs=() index=0 shard=0
+		while [[ "${index}" -lt "${#files[@]}" ]]; do
+			local batch=() output
+			while
+				[[ "${#batch[@]}" -lt "${shard_size}" && "${index}" -lt "${#files[@]}" ]]
+			do
+				batch+=("${files[${index}]}")
+				index=$((index + 1))
+			done
+			output="${tmp_dir}/shard-${shard}.out"
+			# ${tool_args[@]+...}: the array may be empty (gdlint takes no
+			# args) and bare empty-array expansion aborts under `set -u` on
+			# bash < 4.4 (macOS stock 3.2).
+			"${tool}" ${tool_args[@]+"${tool_args[@]}"} "${batch[@]}" >"${output}" 2>&1 &
+			pids+=("$!")
+			outs+=("${output}")
+			shard=$((shard + 1))
+		done
+		local failed=0 i rc
+		for i in "${!pids[@]}"; do
+			rc=0
+			wait "${pids[${i}]}" || rc=$?
+			cat "${outs[${i}]}"
+			[[ "${rc}" -eq 0 ]] || failed=1
+		done
+		[[ "${failed}" -eq 0 ]] || exit 1
+	)
+}
+
+# Scoped static checks for the agent fast loop: the same three checks over
+# the given files only, skipping the analyzer self-test (a ~2 s guard on the
+# analyzer itself that CI and the full gate still enforce). An empty list is
+# a no-op: the analyzer's own zero-args default would sweep the whole tree.
+run_static_on() {
+	if [[ "$#" -eq 0 ]]; then
+		return 0
+	fi
+	prepare_gdtoolkit_cache
+	local helper_out format_out lint_out failed=0 rc
+	helper_out="$(mktemp)"
+	format_out="$(mktemp)"
+	lint_out="$(mktemp)"
+	# Always invoked backgrounded (subshell), so cleanup_paths would be a
+	# copy and leak; the EXIT trap self-cleans even on a `set -e` abort,
+	# mirroring the cold-copy workers.
+	trap 'rm -rf "'"${helper_out}"'" "'"${format_out}"'" "'"${lint_out}"'"' EXIT
+	run_private_helpers_on "$@" >"${helper_out}" 2>&1 &
+	local helper_pid=$!
+	run_sharded_tool_on gdformat --diff --check -- "$@" >"${format_out}" 2>&1 &
+	local format_pid=$!
+	run_sharded_tool_on gdlint -- "$@" >"${lint_out}" 2>&1 &
+	local lint_pid=$!
+	rc=0
+	wait "${helper_pid}" || failed=1
+	cat "${helper_out}"
+	rc=0
+	wait "${format_pid}" || rc=$?
+	cat "${format_out}"
+	[[ "${rc}" -eq 0 ]] || failed=1
+	rc=0
+	wait "${lint_pid}" || rc=$?
+	cat "${lint_out}"
+	[[ "${rc}" -eq 0 ]] || failed=1
+	return "${failed}"
+}
+
+
 run_format() {
 	prepare_gdtoolkit_cache
 	run_sharded_tool gdformat --diff --check
@@ -324,6 +423,125 @@ run_smoke() {
 	run_godot_script tests/smoke/run_websocket_smoke.gd
 }
 
+# Agent fast loop (issue #117): check only what the dirty tree can affect.
+# Suite selection is a BFS over the runners' res:// preload strings — a
+# changed test file maps to the suites that (transitively) load it; any
+# production-side or unreferenced change falls back to the full gate, so the
+# mapping can't silently under-run. Output states exactly what ran and why.
+collect_changed_files() {
+	{
+		git diff --name-only HEAD
+		git ls-files --others --exclude-standard
+	} | sort -u
+}
+
+suite_uses_file() {
+	local runner="$1" target="$2"
+	if [[ "${runner}" == "${target}" ]]; then
+		return 0
+	fi
+	local queue=("$runner") seen=""
+	while [[ "${#queue[@]}" -gt 0 ]]; do
+		local current="${queue[0]}"
+		queue=("${queue[@]:1}")
+		case " $seen " in *" ${current} "*) continue ;; esac
+		seen+="${current} "
+		if grep -qF "res://${target}" "${current}" 2>/dev/null; then
+			return 0
+		fi
+		while IFS= read -r dep; do
+			queue+=("${dep#res://}")
+		done < <(grep -o 'res://tests/[^"]*' "${current}" 2>/dev/null || true)
+	done
+	return 1
+}
+
+run_changed() {
+	local files
+	files="$(collect_changed_files)"
+	if [[ -z "${files}" ]]; then
+		echo "working tree clean; nothing to check"
+		return 0
+	fi
+	local runtime_changed="" gd_suites=() md_only=1 file
+	while IFS= read -r file; do
+		case "${file}" in
+			*.md | .markdownlint* | LICENSE)
+				;;
+			*)
+				md_only=""
+				;;
+		esac
+		case "${file}" in
+			addons/* | demo/* | scripts/* | project.godot | export_presets.cfg | tests/fixtures/*)
+				runtime_changed="full"
+				;;
+			tests/*.gd)
+				gd_suites+=("${file}")
+				;;
+		esac
+	done <<<"${files}"
+
+	if [[ -n "${md_only}" ]]; then
+		echo "docs-only change: no runtime checks; run agent-check.ps1 for .llm edits"
+		return 0
+	fi
+
+	if [[ "${runtime_changed}" == "full" ]]; then
+		echo "=== changed: production-side edit -> full gate ==="
+		local static_output godot_rc=0 static_rc=0
+		static_output="$(mktemp)"
+		cleanup_paths+=("${static_output}")
+		run_static >"${static_output}" 2>&1 &
+		local static_pid=$!
+		run_godot || godot_rc=$?
+		wait "${static_pid}" || static_rc=$?
+		cat "${static_output}"
+		[[ "${static_rc}" -eq 0 && "${godot_rc}" -eq 0 ]]
+		return
+	fi
+
+	local runner name names=()
+	for runner in \
+		"protocol tests/protocol/run_protocol_tests.gd" \
+		"transport tests/transport/run_transport_tests.gd" \
+		"client tests/client/run_client_tests.gd" \
+		"binary tests/client/run_binary_tests.gd" \
+		"reconnect tests/client/run_reconnect_tests.gd"; do
+		name="${runner%% *}"
+		runner="${runner#* }"
+		# ${gd_suites[@]+...}: possibly empty; bare expansion aborts under
+		# `set -u` on bash < 4.4 (macOS stock 3.2).
+		for file in ${gd_suites[@]+"${gd_suites[@]}"}; do
+			if suite_uses_file "${runner}" "${file}"; then
+				names+=("${name}")
+				break
+			fi
+		done
+	done
+	if [[ "${#names[@]}" -eq 0 ]]; then
+		echo "=== changed: unreferenced test file -> full gate ==="
+		run_static
+		run_godot
+		return
+	fi
+
+	echo "=== changed: suites ${names[*]} ==="
+	# Deleted paths still map to their suite above (the runners reference
+	# them), but the static tools cannot read a missing file.
+	local static_files=()
+	for file in ${gd_suites[@]+"${gd_suites[@]}"}; do
+		[[ -f "${file}" ]] && static_files+=("${file}")
+	done
+	local godot_rc=0 static_rc=0
+	# Same bash < 4.4 empty-array guard as above.
+	run_static_on ${static_files[@]+"${static_files[@]}"} &
+	local static_pid=$!
+	run_godot "${names[@]}" || godot_rc=$?
+	wait "${static_pid}" || static_rc=$?
+	[[ "${static_rc}" -eq 0 && "${godot_rc}" -eq 0 ]]
+}
+
 case "${target}" in
 	all)
 		# Static checks and the godot suites are independent: run them
@@ -357,13 +575,17 @@ case "${target}" in
 		shift
 		run_godot "$@"
 		;;
+	changed)
+		run_changed
+		;;
 	smoke)
 		run_smoke
 		;;
 	*)
-		echo "usage: $0 [all|static|private-helpers|format|lint|godot [suite...]|smoke]" >&2
+		echo "usage: $0 [all|static|private-helpers|format|lint|godot [suite...]|changed|smoke]" >&2
 		echo "  godot suites: protocol transport client binary reconnect demo_boot p2p_boot" >&2
 		echo "  a single godot suite runs warm in-tree; SF_COLD=1 forces the cold copy" >&2
+		echo "  changed checks only what the dirty tree can affect (agent fast loop)" >&2
 		exit 2
 		;;
 esac

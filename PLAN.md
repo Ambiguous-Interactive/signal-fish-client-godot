@@ -20,23 +20,6 @@ Per-session history: `progress/session-NNN-*.md`.
       `GODOT_ASSET_LIBRARY_ASSET_ID`. Runbook:
       `.llm/skills/asset-library-release.md`.
 
-### Open upstream verifications (anchor before touching the related code)
-- [ ] `missed_events` ordering/sequence guarantees (server reconnection
-      module) before any dedup/replay logic.
-- [ ] Does the server accept both `{"type":"Ping"}` and
-      `{"type":"Ping","data":null}`? (decoder tolerates both regardless).
-- [ ] `RoomJoinedPayload` / `ReconnectedPayload` / `SpectatorJoinedPayload`
-      full field lists + `rename_all` so payload keys match the wire exactly.
-- [ ] `ConnectionInfo` variant field names (`direct`/`unity_relay`/`relay`/
-      `webrtc`/`custom`) for the `ProvideConnectionInfo` round-trip.
-- [ ] Which events carry mandatory vs optional `error_code` (sets the
-      `Code.NONE` sentinel correctly).
-- [ ] App-specific WS close codes (4xxx), if any, before mapping them to
-      auto-reconnect decisions.
-- [ ] Cloud error-code drift: server/Rust client use `STORAGE_ERROR`; cloud
-      also exposes `DATABASE_ERROR`. Map cloud-only codes to `UNKNOWN` or
-      named aliases.
-
 ### Post-v1 (P7, each gated)
 - [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke
       tests) — only after the separate compatibility decision (context.md

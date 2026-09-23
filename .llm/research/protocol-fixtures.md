@@ -256,5 +256,7 @@ blank lines and lines beginning with `#`.
   `.llm/skills/reconnection-replay.md`. Upstream rotates the token on every
   join and every successful reconnect; the fixtures now carry fake
   placeholder tokens modeling the rotation (issue #12).
-- Upstream close-code conventions were not found in the protocol files listed
-  above. Treat close-code mapping as a later transport-phase decision gate.
+- Upstream close-code conventions (resolved 2026-09-23, server `main` @
+  `272cfa0c`): `CloseReason` in `src/coordination/mod.rs` maps `4000`-`4007`
+  plus RFC `1000`/`1009`; see the table in
+  `.llm/skills/reconnection-replay.md`.

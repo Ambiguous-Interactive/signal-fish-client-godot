@@ -56,6 +56,19 @@ Never invent protocol details; re-verify against the pinned commits before use.
   optionals default `None` → omitted on the wire (`protocol.rs` @ `da8f2d1`);
   an omitted `supports_authority` means **enabled** (server `room_service.rs:
   585` `unwrap_or(true)` @ `5af5fee`).
+- Field naming (verified 2026-09-23, server `main` @ `272cfa0c`): payload
+  structs have **no `rename_all`** — fields serialize snake_case inside
+  PascalCase-tagged envelopes (`RoomJoined`/`Reconnected`/
+  `SpectatorJoined` field lists match our codec exactly; `missed_events` is
+  mandatory even when empty).
+- `error_code` (verified same commit): mandatory on `AuthenticationError` and
+  `ReconnectionFailed`; `Option` + skip-when-None (key absent, decodes to
+  `Code.NONE`) on `RoomJoinFailed`, `AuthorityResponse`, `SpectatorJoinFailed`,
+  and `Error`. Absent — never `null` — is the only wire shape for "no code".
+- `ConnectionInfo` (verified same commit): internally tagged `type` with
+  explicit renames `direct|unity_relay|relay|webrtc|custom`; field sets match
+  `SFTypes.ConnectionInfo` (`webrtc.sdp` serializes `null` rather than being
+  skipped; serde accepts our omission on decode).
 
 ## Implementation Rules
 

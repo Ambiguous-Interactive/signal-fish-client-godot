@@ -123,6 +123,8 @@ game_starting(peer_connections)
 pong
 # reconnection
 reconnected(info, missed_events: Array), reconnection_failed(reason, error_code)
+#   v3: info.replay_status (COMPLETE/TRUNCATED/UNAVAILABLE/UNKNOWN),
+#   info.sender_watermarks (per-sender player_id/epoch/seq tails)
 # spectators
 spectator_joined(info), spectator_join_failed(reason, error_code)
 spectator_left(room_id, room_code, reason, current_spectators)
@@ -144,7 +146,7 @@ peer_transport_status(peer_id, transport, connected)
   wire dictionary on decode, with `to_dict()` and a `raw` dictionary for
   exact wire details.
 - Closed sets are enums: `SFTypes.LobbyState`, `GameDataEncoding`,
-  `RelayTransport`, `SpectatorReason`; `SFErrorCodes.Code`;
+  `RelayTransport`, `SpectatorReason`, `ReplayStatus`; `SFErrorCodes.Code`;
   `SFSessionTypes.Topology`/`TransportKind`.
 - Optional wire values surface as decoded sentinels: missing strings → `""`,
   missing arrays → empty, unknown enum strings → `UNKNOWN`, absent error codes

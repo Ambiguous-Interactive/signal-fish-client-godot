@@ -40,6 +40,16 @@ On success the client emits `reconnected(info, missed_events)`:
 - `info` carries the full room state, the same shape as `room_joined`.
 - `missed_events` is decoded through the same decoder as live traffic.
 
+On protocol v3, `info` also carries the server's replay contract:
+
+- `info.replay_status` is `COMPLETE`, `TRUNCATED`, `UNAVAILABLE`, or
+  `UNKNOWN` (v2 sessions; the server did not state a contract).
+- `TRUNCATED`/`UNAVAILABLE` mean `missed_events` is a suffix or empty —
+  resync from the `info` snapshot fields instead of replaying.
+- `info.sender_watermarks` lists each sender's `(epoch, seq)` game-data
+  tail, so a gap after reconnect is attributable to your absence or replay
+  truncation, never silent relay loss.
+
 You replay missed events yourself. The client never re-emits them as live
 signals. Nested `Reconnected` entries inside `missed_events` are rejected
 as non-replayable, and decode recursion is depth-bounded, so a hostile
@@ -63,6 +73,9 @@ When enabled:
   comes from `_process` deltas, so no threads or timers are involved.
 - Only abnormal terminations are retried: a non-user-initiated close or a
   transport failure. A clean `close()` never starts the loop.
+- A `4007` close (`kicked`) never retries and drops the saved identity: the
+  server removes your reconnection record on kick, so a retry can never
+  rejoin.
 - Terminal codes stop retrying: `RECONNECTION_TOKEN_INVALID` and
   `RECONNECTION_EXPIRED`.
 - A `ReconnectionFailed` tears the link down, so consumers always observe a
