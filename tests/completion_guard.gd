@@ -18,7 +18,10 @@ static func drive(owner: Object, cases: Array, failures: Array) -> void:
 static func check_registration(owner: Object, cases: Array, failures: Array) -> void:
 	var driven := {}
 	for case: Callable in cases:
-		driven[String(case.get_method())] = true
+		var case_name: String = String(case.get_method())
+		if driven.has(case_name):
+			failures.append("%s is driven twice" % case_name)
+		driven[case_name] = true
 	for method: Dictionary in owner.get_method_list():
 		var name: String = method["name"]
 		if name.begins_with("_test_") and not driven.has(name):

@@ -342,12 +342,13 @@ func _test_connect_token_reaches_wire() -> void:
 	_assert_string_contains(
 		SFMessagesScript.validation_error(wrong_type), "connect_token", "error names the field"
 	)
+	_done()
+
 
 ## Issue #76: the encode boundary is the last-resort JSON-shape net. A
 ## payload that skips the builder whitelist (ConnectionInfo.custom.data)
 ## must surface as ERR_INVALID_DATA + protocol_error with nothing on the
 ## wire — never as an empty text frame.
-	_done()
 
 
 func _test_encode_boundary_refuses_unserializable_payload() -> void:

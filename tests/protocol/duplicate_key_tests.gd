@@ -136,11 +136,12 @@ func _test_clean_frames_still_decode() -> void:
 			_assert_equal(
 				case["payload_msg"], decoded.args[1]["msg"], "%s value round-trip" % case["label"]
 			)
+	_done()
+
 
 ## Direct guard vectors for the escape spellings the engine parser decodes:
 ## keys differing only in escape notation are the same key (duplicates),
 ## while escaped spellings of genuinely different keys never false-positive.
-	_done()
 
 
 func _test_escape_canonicalization() -> void:
@@ -173,10 +174,11 @@ func _test_escape_canonicalization() -> void:
 	var truncated := SFJsonGuard.duplicate_key_error(oversized)
 	_assert_string_contains(truncated, "duplicate", "oversized key still reported")
 	_assert(not truncated.contains("k".repeat(64)), "oversized key truncated in diagnostic")
+	_done()
+
 
 ## Emits the minimal RoomJoined baseline as raw wire text, minus its closing
 ## brace, so duplicate-key vectors can append repeated fields to it.
-	_done()
 
 
 func _room_joined_text_with_suffix(suffix: String) -> String:

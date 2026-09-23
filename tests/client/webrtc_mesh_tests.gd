@@ -502,12 +502,13 @@ func _test_closing_window_suppresses_sends() -> void:
 	_assert_equal(0, errors.size(), "closing window emits no spurious protocol errors")
 	mesh.free()
 	client.free()
+	_done()
+
 
 ## Issue #102: a boundary report refused under backpressure must stay armed —
 ## it retries (throttled to one attempt per interval, like the heartbeat's
 ## backpressured beats) instead of the edge being consumed and the report
 ## lost for the session.
-	_done()
 
 
 func _test_transport_status_boundary_survives_backpressure() -> void:
@@ -714,12 +715,13 @@ func _test_teardown_paths() -> void:
 	_assert_equal(0, exit_mesh.get_peer_count(), "detached mesh ignores later plans")
 	exit_mesh.free()
 	exit_client.free()
+	_done()
+
 
 ## Issue #86: the signal lambdas capture the mesh entry and the entry holds
 ## the connection, so an undisconnected signal is a RefCounted cycle — every
 ## rebuilt peer used to leak its WebRTCPeerConnection. Godot frees RefCounted
 ## at zero refs, so a weakref must go dead immediately after the drop.
-	_done()
 
 
 func _test_dropped_peer_connections_are_freed() -> void:
@@ -743,11 +745,12 @@ func _test_dropped_peer_connections_are_freed() -> void:
 	_assert(witness.get_ref() == null, "the dropped peer connection is freed")
 	mesh.free()
 	client.free()
+	_done()
+
 
 ## The #86 cycle must also die when a mesh holding live peers is discarded
 ## without a teardown path: freed while outside the tree, so `_exit_tree`
 ## never runs and only `NOTIFICATION_PREDELETE` can reset the mesh.
-	_done()
 
 
 func _test_out_of_tree_free_does_not_leak() -> void:

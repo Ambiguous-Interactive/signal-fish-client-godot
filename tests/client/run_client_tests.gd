@@ -936,10 +936,11 @@ func _test_process_and_exit_tree_paths() -> void:
 	)
 	_assert_equal(null, client.transport, "tree exit releases the transport")
 	client.free()
+	_done()
+
 
 ## Issue #87: the accessors hand out defensive copies — a live-array
 ## reference would let one caller mutation corrupt session state silently.
-	_done()
 
 
 func _test_roster_accessors_are_copies() -> void:
@@ -1052,13 +1053,14 @@ func _test_frame_cap_drops_oversized_and_binary_frames() -> void:
 		"client stays connected after dropped frames"
 	)
 	client.free()
+	_done()
+
 
 ## Issue #92: a repeated envelope key used to silently substitute the decoded
 ## event (the engine parser is last-wins) — here the smuggled RoomLeft used
 ## to wipe the in-room session while the server still counted the player as
 ## joined. The duplicate-key guard fails the frame closed instead: one
 ## protocol_error, connection and room state untouched.
-	_done()
 
 
 func _test_duplicate_key_frame_fails_closed() -> void:

@@ -148,12 +148,13 @@ func _test_wire_payload_fidelity() -> void:
 	_assert_invalid_message(
 		over_bound, "must be JSON data", "over-deep game data refused at the builder"
 	)
+	_done()
+
 
 ## The encode boundary is the last-resort net for payloads that skip the
 ## builder whitelist (ConnectionInfo.custom.data): unserializable values
 ## refuse the frame — empty wire, never JSON.stringify's silent
 ## stringification, `nan` literals, or coerced dict keys.
-	_done()
 
 
 func _test_encode_boundary_refusals() -> void:
@@ -191,10 +192,11 @@ func _test_encode_boundary_refusals() -> void:
 	var over_deep: Variant = [deep]
 	var over_envelope := SFEnvelopeScript.message("GameData", {"data": {"custom": over_deep}})
 	_assert_equal("", SFEnvelopeScript.encode(over_envelope, false), "over-deep payload refuses")
+	_done()
+
 
 ## Issue #79: the downgrade diagnostic renders the server's statement as
 ## wire tokens, not coerced enum ints (unknown becomes "-1" today).
-	_done()
 
 
 func _test_format_downgrade_diagnostics() -> void:

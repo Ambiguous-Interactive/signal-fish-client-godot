@@ -908,12 +908,13 @@ func _test_protocol_error_diagnostics() -> void:
 	_assert_protocol_error_contains(
 		bad_missed_event_decoded, "missed_events[0]", "missed event index"
 	)
+	_done()
+
 
 ## Data-driven sweep over the whole wire table (issue #26): every enum token
 ## must round-trip through both string conversions and own a category, so a
 ## future append can never silently decode to UNKNOWN or land in the wrong
 ## bucket. Category spot pins guard the upstream-doc grouping semantics.
-	_done()
 
 
 func _test_error_code_table() -> void:

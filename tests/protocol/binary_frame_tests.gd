@@ -136,11 +136,12 @@ func _test_msgpack_hostile_vectors() -> void:
 	var at_cap_decode: Dictionary = SFMsgpackScript.decode(at_cap_bytes)
 	var at_cap_decode_ok: bool = at_cap_decode["ok"]
 	_assert(at_cap_decode_ok, true, "nesting at the cap decodes")
+	_done()
+
 
 ## Issue #99: get_string() maps bytes 1:1 to code points; only the UTF-8
 ## variant decodes multi-byte strings and degrades hostile bytes to the
 ## replacement character the class doc promises.
-	_done()
 
 
 func _test_msgpack_utf8_decode() -> void:
@@ -594,10 +595,11 @@ func _test_v3_envelope_matrix() -> void:
 		_assert_equal(
 			SFTypesScript.GameDataEncoding.MESSAGE_PACK, result["encoding"], "str8 token encoding"
 		)
+	_done()
+
 
 ## Concatenates ordered field byte arrays, prefixing a fixmap header sized to
 ## the field count (unless an explicit header override is provided).
-	_done()
 
 
 func _envelope(fields: Array, header_override: Array = []) -> PackedByteArray:

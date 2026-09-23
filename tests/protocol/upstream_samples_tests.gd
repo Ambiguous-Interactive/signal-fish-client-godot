@@ -104,7 +104,6 @@ func _check_all_expected_signals_present(server_events: Array) -> void:
 		if not seen.has(expected):
 			_failures.append("%s: no sample decodes to %s" % [SERVER_SAMPLES, expected])
 	_assert_equal(24, server_events.size(), "sample decode count")
-	_done()
 
 
 func _check_published_shape_pins(server_events: Array) -> void:
@@ -168,7 +167,6 @@ func _check_published_shape_pins(server_events: Array) -> void:
 			server_errors[1].args[1],
 			"error game start not ready"
 		)
-	_done()
 
 
 func _test_all_client_samples_are_client_messages() -> void:

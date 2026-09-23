@@ -1021,13 +1021,14 @@ func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:
 	_assert_equal(2, client._auto_reconnect_attempts, "attempts stop at budget")
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
+
 
 ## The exhaustion notice is emitted synchronously: a consumer redialing from
 ## its handler captures a fresh retained identity that the post-emit drop
 ## must not clobber — and that manual dial's later death must still engage
 ## auto-reconnect (with a fresh exhaustion notice) instead of silent-dead-
 ## ending it.
-	_done()
 
 
 func _test_redial_from_exhaustion_handler_keeps_the_fresh_identity() -> void:

@@ -70,12 +70,13 @@ func _test_valid_bools_pass_through() -> void:
 	for site: Array in _bool_sites():
 		for honest: Variant in [true, false]:
 			_assert_equal(honest, _read(site, _build(site, honest)), "%s honest bool" % site[0])
+	_done()
+
 
 ## Every constructor integer field driven over the int()-collapse matrix:
 ## integral floats at/after 2^63 collapse platform-dependently, non-finite
 ## and non-numeric input is not an integer at all. Each field reads as its
 ## documented absent sentinel instead.
-	_done()
 
 
 func _test_collapsing_integers_take_the_absent_sentinel() -> void:
@@ -96,10 +97,11 @@ func _test_representable_integers_pass_through() -> void:
 			4294967296, _read(site, _build(site, 4294967296.0)), "%s big-but-legal float" % site[0]
 		)
 		_assert_equal(7, _read(site, _build(site, 7)), "%s plain int" % site[0])
+	_done()
+
 
 ## A hostile negative is not the 0 "absent" sentinel: ProtocolInfo versions
 ## used to clamp it to 0, silently reading as "absent on negotiated v2".
-	_done()
 
 
 func _test_negative_integers_stay_visible() -> void:
@@ -108,10 +110,11 @@ func _test_negative_integers_stay_visible() -> void:
 	)
 	_assert_equal(-1, info.protocol_version, "negative protocol_version stays visible")
 	_assert_equal(-1, info.max_outbound_message_size, "negative size cap stays visible")
+	_done()
+
 
 ## The #89 relay-slot hazard at constructor level: a collapsed client_id used
 ## to flow back out through to_dict() as the relay slot on the wire dict.
-	_done()
 
 
 func _test_laundered_client_id_never_reaches_the_wire_dict() -> void:
@@ -122,12 +125,13 @@ func _test_laundered_client_id_never_reaches_the_wire_dict() -> void:
 	_assert(
 		not laundered.to_dict().has("client_id"), "laundered client_id is erased from to_dict()"
 	)
+	_done()
+
 
 ## Issue #97: array coercion keeps only strings (the typed accessor view),
 ## but to_dict() must not silently shorten what a consumer put in — the
 ## verbatim entries either round-trip (rosters) or let the outbound
 ## validation refuse the frame loudly (webrtc candidates on the resend path).
-	_done()
 
 
 func _test_wrong_typed_array_entries_round_trip() -> void:

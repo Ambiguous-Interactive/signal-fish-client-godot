@@ -487,7 +487,13 @@ def bare_name_references(node: Tree | Token, names: set[str]) -> set[str]:
 # Trees whose FIRST name child is a binding (declared variable / loop
 # variable), never a method reference: `var _dead = 1` must not keep a
 # same-named method alive.
-BINDING_FIRST_NAME_TREES = {"func_var_assigned", "func_var_typed_assgnd", "for_stmt"}
+BINDING_FIRST_NAME_TREES = {
+    "func_var_assigned",
+    "func_var_inf",
+    "func_var_typed_assgnd",
+    "for_stmt",
+    "for_stmt_typed",
+}
 
 
 def walk_bare_names(node: Tree | Token) -> Iterable[str]:
@@ -499,6 +505,10 @@ def walk_bare_names(node: Tree | Token) -> Iterable[str]:
     if node.data == "getattr":
         if is_direct_self_getattr(node):
             yield last_token_value(node)
+        return
+    if node.data == "lambda_header":
+        # Lambda parameters are bindings, not method references; the lambda
+        # body is a sibling subtree and is still scanned.
         return
     skip_first_name = node.data in BINDING_FIRST_NAME_TREES
     first_name_seen = False
@@ -951,6 +961,27 @@ def run_self_tests() -> None:
         (
             "identifier variable is not a call edge",
             "func public():\n\tvar _dead = 1\n\nfunc _dead():\n\tpass\n",
+            {"_dead"},
+        ),
+        (
+            "inferred variable is not a call edge",
+            "func public():\n\tvar _dead := 1\n\nfunc _dead():\n\tpass\n",
+            {"_dead"},
+        ),
+        (
+            "typed loop variable is not a call edge",
+            "func public():\n\tfor _dead: int in [1]:\n\t\tpass\n\nfunc _dead():\n\tpass\n",
+            {"_dead"},
+        ),
+        (
+            "lambda parameter is not a call edge",
+            (
+                "func public():\n"
+                "\tvar lam := func(_dead: int): pass\n"
+                "\n"
+                "func _dead():\n"
+                "\tpass\n"
+            ),
             {"_dead"},
         ),
         (
