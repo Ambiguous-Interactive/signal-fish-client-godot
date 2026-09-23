@@ -6,13 +6,6 @@ CI, tests, and internal tooling are not listed.
 
 ## [Unreleased]
 
-### Added
-
-- v3 `Reconnected` frames now decode the replay status
-  (`complete`/`truncated`/`unavailable`) and per-sender watermarks as typed
-  fields on the room baseline, so a truncated replay is visible instead of
-  silent. v2 sessions decode to the absent sentinels (#114).
-
 ### Changed
 
 - Decoded events and typed payloads no longer deep-copy the parsed wire
@@ -154,10 +147,15 @@ CI, tests, and internal tooling are not listed.
 
 ### Added
 
+- v3 `Reconnected` frames now decode the replay status
+  (`complete`/`truncated`/`unavailable`) and per-sender watermarks as typed
+  fields on the room baseline, so a truncated replay is visible instead of
+  silent. v2 sessions decode to the absent sentinels (#114).
 - Optional dead-link heartbeat: set `heartbeat_interval_sec` to ping while
   connected and authenticated; a missing `pong` within `pong_timeout_sec`
   tears the link down as a failure, so auto-reconnect can engage on silent
-  link death (NAT rebinding, radio loss). Off by default.
+  link death (NAT rebinding, radio loss). The same silence deadline covers
+  the authentication window, where pings are not allowed. Off by default.
 - Documentation site: release runbook for the Godot Asset Library (one-time
   first submission, secrets setup, automated per-release updates).
 - Documentation site: branded MkDocs Material site published to GitHub
