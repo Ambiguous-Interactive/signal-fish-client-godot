@@ -106,12 +106,42 @@ clobber generalized into standing rules:
   emit `protocol_error` and keep the connection.
 - Recursion is depth-bounded (`MAX_MESSAGE_DEPTH`); nested `Reconnected`
   entries inside `missed_events` are rejected (matches the Rust client).
+- Text frames pass a strict duplicate-key pre-scan (`sf_json_guard.gd`): any
+  key repeated inside one object (compared after escape decoding) fails
+  closed to `protocol_error`, matching upstream serde and the binary path.
 - Decode output aliases one freshly parsed envelope tree; `raw` is a
   read-only view, `to_dict()` returns an independent mutable copy.
 - Optional upstream values surface as stable sentinels: missing strings `""`,
   missing arrays empty, unknown enum strings `UNKNOWN`, absent error codes
   `Code.NONE`. Open payloads (`GameData.data`) preserve JSON `null`.
 - Outbound optional fields are omitted when unset (never JSON `null`).
+
+## Data representation
+
+- Inbound structured payloads → typed `RefCounted` value objects
+  (`PlayerInfo`, `RoomJoinedInfo`, ...) built on decode, with `to_dict()` for
+  an independent mutable copy. Not `Resource` — no `.tres`/editor baggage for
+  transient data.
+- Closed sets → `enum` + string⇄enum tables in the owning class (`LobbyState`,
+  `GameDataEncoding`, `SpectatorReason`, `SFErrorCodes.Code`). Enum ints are
+  internal only; the wire uses strings.
+- User game data stays `Variant`/`Dictionary` (open-ended). Binary is
+  `PackedByteArray` + the `encoding` enum at the codec boundary.
+- `SignalFishConfig` is the one `Resource` (authored/reused in the editor);
+  its `credential` slot is a plain non-exported var (security skill).
+
+## Reliability extras
+
+- Heartbeat (opt-in, off by default): ping accumulates `_process` delta, goes
+  out once connected + authenticated; a missing `pong` within
+  `pong_timeout_sec` ends the link through the transport-failure path so
+  auto-reconnect engages on silent link death. Backpressured beats retry
+  after a full interval, not per frame.
+- Auto-reconnect constants and scheduling rules live in
+  `.llm/skills/reconnection-replay.md`.
+- Cleanup on close/failure: disconnect transport signals, free the transport,
+  clear roster/spectators/ids/lobby state, reset `SessionState`;
+  `_exit_tree()` closes.
 
 ## Transport seam
 

@@ -48,6 +48,27 @@ Use compact ASCII diagrams when they clarify behavior:
 - State diagram for connection lifecycle and failure transitions.
 - Test matrix mapping requirements to fixtures, fake transports, and smoke tests.
 
+## Plan File Hygiene
+
+`PLAN.md` is a going-forward roadmap, not a log or a knowledge base. Keeping
+the three functions in separate files is what prevents context rot; merging
+them is how plans bloat (PLAN.md once grew 689 → 1019 lines without a single
+shrinking commit).
+
+- `PLAN.md` holds only: a short status line, in-progress/next work with
+  checkboxes, open questions to resolve, and the definition of done.
+- Completed work is recorded once, in `progress/session-NNN-*.md`, and is
+  deleted from `PLAN.md` in the same session that finishes it. Never append
+  session summaries or status paragraphs to `PLAN.md`.
+- Durable rules and facts live in `.llm/skills`, `.llm/code-samples`, and
+  `.llm/research`; `PLAN.md` links to them instead of copying (copies drift).
+- Before adding anything to `PLAN.md`, ask: is this about work that has not
+  happened yet? If not, it belongs in `progress/` (it happened) or `.llm/`
+  (it is durable). A section whose deletion would not change anyone's next
+  action does not belong in the plan.
+- Keep `PLAN.md` around 100 lines or fewer; growth past that is a signal to
+  move content to its function-appropriate home, not to restructure.
+
 ## Decision Gates
 
 Stop and ask before choosing among materially different options for:
