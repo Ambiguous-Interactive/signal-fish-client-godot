@@ -32,9 +32,9 @@ any test that simulates disconnect/retry timing.
   starts at 1). v2 wire has no truncation flag — our client's
   `MAX_MISSED_EVENTS` decode cap + `protocol_error` sentinel is the only
   client-side guard. We do not yet decode `replay`/`sender_watermarks`
-  (raw-only); tracked as a follow-up issue.
+  (raw-only); tracked as issue #114.
 
-### Server WebSocket close codes (coordination `CloseReason`)
+### Server WebSocket close codes (`src/coordination/mod.rs` `CloseReason`)
 
 `4000` shutdown, `4001` auth timeout, `4002` slow consumer, `4003` activity
 timeout, `4004` idle timeout, `4005` room inactive, `4006` inbound rate

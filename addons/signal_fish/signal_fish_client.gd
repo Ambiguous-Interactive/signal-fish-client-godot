@@ -269,8 +269,8 @@ func reconnect(player_id: String, room_id: String, auth_token: String) -> Error:
 ## non-user-initiated close, or a transport failure (including failed dials,
 ## even ones you initiate). Uses the freshest reconnection identity (the last
 ## server-issued token, or a later manual [method reconnect] dial's
-## credentials); a clean [method close] or a terminal reconnection error
-## stops it. When the retry budget is exhausted, a final
+## credentials); a clean [method close], a terminal reconnection error, or a
+## `4007` (kicked) close stops it. When the retry budget is exhausted, a final
 ## [signal connection_failed] ("auto-reconnect exhausted") is emitted, the
 ## retained token is dropped, and retrying stops until a fresh baseline
 ## re-establishes a session. Off by default.
@@ -835,13 +835,15 @@ func _on_transport_closed(code: int, reason: String) -> void:
 	_reset_session()
 	_teardown_transport()
 	SFLogScript.info("transport closed (code %d): %s" % [code, reason], _secrets)
-	disconnected.emit(code, reason)
-	if code == CLOSE_CODE_KICKED:
-		# A kicked player has no reconnection record left; also supersede any
-		# armed retry timer from an earlier termination in this cascade.
+	var kicked := code == CLOSE_CODE_KICKED
+	if kicked:
+		# Cancel before the emit so a consumer redialing from the handler
+		# captures a fresh retained identity (issue #73 contract), like the
+		# terminal-ReconnectionFailed path. A kick removes the reconnection
+		# record server-side, so the old identity must not survive the emit.
 		_cancel_auto_reconnect()
-		return
-	if _auto_reconnect_enabled and not user_close:
+	disconnected.emit(code, reason)
+	if not kicked and _auto_reconnect_enabled and not user_close:
 		_schedule_auto_reconnect()
 
 

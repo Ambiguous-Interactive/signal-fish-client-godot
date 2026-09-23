@@ -79,6 +79,7 @@ func _run() -> void:
 		_test_user_close_mid_dial_stops_retrying,
 		_test_close_cancels_pending_retry_timer,
 		_test_kicked_close_code_ends_the_episode,
+		_test_kick_then_handler_redial_keeps_fresh_identity,
 		_test_close_from_disconnected_handler_wins_over_retry,
 		_test_handler_redial_failure_burns_one_attempt,
 		_test_close_from_connection_failed_handler_wins_over_retry,
@@ -639,11 +640,11 @@ func _test_close_cancels_pending_retry_timer() -> void:
 
 
 func _test_kicked_close_code_ends_the_episode() -> void:
-	# Upstream 4007 = CloseReason::Kicked: a kick removes the reconnection
-	# record, so retrying can never rejoin; every other code keeps retrying.
+	# Upstream 4007 = Kicked: a kick removes the reconnection record; retrying never rejoins.
 	var cases := [
 		["kicked", 4007, false],
 		["server shutdown", 4000, true],
+		["message too large", 1009, true],
 		["abnormal drop", 4999, true],
 	]
 	for case: Array in cases:
@@ -654,22 +655,35 @@ func _test_kicked_close_code_ends_the_episode() -> void:
 		var close_code: int = case[1]
 		transport.inject_close(close_code, "server closed")
 		_assert_equal([close_code], codes, "%s: close code surfaced verbatim" % case[0])
-		if case[2]:
-			_assert(client._reconnect_timer_running, "%s: retry armed" % case[0])
-			_assert(not client._context_auth_token.is_empty(), "%s: identity retained" % case[0])
-		else:
-			_assert(not client._reconnect_timer_running, "%s: no retry armed" % case[0])
-			_assert(client._context_auth_token.is_empty(), "%s: identity cleared" % case[0])
+		var retries: bool = case[2]
+		_assert_equal(retries, client._reconnect_timer_running, "%s: retry decision" % case[0])
+		_assert_equal(not retries, client._context_auth_token.is_empty(), "%s: identity" % case[0])
 		client.transport = SFFakeTransportScript.new()
 		_step(client, 30.0)
-		var expected_state := (
+		var expected_state: int = (
 			SignalFishClientScript.ConnectionState.CONNECTING
-			if case[2]
+			if retries
 			else SignalFishClientScript.ConnectionState.CLOSED
 		)
 		_assert_equal(expected_state, client.get_connection_state(), "%s: final state" % case[0])
 		_assert_no_protocol_errors()
 		client.free()
+	_done()
+
+
+func _test_kick_then_handler_redial_keeps_fresh_identity() -> void:
+	# 4007 cancels before the emit: a handler redial re-captures identity (#73).
+	var client := _make_client(true, "token")
+	client.disconnected.connect(
+		func(_code: int, _reason: String) -> void:
+			client.transport = SFFakeTransportScript.new()
+			_assert_equal(OK, client.reconnect(PLAYER_A, ROOM_ID, TOKEN_V2), "handler redial")
+	)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_close(4007, "kicked")
+	_assert_equal(TOKEN_V2, client._context_auth_token, "fresh identity survives the kick")
+	_assert_no_protocol_errors()
+	client.free()
 	_done()
 
 

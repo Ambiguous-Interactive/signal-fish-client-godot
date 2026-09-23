@@ -42,15 +42,25 @@ code: kicked players burned the full retry budget on a doomed loop.
   identity cleared (also supersedes an armed timer). All other codes keep the
   retry rule. Docs: `docs/reconnection.md`.
 - Data-driven test `_test_kicked_close_code_ends_the_episode` covers
-  `4007` (no retry) vs `4000`/`4999` (retry). Red-green verified.
+  `4007` (no retry) vs `4000`/`1009`/`4999` (retry). Red-green verified.
 
 ## Left open
 
 - Cloud error-code drift: `signal-fish-cloud` is private (404); the
   `DATABASE_ERROR` alias ships; completeness re-check blocked on access.
 - v3 gap recovery: `Reconnected.replay` (`ReplayStatus`) and
-  `sender_watermarks` are raw-only today; follow-up issue opened before any
+  `sender_watermarks` are raw-only today; issue #114 opened before any
   `DeliveryReport` work.
+
+## Adversarial review outcome
+
+Review confirmed the 4007 policy but caught a real ordering bug: cancelling
+after `disconnected.emit` wiped the identity a consumer handler had just
+re-captured via a redial (issue #73 contract). Fix: cancel before the emit,
+mirroring the terminal-`ReconnectionFailed` path. Also: `1009` row added to
+the close-code data table, a regression test pins the fresh-identity rule,
+the stale research bullet on close codes was resolved inline, and the close
+pins gained their source path.
 
 ## Checks
 
