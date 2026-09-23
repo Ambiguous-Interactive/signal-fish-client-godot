@@ -930,11 +930,15 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"authority_response":
 			authority_response.emit(event.args[0], event.args[1], event.args[2])
 		&"lobby_state_changed":
-			_lobby_state = event.args[0]
-			# Spectators receive lobby updates too; only players map lobby
-			# state onto in-room session states.
-			if _session_state != SessionState.SPECTATING:
-				_session_state = _session_state_for_lobby(_lobby_state)
+			# A lobby update is room-scoped (issue #100): without a room
+			# baseline an off-contract frame must not touch cached state —
+			# an in-room session state with no baseline would defeat the
+			# pre-auth send guard. Spectators receive lobby updates too; only
+			# players map lobby state onto in-room session states.
+			if not _room_id.is_empty():
+				_lobby_state = event.args[0]
+				if _session_state != SessionState.SPECTATING:
+					_session_state = _session_state_for_lobby(_lobby_state)
 			lobby_state_changed.emit(event.args[0], event.args[1], event.args[2])
 		&"game_starting":
 			# One-shot instruction event; session state stays FINALIZED.
