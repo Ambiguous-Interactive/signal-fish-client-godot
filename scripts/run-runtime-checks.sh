@@ -40,13 +40,24 @@ python_bin="${PYTHON:-python3}"
 target="${1:-all}"
 GD_DIRS=(addons/signal_fish tests demo)
 
+gdtoolkit_version() {
+	# importlib.metadata reads the dist-info without importing the gdtoolkit
+	# parser: ~0.15 s vs ~0.7 s for `gdformat --version` (a full import).
+	# Every prepare call in one gate run reuses the first answer.
+	if [[ -z "${_GDTOOLKIT_VERSION:-}" ]]; then
+		_GDTOOLKIT_VERSION="$("${bootstrap_python}" -c 'import importlib.metadata as m; print(m.version("gdtoolkit"))')"
+		export _GDTOOLKIT_VERSION
+	fi
+	printf '%s\n' "${_GDTOOLKIT_VERSION}"
+}
+
 prepare_gdtoolkit_cache() {
 	# gdtoolkit bootstraps its grammar cache ($HOME/.cache/gdtoolkit/<version>)
 	# with a bare `os.makedirs` (parser.py, no exist_ok): concurrent cold
 	# starts race EEXIST and a check fails with "Cannot open file ..." —
 	# CI runners cold-start this home on every run. Pre-create the leaf
 	# sequentially; identical-content pickle writes afterward are benign.
-	mkdir -p "${HOME}/.cache/gdtoolkit/$(gdformat --version | awk '{print $2}')"
+	mkdir -p "${HOME}/.cache/gdtoolkit/$(gdtoolkit_version)"
 }
 
 # Run a per-file GDScript tool over GD_DIRS as parallel same-tool shards and
@@ -488,11 +499,29 @@ run_changed() {
 	fi
 
 	if [[ "${runtime_changed}" == "full" ]]; then
-		echo "=== changed: production-side edit -> full gate ==="
+		echo "=== changed: production-side edit -> all suites, static scoped to the edit ==="
 		local static_output godot_rc=0 static_rc=0
 		static_output="$(mktemp)"
 		cleanup_paths+=("${static_output}")
-		run_static >"${static_output}" 2>&1 &
+		# Format/lint/private-helper checks are per-file, so scoping them to
+		# the edited files cannot miss an effect of the edit; the analyzer
+		# self-test and whole-tree sweep stay the `all`/CI/pre-push contract.
+		# Every godot suite still runs: a production file can affect any of
+		# them, so the behavioral gate never under-runs (issue #117).
+		local static_files=() gd_file
+		for gd_file in ${gd_suites[@]+"${gd_suites[@]}"}; do
+			[[ -f "${gd_file}" ]] && static_files+=("${gd_file}")
+		done
+		# Same directory scope as the gate (addons/signal_fish, tests, demo):
+		# the fast loop must never be stricter than the pre-push contract.
+		while IFS= read -r file; do
+			case "${file}" in
+				addons/signal_fish/*.gd | demo/*.gd)
+					[[ -f "${file}" ]] && static_files+=("${file}")
+					;;
+			esac
+		done <<<"${files}"
+		run_static_on ${static_files[@]+"${static_files[@]}"} >"${static_output}" 2>&1 &
 		local static_pid=$!
 		run_godot || godot_rc=$?
 		wait "${static_pid}" || static_rc=$?
