@@ -88,6 +88,17 @@ run_static() {
 	fi
 }
 
+# Any SCRIPT ERROR line is a runtime abort inside a test function: GDScript
+# only unwinds that function, so a green suite would still have silently
+# skipped every assertion after the abort point (issue #104).
+_fail_on_script_errors() {
+	local output="$1"
+	if grep -q "SCRIPT ERROR" "${output}"; then
+		echo "::error::SCRIPT ERROR in godot output (issue #104): the aborted test skipped its remaining assertions — fix the error, never trust a green suite" >&2
+		return 1
+	fi
+}
+
 make_cold_parent() {
 	local cold_parent_template="${RUNNER_TEMP:-/tmp}/signal-fish-godot-cold.XXXXXX"
 	mktemp -d "${cold_parent_template}"
@@ -205,8 +216,14 @@ run_godot() {
 	# CI-identical cold-copy isolation.
 	if [[ "${#names[@]}" -eq 1 && "${SF_COLD:-0}" != "1" ]]; then
 		echo "=== ${names[0]} (warm; SF_COLD=1 for the CI-identical cold copy) ==="
-		_godot_command "${commands[0]}" "${repo_root}"
-		return
+		local warm_output failed
+		warm_output="$(mktemp)"
+		cleanup_paths+=("${warm_output}")
+		failed=0
+		_godot_command "${commands[0]}" "${repo_root}" >"${warm_output}" 2>&1 || failed=$?
+		cat "${warm_output}"
+		_fail_on_script_errors "${warm_output}" || failed=1
+		return "${failed}"
 	fi
 
 	# Suites are independent processes; run them concurrently and report each
@@ -232,6 +249,7 @@ run_godot() {
 		if [[ "${rc}" -ne 0 ]]; then
 			failed=1
 		fi
+		_fail_on_script_errors "${outputs[${index}]}" || failed=1
 	done
 	return "${failed}"
 }
@@ -242,8 +260,20 @@ run_smoke() {
 
 case "${target}" in
 	all)
-		run_static
-		run_godot
+		# Static checks and the godot suites are independent: run them
+		# concurrently and the gate wall drops to the slower half.
+		local_all_output="$(mktemp)"
+		cleanup_paths+=("${local_all_output}")
+		run_static >"${local_all_output}" 2>&1 &
+		static_pid=$!
+		godot_rc=0
+		run_godot || godot_rc=$?
+		static_rc=0
+		wait "${static_pid}" || static_rc=$?
+		cat "${local_all_output}"
+		if [[ "${static_rc}" -ne 0 || "${godot_rc}" -ne 0 ]]; then
+			exit 1
+		fi
 		;;
 	static)
 		run_static
