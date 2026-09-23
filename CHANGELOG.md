@@ -60,6 +60,14 @@ CI, tests, and internal tooling are not listed.
 - A fractional `ConnectionInfo.client_id` (e.g. `1.5`) no longer truncates to
   a different relay slot through `to_dict()`; it fails closed like a direct
   wire refusal (#89).
+- Directly constructed typed payloads (`PlayerInfo`, `RoomJoinedInfo`,
+  `ConnectionInfo`, session-plan types, and friends) no longer launder
+  wrong-typed values: a wrong-typed number for a boolean field (for example
+  `is_authority: 0.5`) read as `true`, wrong-typed strings or arrays aborted
+  the constructor mid-way and dropped the remaining fields, and integer
+  fields at hostile magnitudes (`1e30`) collapsed into platform-dependent
+  values that could round-trip back out through `ConnectionInfo.to_dict()`.
+  All now fail closed to the field's absent sentinel (#95, #96).
 - Wrong-typed enum values on the wire (e.g. a number where a token string
   belongs) now decode to `protocol_error` instead of silently decoding as
   the first enum member: `PeerTransportStatus.transport` no longer reports

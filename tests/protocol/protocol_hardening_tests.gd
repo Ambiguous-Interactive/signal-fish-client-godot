@@ -221,6 +221,37 @@ func _test_client_message_validation() -> void:
 	_assert_equal(false, join_integral_float["data"]["supports_authority"], "join_room bool")
 	_assert_equal("websocket", join_integral_float["data"]["relay_transport"], "join_room enum int")
 
+	# PLAN §13 item 9 (server room_service.rs `unwrap_or(true)`, upstream
+	# 5af5fee): the Godot default omits `supports_authority`, so the server
+	# enables authority — exactly the rust client's `Option` default.
+	var join_default := SFMessagesScript.join_room("reef-rally", "Alice")
+	_assert_valid_message(join_default, "join_room defaults")
+	var join_default_data: Dictionary = join_default["data"]
+	_assert(
+		not join_default_data.has("supports_authority"),
+		"join_room omits supports_authority by default (server enables authority)"
+	)
+
+	# Builder-side collapse gate (issue #96): a magnitude int() would
+	# collapse platform-dependently must refuse, not range-check the
+	# collapsed value (a collapse landing at 0 would even silently omit
+	# protocol_version).
+	_assert_invalid_message(
+		SFMessagesScript.join_room("reef-rally", "Alice", null, 1e30),
+		"must be an integer",
+		"join_room max_players 1e30 refused"
+	)
+	_assert_invalid_message(
+		SFMessagesScript.join_room("reef-rally", "Alice", null, 9223372036854775808.0),
+		"must be an integer",
+		"join_room max_players 2^63 refused"
+	)
+	_assert_invalid_message(
+		SFMessagesScript.authenticate("mb_app_fixture", null, null, null, 1e30),
+		"must be an integer",
+		"authenticate protocol_version 1e30 refused"
+	)
+
 	var valid_messages := [
 		{
 			"label": "authenticate enum int",

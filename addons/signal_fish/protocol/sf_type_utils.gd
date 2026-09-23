@@ -21,6 +21,30 @@ static func is_integral_number(value: Variant) -> bool:
 	return is_finite(number) and number == floor(number)
 
 
+## Strict constructor-side bool coercion (issue #95): the engine's bool()
+## launders wrong-typed numbers into a different bool (bool(0.5) is true)
+## and raises on wrong-typed strings/null, aborting the constructor mid-way
+## (issue #81 class). Gate on the engine type and fall back to the absent
+## sentinel instead.
+static func bool_or_false(value: Variant) -> bool:
+	return value if typeof(value) == TYPE_BOOL else false
+
+
+## Strict i64 representability for constructor-side integer coercion
+## (issues #73/#96): a value int() would collapse (integral float at or
+## beyond ±2^63, or a non-finite magnitude) must take the field's absent
+## sentinel instead of platform-dependent garbage. Unlike the decode path's
+## non-negative-only gate (SFTypes._is_i64_integer), sign is preserved so a
+## hostile negative stays visible instead of reading as the 0 "absent"
+## sentinel.
+static func is_i64_integer(value: Variant) -> bool:
+	if typeof(value) == TYPE_INT:
+		return true
+	if typeof(value) != TYPE_FLOAT or not is_integral_number(value):
+		return false
+	return float(value) > -9223372036854775808.0 and float(value) < 9223372036854775808.0
+
+
 ## Inbound open payloads (`GameData.data`, `Signal.signal`) are handed to
 ## consumers verbatim: bound their nesting by the shared cap and refuse
 ## non-finite numbers (the engine's JSON parser maps `1e400` to inf, and the
