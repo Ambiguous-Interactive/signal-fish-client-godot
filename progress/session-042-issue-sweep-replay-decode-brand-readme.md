@@ -88,11 +88,24 @@ both already optimized by earlier sessions (#111 et al.).
 
 ## Adversarial review
 
-Ran as the main-thread loop (single deliverable, sub-agent budget spent on
-verification): caught the lambda captured-variable rebind bug in the
-client-surface test (mutations must go through the captured Array), the
-gdlint 1400-line cap overflow (fixed by the helper-suite extraction), and
-the runner-references-itself gap in `suite_uses_file` mapping.
+Two independent rounds, both acted on before merge:
+
+- **Main-thread adversarial agent** (full diff): 0 × P1; 2 × P2 fixed —
+  bash ≤ 4.3 `set -u` aborts on bare empty-array expansion (macOS stock
+  3.2 is an explicit support claim; `${arr[@]+...}` guards added), and
+  `run_static_on` leaked its three temp files when backgrounded (expanded
+  EXIT trap, mirroring the cold-copy workers). P3s fixed: grep stderr on
+  deleted BFS nodes, a comment asserting the opposite of the escalation
+  rule, `generate_icons.gd` now asserts the rendered size (a stale
+  BASE_SIZE would silently ship sub-128 px icons), and the watermark
+  round-trip test pins float-typed raw values explicitly (Godot's
+  `Dictionary ==` treats `1 == 1.0`).
+- **Cursor Bugbot** (CI): flagged deleted test files crashing the scoped
+  static checks. Semantics now: deletions still map to their suite (the
+  runner's stale preload keeps it honest and red), but are excluded from
+  the static file list. Verified: deleting `replay_decode_tests.gd` →
+  `changed` maps to `reconnect` only and fails on the stale preload, with
+  no tool crash.
 
 ## Checks
 
@@ -100,3 +113,5 @@ the runner-references-itself gap in `suite_uses_file` mapping.
 - `agent-check.ps1` green after `.llm` edits; indexes regenerated.
 - `npx markdownlint-cli2 README.md` clean; lychee constraints honored
   (banner URL resolves on `main`; no links to unmerged raw files).
+- PR #116: all 12 checks green (3-engine matrix, static, docs, harness,
+  link check, Bugbot).
