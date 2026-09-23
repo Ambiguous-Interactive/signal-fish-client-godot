@@ -168,6 +168,50 @@ if [ -z "`$REPO_ROOT" ]; then
   exit 1
 fi
 
+# BEGIN STAGED-PATH PREDICATE (kept in sync with run-llm-hooks.ps1 by test-llm-harness.ps1)
+# Fast path (issue #112): a commit whose staged files touch none of the
+# harness predicates cannot change generated or tooling state, so skip the
+# ~2.5 s pwsh boot. Mirrors run-llm-hooks.ps1 PreCommit mode, where a false
+# `$llmTouched/`$toolingTouched pair means "minimal generated sanity, then exit
+# 0". Accepted divergences while fast: the always-on stray-artifact AutoFix
+# and the corrupt-runner self-heal are deferred to harness-touching commits;
+# CI's Full mode still fails loud on committed strays.
+staged_paths="`$(git -C "`$REPO_ROOT" diff --cached --name-only)"
+llm_fast=1
+while IFS= read -r staged_path; do
+  case "`$staged_path" in
+    .llm/*|scripts/*|.githooks/*|.github/workflows/*|.devcontainer/*|.claude/*|AGENTS.md|CLAUDE.md|GEMINI.md|CHATGPT.md|CODEX.md|llms.txt|.cursorrules|.windsurfrules|.github/copilot-instructions.md|.cursor/rules/signal-fish-llm-context.mdc|.pre-commit-config.yaml|.gitattributes|.gitignore|.github/dependabot.yml|.github/dependabot.yaml|requirements-automation.txt)
+      llm_fast=0
+      break
+      ;;
+    *[!A-Za-z0-9_./+-]*)
+      # Quoted/exotic staged paths are ambiguous to match in sh; defer to the
+      # exact pwsh predicate instead of risking a wrongly-fast skip.
+      llm_fast=0
+      break
+      ;;
+  esac
+done <<PREDICATE_INPUT
+`$staged_paths
+PREDICATE_INPUT
+
+if [ "`$llm_fast" -eq 1 ]; then
+  for generated in .llm/index.md .llm/context.md; do
+    if [ ! -f "`$REPO_ROOT/`$generated" ]; then
+      echo "[llm-hook] Missing generated file: `$generated" >&2
+      exit 1
+    fi
+  done
+  if ! grep -q '<!-- LLM-INDEX:START -->' "`$REPO_ROOT/.llm/context.md" ||
+    ! grep -q '<!-- LLM-INDEX:END -->' "`$REPO_ROOT/.llm/context.md"; then
+    echo "[llm-hook] Generated context markers are missing." >&2
+    exit 1
+  fi
+  echo "[llm-hook] No staged LLM/harness changes; fast hook OK."
+  exit 0
+fi
+# END STAGED-PATH PREDICATE
+
 if ! command -v mktemp >/dev/null 2>&1; then
   echo "[llm-hook] ERROR: mktemp is required to create a secure temporary bootstrap script." >&2
   exit 1

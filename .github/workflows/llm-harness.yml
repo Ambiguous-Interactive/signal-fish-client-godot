@@ -9,10 +9,18 @@ on:
 permissions:
     contents: read
 
+# Superseded PR runs are canceled so pushed-through commits do not queue
+# redundant runs; runs on main are never canceled (merge checks depend on
+# them). Same policy as ci.yml.
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
     validate:
         name: Validate LLM context
         runs-on: ubuntu-24.04
+        timeout-minutes: 10
         steps:
             - name: Check out repository
               uses: actions/checkout@v7
@@ -25,7 +33,18 @@ jobs:
                   cache: pip
                   cache-dependency-path: requirements-automation.txt
 
+            # The venv is rebuilt only when the pinned tooling or the resolved
+            # Python version changes; otherwise restore and run directly
+            # (same pattern as the ci.yml static job, issue #111).
+            - name: Cache automation venv
+              id: venv-cache
+              uses: actions/cache@v6
+              with:
+                  path: .venv-ci
+                  key: venv-automation-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-automation.txt') }}
+
             - name: Install automation validation dependencies
+              if: steps.venv-cache.outputs.cache-hit != 'true'
               shell: bash
               run: |
                   python3 -m venv .venv-ci
@@ -84,6 +103,7 @@ jobs:
     self-tests:
         name: LLM harness self-tests
         runs-on: ubuntu-24.04
+        timeout-minutes: 10
         steps:
             - name: Check out repository
               uses: actions/checkout@v7

@@ -94,6 +94,14 @@ const RECONNECT_BACKOFF_FACTOR := 2.0
 const RECONNECT_MAX_DELAY_SEC := 15.0
 const RECONNECT_JITTER_FRACTION := 0.25
 
+## Session states that imply a live player-room baseline; `room_left` mutates
+## state only inside these (issue #106).
+const _PLAYER_ROOM_STATES: Array[SessionState] = [
+	SessionState.IN_ROOM_WAITING,
+	SessionState.IN_ROOM_LOBBY,
+	SessionState.IN_ROOM_FINALIZED,
+]
+
 ## Active transport adapter. Tests may inject an [code]SFFakeTransport[/code]
 ## before [method connect_to_server]; production code leaves this null and the
 ## client builds a [code]SFWebSocketTransport[/code].
@@ -899,6 +907,10 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			_clear_reconnect_credentials()
 			authentication_error.emit(event.args[0], event.args[1])
 		&"room_joined":
+			# Every RoomJoined is an authoritative fresh baseline: consumers
+			# (the WebRTC mesh) rebuild on re-emission, so unlike
+			# Authenticated/Reconnected/ProtocolInfo there is no duplicate
+			# latch here (issue #107, closed as intended behavior).
 			_apply_room_info(event.args[0])
 			_session_state = _session_state_for_lobby(_lobby_state)
 			# A fresh authoritative session restarts the retry budget.
@@ -907,11 +919,16 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"room_join_failed":
 			room_join_failed.emit(event.args[0], event.args[1])
 		&"room_left":
-			_clear_room_state()
-			# Leaving the room ends its rejoin identity; a later drop must
-			# not silently rejoin a room the consumer left.
-			_capture_reconnect_context("", "", "")
-			_session_state = SessionState.AUTHENTICATED
+			# Room-scoped (issue #106, #100 precedent): a `RoomLeft` for a
+			# session that holds no player room baseline is off-contract and
+			# must stay informational — wiping state or the retained
+			# reconnection identity here would silently disable auto-rejoin.
+			if _session_state in _PLAYER_ROOM_STATES:
+				_clear_room_state()
+				# Leaving the room ends its rejoin identity; a later drop must
+				# not silently rejoin a room the consumer left.
+				_capture_reconnect_context("", "", "")
+				_session_state = SessionState.AUTHENTICATED
 			room_left.emit()
 		&"player_joined":
 			_upsert_player(event.args[0])
@@ -965,7 +982,13 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# before this dial's handshake went out (e.g. after an
 			# `AuthenticationError`, issue #82) or on a normal-auth dial is
 			# equally hostile.
-			if _reconnected_seen or not _reconnect_handshake_sent:
+			if _reconnected_seen:
+				return
+			if not _reconnect_handshake_sent:
+				# An unsolicited `Reconnected` (no handshake on this dial) is
+				# hostile input; unlike the idempotent duplicate it must stay
+				# loud instead of silently dropped (issue #108).
+				_emit_protocol_error("Reconnected without a reconnect handshake on this dial")
 				return
 			_reconnected_seen = true
 			_apply_room_info(event.args[0])
@@ -993,16 +1016,22 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# retryable auto-reconnects continue from a clean state.
 			_terminate_reconnection_attempt()
 		&"spectator_joined":
+			# Mirror of `room_joined`: no duplicate latch; every
+			# SpectatorJoined is an authoritative baseline (issue #107).
 			_apply_spectator_info(event.args[0])
 			_session_state = SessionState.SPECTATING
 			spectator_joined.emit(event.args[0])
 		&"spectator_join_failed":
 			spectator_join_failed.emit(event.args[0], event.args[1])
 		&"spectator_left":
-			_clear_room_state()
-			# Mirrors room_left: a voluntary exit ends any retained identity.
-			_capture_reconnect_context("", "", "")
-			_session_state = SessionState.AUTHENTICATED
+			# Spectator-flow-scoped (issue #106): a `SpectatorLeft` for a
+			# session that is not spectating is off-contract and must stay
+			# informational — mirrors the `room_left` guard.
+			if _session_state == SessionState.SPECTATING:
+				_clear_room_state()
+				# Mirrors room_left: a voluntary exit ends any retained identity.
+				_capture_reconnect_context("", "", "")
+				_session_state = SessionState.AUTHENTICATED
 			spectator_left.emit(event.args[0], event.args[1], event.args[2], event.args[3])
 		&"new_spectator_joined":
 			_upsert_spectator(event.args[0])
