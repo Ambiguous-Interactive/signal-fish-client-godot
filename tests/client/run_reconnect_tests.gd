@@ -84,6 +84,7 @@ func _run() -> void:
 	_test_handshake_send_failure_killing_link_cascades()
 	_test_refused_authenticate_resolves_the_dial()
 	_test_auto_reconnect_exhaustion_emits_connection_failed()
+	_test_redial_from_exhaustion_handler_keeps_the_fresh_identity()
 	_test_failure_driven_exhaustion_and_budget_recovery()
 	_test_reconnect_tokens_are_redacted()
 	_run_completed = true
@@ -979,6 +980,66 @@ func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:
 		"exhaustion: no further dial"
 	)
 	_assert_equal(2, client._auto_reconnect_attempts, "attempts stop at budget")
+	_assert_no_protocol_errors()
+	client.free()
+
+
+## The exhaustion notice is emitted synchronously: a consumer redialing from
+## its handler captures a fresh retained identity that the post-emit drop
+## must not clobber — and that manual dial's later death must still engage
+## auto-reconnect (with a fresh exhaustion notice) instead of silent-dead-
+## ending it.
+func _test_redial_from_exhaustion_handler_keeps_the_fresh_identity() -> void:
+	var client := _make_client(true, "token")
+	client._config.reconnect_max_attempts = 1
+	var failures: Array = []
+	var redial_ok := [false]
+	client.connection_failed.connect(
+		func(error: String) -> void:
+			failures.append(error)
+			if error.contains("exhausted") and not redial_ok[0]:
+				redial_ok[0] = (
+					client.reconnect(PLAYER_A, ROOM_ID, "manual-token-not-secret") == OK
+				)
+	)
+	var transport: SFFakeTransportScript = client.transport
+	# Attempt 1: the only budgeted retry (a fresh fake per close: the close
+	# signal fires once per fake session).
+	transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	transport = client.transport
+	_step(client, 30.0)
+	_assert_equal(OK, _wait_open(client), "budgeted attempt dials")
+	# Its death pre-baseline hits the exhausted budget and emits the notice;
+	# the handler redials synchronously inside it.
+	transport.inject_close(4999, "dropped again")
+	var redialed: bool = redial_ok[0]
+	_assert(redialed, "handler redial from the exhaustion notice succeeds")
+	_assert_equal(
+		"manual-token-not-secret",
+		client._context_auth_token,
+		"the redial's identity survives the cascade"
+	)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTING,
+		client.get_connection_state(),
+		"the manual dial is live after the cascade unwinds"
+	)
+	# The manual dial dies pre-baseline: scheduling must re-engage with the
+	# retained manual identity and emit a second, terminal exhaustion notice.
+	# (The redial dialed a fresh transport after the cascade tore the old one
+	# down; its death goes through that live transport.)
+	transport = client.transport
+	transport.inject_close(4999, "manual dial died")
+	_assert_equal(2, failures.size(), "manual dial's death emits a fresh exhaustion notice")
+	var second_notice: String = failures[1]
+	_assert_string_contains(second_notice, "exhausted", "second notice reports exhaustion")
+	_assert_equal("", client._context_auth_token, "terminal exhaustion still drops the identity")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSED,
+		client.get_connection_state(),
+		"no dial after the final exhaustion"
+	)
 	_assert_no_protocol_errors()
 	client.free()
 

@@ -1192,6 +1192,12 @@ func _schedule_auto_reconnect() -> void:
 		connection_failed.emit(
 			"auto-reconnect exhausted after %d attempt(s)" % _auto_reconnect_attempts
 		)
+		if _connection_state == ConnectionState.CONNECTING:
+			# A handler redialed during the notice — emission is synchronous,
+			# so the dial (and its fresh retained capture, issue #73) already
+			# happened. The wipe below must not clobber it, or the manual
+			# dial's later death would silent-dead-end auto-reconnect.
+			return
 		# The episode is over: drop the retained identity so no later event
 		# can re-enter scheduling (retries restart on a fresh baseline).
 		_context_player_id = ""

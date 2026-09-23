@@ -115,9 +115,22 @@ isolated.
 writable deterministic `HOME`, activates `.venv-ci` when present, and exposes
 `private-helpers`, `format`, `lint`, `godot`, `all`, and `smoke` subcommands so
 CI can keep separate step names without drifting from local reproduction
-commands. The `godot` subcommand copies the current source tree into a fresh
-temporary project without `.godot/`, which prevents local editor/global-class
-caches from masking failures that would appear in a clean CI checkout.
+commands. The `godot` subcommand accepts suite names (`protocol transport
+client binary reconnect demo_boot p2p_boot`); one explicit suite runs warm
+in-tree against the live `.godot` cache for fast local iteration (`SF_COLD=1`
+forces the CI-identical path), while no-argument and multi-suite runs copy the
+source tree into fresh temporary projects without `.godot/`, which prevents
+local editor/global-class caches from masking failures that would appear in a
+clean CI checkout.
+
+Cold copies are one tar stream over a filtered `git ls-files -z` manifest, not
+a per-file copy loop. Shell rules that bit here: `set -e` is suppressed inside
+`var="$(...)"` command substitutions, so a helper whose pipeline fails must
+propagate the status through the function return (and background workers
+report it through `wait`); files deleted in the working tree must be filtered
+out of `ls-files` lists before tarring, because tar warns-and-continues and
+would silently shrink the copy behind a zero exit; gate on exit status, never
+on captured stderr text.
 
 The `smoke` subcommand is opt-in (never part of `all`) and runs
 `tests/smoke/run_websocket_smoke.gd`: a local RFC 6455 server

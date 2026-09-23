@@ -110,6 +110,36 @@ canonical spelling; left alone.
   red-green verified by stashing just the production hunk; probes and
   mutation checks recorded above. CI: watch the PR run.
 
+## PR review round (post-open follow-up)
+
+- Fetched all PR feedback (two bugbot rounds + zero-knowledge red team).
+  Both bot findings were already fixed on HEAD; their **classes** were then
+  swept across the runtime by a fresh probe-armed sub-agent:
+  - *Diagnostic amplification* (a refused send retried per frame floods
+    `protocol_error`): all emit sites traced; the two known instances
+    (heartbeat, mesh status) are the only frame-rate-adjacent retries —
+    clean elsewhere.
+  - *Stale armed-state across flap/re-entrancy/session-swap*: every
+    pending/deadline/latch var in the client, mesh, and transports audited
+    against all three axes; one more real bug found and fixed.
+- **New fix (same class, exhaustion path):** `_schedule_auto_reconnect`
+  wiped the retained reconnect identity *after* emitting the exhaustion
+  `connection_failed`. Because Godot emission is synchronous, a consumer
+  redialing from that handler had its fresh capture (issue #73 contract)
+  clobbered, so the manual dial's later death silently dead-ended
+  auto-reconnect. The post-emit wipe now yields to an in-flight dial
+  (state `CONNECTING`); pinned by
+  `_test_redial_from_exhaustion_handler_keeps_the_fresh_identity`
+  (redial inside the handler, manual dial dies pre-baseline, fresh
+  terminal exhaustion notice asserted). Red-green verified.
+- **Guidance updates:** `.llm/skills/runtime-architecture.md` gains
+  "Signals are synchronous: audit every emit site" (post-emit writes,
+  three-axis invalidation for armed state, retry-throttling rule,
+  handler-re-entry test pattern); `.llm/skills/testing-automation.md`
+  documents the suite selector/warm mode and the shell rules the tar
+  cold copy taught (set -e suppression in command substitutions, ls-files
+  filtering, exit-status gating). Index regenerated; agent-check green.
+
 ## Leftovers / follow-ups
 
 - PLAN §13 items 4–8, 10 (upstream verification) remain open; P7

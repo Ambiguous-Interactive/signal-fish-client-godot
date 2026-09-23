@@ -70,6 +70,36 @@ payloads inside `transport/`.
   normal decoder, and emit `reconnected(info, missed_events)` — no hidden
   re-emit; consumers replay.
 
+## Signals are synchronous: audit every emit site
+
+Godot signal emission re-enters consumer code before `emit` returns; a
+handler may call any public API (`close`, `reconnect`, `mesh.detach`). The
+review rounds that found the mesh status-boundary bugs and the exhaustion
+clobber generalized into standing rules:
+
+- Never write state after an `emit` in the same function unless the write is
+  proven harmless against handler mutations. The exhaustion path once wiped
+  the retained reconnect identity *after* emitting `connection_failed`,
+  clobbering the fresh identity a handler had just captured by redialing
+  inside the notice. Either move the write before the emit or guard it on
+  the pre-emit condition still holding (e.g. "no dial is in flight").
+- Every armed/deadline/latched piece of state (`_reconnect_timer_running`,
+  `_reported_connected`, `_status_retry_due_msec`, per-dial latches) must be
+  invalidated on three axes: the triggering edge resolving itself (state
+  flap back), teardown running re-entrantly from a handler mid-operation,
+  and a session swap (a fresh dial must not inherit the old session's
+  deadline).
+- A refused send retried from a per-frame loop (`poll`/`_process`) must
+  throttle retries to one per interval — the heartbeat's backpressured-beat
+  rule — with the interval injectable for deterministic tests. One refused
+  send is one diagnostic; a stalled link must not flood `protocol_error`
+  once per frame.
+- Pin each rule with a handler-re-entry test: redial/flap from *inside* the
+  handler, kill the follow-up dial pre-baseline, assert the retained
+  identity and the next scheduling step. See
+  `_test_redial_from_exhaustion_handler_keeps_the_fresh_identity`
+  (reconnect) and the mesh backpressure/flap test.
+
 ## Decode policy
 
 - Decode never crashes: parse failure, missing/unknown type, or wrong shapes
