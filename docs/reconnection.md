@@ -40,6 +40,16 @@ On success the client emits `reconnected(info, missed_events)`:
 - `info` carries the full room state, the same shape as `room_joined`.
 - `missed_events` is decoded through the same decoder as live traffic.
 
+On protocol v3, `info` also carries the server's replay contract:
+
+- `info.replay_status` is `COMPLETE`, `TRUNCATED`, `UNAVAILABLE`, or
+  `UNKNOWN` (v2 sessions; the server did not state a contract).
+- `TRUNCATED`/`UNAVAILABLE` mean `missed_events` is a suffix or empty —
+  resync from the `info` snapshot fields instead of replaying.
+- `info.sender_watermarks` lists each sender's `(epoch, seq)` game-data
+  tail, so a gap after reconnect is attributable to your absence or replay
+  truncation, never silent relay loss.
+
 You replay missed events yourself. The client never re-emits them as live
 signals. Nested `Reconnected` entries inside `missed_events` are rejected
 as non-replayable, and decode recursion is depth-bounded, so a hostile

@@ -31,8 +31,8 @@ any test that simulates disconnect/retry timing.
   `sender_watermarks` (gap recovery via `DeliveryReport`; per-sender `seq`
   starts at 1). v2 wire has no truncation flag — our client's
   `MAX_MISSED_EVENTS` decode cap + `protocol_error` sentinel is the only
-  client-side guard. We do not yet decode `replay`/`sender_watermarks`
-  (raw-only); tracked as issue #114.
+  client-side guard. Both decode as typed `RoomJoinedInfo.replay_status` /
+  `sender_watermarks` (issue #114); absent keys decode to `UNKNOWN` / `[]`.
 
 ### Server WebSocket close codes (`src/coordination/mod.rs` `CloseReason`)
 

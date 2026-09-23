@@ -11,6 +11,7 @@ const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fak
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
+const ReplayDecodeTests = preload("res://tests/client/replay_decode_tests.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_A := ClientFixtures.PLAYER_A
@@ -61,7 +62,7 @@ func _init() -> void:
 
 func _run() -> void:
 	var cases: Array[Callable] = [
-		_test_reconnection_token_decodes_from_baselines,
+		_test_baseline_decodes,
 		_test_manual_reconnect_guards_and_wire_bytes,
 		_test_manual_reconnect_completes_and_refreshes_context,
 		_test_manual_reconnect_dial_refreshes_auto_reconnect_context,
@@ -104,37 +105,10 @@ func _run() -> void:
 	_run_completed = true
 
 
-func _test_reconnection_token_decodes_from_baselines() -> void:
-	var cases := [
-		["string token", TOKEN_V1, TOKEN_V1],
-		["absent token", null, ""],
-		["null token", "null", ""],
-		["empty token", "", ""],
-	]
-	for case: Array in cases:
-		var data := _room_joined_data()
-		if case[1] == "null":
-			data["reconnection_token"] = null
-		elif case[1] != null:
-			data["reconnection_token"] = case[1]
-		var event: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(
-			SFMessagesScript.encode({"type": "RoomJoined", "data": data})
-		)
-		if not _assert_equal(
-			SFTypesScript.LobbyState.WAITING, event.args[0].lobby_state, "%s: decodes" % case[0]
-		):
-			continue
-		_assert_equal(case[2], event.args[0].reconnection_token, "%s: RoomJoined" % case[0])
-
-	var reconnected_data := _room_joined_data({"lobby_state": "lobby"})
-	reconnected_data["reconnection_token"] = TOKEN_V1
-	reconnected_data["missed_events"] = [{"type": "Pong"}]
-	var event: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(
-		SFMessagesScript.encode({"type": "Reconnected", "data": reconnected_data})
-	)
-	_assert_equal(TOKEN_V1, event.args[0].reconnection_token, "Reconnected carries token")
-	var missed: Array = event.args[1]
-	_assert_equal(1, missed.size(), "missed_events decoded")
+## Baseline decode matrices (tokens, v3 replay fields) live in the shared
+## replay_decode_tests helper; reconnection episode behavior stays here.
+func _test_baseline_decodes() -> void:
+	_failures.append_array(ReplayDecodeTests.run(self))
 	_done()
 
 
@@ -198,19 +172,40 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	client.set_auto_reconnect(true)
 	var reconnected_count := [0]
 	var missed_count := [0]
+	# Issue #114: the reconnected signal surfaces the typed v3 replay fields.
+	# Lambdas capture locals by value; mutations must go through the Array.
+	var replay_fields: Array = []
 	client.reconnected.connect(
-		func(_info: SFTypesScript.RoomJoinedInfo, missed: Array) -> void:
+		func(info: SFTypesScript.RoomJoinedInfo, missed: Array) -> void:
 			reconnected_count[0] += 1
 			missed_count[0] = missed.size()
+			replay_fields.assign(
+				[
+					info.replay_status,
+					info.sender_watermarks[0].player_id,
+					info.sender_watermarks[0].seq,
+				]
+			)
 	)
 	var data := _room_joined_data({"lobby_state": "lobby"})
 	data["reconnection_token"] = TOKEN_V2
 	data["missed_events"] = [
 		{"type": "Pong"}, {"type": "PlayerLeft", "data": {"player_id": PLAYER_B}}
 	]
+	data["replay"] = "truncated"
+	data["sender_watermarks"] = [{"player_id": PLAYER_A, "epoch": 1, "seq": 42}]
 	transport.inject_server_message({"type": "Reconnected", "data": data})
 	_assert_equal(1, reconnected_count[0], "reconnected emitted")
 	_assert_equal(2, missed_count[0], "missed_events handed to consumer")
+	_assert_equal(
+		[
+			SFTypesScript.ReplayStatus.TRUNCATED,
+			PLAYER_A,
+			42,
+		],
+		replay_fields,
+		"replay status + sender watermarks surface"
+	)
 	_assert_equal(
 		SignalFishClientScript.SessionState.IN_ROOM_LOBBY,
 		client.get_session_state(),

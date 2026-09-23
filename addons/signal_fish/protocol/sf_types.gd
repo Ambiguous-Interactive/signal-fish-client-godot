@@ -5,6 +5,9 @@ enum GameDataEncoding { UNKNOWN = -1, JSON, MESSAGE_PACK, RKYV }
 enum LobbyState { UNKNOWN = -1, WAITING, LOBBY, FINALIZED }
 enum RelayTransport { UNKNOWN = -1, TCP, UDP, WEBSOCKET, AUTO }
 enum SpectatorReason { UNKNOWN = -1, JOINED, VOLUNTARY_LEAVE, DISCONNECTED, REMOVED, ROOM_CLOSED }
+## Completeness of `Reconnected.missed_events` (v3 only; the `replay` wire key
+## is absent on v2, which decodes as UNKNOWN — no replay contract was stated).
+enum ReplayStatus { UNKNOWN = -1, COMPLETE, TRUNCATED, UNAVAILABLE }
 
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const TypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
@@ -49,6 +52,11 @@ const LOBBY_STATE_FROM_STRING: Dictionary = {
 	"waiting": LobbyState.WAITING,
 	"lobby": LobbyState.LOBBY,
 	"finalized": LobbyState.FINALIZED,
+}
+const REPLAY_STATUS_FROM_STRING: Dictionary = {
+	"complete": ReplayStatus.COMPLETE,
+	"truncated": ReplayStatus.TRUNCATED,
+	"unavailable": ReplayStatus.UNAVAILABLE,
 }
 const RELAY_TRANSPORT_TO_STRING: Dictionary = {
 	RelayTransport.TCP: "tcp",
@@ -420,6 +428,37 @@ class PeerConnectionInfo:
 		return String(value)
 
 
+## A v3 reconnect baseline for one current room member's relayed game-data
+## stream (upstream server messages.rs `SenderWatermark`: `player_id`, u32
+## `epoch`, u64 `seq`). The reconnecting client never receives missed
+## `GameData`; these watermarks are the `(epoch, seq)` tail per sender so a
+## post-reconnect gap can be attributed to the client's absence or replay
+## truncation instead of silent relay loss.
+class SenderWatermark:
+	extends RefCounted
+	var player_id: String = ""
+	var epoch: int = 0
+	var seq: int = 0
+	var raw: Dictionary = {}
+
+	func _init(data: Dictionary = {}) -> void:
+		raw = data
+		player_id = data["player_id"] if _has_string(data, "player_id") else ""
+		# Constructors cannot report errors: a hostile negative takes the 0
+		# absent sentinel instead of reading as valid (issue #73 class).
+		epoch = int(data["epoch"]) if _is_non_negative_integer(data.get("epoch")) else 0
+		seq = int(data["seq"]) if _is_non_negative_integer(data.get("seq")) else 0
+
+	func to_dict() -> Dictionary:
+		return raw.duplicate(true)
+
+	func _has_string(data: Dictionary, key: String) -> bool:
+		return typeof(data.get(key)) == TYPE_STRING
+
+	func _is_non_negative_integer(value: Variant) -> bool:
+		return TypeUtils.is_i64_integer(value) and value >= 0
+
+
 class RoomJoinedInfo:
 	extends RefCounted
 	var room_id: String = ""
@@ -443,6 +482,14 @@ class RoomJoinedInfo:
 	## `RoomJoinedPayload.reconnection_token` / `ReconnectedPayload.reconnection_token`).
 	## Empty when the server omitted it or sent JSON null. Handle as a secret.
 	var reconnection_token: String = ""
+	## Completeness of `Reconnected.missed_events` (v3 only, upstream
+	## `ReconnectedPayload.replay`). UNKNOWN when absent (v2 sessions) — no
+	## replay contract was stated. TRUNCATED/UNAVAILABLE mean `missed_events`
+	## is a suffix or empty: resync from the snapshot fields.
+	var replay_status: int = ReplayStatus.UNKNOWN
+	## Per-sender relayed game-data baseline (v3 only, upstream
+	## `ReconnectedPayload.sender_watermarks`). Empty for v2 sessions.
+	var sender_watermarks: Array = []
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
@@ -463,6 +510,10 @@ class RoomJoinedInfo:
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
 		ice_servers = _coerce_ice_servers(data.get("ice_servers", []))
 		reconnection_token = _string_or_empty(data.get("reconnection_token"))
+		replay_status = TypeUtils.enum_value(
+			REPLAY_STATUS_FROM_STRING, data.get("replay"), ReplayStatus.UNKNOWN
+		)
+		sender_watermarks = _coerce_watermarks(data.get("sender_watermarks", []))
 
 	func _int_or_zero(value: Variant) -> int:
 		return int(value) if TypeUtils.is_i64_integer(value) else 0
@@ -503,6 +554,15 @@ class RoomJoinedInfo:
 		for value: Variant in values:
 			if typeof(value) == TYPE_DICTIONARY:
 				result.append(SpectatorInfo.new(value))
+		return result
+
+	func _coerce_watermarks(values: Variant) -> Array:
+		var result: Array = []
+		if typeof(values) != TYPE_ARRAY:
+			return result
+		for value: Variant in values:
+			if typeof(value) == TYPE_DICTIONARY:
+				result.append(SenderWatermark.new(value))
 		return result
 
 	func _string_or_empty(value: Variant) -> String:
@@ -804,6 +864,13 @@ static func validate_room_joined_info(data: Variant) -> String:
 	# back on Reconnect, so a present value must be a string (issue #72).
 	if not _is_optional_string(dict, "reconnection_token"):
 		return "RoomJoinedInfo reconnection_token must be a string"
+	# v3-only Reconnected additions: optional upstream (`Option` / serde
+	# default), so absent or null stays legal, but a present value must match
+	# the wire shape (issue #114).
+	if not _is_optional_replay_status(dict):
+		return "RoomJoinedInfo replay is unknown"
+	if not _is_optional_watermarks_array(dict):
+		return "RoomJoinedInfo sender_watermarks must be valid watermark objects"
 	if dict.has("current_spectators"):
 		var spectators_error := validate_spectators_array(dict["current_spectators"])
 		if not spectators_error.is_empty():
@@ -1075,6 +1142,37 @@ static func _is_optional_string(data: Dictionary, key: String) -> bool:
 	if not data.has(key) or data[key] == null:
 		return true
 	return typeof(data[key]) == TYPE_STRING
+
+
+## Absent or JSON-null `Reconnected.replay` (v3-only `Option<ReplayStatus>`,
+## serde skip_serializing_if); a present value must be a known status token.
+static func _is_optional_replay_status(data: Dictionary) -> bool:
+	if not data.has("replay") or data["replay"] == null:
+		return true
+	return (
+		typeof(data["replay"]) == TYPE_STRING
+		and REPLAY_STATUS_FROM_STRING.has(String(data["replay"]))
+	)
+
+
+## Absent or JSON-null `Reconnected.sender_watermarks` (v3-only
+## `Vec<SenderWatermark>`); a present value must be an array of watermark
+## objects with a string `player_id`, u32 `epoch`, and i64-representable `seq`.
+static func _is_optional_watermarks_array(data: Dictionary) -> bool:
+	if not data.has("sender_watermarks") or data["sender_watermarks"] == null:
+		return true
+	if typeof(data["sender_watermarks"]) != TYPE_ARRAY:
+		return false
+	for watermark: Variant in data["sender_watermarks"]:
+		if typeof(watermark) != TYPE_DICTIONARY:
+			return false
+		if not _has_string(watermark, "player_id"):
+			return false
+		if not _has_integer_in_range(watermark, "epoch", 0, U32_MAX):
+			return false
+		if not _has_i64_integer(watermark, "seq"):
+			return false
+	return true
 
 
 ## Wire integers beyond the platform range arrive as floats: require strict
