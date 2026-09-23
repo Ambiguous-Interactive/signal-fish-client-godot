@@ -487,12 +487,14 @@ func _test_closing_window_suppresses_sends() -> void:
 
 
 ## Issue #102: a boundary report refused under backpressure must stay armed —
-## the next boundary update carries it once the cap clears, instead of the
-## connected edge being consumed and the report lost for the session.
+## it retries (throttled to one attempt per interval, like the heartbeat's
+## backpressured beats) instead of the edge being consumed and the report
+## lost for the session.
 func _test_transport_status_boundary_survives_backpressure() -> void:
 	var client := _make_in_room_client()
 	var errors := _track_protocol_errors(client)
 	var mesh := _make_mesh()
+	mesh.transport_status_retry_msec = 0
 	_attach(mesh, client)
 	_inject_plan(client, [_peer(PLAYER_B, true)])
 	var pc: FakePeerConnection = _mesh_peers(mesh)[0]
@@ -530,6 +532,30 @@ func _test_transport_status_boundary_survives_backpressure() -> void:
 	_assert_equal([status_false], _sent_after(client, baseline + 1), "disconnect report retried")
 	mesh.free()
 	client.free()
+
+	# A refused retry waits out its interval instead of erroring per frame.
+	var throttled_client := _make_in_room_client()
+	var throttled_errors := _track_protocol_errors(throttled_client)
+	var throttled_mesh := _make_mesh()
+	throttled_mesh.transport_status_retry_msec = 60000
+	_attach(throttled_mesh, throttled_client)
+	_inject_plan(throttled_client, [_peer(PLAYER_B, true)])
+	var throttled_pc: FakePeerConnection = _mesh_peers(throttled_mesh)[0]
+	var throttled_transport: SFFakeTransportScript = throttled_client.transport
+	var throttled_baseline: int = throttled_transport.sent_text.size()
+	throttled_pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
+	throttled_transport.buffered_amount = 262145
+	throttled_mesh.poll()
+	throttled_mesh.poll()
+	throttled_mesh.poll()
+	_assert_equal(
+		throttled_baseline,
+		throttled_transport.sent_text.size(),
+		"throttled report stays silent for the interval"
+	)
+	_assert_equal(1, throttled_errors.size(), "throttle surfaces one error per interval")
+	throttled_mesh.free()
+	throttled_client.free()
 
 
 func _test_teardown_paths() -> void:

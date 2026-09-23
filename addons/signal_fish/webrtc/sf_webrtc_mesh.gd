@@ -64,6 +64,13 @@ var peer_connection_factory: Callable = Callable()
 ## [WebRTCMultiplayerPeer]. Empty Callable = the engine class.
 var multiplayer_peer_factory: Callable = Callable()
 
+## A boundary report refused (e.g. backpressure) stays armed (issue #102) and
+## retries at most once per interval — the heartbeat's backpressured-beat
+## rule (PLAN §4.7) — so a sustained congestion episode surfaces one
+## protocol_error per interval instead of one per poll. Injectable for
+## deterministic tests.
+var transport_status_retry_msec := 1000
+
 var _client: SignalFishClientScript = null
 # Distinguishes "never attached / detached" from "the attached client node was
 # freed": Godot reads a freed object held by a script-typed variable as null,
@@ -74,6 +81,7 @@ var _ice_servers: Array = []
 var _peers: Dictionary = {}
 var _mp_peer = null
 var _reported_connected := false
+var _status_retry_due_msec := 0
 
 
 ## Starts consuming a client's session-plan events. The client must stay
@@ -373,6 +381,7 @@ func _reset_mesh() -> void:
 	# observed connected-count changes on a living session, never for a room
 	# or connection that is already gone.
 	_reported_connected = false
+	_status_retry_due_msec = 0
 
 
 func _update_transport_status() -> void:
@@ -382,15 +391,22 @@ func _update_transport_status() -> void:
 	if not _client_connected():
 		return
 	var connected := _count_connected_peers()
-	# The boundary flips only on send success (issue #102): a refused report
-	# (e.g. backpressure) stays armed and rides the next boundary update
-	# instead of being swallowed with the dropped frame.
-	if connected > 0 and not _reported_connected:
-		if _client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true) == OK:
-			_reported_connected = true
-	elif connected == 0 and _reported_connected:
-		if _client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, false) == OK:
-			_reported_connected = false
+	var wanted := connected > 0
+	if wanted == _reported_connected:
+		return
+	# The boundary flips only on send success (issue #102): a fresh edge
+	# reports immediately; a refused report stays armed and throttles its
+	# retries to one per interval.
+	var now := Time.get_ticks_msec()
+	if _status_retry_due_msec > now:
+		return
+	var sent: Error = _client.send_transport_status(
+		SFSessionTypesScript.TransportKind.WEBRTC, wanted
+	)
+	if sent == OK:
+		_reported_connected = wanted
+	else:
+		_status_retry_due_msec = now + transport_status_retry_msec
 
 
 func _count_connected_peers() -> int:
