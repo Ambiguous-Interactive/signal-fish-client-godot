@@ -63,6 +63,9 @@ When enabled:
   comes from `_process` deltas, so no threads or timers are involved.
 - Only abnormal terminations are retried: a non-user-initiated close or a
   transport failure. A clean `close()` never starts the loop.
+- A `4007` close (`kicked`) never retries and drops the saved identity: the
+  server removes your reconnection record on kick, so a retry can never
+  rejoin.
 - Terminal codes stop retrying: `RECONNECTION_TOKEN_INVALID` and
   `RECONNECTION_EXPIRED`.
 - A `ReconnectionFailed` tears the link down, so consumers always observe a

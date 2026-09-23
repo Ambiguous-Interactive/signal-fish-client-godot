@@ -94,6 +94,10 @@ const RECONNECT_BACKOFF_FACTOR := 2.0
 const RECONNECT_MAX_DELAY_SEC := 15.0
 const RECONNECT_JITTER_FRACTION := 0.25
 
+## Upstream `CloseReason::Kicked`: a kick removes the reconnection record, so
+## the episode is over and retrying can never rejoin.
+const CLOSE_CODE_KICKED := 4007
+
 ## Session states that imply a live player-room baseline; `room_left` mutates
 ## state only inside these (issue #106).
 const _PLAYER_ROOM_STATES: Array[SessionState] = [
@@ -832,6 +836,11 @@ func _on_transport_closed(code: int, reason: String) -> void:
 	_teardown_transport()
 	SFLogScript.info("transport closed (code %d): %s" % [code, reason], _secrets)
 	disconnected.emit(code, reason)
+	if code == CLOSE_CODE_KICKED:
+		# A kicked player has no reconnection record left; also supersede any
+		# armed retry timer from an earlier termination in this cascade.
+		_cancel_auto_reconnect()
+		return
 	if _auto_reconnect_enabled and not user_close:
 		_schedule_auto_reconnect()
 
