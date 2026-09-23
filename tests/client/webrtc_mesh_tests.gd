@@ -557,6 +557,37 @@ func _test_transport_status_boundary_survives_backpressure() -> void:
 	throttled_mesh.free()
 	throttled_client.free()
 
+	# A flap that resolves the edge drops the leftover retry deadline, so the
+	# next genuine edge reports immediately instead of waiting out the
+	# interval.
+	var flap_client := _make_in_room_client()
+	var flap_errors := _track_protocol_errors(flap_client)
+	var flap_mesh := _make_mesh()
+	flap_mesh.transport_status_retry_msec = 60000
+	_attach(flap_mesh, flap_client)
+	_inject_plan(flap_client, [_peer(PLAYER_B, true)])
+	var flap_pc: FakePeerConnection = _mesh_peers(flap_mesh)[0]
+	var flap_transport: SFFakeTransportScript = flap_client.transport
+	var flap_baseline: int = flap_transport.sent_text.size()
+	flap_pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
+	flap_transport.buffered_amount = 262145
+	flap_mesh.poll()
+	_assert_equal(1, flap_errors.size(), "flap: first report refused")
+	flap_pc.state = 0  # back to NEW: the edge resolves itself
+	flap_mesh.poll()
+	flap_pc.state = 2
+	flap_transport.buffered_amount = 0
+	flap_mesh.poll()
+	_assert_equal(
+		[SFMessagesScript.encode(
+			SFMessagesScript.transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true)
+		)],
+		_sent_after(flap_client, flap_baseline),
+		"flap: fresh edge reports immediately"
+	)
+	flap_mesh.free()
+	flap_client.free()
+
 
 func _test_teardown_paths() -> void:
 	var client := _make_in_room_client()

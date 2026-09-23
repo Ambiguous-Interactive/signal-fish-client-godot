@@ -393,6 +393,10 @@ func _update_transport_status() -> void:
 	var connected := _count_connected_peers()
 	var wanted := connected > 0
 	if wanted == _reported_connected:
+		# The edge resolved itself (e.g. a flap back to the reported state):
+		# drop any leftover retry deadline so the next genuine edge reports
+		# immediately.
+		_status_retry_due_msec = 0
 		return
 	# The boundary flips only on send success (issue #102): a fresh edge
 	# reports immediately; a refused report stays armed and throttles its
@@ -400,9 +404,14 @@ func _update_transport_status() -> void:
 	var now := Time.get_ticks_msec()
 	if _status_retry_due_msec > now:
 		return
-	var sent: Error = _client.send_transport_status(
+	var client := _client
+	var sent: Error = client.send_transport_status(
 		SFSessionTypesScript.TransportKind.WEBRTC, wanted
 	)
+	if _client != client:
+		# A handler re-entrantly detached/reattached during the send:
+		# teardown already resolved the boundary for the old session.
+		return
 	if sent == OK:
 		_reported_connected = wanted
 	else:
