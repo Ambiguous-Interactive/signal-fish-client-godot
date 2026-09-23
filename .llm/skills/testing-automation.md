@@ -123,6 +123,13 @@ source tree into fresh temporary projects without `.godot/`, which prevents
 local editor/global-class caches from masking failures that would appear in a
 clean CI checkout.
 
+A GDScript runtime error inside a test function aborts only that function —
+the runner still reports green while the rest of the test never ran (issue
+#104). Keep wrong-type assignments and dynamic calls on possibly-wrong object
+types out of test middles; assert the object type (`is`) before driving it,
+and never let a helper construct a real engine transport/socket inside a
+fake-only gate.
+
 Cold copies are one tar stream over a filtered `git ls-files -z` manifest, not
 a per-file copy loop. Shell rules that bit here: `set -e` is suppressed inside
 `var="$(...)"` command substitutions, so a helper whose pipeline fails must

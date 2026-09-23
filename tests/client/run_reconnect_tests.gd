@@ -998,6 +998,10 @@ func _test_redial_from_exhaustion_handler_keeps_the_fresh_identity() -> void:
 		func(error: String) -> void:
 			failures.append(error)
 			if error.contains("exhausted") and not redial_ok[0]:
+				# Sibling handler-redial tests assign a fake first: the
+				# cascade already tore the old transport down, so a redial on
+				# the nulled member would construct a real socket.
+				client.transport = SFFakeTransportScript.new()
 				redial_ok[0] = (
 					client.reconnect(PLAYER_A, ROOM_ID, "manual-token-not-secret") == OK
 				)
@@ -1027,18 +1031,26 @@ func _test_redial_from_exhaustion_handler_keeps_the_fresh_identity() -> void:
 	)
 	# The manual dial dies pre-baseline: scheduling must re-engage with the
 	# retained manual identity and emit a second, terminal exhaustion notice.
-	# (The redial dialed a fresh transport after the cascade tore the old one
-	# down; its death goes through that live transport.)
+	# (The redial dialed a fresh fake after the cascade tore the old transport
+	# down; its death goes through that live fake.)
+	var live: Object = client.transport
+	_assert(live is SFFakeTransportScript, "the manual dial runs on a fake transport")
 	transport = client.transport
 	transport.inject_close(4999, "manual dial died")
-	_assert_equal(2, failures.size(), "manual dial's death emits a fresh exhaustion notice")
-	var second_notice: String = failures[1]
-	_assert_string_contains(second_notice, "exhausted", "second notice reports exhaustion")
+	# The refused dial surfaces its own failure notice, and its death re-engages
+	# scheduling with the retained manual identity: a fresh terminal exhaustion.
+	_assert_equal(3, failures.size(), "manual dial's death re-engages scheduling")
+	var refused_notice: String = failures[1]
+	_assert_string_contains(
+		refused_notice, "failed before open", "refused dial surfaces its own notice"
+	)
+	var terminal_notice: String = failures[2]
+	_assert_string_contains(terminal_notice, "exhausted", "terminal notice reports exhaustion")
 	_assert_equal("", client._context_auth_token, "terminal exhaustion still drops the identity")
 	_assert_equal(
-		SignalFishClientScript.ConnectionState.CLOSED,
+		SignalFishClientScript.ConnectionState.FAILED,
 		client.get_connection_state(),
-		"no dial after the final exhaustion"
+		"terminal: the refused dial's FAILED state stands, no further dial"
 	)
 	_assert_no_protocol_errors()
 	client.free()

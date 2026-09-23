@@ -140,6 +140,23 @@ canonical spelling; left alone.
   cold copy taught (set -e suppression in command substitutions, ls-files
   filtering, exit-status gating). Index regenerated; agent-check green.
 
+### Bugbot round 3 (on the follow-up commit)
+
+- Bugbot flagged the new exhaustion test: the handler redial ran on a
+  nulled transport, so `_open_transport` constructed a **real**
+  `SFWebSocketTransport` (a live socket in a fake-only gate), and the
+  follow-up typed assignment errored — aborting the test function so its
+  remaining assertions never ran (a vacuous green). Fix: the handler
+  assigns a fresh fake before redialing (the sibling-test pattern), a loud
+  `is SFFakeTransportScript` guard pins the transport type, and the
+  assertions now match the real cascade (refused dial → pre-open failure
+  notice → fresh terminal exhaustion, identity retained through it all).
+  Proper red-green re-verified by swapping in the pre-fix client file
+  (an empty `git stash` had made the earlier red check vacuous).
+- Meta-lesson filed as #104: a runtime error aborts only the current test
+  function, so runners can report vacuous passes; fix direction needs a
+  decision.
+
 ## Leftovers / follow-ups
 
 - PLAN §13 items 4–8, 10 (upstream verification) remain open; P7
@@ -149,3 +166,5 @@ canonical spelling; left alone.
 - Possible future guard: duplicate off-baseline `RoomJoined` re-emits
   (noted during the sweep, weaker than #100 — no once-per-baseline
   latch yet).
+- #104: per-test completion sentinels (or equivalent) against vacuous
+  passes after mid-test runtime errors.
