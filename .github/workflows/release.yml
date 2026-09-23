@@ -18,6 +18,7 @@ jobs:
     release:
         name: Tag, package, publish
         runs-on: ubuntu-24.04
+        timeout-minutes: 10
         permissions:
             contents: write
         steps:
@@ -94,6 +95,7 @@ jobs:
         name: Submit Asset Library edit
         needs: release
         runs-on: ubuntu-24.04
+        timeout-minutes: 10
         permissions:
             contents: read
         steps:
