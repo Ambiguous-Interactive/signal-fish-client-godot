@@ -47,6 +47,7 @@ func run_all() -> void:
 		_test_uuid_mapping_is_deterministic,
 		_test_attach_and_detach_guards,
 		_test_plan_opens_peers_and_reports_boundaries,
+		_test_plan_before_room_baseline_is_ignored,
 		_test_plan_replaces_fully,
 		_test_ice_replace_and_clear,
 		_test_signal_gates,
@@ -319,6 +320,26 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 	)
 	_assert_equal(0, errors.size(), "happy path emits no protocol errors")
 	mesh.free()
+	client.free()
+	_done()
+
+
+func _test_plan_before_room_baseline_is_ignored() -> void:
+	var client: SignalFishClientScript = _runner.call("_make_authenticated_client")
+	var errors := _track_protocol_errors(client)
+	var mesh := _make_mesh()
+	_attach(mesh, client)
+	_inject_plan(client, [_peer(PLAYER_B, true)])
+	_assert_equal(0, _mesh_peers(mesh).size(), "a pre-baseline plan opens no peer connections")
+	var fake_transport: SFFakeTransportScript = client.transport
+	_assert_equal([], fake_transport.sent_text.slice(1), "a pre-baseline plan relays no offers")
+	fake_transport.inject_server_message(
+		{"type": "RoomJoined", "data": _runner.call("_room_joined_data")}
+	)
+	_inject_plan(client, [_peer(PLAYER_B, true)], "gen-2")
+	_assert_equal(1, _mesh_peers(mesh).size(), "the baseline re-arms the mesh for the next plan")
+	_assert_equal([], errors, "no spurious protocol_error")
+	mesh.detach()
 	client.free()
 	_done()
 
@@ -645,10 +666,16 @@ func _test_teardown_paths() -> void:
 		var teardown_mesh := _make_mesh()
 		_attach(teardown_mesh, teardown_client)
 		var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(teardown_mesh)
-		_inject_plan(teardown_client, [_peer(PLAYER_B, true)])
-		var pc: FakePeerConnection = _mesh_peers(teardown_mesh)[0]
-		pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
-		teardown_mesh.poll()
+		# A reconnect dial is roomless until its Reconnected baseline lands
+		# (issue #120 gate), so it has no live mesh to tear down; the plan in
+		# its replay must simply stay inert. Every other branch drives a
+		# roomed session whose live plan-opened peer must die.
+		var pc: FakePeerConnection = null
+		if teardown != "reconnected":
+			_inject_plan(teardown_client, [_peer(PLAYER_B, true)])
+			pc = _mesh_peers(teardown_mesh)[0]
+			pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
+			teardown_mesh.poll()
 		var teardown_fake: SFFakeTransportScript = teardown_client.transport
 		match teardown:
 			"room_left":
@@ -684,8 +711,9 @@ func _test_teardown_paths() -> void:
 					{"type": "RoomJoined", "data": _runner.call("_room_joined_data")}
 				)
 		_assert_equal(0, teardown_mesh.get_peer_count(), "%s empties the mesh" % teardown)
-		_assert(pc.closed, "%s closes connections" % teardown)
-		_assert(multiplayer.closed, "%s closes the multiplayer peer" % teardown)
+		if pc != null:
+			_assert(pc.closed, "%s closes connections" % teardown)
+			_assert(multiplayer.closed, "%s closes the multiplayer peer" % teardown)
 		_assert_equal(null, teardown_mesh.get_multiplayer_peer(), "%s releases the peer" % teardown)
 		# Stale signaling after teardown must stay inert (only teardowns that keep
 		# the link, e.g. room_left, still have a transport).
