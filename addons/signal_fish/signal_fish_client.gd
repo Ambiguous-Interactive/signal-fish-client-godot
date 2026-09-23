@@ -555,10 +555,24 @@ func _process(delta: float) -> void:
 ## transport-failure path, so consumers observe [signal connection_failed]
 ## and opt-in auto-reconnect engages exactly like any other abnormal
 ## termination. Delta-accumulated (no timers, no threads); off by default.
+## A link that stays silent for the pong window during AUTHENTICATING (where
+## protocol Ping is not allowed) is dead the same way; issue #121.
 func _tick_heartbeat(delta: float) -> void:
 	if _config == null or _config.heartbeat_interval_sec <= 0.0:
 		return
-	if _connection_state != ConnectionState.CONNECTED or not is_authenticated():
+	if _connection_state != ConnectionState.CONNECTED:
+		_reset_heartbeat()
+		return
+	if _session_state == SessionState.AUTHENTICATING:
+		# Protocol Ping requires an authenticated session, so there is
+		# nothing to send pre-auth; `Authenticated` is the only inbound
+		# frame this window waits for, so silence past the pong deadline
+		# is a dead link, not a slow one.
+		_heartbeat_elapsed += delta
+		if _heartbeat_elapsed >= _config.pong_timeout_sec:
+			_on_transport_failed("heartbeat auth timeout")
+		return
+	if not is_authenticated():
 		_reset_heartbeat()
 		return
 	if _awaiting_pong:
