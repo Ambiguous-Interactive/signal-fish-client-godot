@@ -1,8 +1,11 @@
 #!/usr/bin/env sh
-# llm-harness-installed-hook v1
-# Auto-installed by scripts/install-git-hooks.ps1. Do not edit by hand;
-# re-run the installer to regenerate. All real logic lives in
-# scripts/run-llm-hooks.ps1.
+# Reference POSIX shim for the LLM harness pre-commit entry point.
+#
+# This file is not installed as the live hook by default. Run
+# `pwsh -NoProfile -File scripts/install-git-hooks.ps1` to materialize the
+# canonical direct shim into the path from `git rev-parse --git-path hooks`.
+# Keep this reference behavior aligned with that generated hook so fallback
+# core.hooksPath users get the same bootstrap recovery path.
 set -eu
 
 # Defensive env-var hygiene: a parent shell that left
@@ -35,8 +38,10 @@ fi
 # ~2.5 s pwsh boot. Mirrors run-llm-hooks.ps1 PreCommit mode, where a false
 # $llmTouched/$toolingTouched pair means "minimal generated sanity, then exit
 # 0". Accepted divergences while fast: the always-on stray-artifact AutoFix
-# and the corrupt-runner self-heal are deferred to harness-touching commits;
-# CI's Full mode still fails loud on committed strays.
+# and the corrupt-runner self-heal are deferred to harness-touching commits
+# (CI's Full mode still fails loud on committed strays); sh patterns are
+# case-sensitive where the pwsh predicate is case-insensitive, which only
+# matters for case-only renames of predicate paths.
 staged_paths="$(git -C "$REPO_ROOT" diff --cached --name-only)"
 llm_fast=1
 while IFS= read -r staged_path; do

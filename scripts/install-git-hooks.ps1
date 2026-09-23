@@ -174,8 +174,10 @@ fi
 # ~2.5 s pwsh boot. Mirrors run-llm-hooks.ps1 PreCommit mode, where a false
 # `$llmTouched/`$toolingTouched pair means "minimal generated sanity, then exit
 # 0". Accepted divergences while fast: the always-on stray-artifact AutoFix
-# and the corrupt-runner self-heal are deferred to harness-touching commits;
-# CI's Full mode still fails loud on committed strays.
+# and the corrupt-runner self-heal are deferred to harness-touching commits
+# (CI's Full mode still fails loud on committed strays); sh patterns are
+# case-sensitive where the pwsh predicate is case-insensitive, which only
+# matters for case-only renames of predicate paths.
 staged_paths="`$(git -C "`$REPO_ROOT" diff --cached --name-only)"
 llm_fast=1
 while IFS= read -r staged_path; do

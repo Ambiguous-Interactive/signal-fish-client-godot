@@ -598,8 +598,12 @@ function Get-HookShimPredicateTokens {
     $tokens = @($pattern -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     if ($tokens.Count -ne
         ($script:HookPredicatePrefixes.Count + $script:HookPredicateExact.Count)) {
-        throw ("$Label predicate has {0} tokens; expected {1} (prefixes + exact names)." -
-            $tokens.Count, ($script:HookPredicatePrefixes.Count + $script:HookPredicateExact.Count))
+        throw (
+            "{0} predicate has {1} tokens; expected {2} (prefixes + exact names)." -f
+                $label,
+                $tokens.Count,
+                ($script:HookPredicatePrefixes.Count + $script:HookPredicateExact.Count)
+        )
     }
     return $tokens
 }

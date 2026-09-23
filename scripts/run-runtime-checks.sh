@@ -57,7 +57,11 @@ run_sharded_tool() {
 	local tool="$1"
 	shift
 	local files=()
-	mapfile -d '' files < <(find "${GD_DIRS[@]}" -type f -name '*.gd' -print0 | sort -z)
+	# `read -d ''` works back to bash 3.2 (macOS stock); `mapfile -d` would
+	# need 4.4 and abort under `set -e` there.
+	while IFS= read -r -d '' file; do
+		files+=("${file}")
+	done < <(find "${GD_DIRS[@]}" -type f -name '*.gd' -print0 | sort -z)
 	if [[ "${#files[@]}" -eq 0 ]]; then
 		return 0
 	fi
@@ -72,8 +76,12 @@ run_sharded_tool() {
 		local pids=() outs=() index=0 shard=0
 		while [[ "${index}" -lt "${#files[@]}" ]]; do
 			local batch=() output
-			batch=("${files[@]:${index}:${shard_size}}")
-			index=$((index + shard_size))
+			while
+				[[ "${#batch[@]}" -lt "${shard_size}" && "${index}" -lt "${#files[@]}" ]]
+			do
+				batch+=("${files[${index}]}")
+				index=$((index + 1))
+			done
 			output="${tmp_dir}/shard-${shard}.out"
 			"${tool}" "$@" "${batch[@]}" >"${output}" 2>&1 &
 			pids+=("$!")
