@@ -382,12 +382,15 @@ func _update_transport_status() -> void:
 	if not _client_connected():
 		return
 	var connected := _count_connected_peers()
+	# The boundary flips only on send success (issue #102): a refused report
+	# (e.g. backpressure) stays armed and rides the next boundary update
+	# instead of being swallowed with the dropped frame.
 	if connected > 0 and not _reported_connected:
-		_reported_connected = true
-		_client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true)
+		if _client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true) == OK:
+			_reported_connected = true
 	elif connected == 0 and _reported_connected:
-		_reported_connected = false
-		_client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, false)
+		if _client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, false) == OK:
+			_reported_connected = false
 
 
 func _count_connected_peers() -> int:

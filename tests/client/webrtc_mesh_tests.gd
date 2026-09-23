@@ -45,6 +45,7 @@ func run_all() -> void:
 	_test_signal_gates()
 	_test_new_peer_event_obey_flag()
 	_test_closing_window_suppresses_sends()
+	_test_transport_status_boundary_survives_backpressure()
 	_test_teardown_paths()
 	_test_dropped_peer_connections_are_freed()
 	_test_out_of_tree_free_does_not_leak()
@@ -481,6 +482,52 @@ func _test_closing_window_suppresses_sends() -> void:
 	pc.emit_ice_candidate_created("", 0, "cand:late")
 	_assert_equal(baseline, fake_transport.sent_text.size(), "closing window sends nothing")
 	_assert_equal(0, errors.size(), "closing window emits no spurious protocol errors")
+	mesh.free()
+	client.free()
+
+
+## Issue #102: a boundary report refused under backpressure must stay armed —
+## the next boundary update carries it once the cap clears, instead of the
+## connected edge being consumed and the report lost for the session.
+func _test_transport_status_boundary_survives_backpressure() -> void:
+	var client := _make_in_room_client()
+	var errors := _track_protocol_errors(client)
+	var mesh := _make_mesh()
+	_attach(mesh, client)
+	_inject_plan(client, [_peer(PLAYER_B, true)])
+	var pc: FakePeerConnection = _mesh_peers(mesh)[0]
+	var fake_transport: SFFakeTransportScript = client.transport
+	var baseline: int = fake_transport.sent_text.size()
+	var status_true := SFMessagesScript.encode(
+		SFMessagesScript.transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true)
+	)
+
+	pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
+	fake_transport.buffered_amount = 262145  # over the client's 256 KiB cap
+	mesh.poll()
+	_assert_equal(baseline, fake_transport.sent_text.size(), "backpressured report not sent")
+	_assert_equal(1, errors.size(), "backpressure surfaces loudly")
+
+	fake_transport.buffered_amount = 0
+	mesh.poll()
+	_assert_equal([status_true], _sent_after(client, baseline), "report rides the next update")
+	mesh.poll()
+	_assert_equal(baseline + 1, fake_transport.sent_text.size(), "no duplicate after success")
+	_assert_equal([], errors.slice(1), "no further errors")
+
+	# The disconnect edge re-arms the same way (issue #102).
+	var status_false := SFMessagesScript.encode(
+		SFMessagesScript.transport_status(SFSessionTypesScript.TransportKind.WEBRTC, false)
+	)
+	pc.state = 4  # WebRTCPeerConnection.STATE_FAILED
+	fake_transport.buffered_amount = 262145
+	mesh.poll()
+	_assert_equal(
+		baseline + 1, fake_transport.sent_text.size(), "backpressured disconnect report not sent"
+	)
+	fake_transport.buffered_amount = 0
+	mesh.poll()
+	_assert_equal([status_false], _sent_after(client, baseline + 1), "disconnect report retried")
 	mesh.free()
 	client.free()
 
