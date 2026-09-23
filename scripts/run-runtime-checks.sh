@@ -38,54 +38,103 @@ fi
 
 python_bin="${PYTHON:-python3}"
 target="${1:-all}"
+GD_DIRS=(addons/signal_fish tests demo)
 
-run_private_helpers() {
-	"${python_bin}" scripts/check-gdscript-private-helpers.py --self-test addons/signal_fish tests demo
-}
-
-run_format() {
-	gdformat --diff --check addons/signal_fish tests demo
-}
-
-run_lint() {
-	gdlint addons/signal_fish tests demo
-}
-
-run_static() {
+prepare_gdtoolkit_cache() {
 	# gdtoolkit bootstraps its grammar cache ($HOME/.cache/gdtoolkit/<version>)
 	# with a bare `os.makedirs` (parser.py, no exist_ok): concurrent cold
 	# starts race EEXIST and a check fails with "Cannot open file ..." —
 	# CI runners cold-start this home on every run. Pre-create the leaf
 	# sequentially; identical-content pickle writes afterward are benign.
 	mkdir -p "${HOME}/.cache/gdtoolkit/$(gdformat --version | awk '{print $2}')"
-	# All three checks are independent; run them concurrently and report each
-	# tool's output verbatim after all finish.
-	local helper_output format_output lint_output helper_rc format_rc lint_rc
-	helper_output="$(mktemp)"
-	format_output="$(mktemp)"
-	lint_output="$(mktemp)"
-	cleanup_paths+=("${helper_output}" "${format_output}" "${lint_output}")
-	run_private_helpers >"${helper_output}" 2>&1 &
-	local helper_pid=$!
-	run_format >"${format_output}" 2>&1 &
-	local format_pid=$!
-	run_lint >"${lint_output}" 2>&1 &
-	local lint_pid=$!
-	helper_rc=0
-	wait "${helper_pid}" || helper_rc=$?
-	format_rc=0
-	wait "${format_pid}" || format_rc=$?
-	lint_rc=0
-	wait "${lint_pid}" || lint_rc=$?
-	cat "${helper_output}"
-	rm -f "${helper_output}"
-	cat "${format_output}"
-	rm -f "${format_output}"
-	cat "${lint_output}"
-	rm -f "${lint_output}"
-	if [[ "${helper_rc}" -ne 0 || "${format_rc}" -ne 0 || "${lint_rc}" -ne 0 ]]; then
-		return 1
+}
+
+# Run a per-file GDScript tool over GD_DIRS as parallel same-tool shards and
+# report each shard's output verbatim once all finish. Sharding cuts the
+# per-invocation interpreter/parse fixed cost that dominates a serial run of
+# the small file set; the checks themselves are unchanged (issue #112).
+run_sharded_tool() {
+	local tool="$1"
+	shift
+	local files=()
+	mapfile -d '' files < <(find "${GD_DIRS[@]}" -type f -name '*.gd' -print0 | sort -z)
+	if [[ "${#files[@]}" -eq 0 ]]; then
+		return 0
 	fi
+	local tmp_dir
+	tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-shards.XXXXXX")"
+	# The subshell owns the shard outputs: its EXIT trap removes them even
+	# when `set -e` aborts mid-wait, so an early failure cannot leak files.
+	(
+		trap 'rm -rf "'"$tmp_dir"'"' EXIT
+		local shard_count=4
+		local shard_size=$((( ${#files[@]} + shard_count - 1 ) / shard_count))
+		local pids=() outs=() index=0 shard=0
+		while [[ "${index}" -lt "${#files[@]}" ]]; do
+			local batch=() output
+			batch=("${files[@]:${index}:${shard_size}}")
+			index=$((index + shard_size))
+			output="${tmp_dir}/shard-${shard}.out"
+			"${tool}" "$@" "${batch[@]}" >"${output}" 2>&1 &
+			pids+=("$!")
+			outs+=("${output}")
+			shard=$((shard + 1))
+		done
+		local failed=0 i rc
+		for i in "${!pids[@]}"; do
+			rc=0
+			wait "${pids[${i}]}" || rc=$?
+			cat "${outs[${i}]}"
+			[[ "${rc}" -eq 0 ]] || failed=1
+		done
+		[[ "${failed}" -eq 0 ]] || exit 1
+	)
+}
+
+run_private_helpers() {
+	"${python_bin}" scripts/check-gdscript-private-helpers.py --self-test "${GD_DIRS[@]}"
+}
+
+run_format() {
+	prepare_gdtoolkit_cache
+	run_sharded_tool gdformat --diff --check
+}
+
+run_lint() {
+	prepare_gdtoolkit_cache
+	run_sharded_tool gdlint
+}
+
+run_static() {
+	local tmp_dir
+	tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-static.XXXXXX")"
+	# One temp dir owned by a subshell trap: if `set -e` aborts a check early,
+	# the remaining outputs still get cleaned up instead of leaking.
+	(
+		trap 'rm -rf "'"$tmp_dir"'"' EXIT
+		# run_format/run_lint pre-create the grammar cache themselves before
+		# their shards start, so no separate prepare step is needed here.
+		run_private_helpers >"${tmp_dir}/helper.out" 2>&1 &
+		local helper_pid=$!
+		run_format >"${tmp_dir}/format.out" 2>&1 &
+		local format_pid=$!
+		run_lint >"${tmp_dir}/lint.out" 2>&1 &
+		local lint_pid=$!
+		local failed=0 rc
+		rc=0
+		wait "${helper_pid}" || rc=$?
+		cat "${tmp_dir}/helper.out"
+		[[ "${rc}" -eq 0 ]] || failed=1
+		rc=0
+		wait "${format_pid}" || rc=$?
+		cat "${tmp_dir}/format.out"
+		[[ "${rc}" -eq 0 ]] || failed=1
+		rc=0
+		wait "${lint_pid}" || rc=$?
+		cat "${tmp_dir}/lint.out"
+		[[ "${rc}" -eq 0 ]] || failed=1
+		[[ "${failed}" -eq 0 ]] || exit 1
+	)
 }
 
 # Any SCRIPT ERROR line is a runtime abort inside a test function: GDScript
@@ -108,8 +157,11 @@ copy_cold_project() {
 	local cold_parent="$1"
 	local cold_project="${cold_parent}/project"
 	local manifest
-	manifest="$(mktemp)"
-	cleanup_paths+=("${manifest}")
+	# The manifest lives under the cold parent so the caller's existing
+	# `rm -rf cold_parent` cleanup removes it too; registering it in the
+	# caller-agnostic cleanup_paths leaked one file per suite in the
+	# background workers, whose cleanup_paths is a subshell copy.
+	manifest="${cold_parent}/manifest"
 	mkdir -p "${cold_project}"
 
 	if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
