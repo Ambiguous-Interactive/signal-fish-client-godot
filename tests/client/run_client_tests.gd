@@ -9,6 +9,7 @@ const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fak
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const HeartbeatTestsScript = preload("res://tests/client/heartbeat_tests.gd")
+const SessionGuardTestsScript = preload("res://tests/client/session_guard_tests.gd")
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
 const WebrtcMeshTestsScript = preload("res://tests/client/webrtc_mesh_tests.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
@@ -79,6 +80,7 @@ func _run() -> void:
 	_test_config_to_string_redacts_credential()
 	_failures.append_array(V3ClientTestsScript.run(self))
 	_failures.append_array(HeartbeatTestsScript.run(self))
+	_failures.append_array(SessionGuardTestsScript.run(self))
 	_failures.append_array(WebrtcMeshTestsScript.run(self))
 	_run_completed = true
 
