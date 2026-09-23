@@ -166,8 +166,12 @@ run_sharded_tool_on() {
 
 # Scoped static checks for the agent fast loop: the same three checks over
 # the given files only, skipping the analyzer self-test (a ~2 s guard on the
-# analyzer itself that CI and the full gate still enforce).
+# analyzer itself that CI and the full gate still enforce). An empty list is
+# a no-op: the analyzer's own zero-args default would sweep the whole tree.
 run_static_on() {
+	if [[ "$#" -eq 0 ]]; then
+		return 0
+	fi
 	prepare_gdtoolkit_cache
 	local helper_out format_out lint_out failed=0 rc
 	helper_out="$(mktemp)"
