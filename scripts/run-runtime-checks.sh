@@ -324,6 +324,111 @@ run_smoke() {
 	run_godot_script tests/smoke/run_websocket_smoke.gd
 }
 
+# Agent fast loop (issue #117): check only what the dirty tree can affect.
+# Suite selection is a BFS over the runners' res:// preload strings — a
+# changed test file maps to the suites that (transitively) load it; any
+# production-side or unreferenced change falls back to the full gate, so the
+# mapping can silently under-run. Output states exactly what ran and why.
+collect_changed_files() {
+	{
+		git diff --name-only HEAD
+		git ls-files --others --exclude-standard
+	} | sort -u
+}
+
+suite_uses_file() {
+	local runner="$1" target="$2"
+	local queue=("$runner") seen=""
+	while [[ "${#queue[@]}" -gt 0 ]]; do
+		local current="${queue[0]}"
+		queue=("${queue[@]:1}")
+		case " $seen " in *" ${current} "*) continue ;; esac
+		seen+="${current} "
+		if grep -qF "res://${target}" "${current}"; then
+			return 0
+		fi
+		while IFS= read -r dep; do
+			queue+=("${dep#res://}")
+		done < <(grep -o 'res://tests/[^"]*' "${current}" 2>/dev/null || true)
+	done
+	return 1
+}
+
+run_changed() {
+	local files
+	files="$(collect_changed_files)"
+	if [[ -z "${files}" ]]; then
+		echo "working tree clean; nothing to check"
+		return 0
+	fi
+	local runtime_changed="" gd_suites=() md_only=1 file
+	while IFS= read -r file; do
+		case "${file}" in
+			*.md | .markdownlint* | LICENSE)
+				;;
+			*)
+				md_only=""
+				;;
+		esac
+		case "${file}" in
+			addons/* | demo/* | scripts/* | project.godot | export_presets.cfg | tests/fixtures/*)
+				runtime_changed="full"
+				;;
+			tests/*.gd)
+				gd_suites+=("${file}")
+				;;
+		esac
+	done <<<"${files}"
+
+	if [[ -n "${md_only}" ]]; then
+		echo "docs-only change: no runtime checks; run agent-check.ps1 for .llm edits"
+		return 0
+	fi
+
+	local names=()
+	if [[ "${runtime_changed}" == "full" ]]; then
+		echo "=== changed: production-side edit -> full gate ==="
+	else
+		local runner name
+		for runner in \
+			"protocol tests/protocol/run_protocol_tests.gd" \
+			"transport tests/transport/run_transport_tests.gd" \
+			"client tests/client/run_client_tests.gd" \
+			"binary tests/client/run_binary_tests.gd" \
+			"reconnect tests/client/run_reconnect_tests.gd"; do
+			name="${runner%% *}"
+			runner="${runner#* }"
+			for file in "${gd_suites[@]}"; do
+				if suite_uses_file "${runner}" "${file}"; then
+					names+=("${name}")
+					break
+				fi
+			done
+		done
+		if [[ "${#names[@]}" -eq 0 ]]; then
+			echo "=== changed: unreferenced test file -> full gate ==="
+			names=()
+			runtime_changed="full"
+		else
+			echo "=== changed: suites ${names[*]} ==="
+		fi
+	fi
+
+	local static_output godot_rc=0 static_rc=0
+	static_output="$(mktemp)"
+	cleanup_paths+=("${static_output}")
+	run_static >"${static_output}" 2>&1 &
+	local static_pid=$!
+	if [[ "${runtime_changed}" == "full" ]]; then
+		run_godot || godot_rc=$?
+	else
+		run_godot "${names[@]}" || godot_rc=$?
+	fi
+	wait "${static_pid}" || static_rc=$?
+	cat "${static_output}"
+	[[ "${static_rc}" -eq 0 && "${godot_rc}" -eq 0 ]]
+}
+
 case "${target}" in
 	all)
 		# Static checks and the godot suites are independent: run them
@@ -357,13 +462,17 @@ case "${target}" in
 		shift
 		run_godot "$@"
 		;;
+	changed)
+		run_changed
+		;;
 	smoke)
 		run_smoke
 		;;
 	*)
-		echo "usage: $0 [all|static|private-helpers|format|lint|godot [suite...]|smoke]" >&2
+		echo "usage: $0 [all|static|private-helpers|format|lint|godot [suite...]|changed|smoke]" >&2
 		echo "  godot suites: protocol transport client binary reconnect demo_boot p2p_boot" >&2
 		echo "  a single godot suite runs warm in-tree; SF_COLD=1 forces the cold copy" >&2
+		echo "  changed checks only what the dirty tree can affect (agent fast loop)" >&2
 		exit 2
 		;;
 esac
