@@ -10,8 +10,14 @@ const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
+var _test_done := false
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run() -> Array:
@@ -21,8 +27,12 @@ static func run() -> Array:
 
 
 func run_all() -> void:
-	_test_wrong_typed_enum_tokens_fail_closed()
-	_test_passthrough_payload_guard()
+	var cases: Array[Callable] = [
+		_test_wrong_typed_enum_tokens_fail_closed,
+		_test_passthrough_payload_guard,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 ## Issue #88: `GameData.data` and `Signal.signal` are handed to consumers
@@ -103,6 +113,7 @@ func _test_passthrough_payload_guard() -> void:
 		),
 		"passthrough leaf past the cap refused"
 	)
+	_done()
 
 
 func _nested_arrays(depth: int) -> Variant:
@@ -217,6 +228,7 @@ func _test_wrong_typed_enum_tokens_fail_closed() -> void:
 	)
 	_assert_equal(0, custom_info.port, "custom null port stays defaulted")
 	_assert_equal(1, custom_info.data["x"], "custom data survives null port")
+	_done()
 
 
 func _assert_protocol_error_envelope(envelope: Dictionary, label: String) -> void:

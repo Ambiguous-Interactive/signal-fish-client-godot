@@ -11,8 +11,14 @@ extends RefCounted
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
+var _test_done := false
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run() -> Array:
@@ -22,13 +28,17 @@ static func run() -> Array:
 
 
 func run_all() -> void:
-	_test_wrong_typed_bools_take_the_false_sentinel()
-	_test_valid_bools_pass_through()
-	_test_collapsing_integers_take_the_absent_sentinel()
-	_test_representable_integers_pass_through()
-	_test_negative_integers_stay_visible()
-	_test_laundered_client_id_never_reaches_the_wire_dict()
-	_test_wrong_typed_array_entries_round_trip()
+	var cases: Array[Callable] = [
+		_test_wrong_typed_bools_take_the_false_sentinel,
+		_test_valid_bools_pass_through,
+		_test_collapsing_integers_take_the_absent_sentinel,
+		_test_representable_integers_pass_through,
+		_test_negative_integers_stay_visible,
+		_test_laundered_client_id_never_reaches_the_wire_dict,
+		_test_wrong_typed_array_entries_round_trip,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 ## Every constructor bool field, driven over the hostile matrix. The decode
@@ -53,18 +63,22 @@ func _test_wrong_typed_bools_take_the_false_sentinel() -> void:
 				object.get(after_field),
 				"%s trailing %s survives %s" % [site[0], site[4], _variant_label(hostile)]
 			)
+	_done()
 
 
 func _test_valid_bools_pass_through() -> void:
 	for site: Array in _bool_sites():
 		for honest: Variant in [true, false]:
 			_assert_equal(honest, _read(site, _build(site, honest)), "%s honest bool" % site[0])
+	_done()
 
 
 ## Every constructor integer field driven over the int()-collapse matrix:
 ## integral floats at/after 2^63 collapse platform-dependently, non-finite
 ## and non-numeric input is not an integer at all. Each field reads as its
 ## documented absent sentinel instead.
+
+
 func _test_collapsing_integers_take_the_absent_sentinel() -> void:
 	var collapsing := [1e30, 9223372036854775808.0, -9223372036854775808.0, NAN, INF, "12", 1.5]
 	for site: Array in _int_sites():
@@ -74,6 +88,7 @@ func _test_collapsing_integers_take_the_absent_sentinel() -> void:
 				_read(site, _build(site, hostile)),
 				"%s <- %s collapses" % [site[0], _variant_label(hostile)]
 			)
+	_done()
 
 
 func _test_representable_integers_pass_through() -> void:
@@ -82,20 +97,26 @@ func _test_representable_integers_pass_through() -> void:
 			4294967296, _read(site, _build(site, 4294967296.0)), "%s big-but-legal float" % site[0]
 		)
 		_assert_equal(7, _read(site, _build(site, 7)), "%s plain int" % site[0])
+	_done()
 
 
 ## A hostile negative is not the 0 "absent" sentinel: ProtocolInfo versions
 ## used to clamp it to 0, silently reading as "absent on negotiated v2".
+
+
 func _test_negative_integers_stay_visible() -> void:
 	var info: SFTypesScript.ProtocolInfo = SFTypesScript.ProtocolInfo.new(
 		{"protocol_version": -1, "max_outbound_message_size": -1}
 	)
 	_assert_equal(-1, info.protocol_version, "negative protocol_version stays visible")
 	_assert_equal(-1, info.max_outbound_message_size, "negative size cap stays visible")
+	_done()
 
 
 ## The #89 relay-slot hazard at constructor level: a collapsed client_id used
 ## to flow back out through to_dict() as the relay slot on the wire dict.
+
+
 func _test_laundered_client_id_never_reaches_the_wire_dict() -> void:
 	var laundered: SFTypesScript.ConnectionInfo = SFTypesScript.ConnectionInfo.new(
 		{"type": "relay", "host": "relay.example.test", "port": 9000, "client_id": 1e30}
@@ -104,12 +125,15 @@ func _test_laundered_client_id_never_reaches_the_wire_dict() -> void:
 	_assert(
 		not laundered.to_dict().has("client_id"), "laundered client_id is erased from to_dict()"
 	)
+	_done()
 
 
 ## Issue #97: array coercion keeps only strings (the typed accessor view),
 ## but to_dict() must not silently shorten what a consumer put in — the
 ## verbatim entries either round-trip (rosters) or let the outbound
 ## validation refuse the frame loudly (webrtc candidates on the resend path).
+
+
 func _test_wrong_typed_array_entries_round_trip() -> void:
 	var webrtc: SFTypesScript.ConnectionInfo = SFTypesScript.ConnectionInfo.new(
 		{"type": "webrtc", "sdp": "s", "ice_candidates": ["candidate:a", 42, true]}
@@ -169,6 +193,7 @@ func _test_wrong_typed_array_entries_round_trip() -> void:
 	_assert_equal(2, spectator_round_tripped.size(), "spectator roster keeps junk position")
 	_assert_equal("junk", spectator_round_tripped[0], "leading junk stays in place")
 	_assert_equal("a", spectator_round_tripped[1]["id"], "trailing dict still canonicalizes")
+	_done()
 
 
 func _bool_sites() -> Array:

@@ -465,7 +465,61 @@ def call_references(node: Tree | Token, names: set[str]) -> set[str]:
         references.update(dynamic_method_string_references(call, names))
         if api_call_name(call) in CALLABLE_ARGUMENT_CALLS:
             references.update(callable_argument_references(call, names))
+    references.update(bare_name_references(node, names))
     return references
+
+
+# A bare identifier resolving to a script method is a Callable reference
+# (table-driven suites drive tests through `var cases: Array[Callable] =
+# [_test_a, ...]`), which is a use even though nothing calls it here. Names
+# reached through a receiver stay excluded — `other._dead` proves nothing
+# about this script — except explicit `self._method`, which is a local
+# member reference. Definition names never reach this scan: function bodies
+# exclude the func_header and class-body scans skip func definitions.
+def bare_name_references(node: Tree | Token, names: set[str]) -> set[str]:
+    references: set[str] = set()
+    for name in walk_bare_names(node):
+        if name in names:
+            references.add(name)
+    return references
+
+
+# Trees whose FIRST name child is a binding (declared variable / loop
+# variable), never a method reference: `var _dead = 1` must not keep a
+# same-named method alive.
+BINDING_FIRST_NAME_TREES = {
+    "func_var_assigned",
+    "func_var_inf",
+    "func_var_typed_assgnd",
+    "for_stmt",
+    "for_stmt_typed",
+}
+
+
+def walk_bare_names(node: Tree | Token) -> Iterable[str]:
+    if is_name_token(node):
+        yield str(node)
+        return
+    if isinstance(node, Token):
+        return
+    if node.data == "getattr":
+        if is_direct_self_getattr(node):
+            yield last_token_value(node)
+        return
+    if node.data == "lambda_header":
+        # Lambda parameters are bindings, not method references; the lambda
+        # body is a sibling subtree and is still scanned.
+        return
+    skip_first_name = node.data in BINDING_FIRST_NAME_TREES
+    first_name_seen = False
+    for child in node.children:
+        if is_name_token(child):
+            if skip_first_name and not first_name_seen:
+                first_name_seen = True
+                continue
+            yield str(child)
+        elif isinstance(child, Tree) and child.data not in TREE_WALK_SKIP:
+            yield from walk_bare_names(child)
 
 
 def walk_call_nodes(node: Tree | Token) -> Iterable[Tree]:
@@ -684,6 +738,19 @@ def run_self_tests() -> None:
             {"_dead", "_leaf"},
         ),
         (
+            "bare callable reference reaches private",
+            (
+                "func public():\n"
+                "\tvar cases: Array[Callable] = [_helper]\n"
+                "\tfor case in cases:\n"
+                "\t\tcase.call()\n"
+                "\n"
+                "func _helper():\n"
+                "\tpass\n"
+            ),
+            set(),
+        ),
+        (
             "constructor root reaches private",
             "func _init():\n\t_setup()\n\nfunc _setup():\n\tpass\n",
             set(),
@@ -894,6 +961,27 @@ def run_self_tests() -> None:
         (
             "identifier variable is not a call edge",
             "func public():\n\tvar _dead = 1\n\nfunc _dead():\n\tpass\n",
+            {"_dead"},
+        ),
+        (
+            "inferred variable is not a call edge",
+            "func public():\n\tvar _dead := 1\n\nfunc _dead():\n\tpass\n",
+            {"_dead"},
+        ),
+        (
+            "typed loop variable is not a call edge",
+            "func public():\n\tfor _dead: int in [1]:\n\t\tpass\n\nfunc _dead():\n\tpass\n",
+            {"_dead"},
+        ),
+        (
+            "lambda parameter is not a call edge",
+            (
+                "func public():\n"
+                "\tvar lam := func(_dead: int): pass\n"
+                "\n"
+                "func _dead():\n"
+                "\tpass\n"
+            ),
             {"_dead"},
         ),
         (

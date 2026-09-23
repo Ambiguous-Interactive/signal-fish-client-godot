@@ -7,14 +7,20 @@ const SFWebSocketTransportScript = preload(
 const TestWebSocketPeerAdapterScript = preload(
 	"res://tests/transport/test_websocket_peer_adapter.gd"
 )
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
+var _test_done := false
 # Completion sentinel: a runtime abort inside _run() would otherwise leave
 # the process hanging until CI kills it.
 var _run_completed := false
 # Session under test for _redial_packet_handler. The connection binds the
 # long-lived SceneTree instead of a lambda capturing the transport local.
 var _redial_transport: SFWebSocketTransportScript = null
+
+
+func _done() -> void:
+	_test_done = true
 
 
 func _init() -> void:
@@ -34,24 +40,29 @@ func _init() -> void:
 
 
 func _run() -> void:
-	_test_fake_connect_open_send_receive_and_close()
-	_test_fake_fail_on_send_mirrors_real_cascade()
-	_test_fake_reconnect_resets_terminal_flags()
-	_test_fake_failure_and_backpressure_getter()
-	_test_fake_fail_on_connect_close_does_not_emit_closed()
-	_test_fake_inject_failure_close_does_not_emit_closed()
-	_test_fake_connecting_close_fails_without_closed()
-	_test_fake_terminal_sessions_do_not_reopen_or_emit_packets()
-	_test_fake_reconnect_clears_sent_history()
-	_test_websocket_invalid_scheme_and_send_error_without_network()
-	_test_websocket_never_opened_closed_emits_failed_without_closed()
-	_test_websocket_case_insensitive_scheme_validation()
-	_test_websocket_connect_resets_close_active_peer()
-	_test_websocket_connecting_close_fails_without_closed()
-	_test_websocket_connecting_close_surfaces_caller_reason()
-	_test_websocket_read_error_is_terminal_once()
-	_test_websocket_closed_state_delivers_queued_packets()
-	_test_close_at_closed_drains_queued_packets()
+	var cases: Array[Callable] = [
+		_test_fake_connect_open_send_receive_and_close,
+		_test_fake_fail_on_send_mirrors_real_cascade,
+		_test_fake_reconnect_resets_terminal_flags,
+		_test_fake_failure_and_backpressure_getter,
+		_test_fake_fail_on_connect_close_does_not_emit_closed,
+		_test_fake_inject_failure_close_does_not_emit_closed,
+		_test_fake_connecting_close_fails_without_closed,
+		_test_fake_terminal_sessions_do_not_reopen_or_emit_packets,
+		_test_fake_reconnect_clears_sent_history,
+		_test_websocket_invalid_scheme_and_send_error_without_network,
+		_test_websocket_never_opened_closed_emits_failed_without_closed,
+		_test_websocket_case_insensitive_scheme_validation,
+		_test_websocket_connect_resets_close_active_peer,
+		_test_websocket_connecting_close_fails_without_closed,
+		_test_websocket_connecting_close_surfaces_caller_reason,
+		_test_websocket_read_error_is_terminal_once,
+		_test_websocket_closed_state_delivers_queued_packets,
+		_test_close_at_closed_drains_queued_packets,
+	]
+	CompletionGuard.self_check(self, _failures)
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 	_run_completed = true
 
 
@@ -99,6 +110,7 @@ func _test_fake_connect_open_send_receive_and_close() -> void:
 	_assert_equal(1, closed_events.size(), "fake closed once")
 	_assert_equal([1001, "going away"], closed_events[0], "fake close event")
 	_assert_equal(WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "fake closed state")
+	_done()
 
 
 func _test_fake_fail_on_send_mirrors_real_cascade() -> void:
@@ -127,6 +139,7 @@ func _test_fake_fail_on_send_mirrors_real_cascade() -> void:
 	_assert_equal(0, transport.get_buffered_amount(), "dead session reports zero buffered")
 	_assert_equal(ERR_UNCONFIGURED, transport.send_text("late"), "post-failure send refused")
 	_assert_equal(1, failures.size(), "failed emitted exactly once")
+	_done()
 
 
 func _test_fake_reconnect_resets_terminal_flags() -> void:
@@ -161,6 +174,7 @@ func _test_fake_reconnect_resets_terminal_flags() -> void:
 	transport.inject_open()
 	_assert_equal(3, opened_count[0], "fake open after failed connect")
 	_assert_equal(1, failures.size(), "fake reconnect failure count")
+	_done()
 
 
 func _test_fake_failure_and_backpressure_getter() -> void:
@@ -187,6 +201,7 @@ func _test_fake_failure_and_backpressure_getter() -> void:
 	_assert_equal(WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "fake failure state")
 	_assert_equal("boom", failures[1], "fake injected failure")
 	_assert_equal(0, transport.get_buffered_amount(), "fake terminal buffered amount")
+	_done()
 
 
 func _test_fake_fail_on_connect_close_does_not_emit_closed() -> void:
@@ -206,6 +221,7 @@ func _test_fake_fail_on_connect_close_does_not_emit_closed() -> void:
 	transport.close()
 
 	_assert_equal(["failed"], terminal_events, "fake fail-on-connect terminal ordering")
+	_done()
 
 
 func _test_fake_inject_failure_close_does_not_emit_closed() -> void:
@@ -221,6 +237,7 @@ func _test_fake_inject_failure_close_does_not_emit_closed() -> void:
 	transport.close()
 
 	_assert_equal(["failed"], terminal_events, "fake injected failure terminal ordering")
+	_done()
 
 
 func _test_fake_connecting_close_fails_without_closed() -> void:
@@ -249,6 +266,7 @@ func _test_fake_connecting_close_fails_without_closed() -> void:
 	_assert_equal(
 		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "fake connecting close state"
 	)
+	_done()
 
 
 func _test_fake_reconnect_clears_sent_history() -> void:
@@ -270,6 +288,7 @@ func _test_fake_reconnect_clears_sent_history() -> void:
 	)
 	transport.fail_on_connect = false
 	_assert_equal([], transport.sent_text, "fake failed connect clears sent text")
+	_done()
 
 
 func _test_fake_terminal_sessions_do_not_reopen_or_emit_packets() -> void:
@@ -325,6 +344,7 @@ func _test_fake_terminal_sessions_do_not_reopen_or_emit_packets() -> void:
 		closed_transport.send_binary(PackedByteArray([1])),
 		"fake closed session rejects binary send"
 	)
+	_done()
 
 
 func _test_websocket_invalid_scheme_and_send_error_without_network() -> void:
@@ -354,6 +374,7 @@ func _test_websocket_invalid_scheme_and_send_error_without_network() -> void:
 		"websocket send binary not open"
 	)
 	_assert_equal(1, failures.size(), "websocket invalid scheme is terminal once")
+	_done()
 
 
 func _test_websocket_never_opened_closed_emits_failed_without_closed() -> void:
@@ -372,6 +393,7 @@ func _test_websocket_never_opened_closed_emits_failed_without_closed() -> void:
 	transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
 
 	_assert_equal(["failed"], terminal_events, "never-opened terminal signal ordering")
+	_done()
 
 
 func _test_websocket_case_insensitive_scheme_validation() -> void:
@@ -381,6 +403,7 @@ func _test_websocket_case_insensitive_scheme_validation() -> void:
 	_assert(transport._is_valid_websocket_url("WSS://example.test/socket"), "uppercase wss scheme")
 	_assert(transport._is_valid_websocket_url("wSs://example.test/socket"), "mixed wss scheme")
 	_assert(not transport._is_valid_websocket_url("HTTP://example.test/socket"), "invalid scheme")
+	_done()
 
 
 func _test_websocket_connect_resets_close_active_peer() -> void:
@@ -413,6 +436,7 @@ func _test_websocket_connect_resets_close_active_peer() -> void:
 	)
 	_assert_equal(["failed"], terminal_events, "websocket new invalid session failure")
 	_assert_equal(WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "websocket reset state")
+	_done()
 
 
 func _test_websocket_connecting_close_fails_without_closed() -> void:
@@ -443,6 +467,7 @@ func _test_websocket_connecting_close_fails_without_closed() -> void:
 	_assert_equal(
 		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "websocket connecting close state"
 	)
+	_done()
 
 
 func _test_websocket_connecting_close_surfaces_caller_reason() -> void:
@@ -471,6 +496,7 @@ func _test_websocket_connecting_close_surfaces_caller_reason() -> void:
 		code_only_failure, "close code 4321", "websocket abort code-only message"
 	)
 	_assert_equal([[4321, ""]], retry_peer.close_calls, "websocket code-only close args")
+	_done()
 
 
 func _test_websocket_read_error_is_terminal_once() -> void:
@@ -502,6 +528,7 @@ func _test_websocket_read_error_is_terminal_once() -> void:
 	_assert_equal(
 		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "websocket read error state"
 	)
+	_done()
 
 
 func _test_websocket_closed_state_delivers_queued_packets() -> void:
@@ -607,6 +634,7 @@ func _test_websocket_closed_state_delivers_queued_packets() -> void:
 	_assert_equal(
 		WebSocketPeer.STATE_CONNECTING, redial_transport.get_ready_state(), "redial state intact"
 	)
+	_done()
 
 
 func _redial_packet_handler(_payload: PackedByteArray, _is_text: bool) -> void:
@@ -692,6 +720,7 @@ func _test_close_at_closed_drains_queued_packets() -> void:
 	error_peer.packet_errors = [ERR_FILE_CORRUPT]
 	error_transport.close(1000, "consumer")
 	_assert_equal(["failed"], error_events, "read error during close-drain is terminal once")
+	_done()
 
 
 func _assert(condition: bool, label: String) -> bool:

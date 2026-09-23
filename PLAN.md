@@ -61,6 +61,12 @@
 >   §13 items 3/9 verified against upstream: the omitted
 >   `supports_authority` default is authority-enabled
 >   (`unwrap_or(true)`), matching the Godot omit default.
+>   Session 038 (issue #104) closed the vacuous-pass class: every suite is
+>   driven through a shared completion guard (`_done()` sentinel,
+>   case-list registration check, runner self-check) with a shell gate that
+>   fails any `SCRIPT ERROR` output, the full local gate runs static checks
+>   and godot suites concurrently (~2× faster wall), and local `main` is now
+>   a branch-hygiene-only mirror of `origin/main`.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for

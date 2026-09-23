@@ -9,11 +9,17 @@ const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const V3_CLIENT_FIXTURE := "res://tests/fixtures/v3_client_messages.jsonl"
 const V3_SERVER_FIXTURE := "res://tests/fixtures/v3_server_messages.jsonl"
 
 var _failures: Array = []
+var _test_done := false
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run() -> Array:
@@ -23,14 +29,19 @@ static func run() -> Array:
 
 
 func run_all() -> void:
-	_test_v3_client_encoders_match_fixtures()
-	_test_v3_server_decoders_match_fixtures()
-	_test_v3_validation_and_sentinels()
+	var cases: Array[Callable] = [
+		_test_v3_client_encoders_match_fixtures,
+		_test_v3_server_decoders_match_fixtures,
+		_test_v3_validation_and_sentinels,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 func _test_v3_client_encoders_match_fixtures() -> void:
 	var lines := _read_fixture_lines(V3_CLIENT_FIXTURE)
 	if not _assert_fixture_count(5, lines, V3_CLIENT_FIXTURE):
+		_done()
 		return
 	var built := [
 		SFMessagesScript.authenticate(
@@ -57,16 +68,19 @@ func _test_v3_client_encoders_match_fixtures() -> void:
 		SFMessagesScript.transport_status(SFSessionTypesScript.TransportKind.RELAY, false),
 	]
 	if not _assert_equal(lines.size(), built.size(), "v3 client fixture builder count"):
+		_done()
 		return
 	for index: int in lines.size():
 		var message: Dictionary = built[index]
 		var encoded := SFEnvelopeScript.encode(message)
 		_assert_equal(lines[index], encoded, "%s line %d" % [V3_CLIENT_FIXTURE, index + 1])
+	_done()
 
 
 func _test_v3_server_decoders_match_fixtures() -> void:
 	var lines := _read_fixture_lines(V3_SERVER_FIXTURE)
 	if not _assert_fixture_count(9, lines, V3_SERVER_FIXTURE):
+		_done()
 		return
 	var expected_signals := [
 		"session_plan",
@@ -81,6 +95,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	]
 	var expected_arg_counts := [1, 1, 1, 1, 2, 3, 3, 1, 1]
 	if not _assert_equal(lines.size(), expected_signals.size(), "v3 expected signal count"):
+		_done()
 		return
 	var decoded_events: Array = []
 	var failures_before_fixture_shape_checks := _failures.size()
@@ -98,6 +113,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 			"%s line %d arg count" % [V3_SERVER_FIXTURE, index + 1]
 		)
 	if _failures.size() != failures_before_fixture_shape_checks:
+		_done()
 		return
 
 	var mesh_plan: SFSessionTypesScript.SessionPlanInfo = decoded_events[0].args[0]
@@ -197,6 +213,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	_assert_equal(3, v3_info.max_protocol_version, "info max version")
 	_assert_equal(PackedStringArray(["websocket"]), v3_info.transports, "info transports")
 	_assert_equal(1048576, v3_info.max_outbound_message_size, "info outbound cap")
+	_done()
 
 
 func _test_v3_validation_and_sentinels() -> void:
@@ -527,6 +544,7 @@ func _test_v3_validation_and_sentinels() -> void:
 	if _assert_decoded_signal("reconnected", reconnected, "reconnect with v3 replay"):
 		var replayed: SFTypesScript.DecodedEvent = reconnected.args[1][0]
 		_assert_decoded_signal("session_plan", replayed, "replayed v3 plan decodes")
+	_done()
 
 
 func _room_joined_with_bad_ice() -> Dictionary:

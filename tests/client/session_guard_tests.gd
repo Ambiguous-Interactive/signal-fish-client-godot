@@ -9,9 +9,15 @@ extends RefCounted
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
+var _test_done := false
 var _runner: Object = null
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run(runner: Variant) -> Array:
@@ -22,7 +28,11 @@ static func run(runner: Variant) -> Array:
 
 
 func run_all() -> void:
-	_test_roomless_lobby_state_change_is_inert()
+	var cases: Array[Callable] = [
+		_test_roomless_lobby_state_change_is_inert,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 ## A LobbyStateChanged without a room baseline stays informational: emitted,
@@ -63,6 +73,7 @@ func _test_roomless_lobby_state_change_is_inert() -> void:
 		SFTypesScript.LobbyState.UNKNOWN, authenticated.get_lobby_state(), "cache untouched"
 	)
 	authenticated.free()
+	_done()
 
 
 func _connected_client() -> SignalFishClientScript:

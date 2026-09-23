@@ -8,6 +8,7 @@ extends RefCounted
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const SERVER_SAMPLES := "res://tests/fixtures/upstream/v2_server_messages.jsonl"
 const CLIENT_SAMPLES := "res://tests/fixtures/upstream/v2_client_messages.jsonl"
@@ -57,6 +58,11 @@ const EXPECTED_SERVER_SIGNALS: Array[String] = [
 ]
 
 var _failures: Array = []
+var _test_done := false
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run() -> Array:
@@ -67,9 +73,13 @@ static func run() -> Array:
 
 func run_all() -> void:
 	var server_events := _decode_all_server_samples()
-	_test_all_expected_signals_present(server_events)
-	_test_published_shape_pins(server_events)
-	_test_all_client_samples_are_client_messages()
+	_check_all_expected_signals_present(server_events)
+	_check_published_shape_pins(server_events)
+	var cases: Array[Callable] = [
+		_test_all_client_samples_are_client_messages,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 func _decode_all_server_samples() -> Array:
@@ -85,7 +95,7 @@ func _decode_all_server_samples() -> Array:
 	return events
 
 
-func _test_all_expected_signals_present(server_events: Array) -> void:
+func _check_all_expected_signals_present(server_events: Array) -> void:
 	var seen := {}
 	for decoded: SFTypesScript.DecodedEvent in server_events:
 		var signal_text := String(decoded.signal_name)
@@ -96,7 +106,7 @@ func _test_all_expected_signals_present(server_events: Array) -> void:
 	_assert_equal(24, server_events.size(), "sample decode count")
 
 
-func _test_published_shape_pins(server_events: Array) -> void:
+func _check_published_shape_pins(server_events: Array) -> void:
 	var room_joined := _first_event(server_events, "room_joined")
 	if room_joined != null:
 		var info: SFTypesScript.RoomJoinedInfo = room_joined.args[0]
@@ -174,6 +184,7 @@ func _test_all_client_samples_are_client_messages() -> void:
 		var message_type: String = message.get("type", "")
 		if not known.has(message_type):
 			_failures.append("%s: unknown client message type %s" % [CLIENT_SAMPLES, message_type])
+	_done()
 
 
 func _first_event(events: Array, signal_text: String) -> SFTypesScript.DecodedEvent:

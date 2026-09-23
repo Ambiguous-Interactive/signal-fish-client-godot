@@ -7,8 +7,14 @@ const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
+var _test_done := false
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run() -> Array:
@@ -18,20 +24,24 @@ static func run() -> Array:
 
 
 func run_all() -> void:
-	_test_client_message_validation()
-	_test_connection_info_to_dict_resend_canonicalization()
-	_test_custom_connection_info_data_is_copied()
-	_test_inbound_strict_null_validation()
-	_test_binary_codec_hardening()
-	_test_forward_compatible_inbound_strings()
-	_test_non_empty_wire_strings()
-	_test_reconnected_missed_events_nonfatal()
-	_test_reconnected_missed_events_depth_hardening()
-	_test_decode_raw_aliasing()
-	_test_optional_string_field_strictness()
-	_test_wire_payload_fidelity()
-	_test_encode_boundary_refusals()
-	_test_format_downgrade_diagnostics()
+	var cases: Array[Callable] = [
+		_test_client_message_validation,
+		_test_connection_info_to_dict_resend_canonicalization,
+		_test_custom_connection_info_data_is_copied,
+		_test_inbound_strict_null_validation,
+		_test_binary_codec_hardening,
+		_test_forward_compatible_inbound_strings,
+		_test_non_empty_wire_strings,
+		_test_reconnected_missed_events_nonfatal,
+		_test_reconnected_missed_events_depth_hardening,
+		_test_decode_raw_aliasing,
+		_test_optional_string_field_strictness,
+		_test_wire_payload_fidelity,
+		_test_encode_boundary_refusals,
+		_test_format_downgrade_diagnostics,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 ## Issue #76: nested floats used to serialize at reduced precision
@@ -138,12 +148,15 @@ func _test_wire_payload_fidelity() -> void:
 	_assert_invalid_message(
 		over_bound, "must be JSON data", "over-deep game data refused at the builder"
 	)
+	_done()
 
 
 ## The encode boundary is the last-resort net for payloads that skip the
 ## builder whitelist (ConnectionInfo.custom.data): unserializable values
 ## refuse the frame — empty wire, never JSON.stringify's silent
 ## stringification, `nan` literals, or coerced dict keys.
+
+
 func _test_encode_boundary_refusals() -> void:
 	var cases := [
 		{"label": "engine Variant", "payload": {"deep": Vector2(1, 2)}},
@@ -179,10 +192,13 @@ func _test_encode_boundary_refusals() -> void:
 	var over_deep: Variant = [deep]
 	var over_envelope := SFEnvelopeScript.message("GameData", {"data": {"custom": over_deep}})
 	_assert_equal("", SFEnvelopeScript.encode(over_envelope, false), "over-deep payload refuses")
+	_done()
 
 
 ## Issue #79: the downgrade diagnostic renders the server's statement as
 ## wire tokens, not coerced enum ints (unknown becomes "-1" today).
+
+
 func _test_format_downgrade_diagnostics() -> void:
 	var cases := [
 		{
@@ -210,6 +226,7 @@ func _test_format_downgrade_diagnostics() -> void:
 	_assert_equal(
 		"", SFGameDataFormatScript.downgrade_reason("message_pack", []), "empty statement silent"
 	)
+	_done()
 
 
 func _test_client_message_validation() -> void:
@@ -463,6 +480,7 @@ func _test_client_message_validation() -> void:
 		_assert_invalid_message(envelope, expected_error, label)
 	var invalid_envelope: Dictionary = invalid_messages[0]["envelope"]
 	_assert_equal("", SFEnvelopeScript.encode(invalid_envelope, false), "invalid encode guard")
+	_done()
 
 
 func _test_connection_info_to_dict_resend_canonicalization() -> void:
@@ -600,6 +618,7 @@ func _test_connection_info_to_dict_resend_canonicalization() -> void:
 		typeof(spectator_joined_dict["current_players"][0]["connection_info"]["port"]),
 		"spectator joined to_dict connection port type"
 	)
+	_done()
 
 
 func _test_custom_connection_info_data_is_copied() -> void:
@@ -618,6 +637,7 @@ func _test_custom_connection_info_data_is_copied() -> void:
 		null, SFTypesScript.ConnectionInfo.new({"type": "custom"}).data, "absent data stays null"
 	)
 	_assert_valid_message(SFMessagesScript.provide_connection_info(dict), "resend custom to_dict")
+	_done()
 
 
 func _test_inbound_strict_null_validation() -> void:
@@ -677,6 +697,7 @@ func _test_inbound_strict_null_validation() -> void:
 		"player_joined", String(player_null_connection.signal_name), "player null connection"
 	)
 	_assert_equal(null, player_null_connection.args[0].connection_info, "null player connection")
+	_done()
 
 
 func _test_binary_codec_hardening() -> void:
@@ -717,6 +738,7 @@ func _test_binary_codec_hardening() -> void:
 		"invalid base64 padding"
 	)
 	_assert_protocol_error_contains(invalid_padding, "base64", "invalid base64 diagnostics")
+	_done()
 
 
 func _test_forward_compatible_inbound_strings() -> void:
@@ -836,6 +858,7 @@ func _test_forward_compatible_inbound_strings() -> void:
 	)
 	_assert_equal("game_data_received", String(null_game_data.signal_name), "null game data")
 	_assert_equal(null, null_game_data.args[1], "null game data value")
+	_done()
 
 
 func _test_non_empty_wire_strings() -> void:
@@ -931,6 +954,7 @@ func _test_non_empty_wire_strings() -> void:
 		var envelope: Dictionary = test_case["envelope"]
 		var label: String = test_case["label"]
 		_assert_protocol_error_envelope(envelope, label)
+	_done()
 
 
 func _test_reconnected_missed_events_nonfatal() -> void:
@@ -952,6 +976,7 @@ func _test_reconnected_missed_events_nonfatal() -> void:
 	_assert_equal("pong", str(missed_events[1].signal_name), "known missed event")
 	var non_object_entry: RefCounted = missed_events[2]
 	_assert_protocol_error_contains(non_object_entry, "missed_events[2]", "non-object missed event")
+	_done()
 
 
 func _test_reconnected_missed_events_depth_hardening() -> void:
@@ -994,6 +1019,7 @@ func _test_reconnected_missed_events_depth_hardening() -> void:
 		"exceeds %d entries" % SFEventsScript.MAX_MISSED_EVENTS,
 		"oversized missed events truncated"
 	)
+	_done()
 
 
 func _test_decode_raw_aliasing() -> void:
@@ -1026,6 +1052,7 @@ func _test_decode_raw_aliasing() -> void:
 		not is_same(nested_player.connection_info.raw, info_source),
 		"outbound ConnectionInfo keeps its snapshot"
 	)
+	_done()
 
 
 func _test_optional_string_field_strictness() -> void:
@@ -1090,6 +1117,7 @@ func _test_optional_string_field_strictness() -> void:
 			{"type": envelope_type, "data": hostile},
 			"%s reconnection_token wrong type" % envelope_type
 		)
+	_done()
 
 
 func _minimal_rate_limits() -> Dictionary:
