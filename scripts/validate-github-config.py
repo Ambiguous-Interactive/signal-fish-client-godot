@@ -47,12 +47,15 @@ DEVCONTAINER_GROUP_KEYS = {
 # pin site must repeat it verbatim so a bump cannot leave one site behind.
 # The ci.yml test matrix lists every tested Godot version, so the guard
 # requires the pinned version to be a matrix leg (see ci_matrix_error).
+# web-export-smoke.yml expands the pin to {version}.0-stable because
+# setup-godot expects the full three-part version.
 GODOT_PIN_SOURCE = "project.godot"
 GODOT_PIN_SITES = (
     (".devcontainer/devcontainer.json", '"GODOT_VERSION": "{version}-stable"'),
     (".devcontainer/devcontainer.json", '"GODOT_RELEASE_LABEL": "{version}"'),
     (".devcontainer/Dockerfile", "ARG GODOT_VERSION={version}-stable"),
     (".devcontainer/Dockerfile", "ARG GODOT_RELEASE_LABEL={version}"),
+    (".github/workflows/web-export-smoke.yml", "version: {version}.0-stable"),
 )
 
 
@@ -205,6 +208,33 @@ def has_trigger(data: Any, trigger_name: str) -> bool:
     return trigger_name in as_dict(on_value)
 
 
+PR_TRIGGERS = ("pull_request", "pull_request_target")
+
+
+def write_permission_scopes(permissions: Any) -> list[str]:
+    if not isinstance(permissions, dict):
+        return []
+    return sorted(str(scope) for scope, level in permissions.items() if str(level) == "write")
+
+
+def pr_permission_errors(source: str, data: Any) -> list[str]:
+    if not any(has_trigger(data, trigger) for trigger in PR_TRIGGERS):
+        return []
+    errors: list[str] = []
+    for scope in write_permission_scopes(data.get("permissions")):
+        errors.append(
+            f"{source}: pull_request workflows must stay read-only; "
+            f"top-level permissions grants write to {scope}"
+        )
+    for job_name, job in as_dict(data.get("jobs")).items():
+        for scope in write_permission_scopes(as_dict(job).get("permissions")):
+            errors.append(
+                f"{source}: pull_request workflows must stay read-only; "
+                f"job {job_name} grants write to {scope}"
+            )
+    return errors
+
+
 def split_required_workflows(value: str) -> list[str]:
     return [item.strip() for item in value.split("|") if item.strip()]
 
@@ -237,6 +267,8 @@ def validate_workflows(repo_root: Path, reporter: Reporter) -> dict[str, tuple[P
         for job_name, job in as_dict(data.get("jobs")).items():
             if as_dict(job).get("permissions") == "write-all":
                 reporter.error(f"{path}: job {job_name} permissions must not be write-all")
+        for error in pr_permission_errors(str(path), data):
+            reporter.error(error)
 
         for uses in iter_workflow_uses(data):
             if uses.startswith("./") or uses.startswith("docker://"):
@@ -466,16 +498,23 @@ def validate_dependabot_data(data: Any, source: str, reporter: Reporter) -> None
 
 
 def validate_dependabot(repo_root: Path, reporter: Reporter) -> None:
-    path = repo_root / ".github" / "dependabot.yml"
-    if not path.is_file():
-        reporter.error(f"{path}: missing Dependabot config")
+    yml_path = repo_root / ".github" / "dependabot.yml"
+    yaml_path = repo_root / ".github" / "dependabot.yaml"
+    present = [path for path in (yml_path, yaml_path) if path.is_file()]
+    if len(present) > 1:
+        reporter.error(
+            f"{yml_path.parent}: both dependabot.yml and dependabot.yaml exist; keep one"
+        )
+        return
+    if not present:
+        reporter.error(f"{yml_path}: missing Dependabot config")
         return
     try:
-        data = load_yaml(path)
+        data = load_yaml(present[0])
     except ConfigError as exc:
         reporter.error(str(exc))
         return
-    validate_dependabot_data(data, str(path), reporter)
+    validate_dependabot_data(data, str(present[0]), reporter)
 
 
 def extract_godot_pin_version(project_text: str) -> str | None:
@@ -562,6 +601,85 @@ def run_self_test() -> int:
     except ConfigError as exc:
         reporter.error(f"self-test: failed to parse on.yml: {exc}")
 
+    pr_read_only = load_yaml_text(
+        """
+name: PR Read Only
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    steps:
+      - run: echo ok
+""",
+        "pr-read-only.yml",
+    )
+    if pr_permission_errors("pr-read-only.yml", pr_read_only):
+        reporter.error("self-test: read-only pull_request workflow was rejected")
+
+    pr_top_write = load_yaml_text(
+        """
+name: PR Top Write
+on:
+  pull_request:
+permissions:
+  contents: write
+jobs:
+  build:
+    steps:
+      - run: echo ok
+""",
+        "pr-top-write.yml",
+    )
+    if not any(
+        "top-level permissions grants write to contents" in error
+        for error in pr_permission_errors("pr-top-write.yml", pr_top_write)
+    ):
+        reporter.error("self-test: pull_request top-level write was not rejected")
+
+    pr_job_write = load_yaml_text(
+        """
+name: PR Job Write
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  build:
+    permissions:
+      issues: write
+      contents: write
+    steps:
+      - run: echo ok
+""",
+        "pr-job-write.yml",
+    )
+    if not any(
+        "job build grants write to contents" in error
+        for error in pr_permission_errors("pr-job-write.yml", pr_job_write)
+    ):
+        reporter.error("self-test: pull_request job-level write was not rejected")
+
+    push_write = load_yaml_text(
+        """
+name: Push Write
+on:
+  push:
+permissions:
+  contents: write
+jobs:
+  release:
+    permissions:
+      contents: write
+    steps:
+      - run: echo ok
+""",
+        "push-write.yml",
+    )
+    if pr_permission_errors("push-write.yml", push_write):
+        reporter.error("self-test: push-triggered write workflow was rejected")
+
     old_command = 'gh api --paginate --slurp "/repos/o/r/actions/runs" \\\n  --jq ".[0]"'
     if not find_gh_api_slurp_jq(old_command):
         reporter.error("self-test: gh api --slurp --jq command was not rejected")
@@ -631,6 +749,30 @@ updates:
         reporter.error("self-test: devcontainer multi-ecosystem-group was not rejected")
 
     with tempfile.TemporaryDirectory(prefix="github-config-self-test-") as temp:
+        minimal_dependabot = "version: 2\nupdates: []\n"
+        yml_only = Path(temp) / "yml-only"
+        yaml_only = Path(temp) / "yaml-only"
+        both = Path(temp) / "both"
+        for case_dir in (yml_only, yaml_only, both):
+            (case_dir / ".github").mkdir(parents=True)
+        (yml_only / ".github" / "dependabot.yml").write_text(minimal_dependabot, encoding="utf-8")
+        (yaml_only / ".github" / "dependabot.yaml").write_text(minimal_dependabot, encoding="utf-8")
+        (both / ".github" / "dependabot.yml").write_text(minimal_dependabot, encoding="utf-8")
+        (both / ".github" / "dependabot.yaml").write_text(minimal_dependabot, encoding="utf-8")
+
+        duplicate_reporter = Reporter()
+        validate_dependabot(both, duplicate_reporter)
+        if not any(
+            "dependabot.yml and dependabot.yaml" in error for error in duplicate_reporter.errors
+        ):
+            reporter.error("self-test: duplicate Dependabot config files were not rejected")
+        for case_dir in (yml_only, yaml_only):
+            case_reporter = Reporter()
+            validate_dependabot(case_dir, case_reporter)
+            if any("missing Dependabot config" in error for error in case_reporter.errors):
+                reporter.error(f"self-test: Dependabot config in {case_dir.name} was not found")
+
+    with tempfile.TemporaryDirectory(prefix="github-config-self-test-") as temp:
         script = Path(temp) / "ok.sh"
         script.write_text("#!/usr/bin/env bash\nset -euo pipefail\necho ok\n", encoding="utf-8")
         ok, _ = bash_syntax_check(script)
@@ -653,6 +795,7 @@ updates:
             ".devcontainer/Dockerfile": (
                 "ARG GODOT_VERSION=4.3-stable\nARG GODOT_RELEASE_LABEL=4.3\n"
             ),
+            ".github/workflows/web-export-smoke.yml": "version: 4.3.0-stable\n",
         }
         if godot_pin_errors(pin_sources):
             reporter.error("self-test: consistent Godot version pins were rejected")
@@ -670,6 +813,7 @@ updates:
         for drift_site, drifted_token in (
             (".devcontainer/devcontainer.json", "4.4"),
             (".devcontainer/Dockerfile", "4.4-stable"),
+            (".github/workflows/web-export-smoke.yml", "4.4"),
         ):
             drifted_sources = dict(pin_sources)
             drifted_sources[drift_site] = pin_sources[drift_site].replace("4.3", drifted_token)
