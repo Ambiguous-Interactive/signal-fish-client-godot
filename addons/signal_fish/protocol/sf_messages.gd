@@ -284,7 +284,10 @@ static func _add_optional_relay_transport(data: Dictionary, key: String, value: 
 static func _add_optional_u8(
 	data: Dictionary, key: String, value: Variant, min_value: int = 0
 ) -> String:
-	if not SFTypeUtils.is_integral_number(value):
+	# Strict i64 representability (issue #96): a magnitude int() would
+	# collapse platform-dependently must be refused, not range-checked
+	# post-collapse.
+	if not SFTypeUtils.is_i64_integer(value):
 		return "%s must be an integer" % key
 	var int_value := int(value)
 	if int_value < min_value or int_value > SFTypesScript.U8_MAX:
@@ -296,7 +299,9 @@ static func _add_optional_u8(
 static func _add_optional_u16(data: Dictionary, key: String, value: Variant) -> String:
 	if value == null:
 		return ""
-	if not SFTypeUtils.is_integral_number(value):
+	# Same collapse gate as `_add_optional_u8` above (issue #96): the 0
+	# "unset" omit below must only apply to values read verbatim.
+	if not SFTypeUtils.is_i64_integer(value):
 		return "%s must be an integer" % key
 	var int_value := int(value)
 	if int_value < 0 or int_value > SFTypesScript.U16_MAX:

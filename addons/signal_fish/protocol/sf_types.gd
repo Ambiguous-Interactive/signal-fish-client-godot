@@ -99,7 +99,7 @@ class RateLimitInfo:
 		per_day = _int_or_zero(data.get("per_day"))
 
 	func _int_or_zero(value: Variant) -> int:
-		return int(value) if TypeUtils.is_integral_number(value) else 0
+		return int(value) if TypeUtils.is_i64_integer(value) else 0
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -120,10 +120,10 @@ class PlayerNameRules:
 		raw = data
 		max_length = _int_or_zero(data.get("max_length"))
 		min_length = _int_or_zero(data.get("min_length"))
-		allow_unicode_alphanumeric = bool(data.get("allow_unicode_alphanumeric", false))
-		allow_spaces = bool(data.get("allow_spaces", false))
-		allow_leading_trailing_whitespace = bool(
-			data.get("allow_leading_trailing_whitespace", false)
+		allow_unicode_alphanumeric = TypeUtils.bool_or_false(data.get("allow_unicode_alphanumeric"))
+		allow_spaces = TypeUtils.bool_or_false(data.get("allow_spaces"))
+		allow_leading_trailing_whitespace = TypeUtils.bool_or_false(
+			data.get("allow_leading_trailing_whitespace")
 		)
 		allowed_symbols = _coerce_strings(data.get("allowed_symbols", []))
 		var additional_characters: Variant = data.get("additional_allowed_characters", "")
@@ -132,7 +132,7 @@ class PlayerNameRules:
 		)
 
 	func _int_or_zero(value: Variant) -> int:
-		return int(value) if TypeUtils.is_integral_number(value) else 0
+		return int(value) if TypeUtils.is_i64_integer(value) else 0
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -183,11 +183,11 @@ class ProtocolInfo:
 			and typeof(data.get("player_name_rules")) == TYPE_DICTIONARY
 		):
 			player_name_rules = PlayerNameRules.new(data["player_name_rules"])
-		protocol_version = _nonnegative_int_or_zero(data.get("protocol_version"))
-		min_protocol_version = _nonnegative_int_or_zero(data.get("min_protocol_version"))
-		max_protocol_version = _nonnegative_int_or_zero(data.get("max_protocol_version"))
+		protocol_version = _int_or_zero(data.get("protocol_version"))
+		min_protocol_version = _int_or_zero(data.get("min_protocol_version"))
+		max_protocol_version = _int_or_zero(data.get("max_protocol_version"))
 		transports = _coerce_strings(data.get("transports", []))
-		max_outbound_message_size = _nonnegative_int_or_zero(data.get("max_outbound_message_size"))
+		max_outbound_message_size = _int_or_zero(data.get("max_outbound_message_size"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -212,10 +212,11 @@ class ProtocolInfo:
 				)
 		return result
 
-	func _nonnegative_int_or_zero(value: Variant) -> int:
-		if value == null or not TypeUtils.is_integral_number(value):
-			return 0
-		return maxi(int(value), 0)
+	func _int_or_zero(value: Variant) -> int:
+		# Sign is preserved (issue #96): a hostile negative must stay visible
+		# instead of clamping onto the 0 "absent" sentinel. Decode-path
+		# values are validated non-negative upstream of this class.
+		return int(value) if TypeUtils.is_i64_integer(value) else 0
 
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
@@ -245,9 +246,10 @@ class ConnectionInfo:
 		host = _string_or_empty(input.get("host"))
 		# A present-null port must read like an absent one: `int(null)` raises
 		# and would abort the constructor, silently defaulting every field
-		# assigned after it (issue #81).
+		# assigned after it (issue #81). An out-of-i64-range magnitude must
+		# not collapse into a platform-dependent value (issue #96).
 		var port_value: Variant = input.get("port")
-		port = int(port_value) if TypeUtils.is_integral_number(port_value) else 0
+		port = int(port_value) if TypeUtils.is_i64_integer(port_value) else 0
 		if type == "relay" and (not input.has("transport") or input["transport"] == null):
 			transport = RelayTransport.AUTO
 		else:
@@ -261,9 +263,9 @@ class ConnectionInfo:
 		# A present-null client_id must read like an absent one, and a
 		# non-integral value must not launder through int() truncation into a
 		# different relay slot (issue #89) — same gate as `port` above
-		# (issue #81).
+		# (issues #81/#96).
 		var client_id_value: Variant = input.get("client_id")
-		if client_id_value != null and TypeUtils.is_integral_number(client_id_value):
+		if TypeUtils.is_i64_integer(client_id_value):
 			client_id = int(client_id_value)
 		else:
 			client_id = -1
@@ -366,8 +368,8 @@ class PlayerInfo:
 		raw = data
 		id = _string_or_empty(data.get("id"))
 		name = _string_or_empty(data.get("name"))
-		is_authority = bool(data.get("is_authority", false))
-		is_ready = bool(data.get("is_ready", false))
+		is_authority = TypeUtils.bool_or_false(data.get("is_authority"))
+		is_ready = TypeUtils.bool_or_false(data.get("is_ready"))
 		connected_at = _string_or_empty(data.get("connected_at"))
 		if data.has("connection_info") and typeof(data.get("connection_info")) == TYPE_DICTIONARY:
 			connection_info = ConnectionInfo.new(data["connection_info"])
@@ -419,7 +421,7 @@ class PeerConnectionInfo:
 		raw = data
 		player_id = _string_or_empty(data.get("player_id"))
 		player_name = _string_or_empty(data.get("player_name"))
-		is_authority = bool(data.get("is_authority", false))
+		is_authority = TypeUtils.bool_or_false(data.get("is_authority"))
 		relay_type = _string_or_empty(data.get("relay_type"))
 		if data.has("connection_info") and typeof(data.get("connection_info")) == TYPE_DICTIONARY:
 			connection_info = ConnectionInfo.new(data["connection_info"])
@@ -468,9 +470,9 @@ class RoomJoinedInfo:
 		player_id = _string_or_empty(data.get("player_id"))
 		game_name = _string_or_empty(data.get("game_name"))
 		max_players = _int_or_zero(data.get("max_players"))
-		supports_authority = bool(data.get("supports_authority", false))
+		supports_authority = TypeUtils.bool_or_false(data.get("supports_authority"))
 		current_players = _coerce_players(data.get("current_players", []))
-		is_authority = bool(data.get("is_authority", false))
+		is_authority = TypeUtils.bool_or_false(data.get("is_authority"))
 		lobby_state = TypeUtils.enum_value(
 			LOBBY_STATE_FROM_STRING, data.get("lobby_state", ""), LobbyState.UNKNOWN
 		)
@@ -481,7 +483,7 @@ class RoomJoinedInfo:
 		reconnection_token = _string_or_empty(data.get("reconnection_token"))
 
 	func _int_or_zero(value: Variant) -> int:
-		return int(value) if TypeUtils.is_integral_number(value) else 0
+		return int(value) if TypeUtils.is_i64_integer(value) else 0
 
 	func to_dict() -> Dictionary:
 		var result := raw.duplicate(true)

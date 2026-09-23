@@ -91,8 +91,8 @@ class SessionPeerInfo:
 		raw = data
 		player_id = _string_or_empty(data.get("player_id"))
 		player_name = _string_or_empty(data.get("player_name"))
-		is_authority = bool(data.get("is_authority", false))
-		initiate = bool(data.get("initiate", false))
+		is_authority = SFTypeUtils.bool_or_false(data.get("is_authority"))
+		initiate = SFTypeUtils.bool_or_false(data.get("initiate"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -115,8 +115,11 @@ class DirectEndpointInfo:
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
 		host = _string_or_empty(data.get("host"))
+		# Same gate as ConnectionInfo.port: a magnitude too large for int()
+		# takes the 0 absent sentinel instead of collapsing
+		# platform-dependently (issues #81/#96).
 		var port_value: Variant = data.get("port")
-		port = int(port_value) if SFTypeUtils.is_integral_number(port_value) else 0
+		port = int(port_value) if SFTypeUtils.is_i64_integer(port_value) else 0
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -215,7 +218,7 @@ class NewPeerInfo:
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
 		peer_id = _string_or_empty(data.get("peer_id"))
-		you_initiate = bool(data.get("you_initiate", false))
+		you_initiate = SFTypeUtils.bool_or_false(data.get("you_initiate"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -240,7 +243,7 @@ class PeerTransportStatusInfo:
 		raw = data
 		peer_id = _string_or_empty(data.get("peer_id"))
 		transport = _transport_kind_token(data.get("transport"))
-		connected = bool(data.get("connected", false))
+		connected = SFTypeUtils.bool_or_false(data.get("connected"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)

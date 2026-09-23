@@ -88,14 +88,24 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v7
 
-            - name: Preflight (parse-check toolkit sources)
-              # Same loud corruption gate as the validate job: behavioral
-              # self-tests must not run against a corrupted toolkit.
-              shell: pwsh
-              run: pwsh -NoProfile -File scripts/preflight.ps1 -NoAutoFix -VerboseOutput
-
-            - name: Run behavioral self-tests
-              # Dependency-free suite; invoked directly (same as the hook
-              # runner's self-tests stage does).
-              shell: pwsh
-              run: pwsh -NoProfile -File scripts/test-llm-harness.ps1 -VerboseOutput
+            - name: Preflight and behavioral self-tests
+              # Same loud corruption gate as the validate job (issue #84
+              # parallelism pattern): -NoAutoFix only parses tracked
+              # sources, and the suite's destructive tests operate on temp
+              # copies, so the two run concurrently and the job wall clock
+              # is max(steps) instead of their sum. Both outcomes still
+              # gate the job; coverage is unchanged.
+              shell: bash
+              run: |
+                  preflight_rc=0
+                  pwsh -NoProfile -File scripts/preflight.ps1 -NoAutoFix -VerboseOutput >preflight.log 2>&1 &
+                  preflight_pid=$!
+                  suite_rc=0
+                  pwsh -NoProfile -File scripts/test-llm-harness.ps1 -VerboseOutput || suite_rc=$?
+                  wait "$preflight_pid" || preflight_rc=$?
+                  cat preflight.log || true
+                  rm -f preflight.log
+                  if [ "$suite_rc" -ne 0 ] || [ "$preflight_rc" -ne 0 ]; then
+                      printf '::error::self-tests job failed (preflight=%s suite=%s)\n' "$preflight_rc" "$suite_rc"
+                      exit 1
+                  fi

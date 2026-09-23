@@ -12,6 +12,7 @@ const BinaryFrameTestsScript = preload("res://tests/protocol/binary_frame_tests.
 const V3ProtocolTestsScript = preload("res://tests/protocol/v3_protocol_tests.gd")
 const UpstreamSamplesTestsScript = preload("res://tests/protocol/upstream_samples_tests.gd")
 const DuplicateKeyTestsScript = preload("res://tests/protocol/duplicate_key_tests.gd")
+const ConstructorCoercionTestsScript = preload("res://tests/protocol/constructor_coercion_tests.gd")
 
 const CLIENT_FIXTURE := "res://tests/fixtures/v2_client_messages.jsonl"
 const SERVER_FIXTURE := "res://tests/fixtures/v2_server_messages.jsonl"
@@ -50,6 +51,7 @@ func _helper_suites_are_loadable() -> bool:
 		["v3_protocol_tests", V3ProtocolTestsScript],
 		["upstream_samples_tests", UpstreamSamplesTestsScript],
 		["duplicate_key_tests", DuplicateKeyTestsScript],
+		["constructor_coercion_tests", ConstructorCoercionTestsScript],
 	]
 	var loadable := true
 	for suite: Array in suites:
@@ -79,6 +81,7 @@ func _run() -> void:
 	_failures.append_array(V3ProtocolTestsScript.run())
 	_failures.append_array(UpstreamSamplesTestsScript.run())
 	_failures.append_array(DuplicateKeyTestsScript.run())
+	_failures.append_array(ConstructorCoercionTestsScript.run())
 	_run_completed = true
 
 
