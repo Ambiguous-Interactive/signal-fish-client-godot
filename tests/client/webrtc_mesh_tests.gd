@@ -579,9 +579,11 @@ func _test_transport_status_boundary_survives_backpressure() -> void:
 	flap_transport.buffered_amount = 0
 	flap_mesh.poll()
 	_assert_equal(
-		[SFMessagesScript.encode(
-			SFMessagesScript.transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true)
-		)],
+		[
+			SFMessagesScript.encode(
+				SFMessagesScript.transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true)
+			)
+		],
 		_sent_after(flap_client, flap_baseline),
 		"flap: fresh edge reports immediately"
 	)
