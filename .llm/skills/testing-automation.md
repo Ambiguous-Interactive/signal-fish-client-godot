@@ -141,6 +141,17 @@ changed files only (the ~2 s analyzer self-test stays a CI/full-gate guard),
 and production-side edits escalate to the full gate loudly. The full gate
 remains the pre-push contract; `changed` only narrows the inner loop.
 
+Deletion rule (Bugbot round on PR #116): a path collected in one phase and
+consumed in another must be re-validated at the consumption boundary —
+deletions and renames are the classic divergence. `changed` therefore still
+maps deleted helpers to their suites (the runner's stale preload keeps the
+suite honestly red) but drops them from the static file list, and an empty
+static list is a no-op (never fall back to a whole-tree sweep). The same
+class was checked and is already safe elsewhere: `copy_cold_project` filters
+deleted files out of the tar manifest, the analyzer reports missing paths
+legibly (exit 2), the sh shim and pwsh predicates match names only, and the
+cold-copy tar errors stay loud by design.
+
 A GDScript runtime error aborts only the running function — a green suite
 whose test died mid-way is a vacuous pass (issue 104). Two nets close the
 class: every test function ends with the owner's `_done()` and is driven
