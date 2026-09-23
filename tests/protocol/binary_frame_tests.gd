@@ -324,6 +324,7 @@ func _test_v2_envelope_canonical_bytes() -> void:
 	var result: Dictionary = SFBinaryFramesScript.decode_envelope(_packed(canonical))
 	var result_ok: bool = result["ok"]
 	if not _assert(result_ok, true, "canonical v2 envelope decodes"):
+		_done()
 		return
 	_assert_equal(PLAYER_B, result["from_player"], "canonical v2 from_player")
 	_assert_equal(

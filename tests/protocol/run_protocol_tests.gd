@@ -139,6 +139,7 @@ func _test_allowed_symbols_widen_parity() -> void:
 func _test_client_encoders_match_fixtures() -> void:
 	var lines := _read_fixture_lines(CLIENT_FIXTURE)
 	if not _assert_fixture_count(12, lines, CLIENT_FIXTURE):
+		_done()
 		return
 	var built := [
 		SFMessagesScript.authenticate("mb_app_fixture", "0.1.0-godot", "godot", "json"),
@@ -165,6 +166,7 @@ func _test_client_encoders_match_fixtures() -> void:
 		SFMessagesScript.leave_spectator(),
 	]
 	if not _assert_equal(lines.size(), built.size(), "client fixture builder count"):
+		_done()
 		return
 	for index: int in lines.size():
 		var message: Dictionary = built[index]
@@ -176,6 +178,7 @@ func _test_client_encoders_match_fixtures() -> void:
 func _test_server_decoders_match_fixtures() -> void:
 	var lines := _read_fixture_lines(SERVER_FIXTURE)
 	if not _assert_fixture_count(24, lines, SERVER_FIXTURE):
+		_done()
 		return
 	var expected_signals := [
 		"authenticated",
@@ -207,8 +210,10 @@ func _test_server_decoders_match_fixtures() -> void:
 		3, 1, 2, 1, 2, 0, 1, 1, 2, 3, 2, 3, 3, 1, 0, 2, 2, 1, 1, 2, 4, 3, 3, 2
 	]
 	if not _assert_equal(lines.size(), expected_signals.size(), "server expected signal count"):
+		_done()
 		return
 	if not _assert_equal(lines.size(), expected_arg_counts.size(), "server expected arg count"):
+		_done()
 		return
 	var decoded_events: Array = []
 	var failures_before_fixture_shape_checks := _failures.size()
@@ -226,6 +231,7 @@ func _test_server_decoders_match_fixtures() -> void:
 			"%s line %d arg count" % [SERVER_FIXTURE, index + 1]
 		)
 	if _failures.size() != failures_before_fixture_shape_checks:
+		_done()
 		return
 
 	var authenticated: SFTypesScript.DecodedEvent = decoded_events[0]
@@ -493,6 +499,7 @@ func _test_server_decoders_match_fixtures() -> void:
 func _test_malformed_inputs_decode_to_protocol_error() -> void:
 	var lines := _read_fixture_lines(MALFORMED_FIXTURE)
 	if not _assert_fixture_count(9, lines, MALFORMED_FIXTURE):
+		_done()
 		return
 	for index: int in lines.size():
 		_assert_protocol_error_text(lines[index], "%s line %d" % [MALFORMED_FIXTURE, index + 1])

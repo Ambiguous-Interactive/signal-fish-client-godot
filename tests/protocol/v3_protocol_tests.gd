@@ -41,6 +41,7 @@ func run_all() -> void:
 func _test_v3_client_encoders_match_fixtures() -> void:
 	var lines := _read_fixture_lines(V3_CLIENT_FIXTURE)
 	if not _assert_fixture_count(5, lines, V3_CLIENT_FIXTURE):
+		_done()
 		return
 	var built := [
 		SFMessagesScript.authenticate(
@@ -67,6 +68,7 @@ func _test_v3_client_encoders_match_fixtures() -> void:
 		SFMessagesScript.transport_status(SFSessionTypesScript.TransportKind.RELAY, false),
 	]
 	if not _assert_equal(lines.size(), built.size(), "v3 client fixture builder count"):
+		_done()
 		return
 	for index: int in lines.size():
 		var message: Dictionary = built[index]
@@ -78,6 +80,7 @@ func _test_v3_client_encoders_match_fixtures() -> void:
 func _test_v3_server_decoders_match_fixtures() -> void:
 	var lines := _read_fixture_lines(V3_SERVER_FIXTURE)
 	if not _assert_fixture_count(9, lines, V3_SERVER_FIXTURE):
+		_done()
 		return
 	var expected_signals := [
 		"session_plan",
@@ -92,6 +95,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	]
 	var expected_arg_counts := [1, 1, 1, 1, 2, 3, 3, 1, 1]
 	if not _assert_equal(lines.size(), expected_signals.size(), "v3 expected signal count"):
+		_done()
 		return
 	var decoded_events: Array = []
 	var failures_before_fixture_shape_checks := _failures.size()
@@ -109,6 +113,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 			"%s line %d arg count" % [V3_SERVER_FIXTURE, index + 1]
 		)
 	if _failures.size() != failures_before_fixture_shape_checks:
+		_done()
 		return
 
 	var mesh_plan: SFSessionTypesScript.SessionPlanInfo = decoded_events[0].args[0]
