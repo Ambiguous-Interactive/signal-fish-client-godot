@@ -20,15 +20,6 @@ Per-session history: `progress/session-NNN-*.md`.
       `GODOT_ASSET_LIBRARY_ASSET_ID`. Runbook:
       `.llm/skills/asset-library-release.md`.
 
-### Open upstream verifications (anchor before touching the related code)
-- [ ] Cloud error-code drift: server/Rust client use `STORAGE_ERROR`; cloud
-      also exposes `DATABASE_ERROR` (alias already shipped in
-      `sf_error_codes.gd`). Blocked on private-repo access; re-verify code
-      completeness when access returns.
-- [ ] v3 gap recovery decode: surface `replay`
-      (complete/truncated/unavailable) + `sender_watermarks` from
-      `Reconnected` (currently raw-only) before any `DeliveryReport` work.
-
 ### Post-v1 (P7, each gated)
 - [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke
       tests) — only after the separate compatibility decision (context.md

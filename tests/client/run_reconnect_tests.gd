@@ -179,12 +179,15 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 		func(info: SFTypesScript.RoomJoinedInfo, missed: Array) -> void:
 			reconnected_count[0] += 1
 			missed_count[0] = missed.size()
-			replay_fields.assign(
-				[
-					info.replay_status,
-					info.sender_watermarks[0].player_id,
-					info.sender_watermarks[0].seq,
-				]
+			(
+				replay_fields
+				. assign(
+					[
+						info.replay_status,
+						info.sender_watermarks[0].player_id,
+						info.sender_watermarks[0].seq,
+					]
+				)
 			)
 	)
 	var data := _room_joined_data({"lobby_state": "lobby"})

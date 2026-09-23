@@ -121,17 +121,25 @@ release flow is dispatch-only and documented in
 
 `scripts/run-runtime-checks.sh` is the shared local/CI entry point. It sets a
 writable deterministic `HOME`, activates `.venv-ci` when present, and exposes
-`private-helpers`, `format`, `lint`, `godot`, `all`, and `smoke` subcommands so
-CI can keep separate step names without drifting from local reproduction
-commands. The `all` subcommand runs the static checks and the godot suites
-concurrently — the gate wall is the slower half, not the sum. The `godot`
-subcommand accepts suite names (`protocol transport
+`private-helpers`, `format`, `lint`, `godot`, `all`, `changed`, and `smoke`
+subcommands so CI can keep separate step names without drifting from local
+reproduction commands. The `all` subcommand runs the static checks and the
+godot suites concurrently — the gate wall is the slower half, not the sum.
+The `godot` subcommand accepts suite names (`protocol transport
 client binary reconnect demo_boot p2p_boot`); one explicit suite runs warm
 in-tree against the live `.godot` cache for fast local iteration (`SF_COLD=1`
 forces the CI-identical path), while no-argument and multi-suite runs copy the
 source tree into fresh temporary projects without `.godot/`, which prevents
 local editor/global-class caches from masking failures that would appear in a
 clean CI checkout.
+
+The `changed` subcommand is the agent fast loop (issue #117): it checks only
+what the dirty tree can affect. Test `.gd` files map to the suites whose
+runners transitively preload them (BFS over the runners' `res://` preload
+strings — no hand-maintained map to drift), scoped static checks run over the
+changed files only (the ~2 s analyzer self-test stays a CI/full-gate guard),
+and production-side edits escalate to the full gate loudly. The full gate
+remains the pre-push contract; `changed` only narrows the inner loop.
 
 A GDScript runtime error aborts only the running function — a green suite
 whose test died mid-way is a vacuous pass (issue 104). Two nets close the
