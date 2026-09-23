@@ -9,5 +9,5 @@
   "download_commit": "{{ env.RELEASE_TAG }}",
   "browse_url": "{{ context.repository.html_url }}",
   "issues_url": "{{ context.repository.html_url }}/issues",
-  "icon_url": "https://raw.githubusercontent.com/{{ context.repository.full_name }}/main/addons/signal_fish/icon.png"
+  "icon_url": "https://raw.githubusercontent.com/{{ context.repository.full_name }}/main/docs/assets/icon-256.png"
 }

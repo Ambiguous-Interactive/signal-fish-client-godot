@@ -1,4 +1,14 @@
-# Signal Fish Godot Client
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/docs/assets/logo-banner.svg" alt="Signal Fish Client SDK for Godot" width="640">
+</p>
+
+<p align="center">
+  <a href="https://ambiguous-interactive.github.io/signal-fish-client-godot/"><img src="https://img.shields.io/badge/docs-GitHub%20Pages-blue?logo=github" alt="Documentation"></a>
+  <a href="https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases"><img src="https://img.shields.io/github/v/release/Ambiguous-Interactive/signal-fish-client-godot" alt="Release"></a>
+  <a href="https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/ci.yml"><img src="https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/Godot-4.3%2B-478CBF?logo=godot-engine&logoColor=white" alt="Godot 4.3+">
+  <a href="https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
 A pure-GDScript client for the [Signal Fish](https://github.com/Ambiguous-Interactive/signal-fish-server)
 protocol. Drop the `addons/signal_fish` folder into any Godot 4 project — no C#, no
@@ -15,23 +25,35 @@ GDExtension, no compilation — and it runs everywhere Godot runs, including web
 - **Optional `SFWebRTCMesh`** (`Node`): v3 session plans in, `WebRTCMultiplayerPeer`
   mesh out — server-assigned offerer roles, ICE replacement, and teardown handled.
 
-## Status
-
-Work in progress toward v1 (P4 demo + web-export smoke + full docs, the P3 demo
-P2P example, and remaining P5 items: Godot 4.4 CI matrix, web-export CI job).
-See [PLAN.md](PLAN.md) for the roadmap and current state.
-
 | | |
 |---|---|
 | Engine | Godot 4.3+ (GDScript) |
 | Protocol | Signal Fish v2 + v3 session-plan signaling (fixtures pinned to upstream; drift-checked weekly) |
 | License | [MIT](LICENSE) |
-| CI | [![Runtime CI](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/ci.yml/badge.svg)](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/ci.yml) |
+
+## Documentation
+
+The [full guide](https://ambiguous-interactive.github.io/signal-fish-client-godot/)
+covers everything from first connection to the P2P mesh:
+
+- [Getting started](https://ambiguous-interactive.github.io/signal-fish-client-godot/getting-started/)
+  and the [client API](https://ambiguous-interactive.github.io/signal-fish-client-godot/client/)
+- [Events](https://ambiguous-interactive.github.io/signal-fish-client-godot/events/)
+  and [errors](https://ambiguous-interactive.github.io/signal-fish-client-godot/errors/)
+- [Game data](https://ambiguous-interactive.github.io/signal-fish-client-godot/game-data/)
+  and [reconnection + replay](https://ambiguous-interactive.github.io/signal-fish-client-godot/reconnection/)
+- [Web export](https://ambiguous-interactive.github.io/signal-fish-client-godot/web-export/)
+  and the [mesh guide](https://ambiguous-interactive.github.io/signal-fish-client-godot/mesh-guide/)
 
 ## Installation
 
 **Manual:** copy `addons/signal_fish/` into your project's `addons/` folder.
-(Asset Library listing is planned for the v1 release; until then, manual copy.)
+
+**Release archive:** every [release](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases)
+tag ships the addon as a downloadable archive.
+
+Asset Library listing: planned for the v1 release (one-time human submission;
+the repo automates updates after that).
 
 ## Authentication primer
 
