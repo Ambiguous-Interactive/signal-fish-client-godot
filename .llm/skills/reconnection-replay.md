@@ -12,7 +12,37 @@ Use when touching `SignalFishClient.reconnect`, `set_auto_reconnect`, the
 retained reconnection context, `Reconnected`/`ReconnectionFailed` handling, or
 any test that simulates disconnect/retry timing.
 
-## Upstream anchors (pinned 2026-09-19)
+## Upstream anchors (verified 2026-09-23, server `main` @ `272cfa0c`)
+
+### Replay (`missed_events`) semantics
+
+- Ordered oldest -> newest (server `reconnection.rs` `EventBuffer`, forward
+  iteration); entries carry no wire sequence numbers (the server's global
+  replay counter is internal only), so wire-level dedup is impossible — the
+  client's verbatim, order-preserving replay is the correct contract.
+- Only control events are buffered (`PlayerJoined`/`PlayerLeft`/
+  `PlayerReconnected`/`NewSpectatorJoined`/`SpectatorDisconnected`/
+  `LobbyStateChanged`/`AuthorityChanged`); `GameData` is never replayed — a
+  reconnecting client resyncs from the room snapshot. The server also filters
+  the replay per recipient (drops the reconnector's own join/leave deltas,
+  re-projects authority).
+- Ring is bounded (config default 100, hard cap 65536); truncation is
+  reported v3-only via `replay: complete|truncated|unavailable` +
+  `sender_watermarks` (gap recovery via `DeliveryReport`; per-sender `seq`
+  starts at 1). v2 wire has no truncation flag — our client's
+  `MAX_MISSED_EVENTS` decode cap + `protocol_error` sentinel is the only
+  client-side guard. We do not yet decode `replay`/`sender_watermarks`
+  (raw-only); tracked as a follow-up issue.
+
+### Server WebSocket close codes (coordination `CloseReason`)
+
+`4000` shutdown, `4001` auth timeout, `4002` slow consumer, `4003` activity
+timeout, `4004` idle timeout, `4005` room inactive, `4006` inbound rate
+limited, `4007` kicked, plus RFC-standard `1000` (unregistered — normal) and
+`1009` (outbound message too large). `4007` implies no reconnection; during
+drain v3 clients get a best-effort `GoingAway` before the `4000` close.
+
+### Handshake anchors (pinned 2026-09-19)
 
 - Server `src/protocol/messages.rs` @ `eaae1ca3`: `RoomJoinedPayload` and
   `ReconnectedPayload` both carry `reconnection_token: Option<String>`.
@@ -96,6 +126,9 @@ any test that simulates disconnect/retry timing.
   `disconnected(-1, "reconnection failed")`), so consumers always observe a
   terminal disconnect and retryable auto-reconnects keep a clean scheduling
   point.
+- Close code `4007` (`kicked`) ends the episode without retrying and clears
+  the retained identity: the server removes the reconnection record on kick.
+  All other codes keep the "not user-initiated -> retry" rule.
 - All timing accumulates `_process(delta)` — no threads, no `OS.delay`, web
   safe. Tests inject deltas (`client._process(dt)`), never wall clocks.
 
@@ -110,10 +143,3 @@ any test that simulates disconnect/retry timing.
 - The vendored wire fixtures pre-date `reconnection_token`; decode tests cover
   presence, absence, and JSON null inline instead of editing the pinned
   fixtures (re-pin is tracked by issue #12).
-
-## Open items
-
-- `missed_events` ordering/dedup guarantees are not pinned to server source
-  yet (PLAN open items); the client replays verbatim and dedups nothing.
-- Upstream close-code conventions are unresolved (PLAN open items); auto-reconnect
-  currently keys off "close was not user-initiated", not close codes.
