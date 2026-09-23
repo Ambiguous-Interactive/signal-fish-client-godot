@@ -142,12 +142,18 @@ copy_cold_project() {
 
 run_godot_script() {
 	local script_path="$1"
-	local cold_parent cold_project
+	local cold_parent cold_project output failed
 	cold_parent="$(make_cold_parent)"
 	# Register cleanup in this shell; copy_cold_project returns the project path via stdout.
 	cleanup_paths+=("${cold_parent}")
 	cold_project="$(copy_cold_project "${cold_parent}")"
-	godot --headless --path "${cold_project}" --script "${script_path}"
+	output="$(mktemp)"
+	cleanup_paths+=("${output}")
+	failed=0
+	godot --headless --path "${cold_project}" --script "${script_path}" >"${output}" 2>&1 || failed=$?
+	cat "${output}"
+	_fail_on_script_errors "${output}" || failed=1
+	return "${failed}"
 }
 
 _godot_command() {
