@@ -85,6 +85,7 @@ func _run() -> void:
 		_test_scheme_refused_reconnect_drops_dial_credentials,
 		_test_duplicate_authenticated_sends_handshake_once,
 		_test_duplicate_reconnected_is_fully_silent,
+		_test_unsolicited_reconnected_is_loud,
 		_test_dial_contract_survives_authentication_error,
 		_test_duplicate_protocol_info_is_fully_silent,
 		_test_handshake_send_failure_resolves_attempt,
@@ -792,12 +793,48 @@ func _test_duplicate_reconnected_is_fully_silent() -> void:
 	_done()
 
 
+func _test_unsolicited_reconnected_is_loud() -> void:
+	# Issue #108: `Reconnected` on a dial that never sent the directed
+	# handshake is hostile input. Unlike the idempotent duplicate (#71) it
+	# must surface a `protocol_error` instead of being silently dropped.
+	# Local tracker: this test expects an error, so it must not pollute the
+	# shared zero-error assertion other tests end with.
+	var client := _make_client(false, "none", false)
+	var errors := _track_protocol_errors(client)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	var emissions := [0]
+	client.reconnected.connect(
+		func(_info: SFTypesScript.RoomJoinedInfo, _missed: Array) -> void: emissions[0] += 1
+	)
+	var errors_before := errors.size()
+	var data := _room_joined_data({"lobby_state": "lobby"})
+	data["reconnection_token"] = TOKEN_V1
+	data["missed_events"] = []
+	transport.inject_server_message({"type": "Reconnected", "data": data})
+	_assert_equal(0, emissions[0], "no baseline applied")
+	_assert_equal(1, errors.size() - errors_before, "unsolicited Reconnected surfaces one error")
+	_assert_equal(
+		SignalFishClientScript.SessionState.AUTHENTICATED,
+		client.get_session_state(),
+		"session state untouched"
+	)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTED,
+		client.get_connection_state(),
+		"link stays up (protocol_error is local and non-fatal)"
+	)
+	client.free()
+	_done()
+
+
 func _test_dial_contract_survives_authentication_error() -> void:
 	# Issue #82: `AuthenticationError` clears the dial credentials mid-dial;
 	# hostile `Authenticated`/`Reconnected` events after it must not leak the
 	# consumer-silent dial contract or apply a baseline for a handshake that
 	# never went out.
-	var client := _make_reconnect_client(TOKEN_V1)
+	var client := _make_reconnect_client(TOKEN_V1, false)
+	var errors := _track_protocol_errors(client)
 	var transport: SFFakeTransportScript = client.transport
 	var auth_events: Array = []
 	var auth_error_events: Array = []
@@ -838,7 +875,9 @@ func _test_dial_contract_survives_authentication_error() -> void:
 		client.transport.sent_text,
 		"no handshake for a dial whose authentication failed"
 	)
-	_assert_no_protocol_errors()
+	# Issue #108: the hostile post-error Reconnected is loud, not silent; the
+	# AuthenticationError and hostile Authenticated contribute no errors.
+	_assert_equal(1, errors.size(), "exactly the hostile Reconnected is reported")
 	client.free()
 	_done()
 

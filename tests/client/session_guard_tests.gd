@@ -30,6 +30,7 @@ static func run(runner: Variant) -> Array:
 func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_roomless_lobby_state_change_is_inert,
+		_test_cross_flow_left_events_are_inert,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -76,6 +77,60 @@ func _test_roomless_lobby_state_change_is_inert() -> void:
 	_done()
 
 
+## Issue #106: a `RoomLeft` for a spectating session and a `SpectatorLeft`
+## for a player-in-room session are off-contract. They must stay emitted but
+## inert: no roster/id wipe, no session flip, and above all no erasure of the
+## retained reconnection identity.
+func _test_cross_flow_left_events_are_inert() -> void:
+	var spectator_left_frame := {
+		"type": "SpectatorLeft",
+		"data":
+		{
+			"room_id": "20000000-0000-0000-0000-000000000009",
+			"room_code": "SPEC1",
+			"reason": "voluntary_leave",
+			"current_spectators": []
+		}
+	}
+	var in_room := _in_room_client()
+	var in_room_fake: SFFakeTransportScript = in_room.transport
+	var in_room_left_events: Array = []
+	in_room.spectator_left.connect(
+		func(_room_id: String, _room_code: String, _reason: int, _current: Array) -> void:
+			in_room_left_events.append(1)
+	)
+	in_room_fake.inject_server_message(spectator_left_frame)
+	_assert_equal([1], in_room_left_events, "cross-flow frame still emitted")
+	_assert_equal(
+		SignalFishClientScript.SessionState.IN_ROOM_WAITING,
+		in_room.get_session_state(),
+		"player session state untouched"
+	)
+	_assert_equal(_room_fixture_id(), in_room.get_room_id(), "room baseline untouched")
+	_assert_equal(_room_fixture_player(), in_room.get_player_id(), "player id untouched")
+	_assert_equal(
+		_room_fixture_token(), in_room._context_auth_token, "reconnection identity retained"
+	)
+	in_room.free()
+
+	var room_left_frame := {"type": "RoomLeft"}
+	var spectating := _spectating_client()
+	var spectating_fake: SFFakeTransportScript = spectating.transport
+	var spectator_left_events: Array = []
+	spectating.room_left.connect(func() -> void: spectator_left_events.append(1))
+	spectating_fake.inject_server_message(room_left_frame)
+	_assert_equal([1], spectator_left_events, "cross-flow frame still emitted")
+	_assert_equal(
+		SignalFishClientScript.SessionState.SPECTATING,
+		spectating.get_session_state(),
+		"spectator session state untouched"
+	)
+	_assert_equal("SPEC1", spectating.get_room_code(), "spectator baseline untouched")
+	_assert_equal(1, spectating.get_players().size(), "spectator roster untouched")
+	spectating.free()
+	_done()
+
+
 func _connected_client() -> SignalFishClientScript:
 	var client: SignalFishClientScript = _runner.call(
 		"_connect_new_client", _runner.call("_make_config")
@@ -92,6 +147,49 @@ func _authenticated_client() -> SignalFishClientScript:
 		{"type": "Authenticated", "data": _runner.call("_authenticated_data")}
 	)
 	return client
+
+
+func _in_room_client() -> SignalFishClientScript:
+	var client := _authenticated_client()
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message(
+		{
+			"type": "RoomJoined",
+			"data": _runner.call("_room_joined_data", {"reconnection_token": _room_fixture_token()})
+		}
+	)
+	return client
+
+
+func _spectating_client() -> SignalFishClientScript:
+	var client := _authenticated_client()
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message({"type": "SpectatorJoined", "data": _spectator_joined_data()})
+	return client
+
+
+func _spectator_joined_data() -> Dictionary:
+	return {
+		"room_id": "20000000-0000-0000-0000-000000000009",
+		"room_code": "SPEC1",
+		"spectator_id": "30000000-0000-0000-0000-000000000003",
+		"game_name": "reef-rally",
+		"current_players": [_runner.call("_player", _room_fixture_player(), "Alice")],
+		"current_spectators": [],
+		"lobby_state": "waiting"
+	}
+
+
+func _room_fixture_id() -> String:
+	return "20000000-0000-0000-0000-000000000001"
+
+
+func _room_fixture_player() -> String:
+	return "10000000-0000-0000-0000-000000000001"
+
+
+func _room_fixture_token() -> String:
+	return "test-reconnect-token-not-secret"
 
 
 func _assert_equal(expected: Variant, actual: Variant, label: String) -> bool:

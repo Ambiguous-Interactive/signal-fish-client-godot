@@ -53,6 +53,25 @@ For high-risk work, run the loop until no blocking findings remain:
 5. Release gate ships only when all `P1`/`P2` findings are fixed, deferred with
    owner and rationale, or marked unverifiable with a manual check.
 
+## Phase Exit Bar
+
+A phase is done only when all of the following hold:
+
+- Zero open `P1`/`P2` findings — each is fixed with a covering test, deferred
+  with an owner + rationale, or marked unverifiable with a manual check.
+- Every requirement is conservatively classified `DONE` (a touched file is
+  not proof).
+- Tests are deterministic (fake transports, seeded fixtures, injected clocks;
+  no wall-clock sleeps, no live network in fast gates) and green.
+- `gdformat --check` + `gdlint` clean on changed GDScript; protocol parity
+  cited to upstream commits.
+- The LLM harness is green whenever `.llm/**` or scripts were touched
+  (regenerated index + generated files committed together).
+- The final re-review returns empty ("needs no revision").
+
+Anti-thrash: cap review iterations per phase; if convergence stalls, escalate
+the disputed finding to a human decision gate instead of looping.
+
 ## Red-Team Checklist
 
 Challenge these categories before merging:

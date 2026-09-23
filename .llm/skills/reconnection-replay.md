@@ -79,7 +79,7 @@ any test that simulates disconnect/retry timing.
   retry, including one armed mid-dial (a close while connecting surfaces as
   `failed` and must not retry). Consumers dialing from a `disconnected`
   handler win: the scheduler never arms against a live dial.
-- Backoff (PLAN §4.7 constants): base 0.5s, factor 2, cap 15s, jitter
+- Backoff (plan-locked constants): base 0.5s, factor 2, cap 15s, jitter
   fraction 0.25, budget `config.reconnect_max_attempts` (default 5). A failed
   dial emits `connection_failed` (the transport failure) and then arms the
   next attempt; a dial refused synchronously re-enters scheduling so the
@@ -106,7 +106,7 @@ any test that simulates disconnect/retry timing.
 - Backoff values are plan-locked: assert the scheduled delay against the
   `DELAY_BOUNDS` table instead of real time.
 - Reconnect fixtures use placeholder tokens only (`TOKEN_V1`/`TOKEN_V2` in
-  tests); never commit realistic tokens (PLAN §12).
+  tests); never commit realistic tokens (`security-privacy.md`).
 - The vendored wire fixtures pre-date `reconnection_token`; decode tests cover
   presence, absence, and JSON null inline instead of editing the pinned
   fixtures (re-pin is tracked by issue #12).
@@ -114,6 +114,6 @@ any test that simulates disconnect/retry timing.
 ## Open items
 
 - `missed_events` ordering/dedup guarantees are not pinned to server source
-  yet (PLAN §13.2); the client replays verbatim and dedups nothing.
-- Upstream close-code conventions are unresolved (PLAN §13.8); auto-reconnect
+  yet (PLAN open items); the client replays verbatim and dedups nothing.
+- Upstream close-code conventions are unresolved (PLAN open items); auto-reconnect
   currently keys off "close was not user-initiated", not close codes.

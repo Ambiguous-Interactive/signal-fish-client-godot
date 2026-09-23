@@ -567,6 +567,78 @@ Assert-Test 'LlmHarness exported surface is explicit and contains no dead markdo
 
 # --- Hook scripts present and consistent -----------------------------------
 
+# The staged-path predicate is duplicated three times on purpose: the pwsh
+# runner ($PointerFiles + Test-ToolingPathTouched) and both installed shims
+# (the reference template and the installer's embedded hook body). The shims
+# fast-exit non-harness commits without booting pwsh (issue #112), so a
+# predicate that exists in the runner but is missing from a shim would skip
+# real work forever, and a shim-only entry would be dead. This list is the
+# single source both shapes are pinned against.
+$script:HookPredicatePrefixes = @(
+    '.llm/', 'scripts/', '.githooks/', '.github/workflows/', '.devcontainer/', '.claude/'
+)
+$script:HookPredicateExact = @(
+    'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'CHATGPT.md', 'CODEX.md', 'llms.txt',
+    '.cursorrules', '.windsurfrules', '.github/copilot-instructions.md',
+    '.cursor/rules/signal-fish-llm-context.mdc', '.pre-commit-config.yaml',
+    '.gitattributes', '.gitignore', '.github/dependabot.yml',
+    '.github/dependabot.yaml', 'requirements-automation.txt'
+)
+
+function Get-HookShimPredicateTokens {
+    param([Parameter(Mandatory)][string]$ShimText, [Parameter(Mandatory)][string]$Label)
+
+    $matches = [regex]::Matches(
+        $ShimText,
+        [regex]::Escape('.llm/*|') + '[A-Za-z0-9_./|*-]+\)')
+    if ($matches.Count -ne 1) {
+        throw "$Label must contain exactly one staged-path predicate pattern line; found $($matches.Count)."
+    }
+    $pattern = $matches[0].Value.TrimEnd(')')
+    $tokens = @($pattern -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($tokens.Count -ne
+        ($script:HookPredicatePrefixes.Count + $script:HookPredicateExact.Count)) {
+        throw (
+            "{0} predicate has {1} tokens; expected {2} (prefixes + exact names)." -f
+                $label,
+                $tokens.Count,
+                ($script:HookPredicatePrefixes.Count + $script:HookPredicateExact.Count)
+        )
+    }
+    return $tokens
+}
+
+Assert-Test 'staged-path predicate stays in sync across runner and both shims' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $runner = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
+    foreach ($prefix in $script:HookPredicatePrefixes) {
+        if ($runner -notmatch [regex]::Escape("StartsWith('$prefix')")) {
+            throw "run-llm-hooks.ps1 lost the '$prefix' prefix predicate; the shims pin it."
+        }
+    }
+    foreach ($exact in $script:HookPredicateExact) {
+        if ($runner -notmatch [regex]::Escape("'$exact'")) {
+            throw "run-llm-hooks.ps1 lost the '$exact' exact predicate; the shims pin it."
+        }
+    }
+
+    $expected = @(
+        ($script:HookPredicatePrefixes | ForEach-Object { "$_*" }) +
+        $script:HookPredicateExact
+    ) | Sort-Object
+    foreach ($shimPath in @('.githooks/pre-commit', 'scripts/install-git-hooks.ps1')) {
+        $text = Get-Content -LiteralPath (Join-Path $repoRoot $shimPath) -Raw
+        $label = "$shimPath"
+        $tokens = Get-HookShimPredicateTokens -ShimText $text -Label $label
+        $actual = $tokens | Sort-Object
+        for ($i = 0; $i -lt $expected.Count; $i++) {
+            if ($actual[$i] -ne $expected[$i]) {
+                throw "$label predicate drift: expected '$($expected[$i])', found '$($actual[$i])'."
+            }
+        }
+    }
+}
+
 Assert-Test 'pre-commit shim exists and delegates to run-llm-hooks.ps1' {
     $shim = Join-Path (Split-Path -Parent $ScriptsDir) '.githooks/pre-commit'
     if (-not (Test-Path -LiteralPath $shim -PathType Leaf)) {

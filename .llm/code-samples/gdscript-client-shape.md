@@ -8,7 +8,7 @@ category: Code Sample
 
 The runtime addon ships `SignalFishClient` (Node) and `SignalFishConfig`
 (Resource) under `addons/signal_fish/`. This page maps the shipped API for AI
-context; PLAN.md §4.2 is the design record. Everything is polled: call `poll()`
+context; the addon source is the design record. Everything is polled: call `poll()`
 (or leave `auto_poll` on) — no threads, no blocking, web-safe.
 
 ## Minimal usage

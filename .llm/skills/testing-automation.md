@@ -111,6 +111,14 @@ python scripts/validate-github-config.py --repo-root .
 there rather than in `llm-harness.yml` so the LLM fast-path budget remains
 isolated.
 
+Slow workflows stay off the fast gate: `web-export-smoke.yml` (import, export
+the Web preset, assert `index.html`+`index.wasm`, browser checklist) and
+`protocol-sync.yml` (fails when upstream moves past the pinned fixture SHAs)
+run on a weekly cron + `workflow_dispatch` only — never on push/PR. Third-party
+actions are pinned to commit SHAs; `actions/*` may stay on major tags. The
+release flow is dispatch-only and documented in
+`.llm/skills/asset-library-release.md`.
+
 `scripts/run-runtime-checks.sh` is the shared local/CI entry point. It sets a
 writable deterministic `HOME`, activates `.venv-ci` when present, and exposes
 `private-helpers`, `format`, `lint`, `godot`, `all`, and `smoke` subcommands so

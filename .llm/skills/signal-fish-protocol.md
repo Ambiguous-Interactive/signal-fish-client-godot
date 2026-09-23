@@ -20,6 +20,43 @@ Check upstream before guessing:
 - Cloud: <https://github.com/Ambiguous-Interactive/signal-fish-cloud>
 - Curated notes: `.llm/research/protocol-links.md`
 
+## Confirmed Wire Facts (pinned to upstream)
+
+Source-of-truth paths and commit SHAs live in `.llm/research/protocol-fixtures.md`.
+Never invent protocol details; re-verify against the pinned commits before use.
+
+- Transport: WebSocket (`ws://` local dev only, `wss://` production). Control
+  messages are JSON **text** frames; negotiated binary game data uses binary
+  frames.
+- Envelope: externally tagged `{"type":"<Name>","data":{...}}` (serde
+  `tag="type", content="data"`). Unit messages serialize as `{"type":"X"}`
+  with **no `data` key**; the decoder also tolerates `data: null` and a
+  missing `data`.
+- 12 client→server messages: `Authenticate`, `JoinRoom`, `LeaveRoom`,
+  `GameData`, `AuthorityRequest`, `PlayerReady`, `StartGame`,
+  `ProvideConnectionInfo`, `Ping`, `Reconnect`, `JoinAsSpectator`,
+  `LeaveSpectator` (plus v3 `Signal`/`TransportStatus`, exposed as
+  `peer_signal`/`send_transport_status` — `signal` is a GDScript keyword).
+- 26 client events = 24 server messages + synthetic `Connected`/
+  `Disconnected`. v3 adds the session-plan surface (`SessionPlan`, `NewPeer`,
+  `Signal`, `PeerTransportStatus`).
+- Game data encodings: `json` (default/fallback), `message_pack` (opt-in
+  decode), `rkyv` (pass-through bytes only; zero-copy, not implementable in
+  pure GDScript; v2-route rkyv frames carry no envelope, so `from_player`
+  is `""`). An unsupported preference is downgraded to JSON by the server;
+  binary send/receive gates on the **effective** format.
+- Room state machine: `Waiting → Lobby → Finalized`; `PlayerReady` toggles;
+  single-player rooms skip Lobby; authority is requested, not auto-assigned;
+  leaving drops `Lobby → Waiting`.
+- Reconnection: `Reconnect{player_id, room_id, auth_token}` →
+  `Reconnected{...baseline..., missed_events}` or `ReconnectionFailed`. See
+  `.llm/skills/reconnection-replay.md` for pinned anchors and client rules.
+- Config defaults (pinned): `game_data_format` unset resolves to JSON (rust
+  `client_core.rs` `resolve_effective_game_data_format`); `JoinRoomParams`
+  optionals default `None` → omitted on the wire (`protocol.rs` @ `da8f2d1`);
+  an omitted `supports_authority` means **enabled** (server `room_service.rs:
+  585` `unwrap_or(true)` @ `5af5fee`).
+
 ## Implementation Rules
 
 - Treat the Rust client as the reference for client-side behavior.

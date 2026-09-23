@@ -81,5 +81,5 @@ release.
 - **Submission failed.** The action logs its render env, so a leaked password
   is possible with exotic characters; see the password rule above.
 - **Manual fallback.** Submit the edit by hand with the form values from the
-  first-submission table, or use the curl flow documented in `PLAN.md`
-  (§10 "Godot Asset Library publishing").
+  first-submission table, or use the curl flow documented in
+  `.llm/skills/asset-library-release.md`.
