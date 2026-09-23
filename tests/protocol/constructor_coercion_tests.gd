@@ -28,6 +28,7 @@ func run_all() -> void:
 	_test_representable_integers_pass_through()
 	_test_negative_integers_stay_visible()
 	_test_laundered_client_id_never_reaches_the_wire_dict()
+	_test_wrong_typed_array_entries_round_trip()
 
 
 ## Every constructor bool field, driven over the hostile matrix. The decode
@@ -103,6 +104,71 @@ func _test_laundered_client_id_never_reaches_the_wire_dict() -> void:
 	_assert(
 		not laundered.to_dict().has("client_id"), "laundered client_id is erased from to_dict()"
 	)
+
+
+## Issue #97: array coercion keeps only strings (the typed accessor view),
+## but to_dict() must not silently shorten what a consumer put in — the
+## verbatim entries either round-trip (rosters) or let the outbound
+## validation refuse the frame loudly (webrtc candidates on the resend path).
+func _test_wrong_typed_array_entries_round_trip() -> void:
+	var webrtc: SFTypesScript.ConnectionInfo = SFTypesScript.ConnectionInfo.new(
+		{"type": "webrtc", "sdp": "s", "ice_candidates": ["candidate:a", 42, true]}
+	)
+	_assert_equal(
+		PackedStringArray(["candidate:a"]),
+		webrtc.ice_candidates,
+		"webrtc typed view keeps only strings"
+	)
+	_assert_equal(
+		["candidate:a", 42, true],
+		webrtc.to_dict()["ice_candidates"],
+		"webrtc to_dict preserves every raw entry"
+	)
+	_assert_equal(
+		["candidate:1"],
+		(
+			SFTypesScript
+			. ConnectionInfo
+			. new({"type": "webrtc", "ice_candidates": ["candidate:1"]})
+			. to_dict()["ice_candidates"]
+		),
+		"honest webrtc candidates round-trip"
+	)
+
+	var roster_data := _minimal_room_joined()
+	roster_data["current_players"] = [{"id": "a", "name": "Alice"}, "junk", ["nested"]]
+	roster_data["current_spectators"] = [{"id": "s1", "name": "Watcher"}, 7]
+	var roster: SFTypesScript.RoomJoinedInfo = SFTypesScript.RoomJoinedInfo.new(roster_data)
+	_assert_equal(1, roster.current_players.size(), "roster typed view keeps only objects")
+	var round_tripped: Dictionary = roster.to_dict()
+	var round_tripped_players: Array = round_tripped["current_players"]
+	_assert_equal(3, round_tripped_players.size(), "players to_dict preserves every raw entry")
+	_assert_equal("a", round_tripped_players[0]["id"], "dict entry still canonicalizes")
+	_assert_equal("junk", round_tripped_players[1], "scalar junk passes through")
+	var nested_junk: Array = round_tripped_players[2]
+	nested_junk.append("mutation")
+	_assert_equal(["nested"], roster_data["current_players"][2], "junk containers never alias")
+	var round_tripped_spectators: Array = round_tripped["current_spectators"]
+	_assert_equal(2, round_tripped_spectators.size(), "spectators to_dict preserves entries")
+	_assert_equal("s1", round_tripped_spectators[0]["id"], "spectator dict canonicalizes")
+	_assert_equal(7, round_tripped_spectators[1], "spectator junk passes through")
+
+	var spectator_roster_data := {
+		"room_id": "r1",
+		"room_code": "ABC123",
+		"spectator_id": "s1",
+		"game_name": "reef-rally",
+		"current_players": ["junk", {"id": "a", "name": "Alice"}],
+		"current_spectators": [],
+		"lobby_state": "waiting"
+	}
+	var spectator_roster: SFTypesScript.SpectatorJoinedInfo = SFTypesScript.SpectatorJoinedInfo.new(
+		spectator_roster_data
+	)
+	var spectator_round_tripped: Array = spectator_roster.to_dict()["current_players"]
+	_assert_equal(2, spectator_round_tripped.size(), "spectator roster keeps junk position")
+	_assert_equal("junk", spectator_round_tripped[0], "leading junk stays in place")
+	_assert_equal("a", spectator_round_tripped[1]["id"], "trailing dict still canonicalizes")
 
 
 func _bool_sites() -> Array:

@@ -125,7 +125,7 @@ class PlayerNameRules:
 		allow_leading_trailing_whitespace = TypeUtils.bool_or_false(
 			data.get("allow_leading_trailing_whitespace")
 		)
-		allowed_symbols = _coerce_strings(data.get("allowed_symbols", []))
+		allowed_symbols = TypeUtils.coerce_string_array(data.get("allowed_symbols", []))
 		var additional_characters: Variant = data.get("additional_allowed_characters", "")
 		additional_allowed_characters = (
 			String(additional_characters) if typeof(additional_characters) == TYPE_STRING else ""
@@ -136,15 +136,6 @@ class PlayerNameRules:
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
-
-	func _coerce_strings(values: Variant) -> PackedStringArray:
-		var result := PackedStringArray()
-		if typeof(values) != TYPE_ARRAY:
-			return result
-		for value: Variant in values:
-			if typeof(value) == TYPE_STRING:
-				result.append(String(value))
-		return result
 
 
 class ProtocolInfo:
@@ -175,7 +166,7 @@ class ProtocolInfo:
 		sdk_version = _string_or_empty(data.get("sdk_version"))
 		minimum_version = _string_or_empty(data.get("minimum_version"))
 		recommended_version = _string_or_empty(data.get("recommended_version"))
-		capabilities = _coerce_strings(data.get("capabilities", []))
+		capabilities = TypeUtils.coerce_string_array(data.get("capabilities", []))
 		notes = _string_or_empty(data.get("notes"))
 		game_data_formats = _coerce_game_data_encodings(data.get("game_data_formats", []))
 		if (
@@ -186,20 +177,11 @@ class ProtocolInfo:
 		protocol_version = _int_or_zero(data.get("protocol_version"))
 		min_protocol_version = _int_or_zero(data.get("min_protocol_version"))
 		max_protocol_version = _int_or_zero(data.get("max_protocol_version"))
-		transports = _coerce_strings(data.get("transports", []))
+		transports = TypeUtils.coerce_string_array(data.get("transports", []))
 		max_outbound_message_size = _int_or_zero(data.get("max_outbound_message_size"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
-
-	func _coerce_strings(values: Variant) -> PackedStringArray:
-		var result := PackedStringArray()
-		if typeof(values) != TYPE_ARRAY:
-			return result
-		for value: Variant in values:
-			if typeof(value) == TYPE_STRING:
-				result.append(String(value))
-		return result
 
 	func _coerce_game_data_encodings(values: Variant) -> Array:
 		var result: Array = []
@@ -270,7 +252,7 @@ class ConnectionInfo:
 		else:
 			client_id = -1
 		sdp = _string_or_empty(input.get("sdp"))
-		ice_candidates = _coerce_strings(input.get("ice_candidates", []))
+		ice_candidates = TypeUtils.coerce_string_array(input.get("ice_candidates", []))
 		# `data` views this object's own snapshot (raw), never the caller's
 		# tree: one object must not hold two divergent views (issue #73).
 		data = raw.get("data")
@@ -303,7 +285,16 @@ class ConnectionInfo:
 				else:
 					result.erase("client_id")
 			"webrtc":
-				result["ice_candidates"] = Array(ice_candidates)
+				# Candidates round-trip raw-verbatim (issue #97): rebuilding
+				# from the typed field would silently launder a shorter,
+				# valid-looking array onto the documented resend path, while
+				# the verbatim array lets the outbound validation refuse the
+				# message loudly instead.
+				var candidates: Variant = raw.get("ice_candidates")
+				if typeof(candidates) == TYPE_ARRAY:
+					result["ice_candidates"] = (candidates as Array).duplicate(true)
+				else:
+					result["ice_candidates"] = Array(ice_candidates)
 				if sdp.is_empty() and (not raw.has("sdp") or raw["sdp"] == null):
 					result.erase("sdp")
 				else:
@@ -313,15 +304,6 @@ class ConnectionInfo:
 			_:
 				return raw.duplicate(true)
 		_normalize_common_wire_fields(result)
-		return result
-
-	func _coerce_strings(values: Variant) -> PackedStringArray:
-		var result := PackedStringArray()
-		if typeof(values) != TYPE_ARRAY:
-			return result
-		for value: Variant in values:
-			if typeof(value) == TYPE_STRING:
-				result.append(String(value))
 		return result
 
 	## Open payloads (JSON null, scalars) pass through verbatim; containers
@@ -476,7 +458,7 @@ class RoomJoinedInfo:
 		lobby_state = TypeUtils.enum_value(
 			LOBBY_STATE_FROM_STRING, data.get("lobby_state", ""), LobbyState.UNKNOWN
 		)
-		ready_players = _coerce_strings(data.get("ready_players", []))
+		ready_players = TypeUtils.coerce_string_array(data.get("ready_players", []))
 		relay_type = _string_or_empty(data.get("relay_type"))
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
 		ice_servers = _coerce_ice_servers(data.get("ice_servers", []))
@@ -487,9 +469,13 @@ class RoomJoinedInfo:
 
 	func to_dict() -> Dictionary:
 		var result := raw.duplicate(true)
-		result["current_players"] = TypeUtils.objects_to_dicts(current_players)
+		result["current_players"] = TypeUtils.roster_to_dicts(
+			raw, "current_players", current_players
+		)
 		if current_spectators.size() > 0 or raw.has("current_spectators"):
-			result["current_spectators"] = TypeUtils.objects_to_dicts(current_spectators)
+			result["current_spectators"] = TypeUtils.roster_to_dicts(
+				raw, "current_spectators", current_spectators
+			)
 		return result
 
 	func _coerce_players(values: Variant) -> Array:
@@ -517,15 +503,6 @@ class RoomJoinedInfo:
 		for value: Variant in values:
 			if typeof(value) == TYPE_DICTIONARY:
 				result.append(SpectatorInfo.new(value))
-		return result
-
-	func _coerce_strings(values: Variant) -> PackedStringArray:
-		var result := PackedStringArray()
-		if typeof(values) != TYPE_ARRAY:
-			return result
-		for value: Variant in values:
-			if typeof(value) == TYPE_STRING:
-				result.append(String(value))
 		return result
 
 	func _string_or_empty(value: Variant) -> String:
@@ -561,8 +538,12 @@ class SpectatorJoinedInfo:
 
 	func to_dict() -> Dictionary:
 		var result := raw.duplicate(true)
-		result["current_players"] = TypeUtils.objects_to_dicts(current_players)
-		result["current_spectators"] = TypeUtils.objects_to_dicts(current_spectators)
+		result["current_players"] = TypeUtils.roster_to_dicts(
+			raw, "current_players", current_players
+		)
+		result["current_spectators"] = TypeUtils.roster_to_dicts(
+			raw, "current_spectators", current_spectators
+		)
 		return result
 
 	func _coerce_players(values: Variant) -> Array:

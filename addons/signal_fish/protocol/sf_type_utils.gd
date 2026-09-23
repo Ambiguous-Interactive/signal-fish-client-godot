@@ -70,9 +70,49 @@ static func passthrough_payload_error(value: Variant, depth := 0) -> String:
 	return ""
 
 
+## Shared keep-only-valid string-array coercion (issue #97): non-string
+## entries are dropped instead of coerced — constructors cannot report
+## errors, and laundering scalars through str() manufactures values. The
+## original entries stay visible through `raw`; to_dict() sites that rebuild
+## arrays from typed state must therefore preserve raw entries (or let the
+## outbound validation refuse the frame loudly) instead of silently
+## shortening them.
+static func coerce_string_array(values: Variant) -> PackedStringArray:
+	var result := PackedStringArray()
+	if typeof(values) != TYPE_ARRAY:
+		return result
+	for value: Variant in values:
+		if typeof(value) == TYPE_STRING:
+			result.append(String(value))
+	return result
+
+
 static func objects_to_dicts(values: Array) -> Array:
 	var result: Array = []
 	for value: Variant in values:
 		if typeof(value) == TYPE_OBJECT and value.has_method("to_dict"):
 			result.append(value.to_dict())
+	return result
+
+
+## Roster round-trips without silent loss (issue #97): dict entries
+## canonicalize through the typed objects in raw order, while wrong-typed
+## entries pass through verbatim (containers copied, per the no-aliasing
+## contract) instead of shortening the roster. Falls back to the typed
+## objects alone when [param raw] does not carry [param key] as an array.
+static func roster_to_dicts(raw: Dictionary, key: String, objects: Array) -> Array:
+	var values: Variant = raw.get(key)
+	if typeof(values) != TYPE_ARRAY:
+		return objects_to_dicts(objects)
+	var result: Array = []
+	var next_object := 0
+	for value: Variant in values:
+		if typeof(value) == TYPE_DICTIONARY and next_object < objects.size():
+			var entry: Variant = objects[next_object]
+			result.append(entry.call("to_dict"))
+			next_object += 1
+		elif typeof(value) == TYPE_ARRAY or typeof(value) == TYPE_DICTIONARY:
+			result.append(value.duplicate(true))
+		else:
+			result.append(value)
 	return result
