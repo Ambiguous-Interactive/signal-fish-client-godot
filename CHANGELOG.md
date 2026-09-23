@@ -60,8 +60,8 @@ CI, tests, and internal tooling are not listed.
   final frames out of the queue (#101).
 - The WebRTC mesh now flips its transport-status boundary only when the
   report send succeeds: a report refused under backpressure stays armed
-  and rides the next boundary update instead of being lost for the
-  session (#102).
+  and retries (at most once per interval, like the heartbeat's
+  backpressured beats) instead of being lost for the session (#102).
 - Inbound text frames containing a repeated JSON key (for example a second
   `"type"`) now fail closed with `protocol_error` instead of letting the
   engine's last-wins parser silently substitute fields — a smuggled

@@ -54,8 +54,22 @@ origin/main, one open issue (#97), no open PRs, baseline
   `send_transport_status` and ignored the return code, so a report
   refused under backpressure consumed the boundary edge — the server
   never learned the data path connected. Fix: flip only on `OK`; a
-  refused report stays armed and rides the next boundary update.
-  Test drives the boundary through a real backpressured fake transport.
+  refused report stays armed and retries. Test drives the boundary
+  through a real backpressured fake transport.
+- **Adversarial loop results (review round):** the zero-knowledge
+  red-team verified all six claims red-green and probed UTF-8 key
+  forgery, re-entrant closes, mid-drain redials, tar edge cases, and
+  warm-mode races — one P2 (the tar stream swallowed deleted-in-
+  worktree files noisily; now filtered and loud through pipefail) and
+  the actionable P3s landed: the roster round-trip helper is shared
+  (one copy, not two), the #101 close-drain read-error path is pinned,
+  and bugbot's flood finding reshaped #102's retry into the heartbeat's
+  backpressured-beat rule (at most one retry per injectable interval;
+  a flap that resolves the edge drops the leftover deadline so a fresh
+  edge reports immediately). The "roster raw aliasing" note was assessed
+  and skipped: raw is by-reference across all value objects by the
+  issue-#48 decode-aliasing design; post-construction caller mutation
+  showing through is consistent, documented behavior.
 
 ## Sweep method
 
