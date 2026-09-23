@@ -567,7 +567,8 @@ func _tick_heartbeat(delta: float) -> void:
 		# Protocol Ping requires an authenticated session, so there is
 		# nothing to send pre-auth; `Authenticated` is the only inbound
 		# frame this window waits for, so silence past the pong deadline
-		# is a dead link, not a slow one.
+		# is a dead link, not a slow one. Time accrued here flows into the
+		# ping cycle, so the first post-auth ping may fire immediately.
 		_heartbeat_elapsed += delta
 		if _heartbeat_elapsed >= _config.pong_timeout_sec:
 			_on_transport_failed("heartbeat auth timeout")
