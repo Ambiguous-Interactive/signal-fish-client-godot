@@ -115,7 +115,9 @@ isolated.
 writable deterministic `HOME`, activates `.venv-ci` when present, and exposes
 `private-helpers`, `format`, `lint`, `godot`, `all`, and `smoke` subcommands so
 CI can keep separate step names without drifting from local reproduction
-commands. The `godot` subcommand accepts suite names (`protocol transport
+commands. The `all` subcommand runs the static checks and the godot suites
+concurrently — the gate wall is the slower half, not the sum. The `godot`
+subcommand accepts suite names (`protocol transport
 client binary reconnect demo_boot p2p_boot`); one explicit suite runs warm
 in-tree against the live `.godot` cache for fast local iteration (`SF_COLD=1`
 forces the CI-identical path), while no-argument and multi-suite runs copy the
@@ -123,12 +125,17 @@ source tree into fresh temporary projects without `.godot/`, which prevents
 local editor/global-class caches from masking failures that would appear in a
 clean CI checkout.
 
-A GDScript runtime error inside a test function aborts only that function —
-the runner still reports green while the rest of the test never ran
-(issue 104). Keep wrong-type assignments and dynamic calls on
-possibly-wrong object types out of test middles; assert the object type
-(`is`) before driving it, and never let a helper construct a real engine
-transport/socket inside a fake-only gate.
+A GDScript runtime error aborts only the running function — a green suite
+whose test died mid-way is a vacuous pass (issue 104). Two nets close the
+class: every test function ends with the owner's `_done()` and is driven
+through `tests/completion_guard.gd` (`drive` flags a test that never
+completed, `check_registration` flags a `_test_` method missing from the case
+list, and `self_check` pins the mechanism in each SceneTree runner), and the
+shell runner fails any godot output containing `SCRIPT ERROR`, which also
+covers helper aborts a test could survive. Keep wrong-type assignments and
+dynamic calls on possibly-wrong object types out of test middles; assert the
+object type (`is`) before driving it, and never let a helper construct a real
+engine transport/socket inside a fake-only gate.
 
 Cold copies are one tar stream over a filtered `git ls-files -z` manifest, not
 a per-file copy loop. Shell rules that bit here: `set -e` is suppressed inside

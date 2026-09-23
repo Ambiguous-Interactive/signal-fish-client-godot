@@ -26,6 +26,11 @@ point here unless a tool requires a tiny wrapper format.
 
 - Read this file, then open only the specific skill or reference files that
   match the current task.
+- Keep `main` a pure mirror of `origin/main`: work on a branch, PR it, and
+  after each squash merge resync with
+  `git fetch origin && git reset --hard origin/main`. Squash merges rewrite
+  history, so commits parked on local `main` are what force recurring
+  merge-conflict resolutions.
 - Keep `.llm` Markdown files and known pointer files at or below 300 lines.
 - Add `description`, `triggers`, and `category` frontmatter to every `.llm`
   Markdown file except generated `.llm/index.md`.
