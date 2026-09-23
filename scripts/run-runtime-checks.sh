@@ -523,9 +523,15 @@ run_changed() {
 	fi
 
 	echo "=== changed: suites ${names[*]} ==="
+	# Deleted paths still map to their suite above (the runners reference
+	# them), but the static tools cannot read a missing file.
+	local static_files=()
+	for file in ${gd_suites[@]+"${gd_suites[@]}"}; do
+		[[ -f "${file}" ]] && static_files+=("${file}")
+	done
 	local godot_rc=0 static_rc=0
 	# Same bash < 4.4 empty-array guard as above.
-	run_static_on ${gd_suites[@]+"${gd_suites[@]}"} &
+	run_static_on ${static_files[@]+"${static_files[@]}"} &
 	local static_pid=$!
 	run_godot "${names[@]}" || godot_rc=$?
 	wait "${static_pid}" || static_rc=$?
