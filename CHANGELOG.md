@@ -37,6 +37,31 @@ CI, tests, and internal tooling are not listed.
 
 ### Fixed
 
+- MessagePack strings (opt-in payload decode) and binary-frame string fields
+  now decode as real UTF-8: multi-byte strings such as `"héllo"` or emoji
+  arrived byte-mapped as mojibake, and the codec's own encode/decode
+  round-trip broke for any non-ASCII character (#99).
+- A `LobbyStateChanged` frame received without a room baseline is now
+  informational only: it could previously forge an in-room session state,
+  flipping `is_authenticated()` before `Authenticated` and letting
+  `Ping`/`PlayerReady` frames onto the wire pre-authentication (#100).
+- A hostile webrtc `ice_candidates` array on a directly constructed
+  `ConnectionInfo` no longer silently drops wrong-typed entries on the
+  documented `to_dict()` resend path — the verbatim entries let the
+  outbound validation refuse the message loudly instead (#97). The same
+  no-silent-loss contract now holds for roster round-trips
+  (`RoomJoinedInfo`/`SpectatorJoinedInfo`): wrong-typed roster entries pass
+  through `to_dict()` verbatim instead of vanishing, while valid entries
+  keep their canonical form. The typed accessors intentionally keep
+  only valid entries; the unfiltered view stays in `raw`.
+- An explicit `close()` on a transport whose peer already reached
+  `STATE_CLOSED` now drains queued data frames before emitting `closed`,
+  matching the poll path — a consumer close could previously race the
+  final frames out of the queue (#101).
+- The WebRTC mesh now flips its transport-status boundary only when the
+  report send succeeds: a report refused under backpressure stays armed
+  and rides the next boundary update instead of being lost for the
+  session (#102).
 - Inbound text frames containing a repeated JSON key (for example a second
   `"type"`) now fail closed with `protocol_error` instead of letting the
   engine's last-wins parser silently substitute fields — a smuggled
