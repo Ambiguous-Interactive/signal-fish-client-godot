@@ -13,8 +13,14 @@ extends RefCounted
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFJsonGuard = preload("res://addons/signal_fish/protocol/sf_json_guard.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
+var _test_done := false
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run() -> Array:
@@ -24,9 +30,13 @@ static func run() -> Array:
 
 
 func run_all() -> void:
-	_test_duplicate_key_frames_fail_closed()
-	_test_clean_frames_still_decode()
-	_test_escape_canonicalization()
+	var cases: Array[Callable] = [
+		_test_duplicate_key_frames_fail_closed,
+		_test_clean_frames_still_decode,
+		_test_escape_canonicalization,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 func _test_duplicate_key_frames_fail_closed() -> void:
@@ -93,6 +103,7 @@ func _test_duplicate_key_frames_fail_closed() -> void:
 	_assert_protocol_error_contains(nul_merged, "NUL", "NUL-escape merged keys rejected")
 	var nul_guard := SFJsonGuard.duplicate_key_error('{"a\\u0000b":1,"ab":2}')
 	_assert_string_contains(nul_guard, "NUL", "NUL key guard diagnostic")
+	_done()
 
 
 func _test_clean_frames_still_decode() -> void:
@@ -126,10 +137,12 @@ func _test_clean_frames_still_decode() -> void:
 				case["payload_msg"], decoded.args[1]["msg"], "%s value round-trip" % case["label"]
 			)
 
-
 ## Direct guard vectors for the escape spellings the engine parser decodes:
 ## keys differing only in escape notation are the same key (duplicates),
 ## while escaped spellings of genuinely different keys never false-positive.
+	_done()
+
+
 func _test_escape_canonicalization() -> void:
 	var duplicates := [
 		["plain vs unicode escape", '{"k":1,"\\u006b":2}'],
@@ -161,9 +174,11 @@ func _test_escape_canonicalization() -> void:
 	_assert_string_contains(truncated, "duplicate", "oversized key still reported")
 	_assert(not truncated.contains("k".repeat(64)), "oversized key truncated in diagnostic")
 
-
 ## Emits the minimal RoomJoined baseline as raw wire text, minus its closing
 ## brace, so duplicate-key vectors can append repeated fields to it.
+	_done()
+
+
 func _room_joined_text_with_suffix(suffix: String) -> String:
 	var body := JSON.stringify(_minimal_room_joined_data())
 	return '{"type":"RoomJoined","data":%s%s}' % [body.substr(0, body.length() - 1), suffix]

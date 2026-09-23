@@ -9,13 +9,19 @@ const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fak
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_B := ClientFixtures.PLAYER_B
 
 var _failures: Array = []
+var _test_done := false
 # Completion sentinel: a runtime abort inside _run() would otherwise leave
 # the process hanging until CI kills it.
 var _run_completed := false
+
+
+func _done() -> void:
+	_test_done = true
 
 
 func _init() -> void:
@@ -35,10 +41,15 @@ func _init() -> void:
 
 
 func _run() -> void:
-	_test_send_guards_and_wire_bytes()
-	_test_envelope_receive_paths()
-	_test_rkyv_pass_through()
-	_test_server_format_downgrade()
+	var cases: Array[Callable] = [
+		_test_send_guards_and_wire_bytes,
+		_test_envelope_receive_paths,
+		_test_rkyv_pass_through,
+		_test_server_format_downgrade,
+	]
+	CompletionGuard.self_check(self, _failures)
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 	_run_completed = true
 
 
@@ -78,6 +89,7 @@ func _test_send_guards_and_wire_bytes() -> void:
 	_assert_string_contains(backpressure_error, "backpressure", "binary backpressure message")
 	client.transport.buffered_amount = 0
 	client.free()
+	_done()
 
 
 func _test_envelope_receive_paths() -> void:
@@ -147,6 +159,7 @@ func _test_envelope_receive_paths() -> void:
 		"bad payload falls back to raw bytes"
 	)
 	decode_client.free()
+	_done()
 
 
 func _test_rkyv_pass_through() -> void:
@@ -168,6 +181,7 @@ func _test_rkyv_pass_through() -> void:
 		"rkyv frame passes through raw"
 	)
 	rkyv_client.free()
+	_done()
 
 
 func _test_server_format_downgrade() -> void:
@@ -266,6 +280,7 @@ func _test_server_format_downgrade() -> void:
 	_assert_equal(0, closing_events.size(), "late binary frame surfaces nothing")
 	_assert_equal(0, closing_errors.size(), "late binary frame emits no error")
 	closing.free()
+	_done()
 
 
 func _make_config() -> SignalFishConfigScript:

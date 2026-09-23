@@ -13,14 +13,20 @@ const SessionGuardTestsScript = preload("res://tests/client/session_guard_tests.
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
 const WebrtcMeshTestsScript = preload("res://tests/client/webrtc_mesh_tests.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const ROOM_ID := "20000000-0000-0000-0000-000000000001"
 
 var _failures: Array = []
+var _test_done := false
 # Sentinel: an abort inside _run() unwinds before quit(); CI would hang instead of reporting red.
 var _run_completed := false
+
+
+func _done() -> void:
+	_test_done = true
 
 
 func _init() -> void:
@@ -56,28 +62,33 @@ func _run() -> void:
 	if not _helper_suites_are_loadable():
 		_failures.append("helper suites failed to load")
 		return
-	_test_configure_validation()
-	_test_configure_and_connect_guards()
-	_test_auto_authenticate_matches_builder_bytes()
-	_test_preauth_guards_block_all_sends()
-	_test_authenticated_args_and_send_surface()
-	_test_duplicate_authenticated_is_once_per_dial()
-	_test_room_lifecycle_state_machine()
-	_test_spectators_keep_lobby_updates_and_rosters_stay_stable()
-	_test_connected_handler_close_does_not_crash()
-	_test_presence_and_data_events()
-	_test_spectator_flow()
-	_test_reconnected_restores_room_state()
-	_test_backpressure_returns_busy_and_drops()
-	_test_close_surfaces_code_reason_and_cleans_up()
-	_test_process_and_exit_tree_paths()
-	_test_roster_accessors_are_copies()
-	_test_failures_clean_up_and_failed_open_surfaces_reason()
-	_test_frame_cap_drops_oversized_and_binary_frames()
-	_test_duplicate_key_frame_fails_closed()
-	_test_mixed_content_guard_is_data_driven()
-	_test_log_redaction_and_level_gate()
-	_test_config_to_string_redacts_credential()
+	var cases: Array[Callable] = [
+		_test_configure_validation,
+		_test_configure_and_connect_guards,
+		_test_auto_authenticate_matches_builder_bytes,
+		_test_preauth_guards_block_all_sends,
+		_test_authenticated_args_and_send_surface,
+		_test_duplicate_authenticated_is_once_per_dial,
+		_test_room_lifecycle_state_machine,
+		_test_spectators_keep_lobby_updates_and_rosters_stay_stable,
+		_test_connected_handler_close_does_not_crash,
+		_test_presence_and_data_events,
+		_test_spectator_flow,
+		_test_reconnected_restores_room_state,
+		_test_backpressure_returns_busy_and_drops,
+		_test_close_surfaces_code_reason_and_cleans_up,
+		_test_process_and_exit_tree_paths,
+		_test_roster_accessors_are_copies,
+		_test_failures_clean_up_and_failed_open_surfaces_reason,
+		_test_frame_cap_drops_oversized_and_binary_frames,
+		_test_duplicate_key_frame_fails_closed,
+		_test_mixed_content_guard_is_data_driven,
+		_test_log_redaction_and_level_gate,
+		_test_config_to_string_redacts_credential,
+	]
+	CompletionGuard.self_check(self, _failures)
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 	_failures.append_array(V3ClientTestsScript.run(self))
 	_failures.append_array(HeartbeatTestsScript.run(self))
 	_failures.append_array(SessionGuardTestsScript.run(self))
@@ -121,6 +132,7 @@ func _test_configure_validation() -> void:
 	)
 	connected.free()
 	client.free()
+	_done()
 
 
 func _test_configure_and_connect_guards() -> void:
@@ -156,6 +168,7 @@ func _test_configure_and_connect_guards() -> void:
 		ERR_BUSY, client.connect_to_server("ws://example.test/socket"), "double connect rejected"
 	)
 	client.free()
+	_done()
 
 
 func _test_auto_authenticate_matches_builder_bytes() -> void:
@@ -185,6 +198,7 @@ func _test_auto_authenticate_matches_builder_bytes() -> void:
 		"unset optionals omitted from authenticate"
 	)
 	minimal.free()
+	_done()
 
 
 func _test_preauth_guards_block_all_sends() -> void:
@@ -211,6 +225,7 @@ func _test_preauth_guards_block_all_sends() -> void:
 			var fake: SFFakeTransportScript = client.transport
 			_assert_equal(1, fake.sent_text.size(), "only authenticate was sent while guarding")
 		client.free()
+	_done()
 
 
 func _test_authenticated_args_and_send_surface() -> void:
@@ -376,6 +391,7 @@ func _test_authenticated_args_and_send_surface() -> void:
 	)
 	_assert_equal(ERR_UNAUTHORIZED, client.send_game_data({}), "send after close blocked")
 	client.free()
+	_done()
 
 
 func _test_duplicate_authenticated_is_once_per_dial() -> void:
@@ -422,6 +438,7 @@ func _test_duplicate_authenticated_is_once_per_dial() -> void:
 		"in-room state untouched by the duplicate"
 	)
 	room_client.free()
+	_done()
 
 
 func _test_room_lifecycle_state_machine() -> void:
@@ -503,6 +520,7 @@ func _test_room_lifecycle_state_machine() -> void:
 	_assert_equal("", client.get_player_id(), "player id cleared on leave")
 	_assert_equal([], client.get_players(), "roster cleared on leave")
 	client.free()
+	_done()
 
 
 func _test_spectators_keep_lobby_updates_and_rosters_stay_stable() -> void:
@@ -559,6 +577,7 @@ func _test_spectators_keep_lobby_updates_and_rosters_stay_stable() -> void:
 		SFTypesScript.LobbyState.LOBBY, client.get_lobby_state(), "spectator lobby state tracked"
 	)
 	client.free()
+	_done()
 
 
 func _test_connected_handler_close_does_not_crash() -> void:
@@ -585,6 +604,7 @@ func _test_connected_handler_close_does_not_crash() -> void:
 	)
 	_assert_equal(0, errors.size(), "no protocol errors from the torn-down session")
 	client.free()
+	_done()
 
 
 func _test_presence_and_data_events() -> void:
@@ -674,6 +694,7 @@ func _test_presence_and_data_events() -> void:
 		"presence and data events surface with typed payloads"
 	)
 	client.free()
+	_done()
 
 
 func _test_spectator_flow() -> void:
@@ -783,6 +804,7 @@ func _test_spectator_flow() -> void:
 		"spectator events surface"
 	)
 	client.free()
+	_done()
 
 
 func _test_reconnected_restores_room_state() -> void:
@@ -819,6 +841,7 @@ func _test_reconnected_restores_room_state() -> void:
 	_assert_equal(SFTypesScript.LobbyState.LOBBY, client.get_lobby_state(), "lobby state restored")
 	_assert_equal([], failures, "no reconnection_failed")
 	client.free()
+	_done()
 
 
 func _make_reconnect_dial_client() -> SignalFishClientScript:
@@ -849,6 +872,7 @@ func _test_backpressure_returns_busy_and_drops() -> void:
 	var backpressure_error: String = errors[0]
 	_assert_string_contains(backpressure_error, "backpressure", "backpressure message")
 	client.free()
+	_done()
 
 
 func _test_close_surfaces_code_reason_and_cleans_up() -> void:
@@ -881,6 +905,7 @@ func _test_close_surfaces_code_reason_and_cleans_up() -> void:
 		_assert_equal(null, client.transport, "transport released on close")
 		_assert_equal(true, client.close() == OK, "close after closed is a no-op")
 		client.free()
+	_done()
 
 
 func _test_process_and_exit_tree_paths() -> void:
@@ -912,9 +937,11 @@ func _test_process_and_exit_tree_paths() -> void:
 	_assert_equal(null, client.transport, "tree exit releases the transport")
 	client.free()
 
-
 ## Issue #87: the accessors hand out defensive copies — a live-array
 ## reference would let one caller mutation corrupt session state silently.
+	_done()
+
+
 func _test_roster_accessors_are_copies() -> void:
 	var client := _make_in_room_client()
 	var roster: Array = client.get_players()
@@ -932,6 +959,7 @@ func _test_roster_accessors_are_copies() -> void:
 	_assert_equal(1, client.get_players().size(), "presence lands on the real roster")
 	_assert_equal(PLAYER_B, client.get_players()[0].id, "the joined player is queryable")
 	client.free()
+	_done()
 
 
 func _test_failures_clean_up_and_failed_open_surfaces_reason() -> void:
@@ -977,6 +1005,7 @@ func _test_failures_clean_up_and_failed_open_surfaces_reason() -> void:
 	_assert_equal("", drop_client.get_room_id(), "room cleared on failure")
 	_assert_equal(null, drop_client.transport, "transport released on failure")
 	drop_client.free()
+	_done()
 
 
 func _test_frame_cap_drops_oversized_and_binary_frames() -> void:
@@ -1024,12 +1053,14 @@ func _test_frame_cap_drops_oversized_and_binary_frames() -> void:
 	)
 	client.free()
 
-
 ## Issue #92: a repeated envelope key used to silently substitute the decoded
 ## event (the engine parser is last-wins) — here the smuggled RoomLeft used
 ## to wipe the in-room session while the server still counted the player as
 ## joined. The duplicate-key guard fails the frame closed instead: one
 ## protocol_error, connection and room state untouched.
+	_done()
+
+
 func _test_duplicate_key_frame_fails_closed() -> void:
 	var client := _make_in_room_client()
 	var fake: SFFakeTransportScript = client.transport
@@ -1050,6 +1081,7 @@ func _test_duplicate_key_frame_fails_closed() -> void:
 		"session state survives the smuggled RoomLeft"
 	)
 	client.free()
+	_done()
 
 
 func _test_mixed_content_guard_is_data_driven() -> void:
@@ -1081,6 +1113,7 @@ func _test_mixed_content_guard_is_data_driven() -> void:
 		"ftp://x.test", false, false
 	)
 	_assert_string_contains(scheme_message, "invalid WebSocket URL scheme", "scheme message")
+	_done()
 
 
 func _test_log_redaction_and_level_gate() -> void:
@@ -1101,6 +1134,7 @@ func _test_log_redaction_and_level_gate() -> void:
 	SFLogScript.min_level = original_level
 	SFLogScript.debug("debug hidden by default", PackedStringArray(["secret-value"]))
 	_assert(true, "log calls do not crash under gates")
+	_done()
 
 
 func _test_config_to_string_redacts_credential() -> void:
@@ -1110,6 +1144,7 @@ func _test_config_to_string_redacts_credential() -> void:
 	var text := config.to_string()
 	_assert_string_not_contains(text, "sfk_super_secret", "credential never in _to_string")
 	_assert_string_contains(text, "test-app", "_to_string keeps public fields")
+	_done()
 
 
 func _make_config() -> SignalFishConfigScript:

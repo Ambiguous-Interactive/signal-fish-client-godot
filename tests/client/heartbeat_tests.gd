@@ -9,9 +9,15 @@ extends RefCounted
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
+var _test_done := false
 var _runner: Object = null
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run(runner: Variant) -> Array:
@@ -22,10 +28,14 @@ static func run(runner: Variant) -> Array:
 
 
 func run_all() -> void:
-	_test_heartbeat_off_by_default()
-	_test_interval_pong_cycle_and_dead_link()
-	_test_backpressured_beats_retry_quietly()
-	_test_dead_link_arms_auto_reconnect()
+	var cases: Array[Callable] = [
+		_test_heartbeat_off_by_default,
+		_test_interval_pong_cycle_and_dead_link,
+		_test_backpressured_beats_retry_quietly,
+		_test_dead_link_arms_auto_reconnect,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 func _test_heartbeat_off_by_default() -> void:
@@ -36,6 +46,7 @@ func _test_heartbeat_off_by_default() -> void:
 		idle._process(1.0)
 	_assert_equal(0, _sent_type_count(transport, "Ping"), "heartbeat off sends no pings")
 	idle.free()
+	_done()
 
 
 func _test_interval_pong_cycle_and_dead_link() -> void:
@@ -69,6 +80,7 @@ func _test_interval_pong_cycle_and_dead_link() -> void:
 	)
 	_assert_equal(null, client.transport, "the dead link is torn down")
 	client.free()
+	_done()
 
 
 func _test_backpressured_beats_retry_quietly() -> void:
@@ -86,6 +98,7 @@ func _test_backpressured_beats_retry_quietly() -> void:
 	_assert_equal(2, errors.size(), "each refused beat explains itself once")
 	_assert_connected(client, true, "backpressure alone does not kill the link")
 	client.free()
+	_done()
 
 
 func _test_dead_link_arms_auto_reconnect() -> void:
@@ -120,6 +133,7 @@ func _test_dead_link_arms_auto_reconnect() -> void:
 		"auto-reconnect redials the dead link"
 	)
 	client.free()
+	_done()
 
 
 func _authenticated_client(config: SignalFishConfigScript) -> SignalFishClientScript:

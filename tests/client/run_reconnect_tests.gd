@@ -11,6 +11,7 @@ const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fak
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_A := ClientFixtures.PLAYER_A
 const PLAYER_B := ClientFixtures.PLAYER_B
@@ -29,12 +30,17 @@ const DELAY_BOUNDS := {
 }
 
 var _failures: Array = []
+var _test_done := false
 # Sentinel: an abort inside _run() unwinds before quit(); CI would hang instead of reporting red.
 var _run_completed := false
 ## Protocol-error trackers for every client built by `_make_client` /
 ## `_make_reconnect_client`; reconnection flows must stay error-free, so
 ## tests end with `_assert_no_protocol_errors()` checking them all.
 var _error_trackers: Array = []
+
+
+func _done() -> void:
+	_test_done = true
 
 
 func _init() -> void:
@@ -54,39 +60,44 @@ func _init() -> void:
 
 
 func _run() -> void:
-	_test_reconnection_token_decodes_from_baselines()
-	_test_manual_reconnect_guards_and_wire_bytes()
-	_test_manual_reconnect_completes_and_refreshes_context()
-	_test_manual_reconnect_dial_refreshes_auto_reconnect_context()
-	_test_reconnect_reuses_last_dialed_url()
-	_test_auto_reconnect_requires_context_and_not_user_close()
-	_test_spectator_baseline_clears_context()
-	_test_leaving_room_clears_reconnect_context()
-	_test_clean_close_clears_reconnect_context()
-	_test_failed_auto_dial_does_not_stall_episode()
-	_test_timer_dial_sync_refusal_arms_next_attempt_once()
-	_test_late_baseline_while_closing_is_ignored()
-	_test_auto_reconnect_backoff_growth_bounds()
-	_test_auto_reconnect_stops_on_terminal_codes()
-	_test_auto_reconnect_retries_after_transport_failure()
-	_test_user_close_mid_dial_stops_retrying()
-	_test_close_cancels_pending_retry_timer()
-	_test_close_from_disconnected_handler_wins_over_retry()
-	_test_handler_redial_failure_burns_one_attempt()
-	_test_close_from_connection_failed_handler_wins_over_retry()
-	_test_double_nested_close_cascade_wins_over_retry()
-	_test_scheme_refused_reconnect_drops_dial_credentials()
-	_test_duplicate_authenticated_sends_handshake_once()
-	_test_duplicate_reconnected_is_fully_silent()
-	_test_dial_contract_survives_authentication_error()
-	_test_duplicate_protocol_info_is_fully_silent()
-	_test_handshake_send_failure_resolves_attempt()
-	_test_handshake_send_failure_killing_link_cascades()
-	_test_refused_authenticate_resolves_the_dial()
-	_test_auto_reconnect_exhaustion_emits_connection_failed()
-	_test_redial_from_exhaustion_handler_keeps_the_fresh_identity()
-	_test_failure_driven_exhaustion_and_budget_recovery()
-	_test_reconnect_tokens_are_redacted()
+	var cases: Array[Callable] = [
+		_test_reconnection_token_decodes_from_baselines,
+		_test_manual_reconnect_guards_and_wire_bytes,
+		_test_manual_reconnect_completes_and_refreshes_context,
+		_test_manual_reconnect_dial_refreshes_auto_reconnect_context,
+		_test_reconnect_reuses_last_dialed_url,
+		_test_auto_reconnect_requires_context_and_not_user_close,
+		_test_spectator_baseline_clears_context,
+		_test_leaving_room_clears_reconnect_context,
+		_test_clean_close_clears_reconnect_context,
+		_test_failed_auto_dial_does_not_stall_episode,
+		_test_timer_dial_sync_refusal_arms_next_attempt_once,
+		_test_late_baseline_while_closing_is_ignored,
+		_test_auto_reconnect_backoff_growth_bounds,
+		_test_auto_reconnect_stops_on_terminal_codes,
+		_test_auto_reconnect_retries_after_transport_failure,
+		_test_user_close_mid_dial_stops_retrying,
+		_test_close_cancels_pending_retry_timer,
+		_test_close_from_disconnected_handler_wins_over_retry,
+		_test_handler_redial_failure_burns_one_attempt,
+		_test_close_from_connection_failed_handler_wins_over_retry,
+		_test_double_nested_close_cascade_wins_over_retry,
+		_test_scheme_refused_reconnect_drops_dial_credentials,
+		_test_duplicate_authenticated_sends_handshake_once,
+		_test_duplicate_reconnected_is_fully_silent,
+		_test_dial_contract_survives_authentication_error,
+		_test_duplicate_protocol_info_is_fully_silent,
+		_test_handshake_send_failure_resolves_attempt,
+		_test_handshake_send_failure_killing_link_cascades,
+		_test_refused_authenticate_resolves_the_dial,
+		_test_auto_reconnect_exhaustion_emits_connection_failed,
+		_test_redial_from_exhaustion_handler_keeps_the_fresh_identity,
+		_test_failure_driven_exhaustion_and_budget_recovery,
+		_test_reconnect_tokens_are_redacted,
+	]
+	CompletionGuard.self_check(self, _failures)
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 	_run_completed = true
 
 
@@ -121,6 +132,7 @@ func _test_reconnection_token_decodes_from_baselines() -> void:
 	_assert_equal(TOKEN_V1, event.args[0].reconnection_token, "Reconnected carries token")
 	var missed: Array = event.args[1]
 	_assert_equal(1, missed.size(), "missed_events decoded")
+	_done()
 
 
 func _test_manual_reconnect_guards_and_wire_bytes() -> void:
@@ -173,6 +185,7 @@ func _test_manual_reconnect_guards_and_wire_bytes() -> void:
 		"Reconnect handshake follows Authenticated"
 	)
 	reconnector.free()
+	_done()
 
 
 func _test_manual_reconnect_completes_and_refreshes_context() -> void:
@@ -219,6 +232,7 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	_assert_equal(1, client._auto_reconnect_attempts, "budget restarts at 1 after reset")
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_manual_reconnect_dial_refreshes_auto_reconnect_context() -> void:
@@ -254,6 +268,7 @@ func _test_manual_reconnect_dial_refreshes_auto_reconnect_context() -> void:
 	_assert_equal(expected, client.transport.sent_text[-1], "auto retry uses the rotated token")
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_reconnect_reuses_last_dialed_url() -> void:
@@ -285,6 +300,7 @@ func _test_reconnect_reuses_last_dialed_url() -> void:
 		_assert_equal(connect_url, client.transport._connected_url, "%s: rejoin target" % case[0])
 		_assert_no_protocol_errors()
 		client.free()
+	_done()
 
 
 func _test_auto_reconnect_requires_context_and_not_user_close() -> void:
@@ -326,6 +342,7 @@ func _test_auto_reconnect_requires_context_and_not_user_close() -> void:
 		"clean close: no dial"
 	)
 	client.free()
+	_done()
 
 
 func _test_spectator_baseline_clears_context() -> void:
@@ -361,6 +378,7 @@ func _test_spectator_baseline_clears_context() -> void:
 		"spectator baseline: no reconnect (protocol has none)"
 	)
 	client.free()
+	_done()
 
 
 func _test_leaving_room_clears_reconnect_context() -> void:
@@ -384,6 +402,7 @@ func _test_leaving_room_clears_reconnect_context() -> void:
 	)
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_clean_close_clears_reconnect_context() -> void:
@@ -404,6 +423,7 @@ func _test_clean_close_clears_reconnect_context() -> void:
 	)
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_failed_auto_dial_does_not_stall_episode() -> void:
@@ -428,6 +448,7 @@ func _test_failed_auto_dial_does_not_stall_episode() -> void:
 		"refused dial announces the missing target"
 	)
 	client.free()
+	_done()
 
 
 func _test_timer_dial_sync_refusal_arms_next_attempt_once() -> void:
@@ -451,6 +472,7 @@ func _test_timer_dial_sync_refusal_arms_next_attempt_once() -> void:
 	_assert_equal(OK, _wait_open(client), "retry after refused dial")
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_late_baseline_while_closing_is_ignored() -> void:
@@ -476,6 +498,7 @@ func _test_late_baseline_while_closing_is_ignored() -> void:
 	_assert_equal(OK, client.close(1000, "bye"), "user close")
 	_assert(client._context_auth_token.is_empty(), "the user close clears the identity")
 	client.free()
+	_done()
 
 
 func _test_auto_reconnect_backoff_growth_bounds() -> void:
@@ -503,6 +526,7 @@ func _test_auto_reconnect_backoff_growth_bounds() -> void:
 			"attempt %d open" % attempt
 		)
 	client.free()
+	_done()
 
 
 func _test_auto_reconnect_stops_on_terminal_codes() -> void:
@@ -541,6 +565,7 @@ func _test_auto_reconnect_stops_on_terminal_codes() -> void:
 		_assert_equal(not case[2], dialed, "%s: retry decision" % case[0])
 		_assert_no_protocol_errors()
 		client.free()
+	_done()
 
 
 func _test_auto_reconnect_retries_after_transport_failure() -> void:
@@ -562,6 +587,7 @@ func _test_auto_reconnect_retries_after_transport_failure() -> void:
 	_assert_equal(OK, _wait_open(client), "retry after failed dial")
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_user_close_mid_dial_stops_retrying() -> void:
@@ -590,6 +616,7 @@ func _test_user_close_mid_dial_stops_retrying() -> void:
 	)
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_close_cancels_pending_retry_timer() -> void:
@@ -606,6 +633,7 @@ func _test_close_cancels_pending_retry_timer() -> void:
 	)
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_handler_redial_failure_burns_one_attempt() -> void:
@@ -627,6 +655,7 @@ func _test_handler_redial_failure_burns_one_attempt() -> void:
 	_assert_equal(1, failures.size(), "inner dial failure surfaced once")
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_close_from_connection_failed_handler_wins_over_retry() -> void:
@@ -646,6 +675,7 @@ func _test_close_from_connection_failed_handler_wins_over_retry() -> void:
 	)
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_double_nested_close_cascade_wins_over_retry() -> void:
@@ -671,6 +701,7 @@ func _test_double_nested_close_cascade_wins_over_retry() -> void:
 	_assert(not client._user_close_requested, "a fresh dial clears the settled intent")
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_scheme_refused_reconnect_drops_dial_credentials() -> void:
@@ -689,6 +720,7 @@ func _test_scheme_refused_reconnect_drops_dial_credentials() -> void:
 	_assert_equal("", client._reconnect_auth_token, "token dropped on refusal")
 	_assert(client._secrets.has(TOKEN_V1), "dropped token stays redacted")
 	client.free()
+	_done()
 
 
 func _test_duplicate_authenticated_sends_handshake_once() -> void:
@@ -730,6 +762,7 @@ func _test_duplicate_authenticated_sends_handshake_once() -> void:
 	)
 	_assert_no_protocol_errors()
 	reconnected_client.free()
+	_done()
 
 
 func _test_duplicate_reconnected_is_fully_silent() -> void:
@@ -756,6 +789,7 @@ func _test_duplicate_reconnected_is_fully_silent() -> void:
 	)
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_dial_contract_survives_authentication_error() -> void:
@@ -806,6 +840,7 @@ func _test_dial_contract_survives_authentication_error() -> void:
 	)
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_duplicate_protocol_info_is_fully_silent() -> void:
@@ -828,6 +863,7 @@ func _test_duplicate_protocol_info_is_fully_silent() -> void:
 	_assert_equal(1, emissions.size(), "protocol_info emitted once per dial")
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_handshake_send_failure_resolves_attempt() -> void:
@@ -877,6 +913,7 @@ func _test_handshake_send_failure_resolves_attempt() -> void:
 	)
 	_assert_equal(1, retry_errors.size(), "exactly the transport diagnostic")
 	reconnector.free()
+	_done()
 
 
 func _test_handshake_send_failure_killing_link_cascades() -> void:
@@ -912,6 +949,7 @@ func _test_handshake_send_failure_killing_link_cascades() -> void:
 	_assert_equal(1, errors.size(), "exactly the send diagnostic")
 	_assert_string_contains(errors[0], "send failed", "send diagnostic")
 	client.free()
+	_done()
 
 
 func _test_refused_authenticate_resolves_the_dial() -> void:
@@ -955,6 +993,7 @@ func _test_refused_authenticate_resolves_the_dial() -> void:
 		SignalFishClientScript.ConnectionState.FAILED, killed.get_connection_state(), "ends FAILED"
 	)
 	killed.free()
+	_done()
 
 
 func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:
@@ -983,12 +1022,14 @@ func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:
 	_assert_no_protocol_errors()
 	client.free()
 
-
 ## The exhaustion notice is emitted synchronously: a consumer redialing from
 ## its handler captures a fresh retained identity that the post-emit drop
 ## must not clobber — and that manual dial's later death must still engage
 ## auto-reconnect (with a fresh exhaustion notice) instead of silent-dead-
 ## ending it.
+	_done()
+
+
 func _test_redial_from_exhaustion_handler_keeps_the_fresh_identity() -> void:
 	var client := _make_client(true, "token")
 	client._config.reconnect_max_attempts = 1
@@ -1054,6 +1095,7 @@ func _test_redial_from_exhaustion_handler_keeps_the_fresh_identity() -> void:
 	)
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_close_from_disconnected_handler_wins_over_retry() -> void:
@@ -1070,6 +1112,7 @@ func _test_close_from_disconnected_handler_wins_over_retry() -> void:
 	)
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_failure_driven_exhaustion_and_budget_recovery() -> void:
@@ -1103,6 +1146,7 @@ func _test_failure_driven_exhaustion_and_budget_recovery() -> void:
 	_assert_equal(OK, _wait_open(client), "recovery after fresh baseline dials")
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
 
 
 func _test_reconnect_tokens_are_redacted() -> void:
@@ -1127,6 +1171,7 @@ func _test_reconnect_tokens_are_redacted() -> void:
 	_assert_no_protocol_errors()
 	reconnector.free()
 	client.free()
+	_done()
 
 
 func _make_config() -> SignalFishConfigScript:

@@ -11,6 +11,7 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 const SFWebRTCMeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
@@ -25,7 +26,12 @@ const STUN := {"urls": ["stun:stun.example:3478"]}
 const TURN := {"urls": ["turn:turn.example:3478"], "username": "alice", "credential": "turn-secret"}
 
 var _failures: Array = []
+var _test_done := false
 var _runner: Object = null
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run(runner: Variant) -> Array:
@@ -36,20 +42,24 @@ static func run(runner: Variant) -> Array:
 
 
 func run_all() -> void:
-	_test_engine_api_parity()
-	_test_uuid_mapping_is_deterministic()
-	_test_attach_and_detach_guards()
-	_test_plan_opens_peers_and_reports_boundaries()
-	_test_plan_replaces_fully()
-	_test_ice_replace_and_clear()
-	_test_signal_gates()
-	_test_new_peer_event_obey_flag()
-	_test_closing_window_suppresses_sends()
-	_test_transport_status_boundary_survives_backpressure()
-	_test_teardown_paths()
-	_test_dropped_peer_connections_are_freed()
-	_test_out_of_tree_free_does_not_leak()
-	_test_mesh_survives_engine_hostility()
+	var cases: Array[Callable] = [
+		_test_engine_api_parity,
+		_test_uuid_mapping_is_deterministic,
+		_test_attach_and_detach_guards,
+		_test_plan_opens_peers_and_reports_boundaries,
+		_test_plan_replaces_fully,
+		_test_ice_replace_and_clear,
+		_test_signal_gates,
+		_test_new_peer_event_obey_flag,
+		_test_closing_window_suppresses_sends,
+		_test_transport_status_boundary_survives_backpressure,
+		_test_teardown_paths,
+		_test_dropped_peer_connections_are_freed,
+		_test_out_of_tree_free_does_not_leak,
+		_test_mesh_survives_engine_hostility,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 func _test_engine_api_parity() -> void:
@@ -74,6 +84,7 @@ func _test_engine_api_parity() -> void:
 			ClassDB.class_has_method("WebRTCPeerConnection", method),
 			"WebRTCPeerConnection.%s exists" % method
 		)
+	_done()
 
 
 func _make_mesh() -> SFWebRTCMeshScript:
@@ -181,6 +192,7 @@ func _test_uuid_mapping_is_deterministic() -> void:
 	for uuid: String in [PLAYER_A, PLAYER_B, PLAYER_C, PLAYER_D, ""]:
 		var id: int = SFWebRTCMeshScript.uuid_to_peer_id(uuid)
 		_assert(id >= 2 and id < 2147483648, "id in the valid non-server range for %s" % uuid)
+	_done()
 
 
 func _test_attach_and_detach_guards() -> void:
@@ -204,6 +216,7 @@ func _test_attach_and_detach_guards() -> void:
 	_attach(second, second_client)
 	second.free()
 	second_client.free()
+	_done()
 
 
 func _test_plan_opens_peers_and_reports_boundaries() -> void:
@@ -307,6 +320,7 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 	_assert_equal(0, errors.size(), "happy path emits no protocol errors")
 	mesh.free()
 	client.free()
+	_done()
 
 
 func _test_plan_replaces_fully() -> void:
@@ -366,6 +380,7 @@ func _test_plan_replaces_fully() -> void:
 	_assert_equal(5, multiplayer.added.size(), "no peer opened for the direct plan")
 	mesh.free()
 	client.free()
+	_done()
 
 
 func _test_ice_replace_and_clear() -> void:
@@ -386,6 +401,7 @@ func _test_ice_replace_and_clear() -> void:
 	_assert(clear_pc.closed, "previous-generation peer rebuilt")
 	mesh.free()
 	client.free()
+	_done()
 
 
 func _test_signal_gates() -> void:
@@ -427,6 +443,7 @@ func _test_signal_gates() -> void:
 	_assert_equal(0, mesh.get_peer_count(), "relay gate holds")
 	mesh.free()
 	client.free()
+	_done()
 
 
 func _test_new_peer_event_obey_flag() -> void:
@@ -455,6 +472,7 @@ func _test_new_peer_event_obey_flag() -> void:
 	_assert_equal(0, mesh.get_peer_count(), "relay plan gates new_peer")
 	mesh.free()
 	client.free()
+	_done()
 
 
 func _test_closing_window_suppresses_sends() -> void:
@@ -485,11 +503,13 @@ func _test_closing_window_suppresses_sends() -> void:
 	mesh.free()
 	client.free()
 
-
 ## Issue #102: a boundary report refused under backpressure must stay armed —
 ## it retries (throttled to one attempt per interval, like the heartbeat's
 ## backpressured beats) instead of the edge being consumed and the report
 ## lost for the session.
+	_done()
+
+
 func _test_transport_status_boundary_survives_backpressure() -> void:
 	var client := _make_in_room_client()
 	var errors := _track_protocol_errors(client)
@@ -589,6 +609,7 @@ func _test_transport_status_boundary_survives_backpressure() -> void:
 	)
 	flap_mesh.free()
 	flap_client.free()
+	_done()
 
 
 func _test_teardown_paths() -> void:
@@ -694,11 +715,13 @@ func _test_teardown_paths() -> void:
 	exit_mesh.free()
 	exit_client.free()
 
-
 ## Issue #86: the signal lambdas capture the mesh entry and the entry holds
 ## the connection, so an undisconnected signal is a RefCounted cycle — every
 ## rebuilt peer used to leak its WebRTCPeerConnection. Godot frees RefCounted
 ## at zero refs, so a weakref must go dead immediately after the drop.
+	_done()
+
+
 func _test_dropped_peer_connections_are_freed() -> void:
 	var mesh := _make_mesh()
 	var client := _make_in_room_client()
@@ -721,10 +744,12 @@ func _test_dropped_peer_connections_are_freed() -> void:
 	mesh.free()
 	client.free()
 
-
 ## The #86 cycle must also die when a mesh holding live peers is discarded
 ## without a teardown path: freed while outside the tree, so `_exit_tree`
 ## never runs and only `NOTIFICATION_PREDELETE` can reset the mesh.
+	_done()
+
+
 func _test_out_of_tree_free_does_not_leak() -> void:
 	var mesh := _make_mesh()
 	var client := _make_in_room_client()
@@ -742,6 +767,7 @@ func _test_out_of_tree_free_does_not_leak() -> void:
 	mesh.free()
 	_assert(witness.get_ref() == null, "an out-of-tree free releases the peer cluster")
 	client.free()
+	_done()
 
 
 func _test_mesh_survives_engine_hostility() -> void:
@@ -788,6 +814,7 @@ func _test_mesh_survives_engine_hostility() -> void:
 	_assert_equal(1, zombie_mesh.get_peer_count(), "fresh client drives the mesh")
 	zombie_mesh.free()
 	fresh_client.free()
+	_done()
 
 
 func _assert(condition: bool, label: String) -> bool:

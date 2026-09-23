@@ -9,11 +9,17 @@ extends RefCounted
 const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
 const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const PLAYER_B_BYTES: Array = [0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02]
 
 var _failures: Array = []
+var _test_done := false
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run() -> Array:
@@ -23,16 +29,20 @@ static func run() -> Array:
 
 
 func run_all() -> void:
-	_test_msgpack_decode_vectors()
-	_test_msgpack_hostile_vectors()
-	_test_msgpack_utf8_decode()
-	_test_msgpack_encode_widths()
-	_test_msgpack_non_finite_refusal()
-	_test_msgpack_round_trip_matrix()
-	_test_v2_envelope_canonical_bytes()
-	_test_envelope_variant_matrix()
-	_test_envelope_hostile_matrix()
-	_test_v3_envelope_matrix()
+	var cases: Array[Callable] = [
+		_test_msgpack_decode_vectors,
+		_test_msgpack_hostile_vectors,
+		_test_msgpack_utf8_decode,
+		_test_msgpack_encode_widths,
+		_test_msgpack_non_finite_refusal,
+		_test_msgpack_round_trip_matrix,
+		_test_v2_envelope_canonical_bytes,
+		_test_envelope_variant_matrix,
+		_test_envelope_hostile_matrix,
+		_test_v3_envelope_matrix,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 func _test_msgpack_decode_vectors() -> void:
@@ -87,6 +97,7 @@ func _test_msgpack_decode_vectors() -> void:
 		if not _assert(result_ok, true, "decode %s succeeds" % vector["label"]):
 			continue
 		_assert_equal(vector["want"], result["value"], "decode %s value" % vector["label"])
+	_done()
 
 
 func _test_msgpack_hostile_vectors() -> void:
@@ -126,10 +137,12 @@ func _test_msgpack_hostile_vectors() -> void:
 	var at_cap_decode_ok: bool = at_cap_decode["ok"]
 	_assert(at_cap_decode_ok, true, "nesting at the cap decodes")
 
-
 ## Issue #99: get_string() maps bytes 1:1 to code points; only the UTF-8
 ## variant decodes multi-byte strings and degrades hostile bytes to the
 ## replacement character the class doc promises.
+	_done()
+
+
 func _test_msgpack_utf8_decode() -> void:
 	var valid := PackedByteArray([0xA6]) + "héllo".to_utf8_buffer()
 	var valid_decode: Dictionary = SFMsgpackScript.decode(valid)
@@ -155,6 +168,7 @@ func _test_msgpack_utf8_decode() -> void:
 			true,
 			"invalid UTF-8 does not surface byte-identity code points"
 		)
+	_done()
 
 
 func _test_msgpack_encode_widths() -> void:
@@ -192,6 +206,7 @@ func _test_msgpack_encode_widths() -> void:
 	var object_result: Dictionary = SFMsgpackScript.encode(RefCounted.new())
 	var object_result_ok: bool = object_result["ok"]
 	_assert(object_result_ok, false, "objects are rejected")
+	_done()
 
 
 func _test_msgpack_non_finite_refusal() -> void:
@@ -243,6 +258,7 @@ func _test_msgpack_non_finite_refusal() -> void:
 		var finite_decode: Dictionary = SFMsgpackScript.decode(_packed(finite_bytes))
 		var finite_decode_ok: bool = finite_decode["ok"]
 		_assert(finite_decode_ok, true, "decode %s still works" % vector[0])
+	_done()
 
 
 func _test_msgpack_round_trip_matrix() -> void:
@@ -285,6 +301,7 @@ func _test_msgpack_round_trip_matrix() -> void:
 		if not _assert(decoded_ok, true, "round-trip decode %s" % var_to_str(value)):
 			continue
 		_assert_equal(value, decoded["value"], "round-trip value %s" % var_to_str(value))
+	_done()
 
 
 func _test_v2_envelope_canonical_bytes() -> void:
@@ -313,6 +330,7 @@ func _test_v2_envelope_canonical_bytes() -> void:
 	)
 	_assert_equal(_packed([0xDE, 0xAD]), result["payload"], "canonical v2 payload")
 	_assert_equal(2, result["version"], "canonical v2 version")
+	_done()
 
 
 func _test_envelope_variant_matrix() -> void:
@@ -342,6 +360,7 @@ func _test_envelope_variant_matrix() -> void:
 			"%s encoding" % case["label"]
 		)
 		_assert_equal(2, result["version"], "%s version" % case["label"])
+	_done()
 
 
 func _test_envelope_hostile_matrix() -> void:
@@ -512,6 +531,7 @@ func _test_envelope_hostile_matrix() -> void:
 		_assert(result_ok, false, "%s is rejected" % case["label"])
 		var result_error: String = result["error"]
 		_assert(not result_error.is_empty(), true, "%s explains itself" % case["label"])
+	_done()
 
 
 func _test_v3_envelope_matrix() -> void:
@@ -575,9 +595,11 @@ func _test_v3_envelope_matrix() -> void:
 			SFTypesScript.GameDataEncoding.MESSAGE_PACK, result["encoding"], "str8 token encoding"
 		)
 
-
 ## Concatenates ordered field byte arrays, prefixing a fixmap header sized to
 ## the field count (unless an explicit header override is provided).
+	_done()
+
+
 func _envelope(fields: Array, header_override: Array = []) -> PackedByteArray:
 	var bytes := PackedByteArray()
 	if header_override.is_empty():

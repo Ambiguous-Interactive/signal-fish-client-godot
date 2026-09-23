@@ -11,9 +11,10 @@ max-public-methods: 30
 # max-file-lines: the headless test runners are single-file SceneTree scripts
 # with table-driven cases; the limit keeps each transport area in one runner
 # (raised to 1250 when the largest runner crossed 1200, to 1320 when the
-# client gained the PLAN §4.7 heartbeat and its suites) without inviting
+# client gained the PLAN §4.7 heartbeat and its suites, to 1400 when every
+# test gained the issue-#104 completion sentinel) without inviting
 # unbounded growth.
-max-file-lines: 1320
+max-file-lines: 1400
 
 # max-returns: the headless smoke runner sequences async waits with
 # early-return guards so a timed-out step skips every dependent step; the

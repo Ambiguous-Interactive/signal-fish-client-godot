@@ -13,15 +13,21 @@ const V3ProtocolTestsScript = preload("res://tests/protocol/v3_protocol_tests.gd
 const UpstreamSamplesTestsScript = preload("res://tests/protocol/upstream_samples_tests.gd")
 const DuplicateKeyTestsScript = preload("res://tests/protocol/duplicate_key_tests.gd")
 const ConstructorCoercionTestsScript = preload("res://tests/protocol/constructor_coercion_tests.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const CLIENT_FIXTURE := "res://tests/fixtures/v2_client_messages.jsonl"
 const SERVER_FIXTURE := "res://tests/fixtures/v2_server_messages.jsonl"
 const MALFORMED_FIXTURE := "res://tests/fixtures/malformed.jsonl"
 
 var _failures: Array = []
+var _test_done := false
 # Completion sentinel: an abort inside _run() skips quit() and would
 # otherwise hang CI instead of reporting a red result.
 var _run_completed := false
+
+
+func _done() -> void:
+	_test_done = true
 
 
 func _init() -> void:
@@ -66,15 +72,20 @@ func _run() -> void:
 	if not _helper_suites_are_loadable():
 		_failures.append("helper suites failed to load")
 		return
-	_test_client_encoders_match_fixtures()
-	_test_server_decoders_match_fixtures()
-	_test_malformed_inputs_decode_to_protocol_error()
-	_test_binary_codec_accepts_base64_payload()
-	_test_upstream_optional_fields_decode()
-	_test_allowed_symbols_widen_parity()
-	_test_strict_protocol_validation()
-	_test_protocol_error_diagnostics()
-	_test_error_code_table()
+	var cases: Array[Callable] = [
+		_test_client_encoders_match_fixtures,
+		_test_server_decoders_match_fixtures,
+		_test_malformed_inputs_decode_to_protocol_error,
+		_test_binary_codec_accepts_base64_payload,
+		_test_upstream_optional_fields_decode,
+		_test_allowed_symbols_widen_parity,
+		_test_strict_protocol_validation,
+		_test_protocol_error_diagnostics,
+		_test_error_code_table,
+	]
+	CompletionGuard.self_check(self, _failures)
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 	_failures.append_array(ProtocolHardeningTestsScript.run())
 	_failures.append_array(WrongTypedTokenTestsScript.run())
 	_failures.append_array(BinaryFrameTestsScript.run())
@@ -122,6 +133,7 @@ func _test_allowed_symbols_widen_parity() -> void:
 			SFTypesScript.validate_player_name_rules(envelope["data"]["player_name_rules"]),
 			"%s: validates" % shape[0]
 		)
+	_done()
 
 
 func _test_client_encoders_match_fixtures() -> void:
@@ -158,6 +170,7 @@ func _test_client_encoders_match_fixtures() -> void:
 		var message: Dictionary = built[index]
 		var encoded := SFEnvelopeScript.encode(message)
 		_assert_equal(lines[index], encoded, "%s line %d" % [CLIENT_FIXTURE, index + 1])
+	_done()
 
 
 func _test_server_decoders_match_fixtures() -> void:
@@ -474,6 +487,7 @@ func _test_server_decoders_match_fixtures() -> void:
 	_assert_equal(
 		SFErrorCodesScript.Code.MESSAGE_TOO_LARGE, server_error.args[1], "server error code"
 	)
+	_done()
 
 
 func _test_malformed_inputs_decode_to_protocol_error() -> void:
@@ -527,6 +541,7 @@ func _test_malformed_inputs_decode_to_protocol_error() -> void:
 		var envelope: Dictionary = test_case["envelope"]
 		var label: String = test_case["label"]
 		_assert_protocol_error_envelope(envelope, label)
+	_done()
 
 
 func _test_binary_codec_accepts_base64_payload() -> void:
@@ -538,6 +553,7 @@ func _test_binary_codec_accepts_base64_payload() -> void:
 	)
 	_assert_equal("game_data_binary_received", String(padded.signal_name), "base64 binary event")
 	_assert_equal(PackedByteArray([202, 254]), padded.args[2], "base64 binary payload")
+	_done()
 
 
 func _test_upstream_optional_fields_decode() -> void:
@@ -731,6 +747,7 @@ func _test_upstream_optional_fields_decode() -> void:
 		disconnected_null_reason.args[1],
 		"spectator disconnected null reason value"
 	)
+	_done()
 
 
 func _test_strict_protocol_validation() -> void:
@@ -854,6 +871,7 @@ func _test_strict_protocol_validation() -> void:
 		var envelope: Dictionary = test_case["envelope"]
 		var label: String = test_case["label"]
 		_assert_protocol_error_envelope(envelope, label)
+	_done()
 
 
 func _test_protocol_error_diagnostics() -> void:
@@ -891,11 +909,13 @@ func _test_protocol_error_diagnostics() -> void:
 		bad_missed_event_decoded, "missed_events[0]", "missed event index"
 	)
 
-
 ## Data-driven sweep over the whole wire table (issue #26): every enum token
 ## must round-trip through both string conversions and own a category, so a
 ## future append can never silently decode to UNKNOWN or land in the wrong
 ## bucket. Category spot pins guard the upstream-doc grouping semantics.
+	_done()
+
+
 func _test_error_code_table() -> void:
 	_assert_equal(
 		SFTypesScript.GameDataEncoding.UNKNOWN,
@@ -1032,6 +1052,7 @@ func _test_error_code_table() -> void:
 		"UNKNOWN token stays UNKNOWN"
 	)
 	_assert_equal("", SFErrorCodesScript.to_wire_string(SFErrorCodesScript.Code.NONE), "none wire")
+	_done()
 
 
 func _minimal_spectator_joined_data() -> Dictionary:

@@ -12,9 +12,15 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
+var _test_done := false
 var _runner: Object = null
+
+
+func _done() -> void:
+	_test_done = true
 
 
 static func run(runner: Variant) -> Array:
@@ -25,11 +31,15 @@ static func run(runner: Variant) -> Array:
 
 
 func run_all() -> void:
-	_test_v3_config_advertises_capabilities()
-	_test_v3_events_surface()
-	_test_v3_send_methods()
-	_test_connect_token_reaches_wire()
-	_test_encode_boundary_refuses_unserializable_payload()
+	var cases: Array[Callable] = [
+		_test_v3_config_advertises_capabilities,
+		_test_v3_events_surface,
+		_test_v3_send_methods,
+		_test_connect_token_reaches_wire,
+		_test_encode_boundary_refuses_unserializable_payload,
+	]
+	CompletionGuard.drive(self, cases, _failures)
+	CompletionGuard.check_registration(self, cases, _failures)
 
 
 func _make_config() -> SignalFishConfigScript:
@@ -108,6 +118,7 @@ func _test_v3_config_advertises_capabilities() -> void:
 		"default config keeps v2 authenticate bytes"
 	)
 	v2_client.free()
+	_done()
 
 
 func _test_v3_events_surface() -> void:
@@ -241,6 +252,7 @@ func _test_v3_events_surface() -> void:
 	var relay_plan: SFSessionTypesScript.SessionPlanInfo = plans[1]
 	_assert_equal(0, relay_plan.peers.size(), "relay reset plan has no peers")
 	client.free()
+	_done()
 
 
 func _test_v3_send_methods() -> void:
@@ -291,6 +303,7 @@ func _test_v3_send_methods() -> void:
 	)
 	_assert_equal(before + 3, fake.sent_text.size(), "refused sends put nothing on the wire")
 	client.free()
+	_done()
 
 
 func _test_connect_token_reaches_wire() -> void:
@@ -330,11 +343,13 @@ func _test_connect_token_reaches_wire() -> void:
 		SFMessagesScript.validation_error(wrong_type), "connect_token", "error names the field"
 	)
 
-
 ## Issue #76: the encode boundary is the last-resort JSON-shape net. A
 ## payload that skips the builder whitelist (ConnectionInfo.custom.data)
 ## must surface as ERR_INVALID_DATA + protocol_error with nothing on the
 ## wire — never as an empty text frame.
+	_done()
+
+
 func _test_encode_boundary_refuses_unserializable_payload() -> void:
 	var client := _make_authenticated_client()
 	var fake: SFFakeTransportScript = client.transport
@@ -355,6 +370,7 @@ func _test_encode_boundary_refuses_unserializable_payload() -> void:
 	_assert_equal(OK, client.provide_connection_info(stringy), "JSON custom data accepted")
 	_assert_equal(baseline + 1, fake.sent_text.size(), "accepted payload sends exactly one frame")
 	client.free()
+	_done()
 
 
 func _assert_string_contains(actual: String, expected_substring: String, label: String) -> bool:
