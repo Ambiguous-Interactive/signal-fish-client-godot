@@ -45,6 +45,7 @@ func run_all() -> void:
 	_test_signal_gates()
 	_test_new_peer_event_obey_flag()
 	_test_closing_window_suppresses_sends()
+	_test_transport_status_boundary_survives_backpressure()
 	_test_teardown_paths()
 	_test_dropped_peer_connections_are_freed()
 	_test_out_of_tree_free_does_not_leak()
@@ -483,6 +484,111 @@ func _test_closing_window_suppresses_sends() -> void:
 	_assert_equal(0, errors.size(), "closing window emits no spurious protocol errors")
 	mesh.free()
 	client.free()
+
+
+## Issue #102: a boundary report refused under backpressure must stay armed —
+## it retries (throttled to one attempt per interval, like the heartbeat's
+## backpressured beats) instead of the edge being consumed and the report
+## lost for the session.
+func _test_transport_status_boundary_survives_backpressure() -> void:
+	var client := _make_in_room_client()
+	var errors := _track_protocol_errors(client)
+	var mesh := _make_mesh()
+	mesh.transport_status_retry_msec = 0
+	_attach(mesh, client)
+	_inject_plan(client, [_peer(PLAYER_B, true)])
+	var pc: FakePeerConnection = _mesh_peers(mesh)[0]
+	var fake_transport: SFFakeTransportScript = client.transport
+	var baseline: int = fake_transport.sent_text.size()
+	var status_true := SFMessagesScript.encode(
+		SFMessagesScript.transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true)
+	)
+
+	pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
+	fake_transport.buffered_amount = 262145  # over the client's 256 KiB cap
+	mesh.poll()
+	_assert_equal(baseline, fake_transport.sent_text.size(), "backpressured report not sent")
+	_assert_equal(1, errors.size(), "backpressure surfaces loudly")
+
+	fake_transport.buffered_amount = 0
+	mesh.poll()
+	_assert_equal([status_true], _sent_after(client, baseline), "report rides the next update")
+	mesh.poll()
+	_assert_equal(baseline + 1, fake_transport.sent_text.size(), "no duplicate after success")
+	_assert_equal([], errors.slice(1), "no further errors")
+
+	# The disconnect edge re-arms the same way (issue #102).
+	var status_false := SFMessagesScript.encode(
+		SFMessagesScript.transport_status(SFSessionTypesScript.TransportKind.WEBRTC, false)
+	)
+	pc.state = 4  # WebRTCPeerConnection.STATE_FAILED
+	fake_transport.buffered_amount = 262145
+	mesh.poll()
+	_assert_equal(
+		baseline + 1, fake_transport.sent_text.size(), "backpressured disconnect report not sent"
+	)
+	fake_transport.buffered_amount = 0
+	mesh.poll()
+	_assert_equal([status_false], _sent_after(client, baseline + 1), "disconnect report retried")
+	mesh.free()
+	client.free()
+
+	# A refused retry waits out its interval instead of erroring per frame.
+	var throttled_client := _make_in_room_client()
+	var throttled_errors := _track_protocol_errors(throttled_client)
+	var throttled_mesh := _make_mesh()
+	throttled_mesh.transport_status_retry_msec = 60000
+	_attach(throttled_mesh, throttled_client)
+	_inject_plan(throttled_client, [_peer(PLAYER_B, true)])
+	var throttled_pc: FakePeerConnection = _mesh_peers(throttled_mesh)[0]
+	var throttled_transport: SFFakeTransportScript = throttled_client.transport
+	var throttled_baseline: int = throttled_transport.sent_text.size()
+	throttled_pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
+	throttled_transport.buffered_amount = 262145
+	throttled_mesh.poll()
+	throttled_mesh.poll()
+	throttled_mesh.poll()
+	_assert_equal(
+		throttled_baseline,
+		throttled_transport.sent_text.size(),
+		"throttled report stays silent for the interval"
+	)
+	_assert_equal(1, throttled_errors.size(), "throttle surfaces one error per interval")
+	throttled_mesh.free()
+	throttled_client.free()
+
+	# A flap that resolves the edge drops the leftover retry deadline, so the
+	# next genuine edge reports immediately instead of waiting out the
+	# interval.
+	var flap_client := _make_in_room_client()
+	var flap_errors := _track_protocol_errors(flap_client)
+	var flap_mesh := _make_mesh()
+	flap_mesh.transport_status_retry_msec = 60000
+	_attach(flap_mesh, flap_client)
+	_inject_plan(flap_client, [_peer(PLAYER_B, true)])
+	var flap_pc: FakePeerConnection = _mesh_peers(flap_mesh)[0]
+	var flap_transport: SFFakeTransportScript = flap_client.transport
+	var flap_baseline: int = flap_transport.sent_text.size()
+	flap_pc.state = 2  # WebRTCPeerConnection.STATE_CONNECTED
+	flap_transport.buffered_amount = 262145
+	flap_mesh.poll()
+	_assert_equal(1, flap_errors.size(), "flap: first report refused")
+	flap_pc.state = 0  # back to NEW: the edge resolves itself
+	flap_mesh.poll()
+	flap_pc.state = 2
+	flap_transport.buffered_amount = 0
+	flap_mesh.poll()
+	_assert_equal(
+		[
+			SFMessagesScript.encode(
+				SFMessagesScript.transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true)
+			)
+		],
+		_sent_after(flap_client, flap_baseline),
+		"flap: fresh edge reports immediately"
+	)
+	flap_mesh.free()
+	flap_client.free()
 
 
 func _test_teardown_paths() -> void:

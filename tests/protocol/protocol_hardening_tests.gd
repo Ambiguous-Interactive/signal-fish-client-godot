@@ -543,6 +543,17 @@ func _test_connection_info_to_dict_resend_canonicalization() -> void:
 	_assert_valid_message(
 		SFMessagesScript.provide_connection_info(webrtc_dict), "resend webrtc to_dict"
 	)
+	# Issue #97: a wrong-typed candidate stays in the resent dict verbatim so
+	# the outbound validation refuses the frame loudly instead of the
+	# constructor silently laundering a shorter array onto the wire.
+	var hostile_candidates_info := SFTypesScript.ConnectionInfo.new(
+		{"type": "webrtc", "sdp": "s", "ice_candidates": ["candidate:1", 42]}
+	)
+	_assert_invalid_message(
+		SFMessagesScript.provide_connection_info(hostile_candidates_info.to_dict()),
+		"ice_candidates",
+		"resend hostile webrtc candidates"
+	)
 
 	var player_info := SFTypesScript.PlayerInfo.new(
 		_with_overrides(_minimal_player_data(), {"connection_info": relay_raw})

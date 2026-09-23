@@ -51,6 +51,7 @@ func _run() -> void:
 	_test_websocket_connecting_close_surfaces_caller_reason()
 	_test_websocket_read_error_is_terminal_once()
 	_test_websocket_closed_state_delivers_queued_packets()
+	_test_close_at_closed_drains_queued_packets()
 	_run_completed = true
 
 
@@ -614,6 +615,83 @@ func _redial_packet_handler(_payload: PackedByteArray, _is_text: bool) -> void:
 	fresh.ready_state = WebSocketPeer.STATE_CONNECTING
 	_redial_transport._peer = fresh
 	_redial_transport._reset_session_flags()
+
+
+## Issue #101: an explicit close() at STATE_CLOSED must honor the same
+## issue-#70 drain contract as the poll path instead of dropping the queue.
+func _test_close_at_closed_drains_queued_packets() -> void:
+	var message := "kicked".to_utf8_buffer()
+	var second := "last".to_utf8_buffer()
+	# Cases: [label, queued packets, per-poll cap, expected packets after
+	# close, expected events after close].
+	var cases := [
+		[
+			"close drains queued packets before closed",
+			[message],
+			64,
+			1,
+			["opened", ["closed", 1000, "gone"]],
+		],
+		[
+			"close defers closed while the cap leaves packets queued",
+			[message, second],
+			1,
+			1,
+			["opened"],
+		],
+	]
+	for case: Array in cases:
+		var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+		var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+		transport._peer = peer
+		transport.max_packets_per_poll = case[2]
+		var events: Array = []
+		var packets: Array = []
+		transport.opened.connect(func() -> void: events.append("opened"))
+		transport.failed.connect(func(_error: String) -> void: events.append("failed"))
+		transport.closed.connect(
+			func(code: int, reason: String) -> void: events.append(["closed", code, reason])
+		)
+		transport.packet_received.connect(
+			func(_payload: PackedByteArray, _is_text: bool) -> void: packets.append("packet")
+		)
+		peer.ready_state = WebSocketPeer.STATE_OPEN
+		transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
+		peer.ready_state = WebSocketPeer.STATE_CLOSED
+		peer.close_code = 1000
+		peer.close_reason = "gone"
+		var queued: Array = case[1]
+		peer.packets = queued.duplicate()
+		transport.close(1000, "consumer")
+		_assert_equal(case[3], packets.size(), "%s: packets after close" % case[0])
+		_assert_equal(case[4], events, "%s: events after close" % case[0])
+		if events.has(["closed", 1000, "gone"]):
+			continue
+		# The deferred remainder resurfaces on the consumer's next poll.
+		transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+		_assert_equal(2, packets.size(), "%s: packets after follow-up poll" % case[0])
+		_assert_equal(
+			["opened", ["closed", 1000, "gone"]],
+			events,
+			"%s: events after follow-up poll" % case[0]
+		)
+	# A read error during the close-drain fails the session instead of
+	# emitting `closed` — the shared drain mirrors the poll path.
+	var error_transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	var error_peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+	error_transport._peer = error_peer
+	var error_events: Array = []
+	error_transport.failed.connect(func(_error: String) -> void: error_events.append("failed"))
+	error_transport.closed.connect(
+		func(_code: int, _reason: String) -> void: error_events.append("closed")
+	)
+	error_peer.ready_state = WebSocketPeer.STATE_OPEN
+	error_transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
+	error_peer.ready_state = WebSocketPeer.STATE_CLOSED
+	error_peer.packets = [PackedByteArray([1])]
+	error_peer.packet_errors = [ERR_FILE_CORRUPT]
+	error_transport.close(1000, "consumer")
+	_assert_equal(["failed"], error_events, "read error during close-drain is terminal once")
 
 
 func _assert(condition: bool, label: String) -> bool:

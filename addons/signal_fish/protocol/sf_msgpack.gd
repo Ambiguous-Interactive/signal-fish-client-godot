@@ -201,7 +201,9 @@ static func _read_sized_string(
 static func _read_string(peer: StreamPeerBuffer, length: int, failure: Array[String]) -> Variant:
 	if peer.get_available_bytes() < length:
 		return _fail(failure, "truncated MessagePack string")
-	return peer.get_string(length)
+	# get_string() maps bytes 1:1 to code points (issue #99); only the UTF-8
+	# variant implements the documented replacement-character leniency.
+	return peer.get_utf8_string(length)
 
 
 static func _read_binary(

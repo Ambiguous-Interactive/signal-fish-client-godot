@@ -930,11 +930,15 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"authority_response":
 			authority_response.emit(event.args[0], event.args[1], event.args[2])
 		&"lobby_state_changed":
-			_lobby_state = event.args[0]
-			# Spectators receive lobby updates too; only players map lobby
-			# state onto in-room session states.
-			if _session_state != SessionState.SPECTATING:
-				_session_state = _session_state_for_lobby(_lobby_state)
+			# A lobby update is room-scoped (issue #100): without a room
+			# baseline an off-contract frame must not touch cached state —
+			# an in-room session state with no baseline would defeat the
+			# pre-auth send guard. Spectators receive lobby updates too; only
+			# players map lobby state onto in-room session states.
+			if not _room_id.is_empty():
+				_lobby_state = event.args[0]
+				if _session_state != SessionState.SPECTATING:
+					_session_state = _session_state_for_lobby(_lobby_state)
 			lobby_state_changed.emit(event.args[0], event.args[1], event.args[2])
 		&"game_starting":
 			# One-shot instruction event; session state stays FINALIZED.
@@ -1188,6 +1192,12 @@ func _schedule_auto_reconnect() -> void:
 		connection_failed.emit(
 			"auto-reconnect exhausted after %d attempt(s)" % _auto_reconnect_attempts
 		)
+		if _connection_state == ConnectionState.CONNECTING:
+			# A handler redialed during the notice — emission is synchronous,
+			# so the dial (and its fresh retained capture, issue #73) already
+			# happened. The wipe below must not clobber it, or the manual
+			# dial's later death would silent-dead-end auto-reconnect.
+			return
 		# The episode is over: drop the retained identity so no later event
 		# can re-enter scheduling (retries restart on a fresh baseline).
 		_context_player_id = ""

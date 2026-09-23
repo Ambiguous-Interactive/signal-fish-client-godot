@@ -51,7 +51,7 @@ class IceServerInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		urls = _coerce_strings(data.get("urls", []))
+		urls = SFTypeUtils.coerce_string_array(data.get("urls", []))
 		username = _string_or_empty(data.get("username"))
 		credential = _string_or_empty(data.get("credential"))
 
@@ -60,15 +60,6 @@ class IceServerInfo:
 
 	func _to_string() -> String:
 		return "IceServerInfo(%s)" % [", ".join(urls)]
-
-	func _coerce_strings(values: Variant) -> PackedStringArray:
-		var result := PackedStringArray()
-		if typeof(values) != TYPE_ARRAY:
-			return result
-		for value: Variant in values:
-			if typeof(value) == TYPE_STRING:
-				result.append(String(value))
-		return result
 
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:

@@ -201,7 +201,10 @@ static func _read_string_after_marker(peer: StreamPeerBuffer, marker: int) -> St
 		length = peer.get_u8() if width == 1 else (peer.get_u16() if width == 2 else peer.get_u32())
 	if length < 0 or peer.get_available_bytes() < length:
 		return ""
-	return peer.get_string(length)
+	# get_string() maps bytes 1:1 to code points (issue #99); only the UTF-8
+	# variant implements the documented replacement-character leniency, and
+	# corrupted tokens still fail their exact-match checks below.
+	return peer.get_utf8_string(length)
 
 
 static func _read_string_field(peer: StreamPeerBuffer) -> String:
