@@ -47,8 +47,20 @@
 > duplicate-key guard scans each inbound text frame before the engine
 > parse, so a repeated key — in any envelope or payload object, however
 > spelled after escape decoding — fails closed to `protocol_error` exactly
-> like upstream serde and the binary path; the scan adds ~0.5 ms at the
-> 256 KiB frame-cap bound.
+>   like upstream serde and the binary path; the scan adds ~0.5 ms at the
+>   256 KiB frame-cap bound. Session 036 (issues #95-#96) eliminated the
+>   residual #72-class constructor coercion on direct construction:
+>   wrong-typed booleans fail closed to the field's false sentinel (numeric
+>   wrong-types read `true` today and strings abort the constructor
+>   mid-way), and integer coercion is collapse-proof through a shared i64
+>   gate — `1e30` takes the absent sentinel, a hostile negative stays
+>   visible instead of clamping onto the 0 "absent" sentinel, and a
+>   laundered `client_id` can no longer round-trip back out through
+>   `to_dict()`. The self-tests CI job now runs its preflight gate
+>   concurrently with the suite (same checks, same gating, wall = max).
+>   §13 items 3/9 verified against upstream: the omitted
+>   `supports_authority` default is authority-enabled
+>   (`unwrap_or(true)`), matching the Godot omit default.
 > **Owner repo:** `Ambiguous-Interactive/signal-fish-client-godot`
 > **Target:** A beautiful, performant, easy-to-use **pure-GDScript** Godot 4 client for the
 > Signal Fish v2 protocol, shipped to the **Godot Asset Library via GitHub Actions** for
@@ -957,10 +969,13 @@ Resolve each by reading the cited upstream file at a specific commit during impl
    gates auto-reconnect via the retained context. See `.llm/skills/reconnection-replay.md`.
 2. **`missed_events` ordering / sequence numbers** — confirm guarantees in server reconnection module
    before any dedup/replay logic.
-3. **`SignalFishConfig` / `JoinRoomParams` exact fields + defaults** — client `client.rs`
-   (`game_data_format` defaults unset/client negotiates JSON unless requested, `relay_transport` is
-   optional/reserved, whether `sdk_version`/`platform` auto-filled). Godot outbound messages omit unset
-   optional fields per §4.3; still verify field defaults before the public config/resource lands.
+3. ~~**`SignalFishConfig` / `JoinRoomParams` exact fields + defaults**~~
+   **Resolved (2026-09-23):** rust client `JoinRoomParams` defaults every
+   optional to `None` → omitted on the wire (`protocol.rs`
+   `skip_serializing_if = "Option::is_none"`; `supports_authority.is_none()`
+   pinned upstream at `da8f2d1`), and `game_data_format: None` resolves to
+   JSON (`client_core.rs` `resolve_effective_game_data_format`). The Godot
+   zero-value/omit convention (§4.3) matches exactly.
 4. **Unit-variant serialization** — confirm server accepts both `{"type":"Ping"}` and
    `{"type":"Ping","data":null}` (decoder tolerates both regardless).
 5. **`RoomJoinedPayload` / `ReconnectedPayload` / `SpectatorJoinedPayload`** full field lists +
@@ -971,8 +986,13 @@ Resolve each by reading the cited upstream file at a specific commit during impl
    `Code.NONE` sentinel correctly).
 8. **Close-code conventions** — any app-specific WS close codes (4xxx) with meanings, before mapping to
    auto-reconnect decisions.
-9. **Authority default** — server `room_service.rs` defaults omitted `supports_authority` to `true`, while
-   docs imply omitted/false disables authority. Pick the Godot API default before P1 state-machine tests.
+9. ~~**Authority default**~~ **Resolved (2026-09-23):** the server's
+   omitted-`supports_authority` default is **true** —
+   `room_service.rs:585` `supports_authority.unwrap_or(true)` (upstream
+   `5af5fee`); `docs/concepts/authority.md` agrees ("Authority is enabled
+   by default"; the earlier "docs imply disabled" premise was stale). The
+   Godot default omits the field, so authority is enabled — same as the
+   rust client's `Option` default; pinned by a `join_room` omit test.
 10. **Cloud error-code drift** — server/Rust client use `STORAGE_ERROR`; cloud also exposes
     `DATABASE_ERROR`. Decide whether Godot maps cloud-only legacy codes to `UNKNOWN` or named aliases.
 
