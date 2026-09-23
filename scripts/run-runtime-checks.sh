@@ -96,16 +96,26 @@ make_cold_parent() {
 copy_cold_project() {
 	local cold_parent="$1"
 	local cold_project="${cold_parent}/project"
+	local manifest
+	manifest="$(mktemp)"
+	cleanup_paths+=("${manifest}")
 	mkdir -p "${cold_project}"
 
 	if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		while IFS= read -r -d '' path; do
-			if [[ ! -f "${path}" && ! -L "${path}" ]]; then
-				continue
-			fi
-			mkdir -p "${cold_project}/$(dirname "${path}")"
-			cp -Pp "${path}" "${cold_project}/${path}"
-		done < <(git ls-files --cached --others --exclude-standard -z)
+		# One tar stream per copy: packing the tracked+untracked file list once
+		# is several times faster than a per-file mkdir/cp loop, which used to
+		# dominate the wall of every suite boot. Files deleted in the working
+		# tree (rm, pre-staging) are skipped like the old loop did; tar errors
+		# stay loud through pipefail + set -e instead of shrinking the copy
+		# behind a zero exit.
+		git ls-files --cached --others --exclude-standard -z |
+			while IFS= read -r -d '' path; do
+				if [[ -f "${path}" || -L "${path}" ]]; then
+					printf '%s\0' "${path}"
+				fi
+			done >"${manifest}"
+		tar --null --files-from="${manifest}" --create --file=- |
+			tar --extract --file=- --directory="${cold_project}"
 	else
 		tar \
 			--exclude="./.git" \
@@ -129,6 +139,17 @@ run_godot_script() {
 	godot --headless --path "${cold_project}" --script "${script_path}"
 }
 
+_godot_command() {
+	local command_path="$1"
+	if [[ "${command_path}" == @demo ]]; then
+		godot --headless --path "${2}" --quit-after 3
+	elif [[ "${command_path}" == @p2p ]]; then
+		godot --headless --path "${2}" res://demo/p2p.tscn --quit-after 3
+	else
+		godot --headless --path "${2}" --script "${command_path}"
+	fi
+}
+
 _godot_worker() {
 	local command_path="$1"
 	local cold_parent cold_project
@@ -141,21 +162,12 @@ _godot_worker() {
 	# EXIT trap runs, so a quoted variable reference would clean nothing.
 	trap "rm -rf '${cold_parent}'" EXIT
 	cold_project="$(copy_cold_project "${cold_parent}")"
-	if [[ "${command_path}" == @demo ]]; then
-		godot --headless --path "${cold_project}" --quit-after 3
-	elif [[ "${command_path}" == @p2p ]]; then
-		godot --headless --path "${cold_project}" res://demo/p2p.tscn --quit-after 3
-	else
-		godot --headless --path "${cold_project}" --script "${command_path}"
-	fi
+	_godot_command "${command_path}" "${cold_project}"
 }
 
 run_godot() {
-	# Suites are independent processes; run them concurrently and report each
-	# suite's output verbatim after all finish (same pattern as run_static).
-	# Wall clock drops from the sum of engine boots to the slowest suite.
-	local names=(protocol transport client binary reconnect demo_boot p2p_boot)
-	local commands=(
+	local all_names=(protocol transport client binary reconnect demo_boot p2p_boot)
+	local all_commands=(
 		tests/protocol/run_protocol_tests.gd
 		tests/transport/run_transport_tests.gd
 		tests/client/run_client_tests.gd
@@ -164,6 +176,42 @@ run_godot() {
 		@demo
 		@p2p
 	)
+	local names=() commands=()
+	if [[ "$#" -gt 0 ]]; then
+		local name index found
+		for name in "$@"; do
+			found=""
+			for index in "${!all_names[@]}"; do
+				if [[ "${all_names[${index}]}" == "${name}" ]]; then
+					names+=("${name}")
+					commands+=("${all_commands[${index}]}")
+					found=1
+					break
+				fi
+			done
+			if [[ -z "${found}" ]]; then
+				echo "unknown suite: ${name} (suites: ${all_names[*]})" >&2
+				return 2
+			fi
+		done
+	else
+		names=("${all_names[@]}")
+		commands=("${all_commands[@]}")
+	fi
+
+	# Single-suite fast path for local iteration: run warm in-tree (the live
+	# .godot cache, no cold copy) — a multi-second copy per boot is pure
+	# overhead when only one engine is running. SF_COLD=1 forces the
+	# CI-identical cold-copy isolation.
+	if [[ "${#names[@]}" -eq 1 && "${SF_COLD:-0}" != "1" ]]; then
+		echo "=== ${names[0]} (warm; SF_COLD=1 for the CI-identical cold copy) ==="
+		_godot_command "${commands[0]}" "${repo_root}"
+		return
+	fi
+
+	# Suites are independent processes; run them concurrently and report each
+	# suite's output verbatim after all finish (same pattern as run_static).
+	# Wall clock drops from the sum of engine boots to the slowest suite.
 	local outputs=()
 	local pids=()
 	local index
@@ -172,15 +220,15 @@ run_godot() {
 		output="$(mktemp)"
 		outputs+=("${output}")
 		cleanup_paths+=("${output}")
-		_godot_worker "${commands[$index]}" >"${output}" 2>&1 &
+		_godot_worker "${commands[${index}]}" >"${output}" 2>&1 &
 		pids+=("${!}")
 	done
 	local failed=0
 	for index in "${!names[@]}"; do
 		local rc=0
-		wait "${pids[$index]}" || rc=$?
-		echo "=== ${names[$index]} ==="
-		cat "${outputs[$index]}"
+		wait "${pids[${index}]}" || rc=$?
+		echo "=== ${names[${index}]} ==="
+		cat "${outputs[${index}]}"
 		if [[ "${rc}" -ne 0 ]]; then
 			failed=1
 		fi
@@ -210,13 +258,16 @@ case "${target}" in
 		run_lint
 		;;
 	godot)
-		run_godot
+		shift
+		run_godot "$@"
 		;;
 	smoke)
 		run_smoke
 		;;
 	*)
-		echo "usage: $0 [all|static|private-helpers|format|lint|godot|smoke]" >&2
+		echo "usage: $0 [all|static|private-helpers|format|lint|godot [suite...]|smoke]" >&2
+		echo "  godot suites: protocol transport client binary reconnect demo_boot p2p_boot" >&2
+		echo "  a single godot suite runs warm in-tree; SF_COLD=1 forces the cold copy" >&2
 		exit 2
 		;;
 esac
