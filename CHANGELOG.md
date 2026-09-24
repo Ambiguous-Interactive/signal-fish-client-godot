@@ -42,6 +42,15 @@ CI, tests, and internal tooling are not listed.
 
 ### Fixed
 
+- A heartbeat beat refused under backpressure now arms the pong deadline:
+  the beat keeps retrying each interval, a live-but-congested link recovers
+  when its buffer drains, and a silently dead link fails (`connection_failed`)
+  and engages auto-reconnect instead of sitting `CONNECTED` forever (#128).
+- `SFWebRTCMesh` no longer drops refused signaling relays: a relay refused
+  by backpressure or rate-limited by the server is re-queued per peer and
+  redelivered in order (retries wait out one interval each). A queue that
+  keeps being refused locally is dropped loudly after a retry budget
+  instead of stalling P2P negotiation silently (#127).
 - A `close()` that lands after the engine finished its handshake but
   before the client observed the open now deterministically ends as a
   failed open (`connection_failed`, state `FAILED`) instead of racing
