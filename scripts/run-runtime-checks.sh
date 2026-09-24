@@ -471,9 +471,17 @@ run_godot() {
 	wait "${snapshot_pid}" || snapshot_rc=$?
 	if [[ "${archive_rc}" -ne 0 || "${snapshot_rc}" -ne 0 ]]; then
 		# Prep is an optimization, not a gate: workers fall back to their own
-		# tar pipe (and cold boots), which stays correct.
+		# tar pipe (and cold boots), which stays correct. A failed tar or cp
+		# can leave a truncated artifact behind — remove it, or the workers
+		# would extract a partial tree instead of falling back.
 		echo "::warning::godot prep step failed; using per-worker copies" >&2
 		cat "${prep_dir}/archive.log" "${prep_dir}/snapshot.log" >&2 || true
+		if ((archive_rc != 0)); then
+			rm -f "${prep_dir}/proj.tar"
+		fi
+		if ((snapshot_rc != 0)); then
+			rm -rf "${prep_dir}/.godot"
+		fi
 	fi
 	local archive="${prep_dir}/proj.tar"
 	[[ -f "${archive}" ]] || archive=""

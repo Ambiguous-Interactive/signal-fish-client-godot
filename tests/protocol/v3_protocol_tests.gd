@@ -691,26 +691,29 @@ func _test_truncated_missed_events_keep_the_newest() -> void:
 				}
 			}
 		)
-	var reconnected: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{
-			"type": "Reconnected",
-			"data":
+	var reconnected: SFTypesScript.DecodedEvent = (
+		SFEventsScript
+		. decode_envelope(
 			{
-				"room_id": "r",
-				"room_code": "RC",
-				"player_id": "p",
-				"game_name": "g",
-				"max_players": 4,
-				"supports_authority": true,
-				"current_players": [],
-				"is_authority": true,
-				"lobby_state": "waiting",
-				"ready_players": [],
-				"relay_type": "websocket",
-				"replay": "truncated",
-				"missed_events": missed,
+				"type": "Reconnected",
+				"data":
+				{
+					"room_id": "r",
+					"room_code": "RC",
+					"player_id": "p",
+					"game_name": "g",
+					"max_players": 4,
+					"supports_authority": true,
+					"current_players": [],
+					"is_authority": true,
+					"lobby_state": "waiting",
+					"ready_players": [],
+					"relay_type": "websocket",
+					"replay": "truncated",
+					"missed_events": missed,
+				}
 			}
-		}
+		)
 	)
 	if not _assert_decoded_signal("reconnected", reconnected, "truncated replay decodes"):
 		_done()

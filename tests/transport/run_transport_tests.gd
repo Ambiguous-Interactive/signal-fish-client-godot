@@ -484,18 +484,14 @@ func _test_websocket_open_unobserved_close_fails_without_opened() -> void:
 	var terminal_events: Array = []
 	var opened_count := [0]
 	transport.opened.connect(func() -> void: opened_count[0] += 1)
-	transport.failed.connect(
-		func(_error: String) -> void: terminal_events.append("failed")
-	)
+	transport.failed.connect(func(_error: String) -> void: terminal_events.append("failed"))
 	transport.closed.connect(
 		func(_code: int, _reason: String) -> void: terminal_events.append("closed")
 	)
 
 	transport.close(1000, "abort")
 
-	_assert_equal(
-		0, opened_count[0], "websocket unobserved-open close never emits opened"
-	)
+	_assert_equal(0, opened_count[0], "websocket unobserved-open close never emits opened")
 	_assert_equal(["failed"], terminal_events, "websocket unobserved-open close failed-open")
 	_assert_equal(
 		[[1000, "abort"]], peer.close_calls, "websocket unobserved-open close closes peer"
@@ -503,11 +499,11 @@ func _test_websocket_open_unobserved_close_fails_without_opened() -> void:
 	# Terminal stays terminal: later polls must not emit anything further.
 	transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
 	transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+	_assert_equal(["failed"], terminal_events, "websocket unobserved-open close stays terminal")
 	_assert_equal(
-		["failed"], terminal_events, "websocket unobserved-open close stays terminal"
-	)
-	_assert_equal(
-		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "websocket unobserved-open close state"
+		WebSocketPeer.STATE_CLOSED,
+		transport.get_ready_state(),
+		"websocket unobserved-open close state"
 	)
 	_done()
 

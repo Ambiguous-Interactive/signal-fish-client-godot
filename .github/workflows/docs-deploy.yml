@@ -73,6 +73,9 @@ jobs:
                   path: site/
                   run-id: ${{ github.event.workflow_run.id }}
                   github-token: ${{ github.token }}
+            # A validation run that started before the artifact handoff shipped
+            # completes without a docs-site artifact; this step then fails
+            # loudly and the next validation run self-heals the deploy.
 
             - name: Set up Pages
               uses: actions/configure-pages@v6
