@@ -10,6 +10,10 @@ var fail_on_connect := false
 ## return (issue #24 send-failure parity). Both terminal shapes of the
 ## client's reconnect-handshake failure path become fake-testable.
 var fail_on_send := false
+## When true, close() moves to STATE_CLOSING and waits for the peer like the
+## real transport, instead of terminating the session immediately: the real
+## transport can sit in CLOSING forever on a silently dead link (issue #126).
+var hold_close := false
 
 var _ready_state := WebSocketPeer.STATE_CLOSED
 var _opened_emitted := false
@@ -64,6 +68,9 @@ func get_ready_state() -> int:
 
 
 func close(code := 1000, reason := "") -> void:
+	if hold_close:
+		_ready_state = WebSocketPeer.STATE_CLOSING
+		return
 	inject_close(code, reason)
 
 

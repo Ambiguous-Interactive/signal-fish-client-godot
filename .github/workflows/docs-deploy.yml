@@ -1,13 +1,20 @@
 name: Docs Deploy
 
+# Issue #123: Docs Validation builds the site once on main and uploads it;
+# deploys publish that artifact instead of building a third copy. A push to
+# main only deploys when validation succeeded. `workflow_dispatch` keeps a
+# recovery path that builds from the checked-out source.
 on:
-    push:
-        branches:
-            - main
+    workflow_run:
+        workflows:
+            - Docs Validation
+        types:
+            - completed
     workflow_dispatch:
 
 permissions:
     contents: read
+    actions: read
     pages: write
     id-token: write
 
@@ -20,18 +27,32 @@ jobs:
         name: Build Documentation
         runs-on: ubuntu-24.04
         timeout-minutes: 10
+        if: >-
+            github.event_name == 'workflow_dispatch' ||
+            (
+                github.event.workflow_run.conclusion == 'success' &&
+                github.event.workflow_run.event == 'push' &&
+                github.event.workflow_run.head_branch == 'main'
+            )
+        # The `event == 'push'` guard matters: a fork PR whose branch is named
+        # `main` would otherwise pass the head_branch check, start this job,
+        # and fail the artifact download it can never have (Bugbot, PR #130).
         # Least privilege: only `deploy` consumes the workflow-level pages/id-token
-        # write grants. The build job installs third-party docs dependencies, so it
+        # write grants. The build job handles third-party docs artifacts, so it
         # must not hold an OIDC-minting handle; `pages: read` covers the
-        # configure-pages metadata GET (actions/configure-pages#188).
+        # configure-pages metadata GET (actions/configure-pages#188) and
+        # `actions: read` the cross-run artifact download.
         permissions:
             contents: read
             pages: read
+            actions: read
         steps:
             - name: Check out repository
+              if: github.event_name == 'workflow_dispatch'
               uses: actions/checkout@v7
 
             - name: Set up Python (with pip cache)
+              if: github.event_name == 'workflow_dispatch'
               uses: actions/setup-python@v7
               with:
                   python-version: "3.12"
@@ -39,13 +60,26 @@ jobs:
                   cache-dependency-path: requirements-docs.txt
 
             - name: Install MkDocs dependencies
+              if: github.event_name == 'workflow_dispatch'
               run: pip install -r requirements-docs.txt
 
             - name: Build MkDocs site
-              run: mkdocs build --strict
+              if: github.event_name == 'workflow_dispatch'
+              run: |
+                  mkdocs build --strict
+                  test -f site/llms.txt
 
-            - name: Verify the canonical llms.txt is published
-              run: test -f site/llms.txt
+            - name: Download validated site
+              if: github.event_name != 'workflow_dispatch'
+              uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+              with:
+                  name: docs-site
+                  path: site/
+                  run-id: ${{ github.event.workflow_run.id }}
+                  github-token: ${{ github.token }}
+            # A validation run that started before the artifact handoff shipped
+            # completes without a docs-site artifact; this step then fails
+            # loudly and the next validation run self-heals the deploy.
 
             - name: Set up Pages
               uses: actions/configure-pages@v6

@@ -127,11 +127,15 @@ reproduction commands. The `all` subcommand runs the static checks and the
 godot suites concurrently — the gate wall is the slower half, not the sum.
 The `godot` subcommand accepts suite names (`protocol transport
 client binary reconnect demo_boot p2p_boot`); one explicit suite runs warm
-in-tree against the live `.godot` cache for fast local iteration (`SF_COLD=1`
-forces the CI-identical path), while no-argument and multi-suite runs copy the
-source tree into fresh temporary projects without `.godot/`, which prevents
-local editor/global-class caches from masking failures that would appear in a
-clean CI checkout.
+in-tree against the live `.godot` cache for fast local iteration, while
+no-argument and multi-suite runs extract a tree archive built once per
+invocation into fresh temporary projects and clone a warm `.godot` import
+cache snapshot into each, so local boots skip the cold reimport (~1.3 s ->
+~0.3 s). `SF_COLD=1` forces the CI-identical cold import — keep it honest
+before pushing: a warm cache can mask cold-cache-only failures (global
+`class_name` registration) that a clean CI checkout would surface; the
+pre-push contract stays `all` with `SF_COLD` unset on machines that have a
+warm cache. CI checkouts have no `.godot`, so CI boots are unchanged.
 
 The `changed` subcommand is the agent fast loop (issue #117): it checks only
 what the dirty tree can affect. Test `.gd` files map to the suites whose

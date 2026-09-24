@@ -37,6 +37,7 @@ func run_all() -> void:
 		_test_dead_link_arms_auto_reconnect,
 		_test_auth_window_silence_is_a_dead_link,
 		_test_auth_landing_disarms_the_watchdog,
+		_test_closing_silence_is_a_dead_link,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -162,6 +163,62 @@ func _test_auth_window_silence_is_a_dead_link() -> void:
 		"the stranded auth window ends FAILED"
 	)
 	_assert_equal(null, client.transport, "the dead link is torn down")
+	client.free()
+	_done()
+
+
+func _test_closing_silence_is_a_dead_link() -> void:
+	# Issue #126: a close handshake on a silently dead link never completes;
+	# the CLOSING window must be bounded like the AUTHENTICATING one (#121).
+	var config: SignalFishConfigScript = _make_config_with_auth_watchdog()
+	var client := _authenticated_client(config)
+	var transport: SFFakeTransportScript = client.transport
+	transport.hold_close = true
+	var failures: Array = []
+	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	var disconnects: Array = []
+	client.disconnected.connect(
+		func(_code: int, _reason: String) -> void: disconnects.append("disconnected")
+	)
+	client.close()
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSING,
+		client.get_connection_state(),
+		"a held close leaves the client CLOSING"
+	)
+	client._process(4.9)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSING,
+		client.get_connection_state(),
+		"inside the closing window the client waits"
+	)
+	client._process(0.2)
+	if _assert_equal(1, failures.size(), "a close that never completes fails"):
+		var failure: String = failures[0]
+		_assert(failure.contains("heartbeat close timeout"), "the failure names the close timeout")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"the stranded closing window ends FAILED"
+	)
+	_assert_equal(null, client.transport, "the dead link is torn down")
+	_assert_equal([], disconnects, "a failed close is not reported as a clean disconnect")
+	client.free()
+	# A completing close still ends cleanly: hold off, close again, tick.
+	client = _authenticated_client(config)
+	transport = client.transport
+	var clean_disconnects: Array = []
+	client.disconnected.connect(
+		func(_code: int, _reason: String) -> void: clean_disconnects.append("disconnected")
+	)
+	client.close()
+	client._process(0.2)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSED,
+		client.get_connection_state(),
+		"a completing close still ends CLOSED"
+	)
+	_assert_equal(1, clean_disconnects.size(), "a completing close reports the disconnect")
 	client.free()
 	_done()
 

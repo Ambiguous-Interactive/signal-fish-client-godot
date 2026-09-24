@@ -8,6 +8,11 @@ CI, tests, and internal tooling are not listed.
 
 ### Changed
 
+- A truncated replay (`missed_events` over the 256-entry decode cap) now
+  keeps the newest entries and drops the oldest: `replay: truncated` means
+  the wire array is the most-recent suffix, and the events closest to now
+  are the ones a resync needs (#129). The overflow sentinel's dropped
+  count is unchanged.
 - Decoded events and typed payloads no longer deep-copy the parsed wire
   data: `raw` is a read-only view that may share structure across
   `missed_events`, and `to_dict()` remains the independent mutable copy.
@@ -37,6 +42,14 @@ CI, tests, and internal tooling are not listed.
 
 ### Fixed
 
+- A `close()` that lands after the engine finished its handshake but
+  before the client observed the open now deterministically ends as a
+  failed open (`connection_failed`, state `FAILED`) instead of racing
+  engine timing and surfacing `disconnected`/`CLOSED` (#119).
+- A `close()` whose handshake never completes on a silently dead link no
+  longer strands the client in `CLOSING` forever: the same pong deadline
+  that guards authentication now bounds the closing window and tears the
+  link down as a failure (`connection_failed`) (#126).
 - A `4007` (kicked) close now ends the auto-reconnect episode: the server
   deletes a kicked player's reconnection record, so retrying could never
   rejoin. The identity clears before `disconnected`, so a handler redial

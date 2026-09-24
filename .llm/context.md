@@ -147,9 +147,11 @@ Definition of done for the first usable client:
   protocol fixtures.
 - `scripts/run-runtime-checks.sh`: shared runtime validation entry point used
   by CI and local checks. It sets a deterministic writable `HOME` for
-  tool caches, activates `.venv-ci` when present, and runs Godot from a
-  temporary project copy that excludes `.godot` so local runs exercise the same
-  cold-cache path as CI. Subcommands are `all`, `static`, `private-helpers`,
+  tool caches, activates `.venv-ci` when present, and runs Godot from fresh
+  per-suite project copies; locally each copy clones a warm `.godot` import
+  cache so boots skip the cold reimport (`SF_COLD=1` forces the
+  CI-identical cold import; CI checkouts have no `.godot` and stay cold).
+  Subcommands are `all`, `static`, `private-helpers`,
   `format`, `lint`, and `godot`, plus opt-in `smoke` (real `WebSocketPeer`
   round-trip against a local RFC 6455 test server; never part of `all`) and
   `changed` (agent fast loop: only what the dirty tree can affect; issue #117).

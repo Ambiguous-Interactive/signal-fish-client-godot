@@ -15,12 +15,16 @@ cleanup() {
 trap cleanup EXIT
 
 bootstrap_python="${PYTHON:-python3}"
-original_user_site="$("${bootstrap_python}" - <<'PY'
+# Only needed to fall back to user site-packages when the project venv is
+# unusable; skip the interpreter spawn on the common venv path.
+if [[ ! -f ".venv-ci/bin/activate" ]]; then
+	original_user_site="$("${bootstrap_python}" - <<'PY'
 import site
 
 print(site.getusersitepackages())
 PY
 )"
+fi
 
 export HOME="${GDSCRIPT_TOOL_HOME:-${RUNNER_TEMP:-/tmp}/signal-fish-runtime-home}"
 mkdir -p "${HOME}"
@@ -266,6 +270,41 @@ _fail_on_script_errors() {
 	fi
 }
 
+# One slow pass over the (possibly network-backed) workspace tree; workers
+# extract this local archive instead of each re-reading the tree (7 tar
+# traversals -> 1). Returns 1 outside a git worktree; copy_cold_project
+# then falls back to its per-worker pipe.
+build_project_archive() {
+	local archive="$1"
+	local manifest="${archive}.manifest"
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		return 1
+	fi
+	git ls-files --cached --others --exclude-standard -z |
+		while IFS= read -r -d '' path; do
+			if [[ -f "${path}" || -L "${path}" ]]; then
+				printf '%s\0' "${path}"
+			fi
+		done >"${manifest}"
+	tar --null --files-from="${manifest}" --create --file="${archive}"
+	rm -f "${manifest}"
+}
+
+# Warm-cache fast path: one read of the live .godot import cache into the
+# given prep dir on fast local storage; every suite then clones it locally,
+# turning each engine boot from a full cold reimport (~1.3 s) into a warm
+# start (~0.3 s) — the dominant per-suite cost. Each suite still gets its
+# own copy, so concurrent boots never share cache files. CI checkouts have
+# no .godot, so CI boots stay byte-identical cold imports; SF_COLD=1 forces
+# the CI-identical cold import locally too.
+prepare_warm_cache_snapshot() {
+	local dest="$1"
+	if [[ "${SF_COLD:-0}" == "1" || ! -d ".godot" ]]; then
+		return 0
+	fi
+	cp -a .godot "${dest}/.godot"
+}
+
 make_cold_parent() {
 	local cold_parent_template="${RUNNER_TEMP:-/tmp}/signal-fish-godot-cold.XXXXXX"
 	mktemp -d "${cold_parent_template}"
@@ -283,20 +322,25 @@ copy_cold_project() {
 	mkdir -p "${cold_project}"
 
 	if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		# One tar stream per copy: packing the tracked+untracked file list once
-		# is several times faster than a per-file mkdir/cp loop, which used to
-		# dominate the wall of every suite boot. Files deleted in the working
-		# tree (rm, pre-staging) are skipped like the old loop did; tar errors
-		# stay loud through pipefail + set -e instead of shrinking the copy
-		# behind a zero exit.
-		git ls-files --cached --others --exclude-standard -z |
-			while IFS= read -r -d '' path; do
-				if [[ -f "${path}" || -L "${path}" ]]; then
-					printf '%s\0' "${path}"
-				fi
-			done >"${manifest}"
-		tar --null --files-from="${manifest}" --create --file=- |
-			tar --extract --file=- --directory="${cold_project}"
+		if [[ -n "${SF_GODOT_ARCHIVE:-}" && -f "${SF_GODOT_ARCHIVE}" ]]; then
+			# Local archive built once by run_godot (see build_project_archive).
+			tar --extract --file="${SF_GODOT_ARCHIVE}" --directory="${cold_project}"
+		else
+			# One tar stream per copy: packing the tracked+untracked file list once
+			# is several times faster than a per-file mkdir/cp loop, which used to
+			# dominate the wall of every suite boot. Files deleted in the working
+			# tree (rm, pre-staging) are skipped like the old loop did; tar errors
+			# stay loud through pipefail + set -e instead of shrinking the copy
+			# behind a zero exit.
+			git ls-files --cached --others --exclude-standard -z |
+				while IFS= read -r -d '' path; do
+					if [[ -f "${path}" || -L "${path}" ]]; then
+						printf '%s\0' "${path}"
+					fi
+				done >"${manifest}"
+			tar --null --files-from="${manifest}" --create --file=- |
+				tar --extract --file=- --directory="${cold_project}"
+		fi
 	else
 		tar \
 			--exclude="./.git" \
@@ -305,6 +349,13 @@ copy_cold_project() {
 			--exclude="./.venv-ci" \
 			--exclude="./logs_*.zip" \
 			-cf - . | tar -C "${cold_project}" -xf -
+	fi
+
+	# Clone the warm import cache when a snapshot exists (see
+	# prepare_warm_cache_snapshot); the clone reads local storage, so it is
+	# nearly free.
+	if [[ -n "${SF_GODOT_WARM_CACHE:-}" && -d "${SF_GODOT_WARM_CACHE}/.godot" ]]; then
+		cp -a "${SF_GODOT_WARM_CACHE}/.godot" "${cold_project}/.godot"
 	fi
 
 	printf '%s\n' "${cold_project}"
@@ -405,6 +456,40 @@ run_godot() {
 	# Suites are independent processes; run them concurrently and report each
 	# suite's output verbatim after all finish (same pattern as run_static).
 	# Wall clock drops from the sum of engine boots to the slowest suite.
+	# The tree archive and the warm cache snapshot are each built once,
+	# concurrently, so seven workers read local storage instead of seven
+	# traversals of the workspace mount.
+	local prep_dir
+	prep_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-godot-prep.XXXXXX")"
+	cleanup_paths+=("${prep_dir}")
+	build_project_archive "${prep_dir}/proj.tar" >"${prep_dir}/archive.log" 2>&1 &
+	local archive_pid=$!
+	prepare_warm_cache_snapshot "${prep_dir}" >"${prep_dir}/snapshot.log" 2>&1 &
+	local snapshot_pid=$!
+	local archive_rc=0 snapshot_rc=0
+	wait "${archive_pid}" || archive_rc=$?
+	wait "${snapshot_pid}" || snapshot_rc=$?
+	if [[ "${archive_rc}" -ne 0 || "${snapshot_rc}" -ne 0 ]]; then
+		# Prep is an optimization, not a gate: workers fall back to their own
+		# tar pipe (and cold boots), which stays correct. A failed tar or cp
+		# can leave a truncated artifact behind — remove it, or the workers
+		# would extract a partial tree instead of falling back.
+		echo "::warning::godot prep step failed; using per-worker copies" >&2
+		cat "${prep_dir}/archive.log" "${prep_dir}/snapshot.log" >&2 || true
+		if ((archive_rc != 0)); then
+			rm -f "${prep_dir}/proj.tar"
+		fi
+		if ((snapshot_rc != 0)); then
+			rm -rf "${prep_dir}/.godot"
+		fi
+	fi
+	local archive="${prep_dir}/proj.tar"
+	[[ -f "${archive}" ]] || archive=""
+	local cache_snapshot="${prep_dir}"
+	[[ -d "${cache_snapshot}/.godot" ]] || cache_snapshot=""
+	SF_GODOT_ARCHIVE="${archive}"
+	SF_GODOT_WARM_CACHE="${cache_snapshot}"
+	export SF_GODOT_ARCHIVE SF_GODOT_WARM_CACHE
 	local outputs=()
 	local pids=()
 	local index
