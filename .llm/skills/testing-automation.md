@@ -52,6 +52,21 @@ These checks enforce:
   no generator/linter child `pwsh`, and staged-aware scoping for ordinary
   commits. Tooling changes use in-process PowerShell parse/static guards;
   `Full` and `CI` keep the exhaustive sandbox coverage.
+- Where the full self-test suite runs, it runs as two concurrent shards
+  (issue #132): `-SkipBehavioralTests` (in-process tests) and
+  `-OnlyBehavioralTests` (pwsh-forking tests) in the llm-harness `self-tests`
+  job alongside preflight. The union of the shards is exactly the full
+  suite; the behavioral flag wins over `LLM_HARNESS_SKIP_BEHAVIORAL_TESTS`
+  so a shard can never pass vacuously. Recursion rule: the runner's
+  self-tests stage treats `LLM_HARNESS_SKIP_BEHAVIORAL_TESTS=1` as the
+  "I am a suite-spawned child" signature and then runs only the core shard,
+  so a behavioral test exercising Mode Full cannot fork-bomb through the
+  sharded stage. Keep suite temp trees under
+  `[System.IO.Path]::GetTempPath()`, not the repo: devcontainer bind mounts
+  make small-file-heavy tests an order of magnitude slower (the fake-npm
+  migration matrix measured 36.6 s on the repo mount vs 3.4 s on tmp), and
+  stray-creating tests must run against `New-HookBehaviorSandbox` copies so
+  concurrent shards never observe each other's transients in the real tree.
 - Stray artifact detection is single-sourced through
   `Get-LlmStagingArtifacts` (tracked + non-ignored) and
   `Get-LlmStrayWorkingTreeArtifacts` (includes gitignored junk like

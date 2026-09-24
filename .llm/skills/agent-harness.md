@@ -63,6 +63,13 @@ scripts that maintain AI context.
   verification. `-SkipSelfTests` is CI-only: the llm-harness workflow runs
   the behavioral self-tests as a dedicated parallel job (issue #84), so the
   two jobs' wall clock is max(jobs) instead of the sum; hooks never pass it.
+  Where the self-tests run, they run as two concurrent shards
+  (`-SkipBehavioralTests` + `-OnlyBehavioralTests`, issue #132): wall is
+  max(halves), the union is exactly the full suite, and the behavioral shard
+  must never degrade to zero tests (the flag wins over the skip env var,
+  and a zero-test behavioral run exits non-zero). Recursion contract: when
+  the runner itself is a suite-spawned child (`LLM_HARNESS_SKIP_BEHAVIORAL_TESTS=1`
+  inherited), its self-tests stage runs only the core shard.
 - `scripts/preflight.ps1` parse-checks itself first, then every tracked
   `.ps1`/`.psm1`/`.psd1`. `-AutoFix` recovers a corrupt source from the
   index/staged copy first, then falls back to `git checkout HEAD -- <path>`.

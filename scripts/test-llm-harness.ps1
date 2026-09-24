@@ -8,7 +8,13 @@ param(
     # fast inner-loop feedback. Honors `LLM_HARNESS_SKIP_BEHAVIORAL_TESTS=1`
     # in the environment so wrappers like `agent-check.ps1` can flip the
     # switch without altering arg propagation. (MIN-2)
-    [switch]$SkipBehavioralTests
+    [switch]$SkipBehavioralTests,
+    # Inverse filter: run ONLY the behavioral subset. The suite can
+    # therefore be sharded as two concurrent passes (issue #132) whose
+    # wall is max(halves) instead of the sum, with coverage unchanged.
+    # Wins over the skip switch and the env var so the behavioral shard
+    # can never degrade into a vacuous zero-test pass.
+    [switch]$OnlyBehavioralTests
 )
 
 # Lightweight self-tests for the shared LLM harness library.
@@ -34,20 +40,31 @@ Import-Module $ModulePath -Force
 $failures = New-Object System.Collections.Generic.List[string]
 $passed = 0
 $skipped = 0
-# Honor the env var or the explicit switch. Either suffices.
-$script:SkipBehavioral = [bool]$SkipBehavioralTests -or
-    ($env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS -eq '1')
+if ($SkipBehavioralTests -and $OnlyBehavioralTests) {
+    throw 'Only one of -SkipBehavioralTests and -OnlyBehavioralTests may be set.'
+}
+# Honor the env var or the explicit switch. Either suffices. -OnlyBehavioralTests
+# wins over both so the behavioral shard always runs real tests.
+$script:OnlyBehavioral = [bool]$OnlyBehavioralTests
+$script:SkipBehavioral = -not $script:OnlyBehavioral -and
+    ([bool]$SkipBehavioralTests -or ($env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS -eq '1'))
 
 # Recursion-prevention contract: a behavioral test spawns
 # `pwsh -File run-llm-hooks.ps1` to exercise the harness end-to-end.
 # `run-llm-hooks.ps1` then re-invokes THIS script as its self-test step.
 # Without a guard, that child runs behavioral tests too, which spawn
 # `run-llm-hooks.ps1`, which re-invokes THIS script... an unbounded fork
-# bomb. We propagate `LLM_HARNESS_SKIP_BEHAVIORAL_TESTS=1` to ALL
-# children we spawn so they skip behavioral tests and break the chain.
-# DO NOT clear the env var here: clearing it would let our own children
-# re-enter the recursion. Parent invokers that legitimately want fresh
-# behavioral runs simply unset the var before calling us.
+# bomb. Two layers break the chain:
+#   1. We propagate `LLM_HARNESS_SKIP_BEHAVIORAL_TESTS=1` to ALL children
+#      we spawn. DO NOT clear the env var here: clearing it would let our
+#      own children re-enter the recursion. Parent invokers that
+#      legitimately want fresh behavioral runs simply unset the var before
+#      calling us.
+#   2. The runner's self-tests stage treats that env var as the "I am a
+#      suite-spawned child" signature and runs only the core shard, so a
+#      behavioral test exercising Mode Full cannot fork-bomb through the
+#      sharded stage. A direct `-OnlyBehavioralTests` invocation (the CI
+#      shard) still wins over a leaked env var: it is always top-level.
 $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = '1'
 
 function Assert-Test {
@@ -63,6 +80,13 @@ function Assert-Test {
         $script:skipped++
         if ($VerboseOutput) {
             Write-Host "[llm-test] SKIP (behavioral): $Name" -ForegroundColor DarkGray
+        }
+        return
+    }
+    if (-not $Behavioral -and $script:OnlyBehavioral) {
+        $script:skipped++
+        if ($VerboseOutput) {
+            Write-Host "[llm-test] SKIP (non-behavioral): $Name" -ForegroundColor DarkGray
         }
         return
     }
@@ -1452,6 +1476,11 @@ Assert-Test 'devcontainer agent CLI installer is complete, parseable, and valida
                 Diagnostic  = 'npm view|latest|probe'
             },
             [pscustomobject]@{
+                Pattern     = 'AGENT_TOOLS_RETRY_SLEEP_MS:-2000'
+                Requirement = 'make the failed-install retry delay injectable so the hermetic fake-npm matrix does not pay real sleep time'
+                Diagnostic  = 'retry_sleep_ms|AGENT_TOOLS_RETRY_SLEEP_MS'
+            },
+            [pscustomobject]@{
                 Pattern     = '\[\s*"\$major"\s*=\s*2\s*\]'
                 Requirement = 'reject an OpenCode version outside major version 2'
                 Diagnostic  = 'opencode_major|version 2| -ne 2'
@@ -1470,8 +1499,10 @@ Assert-Test 'devcontainer agent CLI installer is complete, parseable, and valida
 
 Assert-Test 'devcontainer OpenCode migration preserves v1 until v2 is proven' {
     $repoRoot = Split-Path -Parent $ScriptsDir
-    $tempRootName = ".opencode-migration-$([Guid]::NewGuid())"
-    $tempRoot = Join-Path $repoRoot $tempRootName
+    # The fake npm tree does hundreds of small-file operations per case, so it
+    # lives in the OS temp dir like every other suite sandbox: on devcontainer
+    # bind mounts that is an order of magnitude faster than repoRoot.
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-opencode-migration-$([Guid]::NewGuid())")
     $fakeNpm = @'
 #!/usr/bin/env bash
 set -u
@@ -1644,13 +1675,13 @@ esac
         [pscustomobject]@{ Name = 'malformed version rejected'; Mode = 'install'; FailProbe = ''; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = '2beta'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 1; V1 = $true; V1Reinstalled = $false; Major = '1'; ActivePresent = $true; FinalReady = $false }
     )
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-    $envNames = @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_PROBE', 'FAKE_NPM_FAIL_CANDIDATE', 'FAKE_NPM_FAIL_ACTIVE', 'FAKE_NPM_FAIL_ACTIVATION', 'FAKE_NPM_FAIL_V1_RESTORE', 'FAKE_OPENCODE_VERSION', 'FAKE_NPM_FAIL_UNINSTALL', 'PATH')
+    $envNames = @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_PROBE', 'FAKE_NPM_FAIL_CANDIDATE', 'FAKE_NPM_FAIL_ACTIVE', 'FAKE_NPM_FAIL_ACTIVATION', 'FAKE_NPM_FAIL_V1_RESTORE', 'FAKE_OPENCODE_VERSION', 'FAKE_NPM_FAIL_UNINSTALL', 'AGENT_TOOLS_RETRY_SLEEP_MS', 'PATH')
     $snapshots = @($envNames | ForEach-Object { Save-EnvVar $_ })
     try {
         Push-Location $repoRoot
         try {
             foreach ($case in $cases) {
-                $caseRoot = "$tempRootName/$([Guid]::NewGuid().ToString('N'))"
+                $caseRoot = Join-Path $tempRoot ([Guid]::NewGuid().ToString('N'))
                 $state = "$caseRoot/state"
                 $prefix = "$caseRoot/prefix"
                 $bin = "$prefix/bin"
@@ -1719,6 +1750,9 @@ esac
                 $env:FAKE_OPENCODE_VERSION = $case.CandidateVersion
 
                 $env:FAKE_NPM_FAIL_UNINSTALL = '0'
+                # The matrix forces install failures to exercise rollback;
+                # a real 2 s backoff per retry would burn ~25 s of pure sleep.
+                $env:AGENT_TOOLS_RETRY_SLEEP_MS = '0'
                 $env:PATH = "${foreignEarlierBin}:${bin}:$($env:PATH)"
                 $output = @(& bash '.devcontainer/install-agent-tools.sh' $case.Mode 2>&1)
                 $exitCode = $LASTEXITCODE
@@ -1882,6 +1916,26 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
                  Pattern     = 'Agent CLI refresh attempted'
                  Requirement = 'say the refresh was attempted after warn-only migration failures'
                  Diagnostic  = 'refresh attempted|Agent CLIs checked'
+             },
+             [pscustomobject]@{
+                 Pattern     = 'python3 -m pip install --user -r requirements-automation\.txt'
+                 Requirement = 'heal a missing PyYAML import on every start so sandbox self-tests and config validation match CI'
+                 Diagnostic  = 'PyYAML|import yaml|pip install'
+             },
+             [pscustomobject]@{
+                 Pattern     = 'python3 -m venv \.venv-ci'
+                 Requirement = 'provision .venv-ci with runtime (gdtoolkit) and automation (PyYAML) deps so both local gates match CI'
+                 Diagnostic  = 'venv|\.venv-ci|requirements'
+             },
+             [pscustomobject]@{
+                 Pattern     = 'WARN: python3 cannot import PyYAML'
+                 Requirement = 'warn instead of blocking attach when the PyYAML heal fails (e.g. offline)'
+                 Diagnostic  = 'WARN|PyYAML'
+             },
+             [pscustomobject]@{
+                 Pattern     = 'WARN: could not provision \.venv-ci'
+                 Requirement = 'warn instead of blocking attach when the venv bootstrap fails (e.g. offline)'
+                 Diagnostic  = 'WARN|venv'
              }
 
         )) {
@@ -2659,7 +2713,7 @@ Assert-Test 'preflight-stop.ps1 block reason mentions index-first recovery' {
     try {
         $env:CLAUDE_PROJECT_DIR = $tempRoot
         $proc = Start-Process -FilePath 'pwsh' -ArgumentList @(
-            '-NoProfile', '-File', $hook
+            '-NoProfile', '-File', "`"$hook`""
         ) -RedirectStandardOutput $stdoutPath `
             -RedirectStandardError $stderrPath `
             -PassThru -Wait -NoNewWindow
@@ -2816,7 +2870,7 @@ Assert-Test 'parse-check-powershell.ps1 emits stdout decision-block JSON on pars
         [System.IO.File]::WriteAllText($stdinPath, $payload)
         try {
             $proc = Start-Process -FilePath 'pwsh' -ArgumentList @(
-                '-NoProfile', '-File', $hook
+                '-NoProfile', '-File', "`"$hook`""
             ) -RedirectStandardInput $stdinPath `
                 -RedirectStandardOutput $stdoutPath `
                 -RedirectStandardError $stderrPath `
@@ -2881,7 +2935,7 @@ Assert-Test 'validate-llm-context.ps1 ignores .llm paths outside the repo' {
             $env:CLAUDE_PROJECT_DIR = $repoRoot
             try {
                 $proc = Start-Process -FilePath 'pwsh' -ArgumentList @(
-                    '-NoProfile', '-File', $hook
+                    '-NoProfile', '-File', "`"$hook`""
                 ) -RedirectStandardInput $stdinPath `
                     -PassThru -Wait -NoNewWindow
                 $exitCode = $proc.ExitCode
@@ -2947,7 +3001,7 @@ Assert-Test 'validate-llm-context.ps1 blocks invalid and accepts valid repo-loca
         try {
             $env:CLAUDE_PROJECT_DIR = $tempRoot
             $proc = Start-Process -FilePath 'pwsh' -ArgumentList @(
-                '-NoProfile', '-File', $hook
+                '-NoProfile', '-File', "`"$hook`""
             ) -RedirectStandardInput $stdinPath `
                 -RedirectStandardOutput $stdoutPath `
                 -RedirectStandardError $stderrPath `
@@ -3111,15 +3165,17 @@ Assert-Test 'Test-LlmDeletableArtifact collapses repeated `./` and `//` prefixes
 # --- M-6: lint-llm.ps1 detects gitignored .tmp strays ----------------------
 
 Assert-Test 'lint-llm.ps1 fails on stray .tmp file inside controlled dir' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         return  # git unavailable; skip silently.
     }
-    $strayName = "scripts/llm-harness-test-stray-$([Guid]::NewGuid()).tmp"
-    $strayFull = Join-Path $repoRoot $strayName
-    [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+    # Sandbox, not the real tree: concurrent suite shards scan the real
+    # working tree for strays, and this test must not create one there.
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-lint-stray'
     try {
-        $linter = Join-Path $ScriptsDir 'lint-llm.ps1'
+        $strayName = "scripts/llm-harness-test-stray-$([Guid]::NewGuid()).tmp"
+        $strayFull = Join-Path $sandbox $strayName
+        [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+        $linter = Join-Path $sandbox 'scripts/lint-llm.ps1'
         $output = & pwsh -NoProfile -File $linter 2>&1
         $exitCode = $LASTEXITCODE
         if ($exitCode -eq 0) {
@@ -3133,22 +3189,24 @@ Assert-Test 'lint-llm.ps1 fails on stray .tmp file inside controlled dir' {
             throw "lint-llm.ps1 must use the 'Stray staging artifact' prefix; got: $combined"
         }
     } finally {
-        Remove-Item -LiteralPath $strayFull -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
 
 # --- M-6 (cont.): run-llm-hooks.ps1 -NoAutoFix reports strays --------------
 
 Assert-Test 'run-llm-hooks.ps1 -NoAutoFix reports stray .tmp and fails' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         return
     }
-    $strayName = "scripts/llm-harness-test-noautofix-$([Guid]::NewGuid()).tmp"
-    $strayFull = Join-Path $repoRoot $strayName
-    [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+    # Sandbox, not the real tree: concurrent suite shards scan the real
+    # working tree for strays, and this test must not create one there.
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-noautofix-stray'
     try {
-        $hooks = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
+        $strayName = "scripts/llm-harness-test-noautofix-$([Guid]::NewGuid()).tmp"
+        $strayFull = Join-Path $sandbox $strayName
+        [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+        $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
         $output = & pwsh -NoProfile -File $hooks -SkipStagedCheck -NoAutoFix 2>&1
         $exitCode = $LASTEXITCODE
         if ($exitCode -eq 0) {
@@ -3159,20 +3217,22 @@ Assert-Test 'run-llm-hooks.ps1 -NoAutoFix reports stray .tmp and fails' {
             throw "run-llm-hooks.ps1 -NoAutoFix must name the stray artifact; got: $combined"
         }
     } finally {
-        Remove-Item -LiteralPath $strayFull -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
 
 Assert-Test 'run-llm-hooks.ps1 PreCommit reports gitignored scripts .tmp before fast exit' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         return
     }
-    $strayName = "scripts/llm-harness-test-precommit-$([Guid]::NewGuid()).tmp"
-    $strayFull = Join-Path $repoRoot $strayName
-    [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+    # Sandbox, not the real tree: concurrent suite shards scan the real
+    # working tree for strays, and this test must not create one there.
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-precommit-stray'
     try {
-        $hooks = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
+        $strayName = "scripts/llm-harness-test-precommit-$([Guid]::NewGuid()).tmp"
+        $strayFull = Join-Path $sandbox $strayName
+        [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+        $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
         $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -SkipStagedCheck -NoAutoFix 2>&1
         $exitCode = $LASTEXITCODE
         if ($exitCode -eq 0) {
@@ -3183,7 +3243,7 @@ Assert-Test 'run-llm-hooks.ps1 PreCommit reports gitignored scripts .tmp before 
             throw "PreCommit must name the gitignored stray artifact; got: $combined"
         }
     } finally {
-        Remove-Item -LiteralPath $strayFull -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
 
@@ -3472,12 +3532,36 @@ Assert-Test 'MIN-2: agent-check uses AgentFast and Full remains explicit' {
     if ($tests -notmatch 'LLM_HARNESS_SKIP_BEHAVIORAL_TESTS') {
         throw 'test-llm-harness.ps1 must honor LLM_HARNESS_SKIP_BEHAVIORAL_TESTS env var.'
     }
+    if ($tests -notmatch '\[switch\]\$OnlyBehavioralTests') {
+        throw 'test-llm-harness.ps1 must declare [switch]$OnlyBehavioralTests so the suite can shard into two concurrent passes (issue #132).'
+    }
+    if ($tests -notmatch 'Only one of -SkipBehavioralTests and -OnlyBehavioralTests may be set\.') {
+        throw 'test-llm-harness.ps1 must reject contradictory shard filters.'
+    }
+    if ($tests -notmatch '-not \$script:OnlyBehavioral -and') {
+        throw 'test-llm-harness.ps1 must let -OnlyBehavioralTests win over the skip switch/env var so the behavioral shard cannot run zero tests.'
+    }
     if ($tests -notmatch '\[switch\]\$Behavioral') {
         throw 'Assert-Test must accept a -Behavioral switch so tests can be tagged.'
     }
     # At least one test must actually be tagged -Behavioral.
     if ($tests -notmatch '(?m)\}\s*-Behavioral\s*$') {
         throw 'test-llm-harness.ps1 must tag at least one test with -Behavioral.'
+    }
+    $runner = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
+    foreach ($shardFlag in @('-SkipBehavioralTests', '-OnlyBehavioralTests')) {
+        if ($runner -notmatch [regex]::Escape($shardFlag)) {
+            throw "run-llm-hooks.ps1 Full/CI self-tests stage must spawn the '$shardFlag' shard so wall is max(halves)."
+        }
+    }
+    if ($runner -notmatch 'Nested self-test child detected') {
+        throw 'run-llm-hooks.ps1 must run only the core shard for suite-spawned children (recursion contract; see test-llm-harness.ps1).'
+    }
+    $workflow = Get-Content -LiteralPath (Join-Path $ScriptsDir '../.github/workflows/llm-harness.yml') -Raw
+    foreach ($shardFlag in @('-SkipBehavioralTests', '-OnlyBehavioralTests')) {
+        if ($workflow -notmatch [regex]::Escape($shardFlag)) {
+            throw "llm-harness.yml self-tests job must run the '$shardFlag' shard (issue #132)."
+        }
     }
 }
 
@@ -3661,12 +3745,17 @@ Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without 
 } -Behavioral
 
 Assert-Test 'MIN-2: AgentFast reports controlled gitignored strays without deleting them' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
-    $strayName = "scripts/llm-agentfast-stray-$([Guid]::NewGuid()).tmp"
-    $strayFull = Join-Path $repoRoot $strayName
-    [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+    # Sandbox, not the real tree: concurrent suite shards scan the real
+    # working tree for strays, and this test must not create one there.
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        return
+    }
+    $sandbox = New-HookBehaviorSandbox -Prefix 'llm-agentfast-stray'
     try {
-        $hooks = Join-Path $ScriptsDir 'run-llm-hooks.ps1'
+        $strayName = "scripts/llm-agentfast-stray-$([Guid]::NewGuid()).tmp"
+        $strayFull = Join-Path $sandbox $strayName
+        [System.IO.File]::WriteAllText($strayFull, 'sentinel')
+        $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
         $output = & pwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -NoAutoFix 2>&1
         $exitCode = $LASTEXITCODE
         $combined = ($output | Out-String)
@@ -3680,7 +3769,7 @@ Assert-Test 'MIN-2: AgentFast reports controlled gitignored strays without delet
             throw 'AgentFast is non-mutating and must not delete controlled strays in NoAutoFix mode.'
         }
     } finally {
-        Remove-Item -LiteralPath $strayFull -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
 
@@ -4970,11 +5059,21 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
 # --- Summary ---------------------------------------------------------------
 
 if ($failures.Count -gt 0) {
-    $skipNote = if ($skipped -gt 0) { " ($skipped skipped)" } else { '' }
+    $skipNote = if ($skipped -gt 0) {
+        $kind = if ($script:OnlyBehavioral) { 'non-behavioral' } else { 'behavioral' }
+        " ($skipped $kind test(s) skipped)"
+    } else { '' }
     Write-Host "[llm-test] $($failures.Count) test(s) failed; $passed passed$skipNote." -ForegroundColor Red
     exit 1
 }
+if ($script:OnlyBehavioral -and $passed -eq 0) {
+    Write-Host '[llm-test] Behavioral shard ran zero tests; refusing a vacuous pass.' -ForegroundColor Red
+    exit 1
+}
 
-$skipNote = if ($skipped -gt 0) { " ($skipped behavioral test(s) skipped)" } else { '' }
+$skipNote = if ($skipped -gt 0) {
+    $kind = if ($script:OnlyBehavioral) { 'non-behavioral' } else { 'behavioral' }
+    " ($skipped $kind test(s) skipped)"
+} else { '' }
 Write-Host "[llm-test] All $passed test(s) passed$skipNote." -ForegroundColor Green
 exit 0
