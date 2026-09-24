@@ -559,11 +559,15 @@ run_changed() {
 		echo "working tree clean; nothing to check"
 		return 0
 	fi
-	local runtime_changed="" gd_suites=() md_only=1 dirty_docs="" file
+	local runtime_changed="" gd_suites=() md_only=1 dirty_docs=0 file
+	local docs_files=()
 	while IFS= read -r file; do
 		case "${file}" in
 			*.md | llms.txt | .markdownlint* | LICENSE)
-				dirty_docs="1"
+				dirty_docs=1
+				# The style tools cannot read a deleted file; deleted docs
+				# are legitimately absent and simply escape the local check.
+				[[ -f "${file}" ]] && docs_files+=("${file}")
 				;;
 			*)
 				md_only=""
@@ -581,14 +585,17 @@ run_changed() {
 
 	if [[ -n "${md_only}" ]]; then
 		echo "=== changed: docs-only edit -> style check (runtime suites unaffected) ==="
-		"${bootstrap_python}" scripts/check-docs-style.py
+		# Explicit dirty files (not the tracked-tree default) so a brand-new
+		# untracked doc is checked before its first commit, matching CI.
+		"${bootstrap_python}" scripts/check-docs-style.py ${docs_files[@]+"${docs_files[@]}"}
 		return
 	fi
 
 	# Mixed trees: runtime checks below never look at prose, so the dirty
-	# docs still get the style gate here (a ~0.4 s whole-tree scan).
-	if [[ -n "${dirty_docs}" ]]; then
-		"${bootstrap_python}" scripts/check-docs-style.py
+	# docs still get the style gate here (a sub-second scan of the dirty
+	# docs only).
+	if [[ "${dirty_docs}" -eq 1 ]]; then
+		"${bootstrap_python}" scripts/check-docs-style.py ${docs_files[@]+"${docs_files[@]}"}
 	fi
 
 	if [[ "${runtime_changed}" == "full" ]]; then

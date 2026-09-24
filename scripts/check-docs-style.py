@@ -35,10 +35,13 @@ def tracked_doc_files():
     top = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, check=True
     ).stdout.decode("utf-8").strip()
+    # --full-name + cwd=top: paths come back root-relative no matter where
+    # the checker was invoked from.
     result = subprocess.run(
-        ["git", "ls-files", "-z", "--", "*.md", *EXTRA_FILES],
+        ["git", "ls-files", "-z", "--full-name", "--", "*.md", *EXTRA_FILES],
         capture_output=True,
         check=True,
+        cwd=top,
     )
     return sorted(
         f"{top}/{p.decode('utf-8')}" for p in result.stdout.split(b"\0") if p
