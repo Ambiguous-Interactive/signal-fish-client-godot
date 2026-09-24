@@ -53,7 +53,15 @@ Date: 2026-09-24
   Quoted the same way; a full Mode Full run in a space-containing checkout
   path is green end to end. Also named PEP 668 in the PyYAML WARN for
   diagnosability. Kept `gdformat --version` as the venv probe (it is the
-  tool the runtime gate actually invokes).
+  tool the runtime gate actually invokes). Bugbot then caught that
+  `venv_ok` sourced activate into the shell, so a broken venv leaked onto
+  the healing shell's PATH; verification and install now run in subshells.
+
+## PR
+
+- PR #138: https://github.com/Ambiguous-Interactive/signal-fish-client-godot/pull/138
+  (single squash PR). Closes #132, #134, #136. Files #137
+  (composite-action dedupe follow-up).
 
 ## Verification matrix
 
@@ -73,11 +81,9 @@ Date: 2026-09-24
 | Smoke vs docs stamp step bodies | Byte-identical |
 | Mode Full in a space-containing checkout path | Green (quoting class swept) |
 | Space-path + no `.venv-ci` + no PyYAML | Gate still green |
-
-## PR
-
-- PR: session branch (single squash PR). Closes #132, #134, #136. Files
-  #137 (composite-action dedupe follow-up).
+| CI self-tests job | 56 s -> 43 s (PR #138 head) |
+| Dispatched web-export-smoke on the PR branch | Green; warm cache skipped pkg + browser installs |
+| Poisoned `.venv-ci` (pip removed) + post-start | Re-provisioned; heal ran outside the broken env |
 
 ## Review
 
