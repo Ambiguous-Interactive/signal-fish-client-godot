@@ -37,10 +37,14 @@ PowerShell profile behavior, or post-create/post-start setup.
   binaries is on PATH and includes all four versions in the toolchain summary.
   Any install or verification failure fails post-create.
 - `post-start.sh` runs after every successful container start: it re-applies
-  the git `safe.directory` trust and re-runs the installer with `--update`,
-  which probes the registry in parallel and reinstalls only outdated or
-  missing CLIs. `--update` is warn-only: a registry outage degrades to the
-  installed toolchain and never blocks attaching.
+  the git `safe.directory` trust, re-runs the installer with `--update`
+  (warn-only), and heals the Python automation deps so the local gate matches
+  CI: PyYAML is installed into user site-packages when bare `python3` cannot
+  import it (harness sandbox tests strip `.venv-ci`, and runner images ship
+  PyYAML globally), and `.venv-ci` is created when missing with the runtime
+  (gdtoolkit, per ci.yml) and automation (PyYAML, per llm-harness.yml)
+  requirements, so `scripts/run-runtime-checks.sh` and the harness share one
+  local venv. Both heals are warn-only and never block attaching.
 - The installer installs each package with its own `npm install --global`
   (npm treats one multi-package command as a single transaction, so one
   failing postinstall used to roll back every package while leaving their
@@ -73,7 +77,10 @@ PowerShell profile behavior, or post-create/post-start setup.
   `CODEX_NPM_SPEC`, `OPENCODE_NPM_SPEC`,
   `NANOCODER_NPM_SPEC`, and `CLAUDE_NPM_SPEC`;
   `AGENT_TOOLS_NPM_FETCH_TIMEOUT_MS` (default 5000) bounds only the registry
-  version probe, not the install itself.
+  version probe, not the install itself, and `AGENT_TOOLS_RETRY_SLEEP_MS`
+  (default 2000) is the backoff between failed install retries; the hermetic
+  fake-npm self-test matrix sets 0 so rollback cases do not pay real sleep
+  time.
 - `post-create.sh` repairs root-owned mounted directories such as
   `/commandhistory` and `~/.cache` (Docker creates volume-mount parents as
   root; a root-owned `~/.cache` crashed opencode's postinstall verify step and
