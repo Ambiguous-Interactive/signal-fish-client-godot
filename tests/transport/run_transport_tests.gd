@@ -55,6 +55,7 @@ func _run() -> void:
 		_test_websocket_case_insensitive_scheme_validation,
 		_test_websocket_connect_resets_close_active_peer,
 		_test_websocket_connecting_close_fails_without_closed,
+		_test_websocket_open_unobserved_close_fails_without_opened,
 		_test_websocket_connecting_close_surfaces_caller_reason,
 		_test_websocket_read_error_is_terminal_once,
 		_test_websocket_closed_state_delivers_queued_packets,
@@ -466,6 +467,47 @@ func _test_websocket_connecting_close_fails_without_closed() -> void:
 	_assert_equal([[1000, "abort"]], peer.close_calls, "websocket connecting close closes peer")
 	_assert_equal(
 		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "websocket connecting close state"
+	)
+	_done()
+
+
+func _test_websocket_open_unobserved_close_fails_without_opened() -> void:
+	# Issue #119: after the engine handshake completed but before a poll
+	# observed STATE_OPEN, a consumer close() used to emit `opened` and
+	# terminalize as `closed` — diverging from the documented failed-open
+	# contract based on an engine-timing race. The close must fail the
+	# session like every other pre-observation close.
+	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+	peer.ready_state = WebSocketPeer.STATE_OPEN
+	transport._peer = peer
+	var terminal_events: Array = []
+	var opened_count := [0]
+	transport.opened.connect(func() -> void: opened_count[0] += 1)
+	transport.failed.connect(
+		func(_error: String) -> void: terminal_events.append("failed")
+	)
+	transport.closed.connect(
+		func(_code: int, _reason: String) -> void: terminal_events.append("closed")
+	)
+
+	transport.close(1000, "abort")
+
+	_assert_equal(
+		0, opened_count[0], "websocket unobserved-open close never emits opened"
+	)
+	_assert_equal(["failed"], terminal_events, "websocket unobserved-open close failed-open")
+	_assert_equal(
+		[[1000, "abort"]], peer.close_calls, "websocket unobserved-open close closes peer"
+	)
+	# Terminal stays terminal: later polls must not emit anything further.
+	transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
+	transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+	_assert_equal(
+		["failed"], terminal_events, "websocket unobserved-open close stays terminal"
+	)
+	_assert_equal(
+		WebSocketPeer.STATE_CLOSED, transport.get_ready_state(), "websocket unobserved-open close state"
 	)
 	_done()
 

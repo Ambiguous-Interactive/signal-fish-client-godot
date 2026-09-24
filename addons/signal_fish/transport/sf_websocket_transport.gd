@@ -82,14 +82,11 @@ func close(code := 1000, reason := "") -> void:
 		# queue — the same issue-#70 drain the poll path performs applies.
 		_drain_queued_then_close()
 		return
-	if state == WebSocketPeer.STATE_OPEN:
-		_emit_opened_once()
-		# `opened` re-enters consumer handlers; a synchronous failure inside
-		# one tears the transport down before the close frame is queued (the
-		# same re-check _drain_packets performs after every emit).
-		if _peer == null or _is_terminal():
-			return
-	elif not _opened_emitted:
+	# Issue #119: a consumer close before `opened` was observed is a failed
+	# open even if the engine handshake already completed — otherwise the
+	# terminal outcome (failed/FAILED vs closed/CLOSED) races engine timing
+	# that the caller cannot see. `opened` stays suppressed.
+	if not _opened_emitted:
 		_fail_current_session(_preopen_close_message(code, reason), true, code, reason)
 		return
 	_peer.close(code, reason)
