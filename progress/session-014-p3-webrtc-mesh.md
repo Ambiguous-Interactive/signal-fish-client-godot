@@ -1,7 +1,7 @@
-# Session 014 — P3 WebRTC Mesh Node + connect_token Auth
+# Session 014 - P3 WebRTC Mesh Node + connect_token Auth
 
 **Date:** 2026-09-20
-**Branch:** `p3-webrtc-mesh` → PR to `main`
+**Branch:** `p3-webrtc-mesh` -> PR to `main`
 **Goal:** Advance PLAN.md to the next milestone (one focused surface). Drift check found main
 green (Runtime CI + LLM Harness + Dependabot Auto Merge), no open PRs, two open issues:
 #32 (P3 WebRTC mesh, the PLAN milestone) and #33 (connect_token). Both are addressed here
@@ -25,17 +25,17 @@ and aggregated into one PR per the session rules.
     with a matching generation, from a known peer; everything else is discarded silently.
   - ICE servers are replaced (never merged) on every plan; an empty plan list is an
     authoritative clear. `RoomJoined` pre-gather seeds the list before the first plan.
-  - `send_transport_status(webrtc, connected)` fires only at the aggregate 0↔1
+  - `send_transport_status(webrtc, connected)` fires only at the aggregate 0<->1
     connected-peer boundaries (poll-based snapshot; teardown resolves the state silently so
     a dead session never sends stale status).
   - Teardown on `room_left`, `player_left`, `disconnected`, `reconnected`, and
     `_exit_tree`; a replayed plan inside `missed_events` can never revive the old mesh
     (replay reaches consumers only through `reconnected`).
-  - Deterministic UUID→int peer-id mapping (FNV-1a 64, pinned vectors in tests) so every
+  - Deterministic UUID->int peer-id mapping (FNV-1a 64, pinned vectors in tests) so every
     mesh member derives the same `MultiplayerAPI` ids with no extra negotiation.
   - `get_multiplayer_peer()` exposes the mesh for high-level multiplayer RPCs.
 - **Test seams:** `peer_connection_factory` / `multiplayer_peer_factory` Callables make the
-  whole mesh suite deterministic (no real WebRTC in fast gates, PLAN §8).
+  whole mesh suite deterministic (no real WebRTC in fast gates, PLAN section 8).
 - **Tests** (`tests/client/webrtc_mesh_tests.gd`, run via the existing client runner):
   pinned id vectors, attach/detach guards, offer/answer/trickle-ICE relay, boundary
   reporting exactly once per transition, full plan-replacement matrix (retain / rebuild on
@@ -49,7 +49,7 @@ and aggregated into one PR per the session rules.
   existing wire bytes are unchanged); `SignalFishClient._send_authenticate()` passes
   `SignalFishConfig.credential` through.
 - `SignalFishConfig` docstrings updated: the slot is the upstream `sfct_v1.` Ed25519 tenant
-  credential (rust SDK 0.14.0, upstream issue #517). Still a plain non-exported var — never
+  credential (rust SDK 0.14.0, upstream issue #517). Still a plain non-exported var - never
   exported, never in `_to_string`, redacted by the logger.
 - Tests in `v3_client_tests.gd`: credential rides the wire as `connect_token`, unset keeps
   the authenticate bytes unchanged, non-string values are refused with a named error.
@@ -88,7 +88,7 @@ and aggregated into one PR per the session rules.
 - **P2: re-entrant `_peers` mutation.** A real connection's `poll()` can pump callbacks
   into consumer handlers that legally mutate the mesh; `poll()` now iterates a keys copy
   (matching `_apply_plan`/`_reset_mesh`).
-- **P2: peer-id range.** `maxi(digest, 1)` could mint `1` — Godot's reserved server id,
+- **P2: peer-id range.** `maxi(digest, 1)` could mint `1` - Godot's reserved server id,
   which fails `initialize_mesh` silently. The mapping is now forced into the valid
   non-server range `[2, 2^31)` with a range test, `initialize_mesh` errors are logged and
   leave no half-built mesh (test with a refused fake), and `_open_peer` bails cleanly when
@@ -100,7 +100,7 @@ and aggregated into one PR per the session rules.
   the shared wire-shape builders moved to `tests/client/client_fixtures.gd` (thin delegates
   keep the suite-facing helpers stable), restoring ~50 lines of headroom.
 - Reviewer-noted, resolved by documentation: the mesh attaches before joining (or the next
-  plan carries its own ICE list) — stated in the header and README; relayed ICE candidates
+  plan carries its own ICE list) - stated in the header and README; relayed ICE candidates
   carry the candidate string only, which matches the single default data channel.
 - Not deferred lightly: unchecked `create_offer`/`set_*_description` failures stay
   log-only-by-design (the fake suite pins the calls that matter); a credentialed
@@ -110,7 +110,7 @@ and aggregated into one PR per the session rules.
 ### PR review round (Cursor Bugbot findings, all three real)
 
 - **HIGH, real: the mesh called a nonexistent engine method.** Godot 4.3's
-  `WebRTCMultiplayerPeer` has `create_mesh`, not `initialize_mesh` — a false pass through
+  `WebRTCMultiplayerPeer` has `create_mesh`, not `initialize_mesh` - a false pass through
   the duck-typed fake (the exact trap session 013's harness hardening warns about).
   Verified against the local engine's ClassDB; the suite now carries an
   `_test_engine_api_parity` guard asserting every engine method the mesh calls exists, so
@@ -120,7 +120,7 @@ and aggregated into one PR per the session rules.
   any plan whose transport is not `webrtc` (relay floor, or host+direct) instead of opening
   connections whose signals would be gated away; host+direct-with-peers test added.
 - **MEDIUM, real: re-entrant stale key in `poll()`.** A connection callback can tear the
-  mesh down mid-poll (consumer handler → `connection_failed` → reset); the poll loop now
+  mesh down mid-poll (consumer handler -> `connection_failed` -> reset); the poll loop now
   skips peers dropped after the keys snapshot instead of indexing a missing key.
 
 ## Deferred (tracked in PLAN.md)

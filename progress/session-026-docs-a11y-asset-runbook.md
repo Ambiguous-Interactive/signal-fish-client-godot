@@ -1,4 +1,4 @@
-# Session 026 — Docs accessibility gate + Asset Library runbook
+# Session 026 - Docs accessibility gate + Asset Library runbook
 
 Date: 2026-09-21. Scope: one docs-infrastructure round closing the two open
 issues (#67, #65). Drift check first: main was green, local main matched
@@ -7,11 +7,11 @@ squash-merged PR leftovers; nothing to carry forward).
 
 ## Delivered
 
-1. **#67 — Playwright accessibility checks ported from the rust client.**
+1. **#67 - Playwright accessibility checks ported from the rust client.**
    - `scripts/check-docs-accessibility.cjs` copied verbatim from
      `signal-fish-client-rust` (the repo ships the identical
      `docs/javascripts/accessibility.js` + nav override, so all label
-     assertions — "Back from Start Here", "Back from Installation…" — hold
+     assertions - "Back from Start Here", "Back from Installation..." - hold
      here too; nav/theme feature parity verified first).
    - New parallel `accessibility` job in `docs-validation.yml`: strict
      mkdocs build, Chromium cache keyed on the pinned Playwright version
@@ -21,7 +21,7 @@ squash-merged PR leftovers; nothing to carry forward).
    - Validated locally end-to-end: strict build + full browser run green in
      ~10 s (build freshness, closed boundaries, drawer ltr/rtl, search).
 
-2. **#65 — Asset Library operator runbook** at `docs/releasing.md`
+2. **#65 - Asset Library operator runbook** at `docs/releasing.md`
    ("Release Operations"): what you need, the one-time manual first
    submission (field table), secrets/var setup, automated per-release flow,
    pending-edit moderation, troubleshooting. Wired into `mkdocs.yml` nav and
@@ -38,4 +38,4 @@ squash-merged PR leftovers; nothing to carry forward).
 
 - None new. Remaining PLAN gaps are the P4 browser-export manual checklist
   (human, browser-only) and the P6 Asset Library bootstrap (human, needs the
-  first submission + credentials — now documented in `docs/releasing.md`).
+  first submission + credentials - now documented in `docs/releasing.md`).

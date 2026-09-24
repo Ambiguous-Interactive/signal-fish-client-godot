@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Enforce the docs style policy: ASCII-only Markdown, no LLM-isms.
+
+Scope: every tracked ``*.md`` file plus ``llms.txt``. The policy keeps the
+documentation surface copy-paste safe for any editor and tool chain and
+bans the contrast constructions ("not X, but Y") that read as generated
+prose. Intentional non-ASCII (for example a multi-byte string shown in a
+protocol example) needs an inline ``<!-- sf-allow:non-ascii -->`` marker
+on the same line.
+"""
+
+import argparse
+import re
+import subprocess
+import sys
+import unicodedata
+
+ALLOW_MARKER = "<!-- sf-allow:non-ascii -->"
+
+# Name -> pattern. Case-insensitive; each hit is one finding.
+PATTERNS = {
+    "contrast 'not X, but Y'": re.compile(r"\bnot [^.;?!\n]{1,60}, but (?:rather |simply |just )?\b", re.I),
+    "contrast 'it's not X, it's Y'": re.compile(r"\bit'?s not [^.;?!\n]{1,60}, (?:but )?it'?s\b", re.I),
+    "filler 'not just'": re.compile(r"\b(?:not|isn't|aren't|wasn't|weren't) just\b", re.I),
+    "filler 'it's worth noting'": re.compile(r"\bit'?s worth noting (that )?\b", re.I),
+}
+
+EXTRA_FILES = ("llms.txt",)
+
+
+def tracked_doc_files():
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.md", *EXTRA_FILES],
+        capture_output=True,
+        check=True,
+    )
+    return sorted(p.decode("utf-8") for p in result.stdout.split(b"\0") if p)
+
+
+def find_violations(text):
+    """Yield (line_number, column, message) for one file's text."""
+    for index, line in enumerate(text.splitlines(), 1):
+        allowed = ALLOW_MARKER in line
+        for col, char in enumerate(line, 1):
+            if ord(char) > 127:
+                if allowed:
+                    continue
+                name = unicodedata.name(char, f"U+{ord(char):04X}")
+                yield index, col, f"non-ASCII character U+{ord(char):04X} {name}"
+        if allowed:
+            continue
+        for name, pattern in PATTERNS.items():
+            match = pattern.search(line)
+            if match:
+                yield index, match.start() + 1, name
+
+
+def run_check(paths):
+    findings = []
+    files = paths if paths else tracked_doc_files()
+    for path in files:
+        try:
+            text = open(path, encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError) as exc:
+            findings.append((path, 0, 0, f"unreadable: {exc}"))
+            continue
+        for line, col, message in find_violations(text):
+            findings.append((path, line, col, message))
+    return findings
+
+
+def self_test():
+    failures = []
+
+    def expect(message, text, count):
+        got = len(list(find_violations(text)))
+        if got != count:
+            failures.append(f"{message}: expected {count} violations, got {got}")
+
+    def allow(message, text):
+        got = [v for v in find_violations(text) if "non-ASCII" in v[2]]
+        if got:
+            failures.append(f"{message}: allow marker did not suppress {got}")
+
+    expect("em dash", "a \u2014 b\n", 1)
+    expect("en dash", "a \u2013 b\n", 1)
+    expect("arrow", "a \u2192 b\n", 1)
+    expect("ellipsis", "a\u2026\n", 1)
+    expect("section sign", "\u00a74.1\n", 1)
+    expect("middle dot", "a \u00b7 b\n", 1)
+    expect("curly quote", "\u2018x\u2019\n", 2)
+    expect("contrast not-x-but-y", "it is not fast, but robust.\n", 1)
+    expect("contrast its-not-x-its-y", "it's not a bug, it's a feature.\n", 1)
+    expect("not just", "not just fast.\n", 1)
+    expect("isn't just", "isn't just fast.\n", 1)
+    expect("worth noting", "It's worth noting that it works.\n", 1)
+    expect("plain ascii passes", "a - b -> c, 100% done.\n", 0)
+    expect("sentence without the shape is fine", "The file is not found; nothing else happens.\n", 0)
+    allow("marker suppresses", "h\u00e9llo " + ALLOW_MARKER + "\n")
+    expect("marker only covers its line", "h\u00e9llo\nplain\n", 1)
+
+    if failures:
+        for failure in failures:
+            print(f"self-test FAIL: {failure}", file=sys.stderr)
+        return 1
+    print("check-docs-style self-test OK")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("paths", nargs="*", help="files to check (default: all tracked docs)")
+    parser.add_argument("--self-test", action="store_true", help="run internal checks and exit")
+    args = parser.parse_args()
+    if args.self_test:
+        return self_test()
+    findings = run_check(args.paths)
+    for path, line, col, message in findings:
+        print(f"::error::{path}:{line}:{col}: {message}")
+    if findings:
+        print(
+            f"check-docs-style: {len(findings)} violation(s). "
+            "Docs must be ASCII with no LLM-isms; intentional non-ASCII "
+            f"needs an inline '{ALLOW_MARKER}' marker.",
+            file=sys.stderr,
+        )
+        return 1
+    files = args.paths if args.paths else tracked_doc_files()
+    print(f"check-docs-style OK ({len(files)} file(s))")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

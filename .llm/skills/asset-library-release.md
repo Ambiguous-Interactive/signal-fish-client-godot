@@ -30,7 +30,7 @@ configured, so releases stay usable before the one-time bootstrap.
    `.asset-template.json.hb` (category: **Scripts**, `godot_version` 4.3,
    `download_provider` GitHub, `download_commit` = the release tag).
 3. Wait for moderation. Record the numeric asset ID.
-4. Add repo secrets + var (Settings → Secrets and variables → Actions):
+4. Add repo secrets + var (Settings -> Secrets and variables -> Actions):
    - secret `GODOT_ASSET_LIBRARY_USERNAME`
    - secret `GODOT_ASSET_LIBRARY_PASSWORD`
    - var `GODOT_ASSET_LIBRARY_ASSET_ID`
@@ -83,7 +83,7 @@ curl -sf -X POST "$BASE/logout" -H 'Content-Type: application/json' -d "{\"token
 
 ## Local verification
 
-- `python scripts/validate-github-config.py --repo-root .` — workflow shape,
+- `python scripts/validate-github-config.py --repo-root .` - workflow shape,
   pinned refs, permissions.
 - The submit job itself only runs with real credentials; rehearse changes with
   the curl fallback against a scratch asset before touching the workflow.

@@ -1,4 +1,4 @@
-# Dev Container — Signal Fish Godot Client
+# Dev Container - Signal Fish Godot Client
 
 A reproducible, batteries-included VS Code dev environment for working on the
 Signal Fish Godot client. Built on Ubuntu 24.04 with Godot 4 (headless),
@@ -92,18 +92,18 @@ Switch color themes with the `Preferences: Color Theme` command.
 
 ## Files
 
-- [`devcontainer.json`](./devcontainer.json) — features, extensions, settings
-- [`Dockerfile`](./Dockerfile) — base image and Godot install
-- [`install-godot.sh`](./install-godot.sh) — deterministic Godot download
-- [`install-agent-tools.sh`](./install-agent-tools.sh) — agent CLI install/refresh
-- [`post-create.sh`](./post-create.sh) — git hooks + agent CLIs + toolchain summary
-- [`post-start.sh`](./post-start.sh) — git trust + best-effort agent CLI refresh
+- [`devcontainer.json`](./devcontainer.json) - features, extensions, settings
+- [`Dockerfile`](./Dockerfile) - base image and Godot install
+- [`install-godot.sh`](./install-godot.sh) - deterministic Godot download
+- [`install-agent-tools.sh`](./install-agent-tools.sh) - agent CLI install/refresh
+- [`post-create.sh`](./post-create.sh) - git hooks + agent CLIs + toolchain summary
+- [`post-start.sh`](./post-start.sh) - git trust + best-effort agent CLI refresh
 
 ## Local font tip
 
 The default editor/terminal font stack prefers
 [FiraCode Nerd Font](https://www.nerdfonts.com/font-downloads). Install it on
-your **host** for the best appearance — the container does not need the font.
+your **host** for the best appearance - the container does not need the font.
 
 ## Updating Godot
 
@@ -146,5 +146,5 @@ inside the container and sign in according to its vendor's docs.
   `==> Installing agent CLIs` section for npm or PATH errors. The installer
   requires Node.js >= 22 and a writable npm global prefix; if npm installs
   successfully but a CLI is still not found, compare `npm config get prefix`
-  with `$PATH` — the installer prepends the expected npm global `bin`
+  with `$PATH` - the installer prepends the expected npm global `bin`
   directory during setup.

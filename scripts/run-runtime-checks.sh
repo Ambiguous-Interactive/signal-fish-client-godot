@@ -579,8 +579,9 @@ run_changed() {
 	done <<<"${files}"
 
 	if [[ -n "${md_only}" ]]; then
-		echo "docs-only change: no runtime checks; run agent-check.ps1 for .llm edits"
-		return 0
+		echo "=== changed: docs-only edit -> style check (runtime suites unaffected) ==="
+		"${bootstrap_python}" scripts/check-docs-style.py
+		return
 	fi
 
 	if [[ "${runtime_changed}" == "full" ]]; then

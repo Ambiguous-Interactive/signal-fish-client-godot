@@ -1,11 +1,11 @@
-# Signal Fish — Godot 4 GDScript Client Bindings · Plan
+# Signal Fish - Godot 4 GDScript Client Bindings - Plan
 
 Living plan: **in-progress and future work only.** Completed work lives in
 `progress/`, durable rules in `.llm/context.md` + `.llm/skills/`, the shipped
 API map in `.llm/code-samples/gdscript-client-shape.md` (see
 `.llm/skills/architectural-planning.md`, "Plan File Hygiene").
 
-**Status:** P0–P6 are complete — protocol codec + fixtures (pinned to
+**Status:** P0-P6 are complete - protocol codec + fixtures (pinned to
 upstream v0.9.1), transport seam, core client/config/state machines,
 authority, spectators, reconnection + replay, MessagePack/binary game data,
 v3 session-plan signaling + WebRTC mesh, demo + Web export smoke, MkDocs
@@ -22,7 +22,7 @@ Per-session history: `progress/session-NNN-*.md`.
 
 ### Post-v1 (P7, each gated)
 - [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke
-      tests) — only after the separate compatibility decision (context.md
+      tests) - only after the separate compatibility decision (context.md
       MVP rule).
 - [ ] Revisit Rkyv (stays pass-through unless upstream offers a
       JSON-equivalent).

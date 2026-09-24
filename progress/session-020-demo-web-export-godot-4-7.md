@@ -1,7 +1,7 @@
-# Session 020 — Demo Project, Web Export Smoke, Godot 4.7 Matrix
+# Session 020 - Demo Project, Web Export Smoke, Godot 4.7 Matrix
 
 **Date:** 2026-09-21
-**Branch:** `feat/demo-web-export-godot-47` → PR to `main`
+**Branch:** `feat/demo-web-export-godot-47` -> PR to `main`
 **Goal:** Advance PLAN P4/P5 (demo project + web-export smoke), close issue
 #51 (Godot 4.7 support), and keep fast-gate CI wall clock flat or lower
 without touching test coverage.
@@ -14,7 +14,7 @@ all local branches were pre-squash leftovers from merged PRs.
 
 ## What landed
 
-### Issue #51 — Godot 4.7 support
+### Issue #51 - Godot 4.7 support
 
 Godot 4.7.2-stable exists upstream. The full suite (all five runners, plus
 static checks and a headless demo boot) was verified locally against the
@@ -23,7 +23,7 @@ matrix leg; legs run concurrently, so wall clock stays at max(legs), not
 sum. The 4.3 pin-drift guard (`validate-github-config.py --self-test` +
 repo validation) still passes.
 
-### P4 — demo project (connect → join → game data → leave)
+### P4 - demo project (connect -> join -> game data -> leave)
 
 `demo/main.tscn` + `demo/demo_client.gd`: minimal Control UI (endpoint,
 app id, game, player, room code, send text) wired to the shipped client
@@ -33,7 +33,7 @@ cross-`class_name` globals (cold-cache safe), fully typed handlers
 roots). Set as the project main scene; `demo/` added to the gdformat /
 gdlint / private-helper guard scopes.
 
-### P5 — web export preset + export smoke off the fast gate
+### P5 - web export preset + export smoke off the fast gate
 
 `export_presets.cfg`: "Web" preset exporting the demo scene (dependency
 closure only, binary-token scripts, nothreads). The export was verified
@@ -41,7 +41,7 @@ end-to-end locally against real 4.3-stable templates: `index.html` +
 `index.wasm` + a 96 KB `index.pck`.
 
 `.github/workflows/web-export-smoke.yml`: weekly cron + dispatch, never on
-push/PR — template-download minutes stay out of every fast-gate run
+push/PR - template-download minutes stay out of every fast-gate run
 (same pattern as `protocol-sync.yml`). Catches export breakage without
 slowing PRs. Verified details: the exporter refuses a missing target
 folder on a fresh checkout, so the job pre-creates `build/web`; third
@@ -68,7 +68,7 @@ on a version the fast gate covers.
 
 ## PR outcome (#54)
 
-- All Runtime CI legs green (4.3: 17s, 4.4.1: 18s, 4.7.2: 14s — cold Godot
+- All Runtime CI legs green (4.3: 17s, 4.4.1: 18s, 4.7.2: 14s - cold Godot
   cache on the new leg and still fastest; apt step measured 6s vs 10-15s
   before the trim). LLM Harness green (untouched). Bugbot pass.
 - Bugbot caught one real bug: the setup-godot input is `version` (full
@@ -83,7 +83,7 @@ on a version the fast gate covers.
 
 ## Leftovers / follow-ups
 
-- Headless `WebSocketPeer` smoke test (network-gated/opt-in) — PLAN P4.
-- Browser-export manual checklist — PLAN P4 (human-in-the-loop).
-- Demo P2P scene — PLAN P3/P4 leftover.
-- `plugin.cfg`/`icon.png` for the addon — PLAN P6.
+- Headless `WebSocketPeer` smoke test (network-gated/opt-in) - PLAN P4.
+- Browser-export manual checklist - PLAN P4 (human-in-the-loop).
+- Demo P2P scene - PLAN P3/P4 leftover.
+- `plugin.cfg`/`icon.png` for the addon - PLAN P6.

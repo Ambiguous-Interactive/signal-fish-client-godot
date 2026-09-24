@@ -1,7 +1,7 @@
-# Session 019 — DecodedEvent Aliasing Policy, CI Job Split, Godot 4.4 Matrix
+# Session 019 - DecodedEvent Aliasing Policy, CI Job Split, Godot 4.4 Matrix
 
 **Date:** 2026-09-21
-**Branch:** `perf/aliasing-ci-split-matrix` → PR to `main`
+**Branch:** `perf/aliasing-ci-split-matrix` -> PR to `main`
 **Goal:** Close open issue #48 (aliasing policy decision), land the deferred
 #15 item 6 (Godot version matrix), and decrease CI wall clock without
 changing test coverage.
@@ -13,7 +13,7 @@ from `origin/main` at `3552d01`.
 
 ## What landed
 
-### #48 — decode output aliases the parsed envelope
+### #48 - decode output aliases the parsed envelope
 
 Decision: **alias, don't copy**. Grounds:
 
@@ -31,14 +31,14 @@ Changes: `DecodedEvent.raw` and every decode-direction typed payload
 sub-tree instead of `duplicate(true)`. The outbound user-authored
 `ConnectionInfo` alone keeps its construction-time snapshot (mutating the
 caller's dict after construction must not change wire bytes). Semantics
-documented on `DecodedEvent.raw` and in PLAN §4.6.
+documented on `DecodedEvent.raw` and in PLAN section 4.6.
 
 Test sweep: `_test_decode_raw_aliasing` pins the policy data-driven from
 one `Reconnected` envelope (event/baseline/nested player/missed-event
 aliasing, `to_dict()` independence) plus the `ConnectionInfo`
 non-aliasing guard.
 
-### #15 item 6 — Godot version matrix (P5)
+### #15 item 6 - Godot version matrix (P5)
 
 `ci.yml` `test` job now runs 4.3-stable + 4.4.1-stable as concurrent
 legs; the full suite was verified locally on both binaries. The
@@ -52,7 +52,7 @@ of a single env literal; self-test updated.
 gdformat + gdlint; no apt Godot deps, no Godot install) and `test`
 (matrix; no Python tooling install). Per-PR wall clock drops from
 sum(steps) to max(jobs); the same checks run, just distributed.
-`llm-harness.yml` untouched (PLAN §5 hard constraint).
+`llm-harness.yml` untouched (PLAN section 5 hard constraint).
 
 ## Verification
 

@@ -10,7 +10,7 @@ Pure GDScript client for the [Signal Fish](https://github.com/Ambiguous-Interact
 ## Install
 
 Copy `addons/signal_fish/` into your project, then enable the plugin in
-Project Settings → Plugins (or use the classes directly — no enable needed).
+Project Settings -> Plugins (or use the classes directly - no enable needed).
 
 ## Quick start
 
@@ -28,4 +28,4 @@ Full docs, demo scenes, and tests live in the
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).

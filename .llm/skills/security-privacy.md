@@ -38,7 +38,7 @@ transport security, or dependency choices.
 - `app_id`, reconnection `auth_token`, and the reconnection token are never
   logged at the default level; `sf_log.gd` redacts them on all paths. Full
   payload debug logging is opt-in and local-only. Note tokens also ride in
-  consumer-visible `raw`/`to_dict()` — document that logging whole payloads
+  consumer-visible `raw`/`to_dict()` - document that logging whole payloads
   leaks them.
 - `SignalFishConfig.credential` is a plain (non-exported) var so the Resource
   pipeline can never persist it. It rides `Authenticate` as the upstream
@@ -46,7 +46,7 @@ transport security, or dependency choices.
   URLs, absent from `to_string()`/debug output.
 - Tokens never appear in fixtures (fake placeholders only), error messages,
   or signal payloads. Reviewers check every committed fixture.
-- Authenticate **after** socket open — no `Authorization`/custom handshake
+- Authenticate **after** socket open - no `Authorization`/custom handshake
   headers in browsers. Production is `wss://`; `ws://` from a secure page is
   a loud `ERR_INVALID_PARAMETER` (no silent fallback). `Origin` is a
   server-side policy; the client cannot set it in a browser.

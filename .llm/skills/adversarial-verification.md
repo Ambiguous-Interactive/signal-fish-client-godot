@@ -57,7 +57,7 @@ For high-risk work, run the loop until no blocking findings remain:
 
 A phase is done only when all of the following hold:
 
-- Zero open `P1`/`P2` findings — each is fixed with a covering test, deferred
+- Zero open `P1`/`P2` findings - each is fixed with a covering test, deferred
   with an owner + rationale, or marked unverifiable with a manual check.
 - Every requirement is conservatively classified `DONE` (a touched file is
   not proof).

@@ -1,7 +1,7 @@
-# Session 018 — Perf Allocations, SSOT Residuals, Pin Drift Guard
+# Session 018 - Perf Allocations, SSOT Residuals, Pin Drift Guard
 
 **Date:** 2026-09-21
-**Branch:** `quality/perf-allocs-ssot-residuals` → PR to `main`
+**Branch:** `quality/perf-allocs-ssot-residuals` -> PR to `main`
 **Goal:** Close the two open issues (#45 per-message allocations, #46
 SSOT/TOCTOU residuals). CI time does not increase; aggregate CI usage
 decreases (superseded PR runs are now canceled). Test coverage unchanged
@@ -14,7 +14,7 @@ from `origin/main` at `505d7bc`.
 
 ## What landed
 
-### #45 perf — hot-path allocations (items 1, 3, 4)
+### #45 perf - hot-path allocations (items 1, 3, 4)
 
 - `sf_msgpack.gd`: recursive decode no longer builds a result dict per
   decoded node (a large payload previously allocated ~M `{ok, value,
@@ -23,23 +23,21 @@ from `origin/main` at `505d7bc`.
   array per `decode()` call, zero per node; decode stays reentrant). Public
   `decode()`/`encode()` contracts unchanged.
 - `sf_binary_frames.gd`: canonical UUID strings are cached (bounded at 256,
-  cleared when full so a hostile peer cannot grow it without limit) —
-  repeat senders stop paying the hex/substr/format per frame.
+  cleared when full so a hostile peer cannot grow it without limit) - repeat senders stop paying the hex/substr/format per frame.
 - `sf_events.gd`: `_decode_reconnected` hoists `data["missed_events"]` out
   of the per-element loop and the repeated size checks;
   `_decode_lobby_state_changed` hoists `data["ready_players"]` out of its
   validate/convert passes.
 
-Deferred: `DecodedEvent.raw`/`RoomJoinedInfo` deep-copy removal (item 2) —
-needs a public-API compat decision (aliasing across `missed_events`
+Deferred: `DecodedEvent.raw`/`RoomJoinedInfo` deep-copy removal (item 2) - needs a public-API compat decision (aliasing across `missed_events`
 sub-events is observable); split into a follow-up issue.
 
-### #46 SSOT — drift-prone duplication collapsed
+### #46 SSOT - drift-prone duplication collapsed
 
 - `sf_types.gd`: the `LobbyState` `match` copies inside `RoomJoinedInfo`
   and `SpectatorJoinedInfo`, and the `GameDataEncoding` `match` copy inside
   `ProtocolInfo`, now read the outer token tables (via `TypeUtils.enum_value`
-  / `GAME_DATA_ENCODING_FROM_STRING`) — a new token can no longer decode as
+  / `GAME_DATA_ENCODING_FROM_STRING`) - a new token can no longer decode as
   `UNKNOWN` in a forgotten copy. Godot 4.3 lesson: inner classes can reach
   outer **consts** (incl. preloaded-script consts) but **not** outer static
   functions (parse error: "not found in base self"), so the tables are the
@@ -48,32 +46,32 @@ sub-events is observable); split into a follow-up issue.
   `sf_messages.gd`; `sf_session_types.gd`'s inlined typeof+floor logic now
   calls `SFTypeUtils.is_integral_number`.
 
-### #46 TOCTOU — preflight vanished-file tolerance
+### #46 TOCTOU - preflight vanished-file tolerance
 
 - `scripts/preflight.ps1`: a toolkit file deleted between the existence
   gate and the parse, or between the parse and the recovery-backup read, is
   skipped (like tracked-but-deleted) instead of reported as fatal
   corruption.
 
-### #46 SSOT — Godot version pin drift guard
+### #46 SSOT - Godot version pin drift guard
 
 - `scripts/validate-github-config.py`: `project.godot`
   `config/features` is now the single source for the Godot version; the
   guard fails CI when `ci.yml`, `devcontainer.json`, or the `Dockerfile`
   ARGs drift from it (e.g. a bump that leaves one site behind). Self-test
   covers consistent, drifted, and unreadable pins. Runs inside the existing
-  LLM Harness step — zero new CI steps.
+  LLM Harness step - zero new CI steps.
 
 ### CI usage decrease (coverage unchanged)
 
 - `.github/workflows/ci.yml`: concurrency group cancels superseded
   `pull_request` runs; `push` runs on main are never canceled (merge
   checks depend on them). Per-run wall time and coverage unchanged.
-- `llm-harness.yml` untouched (PLAN §5 hard constraint).
+- `llm-harness.yml` untouched (PLAN section 5 hard constraint).
 
 ## Intentionally not done (tracked, do not re-file)
 
-- `DecodedEvent.raw` deep-copy removal: needs a compat decision — follow-up
+- `DecodedEvent.raw` deep-copy removal: needs a compat decision - follow-up
   issue opened.
 - Session-reset peer flush (`_close_peer_for_session_reset`): documented at
   the reconnect dial path, tracked under #24.

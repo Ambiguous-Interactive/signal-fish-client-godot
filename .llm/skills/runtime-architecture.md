@@ -7,15 +7,16 @@ category: Core
 # Runtime Architecture
 
 The addon (`addons/signal_fish/`) has three hard layers with one-way
-dependencies: **API → protocol (pure/static) ⟂ transport (I/O)**. The client
+dependencies: **API -> protocol (pure/static), independent of transport
+(I/O)**. The client
 Node is the only place protocol and transport meet. Everything is driven from
-`_process()`/`poll()`; no threads, no blocking — web-safe by construction.
+`_process()`/`poll()`; no threads, no blocking - web-safe by construction.
 
 ## Layer map
 
 ```text
 addons/signal_fish/
-  signal_fish_client.gd     # class_name SignalFishClient (Node) — PUBLIC API
+  signal_fish_client.gd     # class_name SignalFishClient (Node) - PUBLIC API
   signal_fish_config.gd     # class_name SignalFishConfig (Resource)
   plugin.cfg / plugin.gd / icon.png / README.md / LICENSE
   protocol/                 # PURE static; no Node, no transport imports
@@ -51,23 +52,23 @@ payloads inside `transport/`.
 - No `OS.delay`, no timers with threads, no awaits in addon runtime code; use
   accumulated process deltas.
 - Sends are guarded by backpressure: `get_buffered_amount() >
-  max_buffered_bytes` → `ERR_BUSY` + `protocol_error`, nothing queued.
+  max_buffered_bytes` -> `ERR_BUSY` + `protocol_error`, nothing queued.
 - Frames over `max_inbound_frame_bytes` are dropped pre-parse with
   `protocol_error`.
 
 ## State machines
 
-- `ConnectionState`: DISCONNECTED (idle) → CONNECTING → CONNECTED → CLOSING →
+- `ConnectionState`: DISCONNECTED (idle) -> CONNECTING -> CONNECTED -> CLOSING ->
   CLOSED (observed close frame) / FAILED (client abstraction). Keep polling
   while CLOSING to capture close code/reason; `-1` maps through as-is.
-- `SessionState`: UNAUTHENTICATED → AUTHENTICATING → AUTHENTICATED →
+- `SessionState`: UNAUTHENTICATED -> AUTHENTICATING -> AUTHENTICATED ->
   IN_ROOM_WAITING/LOBBY/FINALIZED or SPECTATING. Lobby transitions are
   **server-driven** (`RoomJoined`/`LobbyStateChanged`/`Reconnected`); the
   client never self-promotes. `GameStarting` does not change session state.
 - Reconnect opens a fresh transport, authenticates, then sends `Reconnect`
   once `Authenticated` arrives (enforcing servers reject pre-auth messages).
   On `Reconnected`, restore cached state, decode `missed_events` through the
-  normal decoder, and emit `reconnected(info, missed_events)` — no hidden
+  normal decoder, and emit `reconnected(info, missed_events)` - no hidden
   re-emit; consumers replay.
 
 ## Signals are synchronous: audit every emit site
@@ -90,8 +91,8 @@ clobber generalized into standing rules:
   and a session swap (a fresh dial must not inherit the old session's
   deadline).
 - A refused send retried from a per-frame loop (`poll`/`_process`) must
-  throttle retries to one per interval — the heartbeat's backpressured-beat
-  rule — with the interval injectable for deterministic tests. One refused
+  throttle retries to one per interval - the heartbeat's backpressured-beat
+  rule - with the interval injectable for deterministic tests. One refused
   send is one diagnostic; a stalled link must not flood `protocol_error`
   once per frame.
 - Pin each rule with a handler-re-entry test: redial/flap from *inside* the
@@ -118,11 +119,11 @@ clobber generalized into standing rules:
 
 ## Data representation
 
-- Inbound structured payloads → typed `RefCounted` value objects
+- Inbound structured payloads -> typed `RefCounted` value objects
   (`PlayerInfo`, `RoomJoinedInfo`, ...) built on decode, with `to_dict()` for
-  an independent mutable copy. Not `Resource` — no `.tres`/editor baggage for
+  an independent mutable copy. Not `Resource` - no `.tres`/editor baggage for
   transient data.
-- Closed sets → `enum` + string⇄enum tables in the owning class (`LobbyState`,
+- Closed sets -> `enum` + string<->enum tables in the owning class (`LobbyState`,
   `GameDataEncoding`, `SpectatorReason`, `SFErrorCodes.Code`). Enum ints are
   internal only; the wire uses strings.
 - User game data stays `Variant`/`Dictionary` (open-ended). Binary is

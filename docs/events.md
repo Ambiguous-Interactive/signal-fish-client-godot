@@ -44,7 +44,7 @@ The `protocol_info` payload (`SFTypes.ProtocolInfo`) carries the server's
 capability statement: `game_data_formats`, `player_name_rules`,
 `capabilities`, the v3 `protocol_version` / `min_protocol_version` /
 `max_protocol_version` / `transports` fields, and
-`max_outbound_message_size` — the maximum complete encoded outbound
+`max_outbound_message_size` - the maximum complete encoded outbound
 payload in bytes when the server states one (v3+; `0` = absent).
 
 ## Room lifecycle and presence

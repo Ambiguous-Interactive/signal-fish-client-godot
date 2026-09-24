@@ -1,6 +1,6 @@
-# Session 041 — Upstream verification sweep + kicked-close policy
+# Session 041 - Upstream verification sweep + kicked-close policy
 
-Date: 2026-09-23 · Branch: `session-041-upstream-verifications` · Base:
+Date: 2026-09-23 - Branch: `session-041-upstream-verifications` - Base:
 `origin/main` @ `a4c12de`
 
 ## What and why
@@ -14,7 +14,7 @@ wire truth against our codec.
 - `RoomJoinedPayload` / `ReconnectedPayload` / `SpectatorJoinedPayload`:
   snake_case fields (no `rename_all`), PascalCase tags; our required/optional
   key sets match exactly; `missed_events` is mandatory even when empty.
-- `missed_events` semantics: oldest→newest, no wire sequence numbers (server
+- `missed_events` semantics: oldest->newest, no wire sequence numbers (server
   counter is internal), control events only, `GameData` never replayed,
   server filters the reconnector's own deltas. Our verbatim order-preserving
   replay is correct; wire dedup is impossible.
@@ -25,7 +25,7 @@ wire truth against our codec.
 - `ConnectionInfo`: tags `direct|unity_relay|relay|webrtc|custom` and field
   sets match; `webrtc.sdp` serializes `null` upstream, omission decodes the
   same (serde `Option` default).
-- `Ping`: upstream canonical form is bare `{"type":"Ping"}` — byte-pinned in
+- `Ping`: upstream canonical form is bare `{"type":"Ping"}` - byte-pinned in
   our fixtures already.
 - Error-code enum: full upstream list present in `SFErrorCodes.Code`.
 
@@ -34,7 +34,7 @@ Facts pinned in `.llm/skills/signal-fish-protocol.md` and
 
 ## Fix: close code 4007 (kicked) now ends the episode
 
-Upstream `CloseReason::Kicked` → WS close `4007` removes the reconnection
+Upstream `CloseReason::Kicked` -> WS close `4007` removes the reconnection
 record ("kick implies no reconnection"), but our client retried every close
 code: kicked players burned the full retry budget on a doomed loop.
 

@@ -114,7 +114,7 @@ The linter, preflight, and self-tests enforce repo-wide invariants beyond
   `Test-LegacyHooksPath` so trailing-separator and relative-path
   variants of `.githooks` are recognized.
 
-When adding a script, edit it in place — do not commit a `.new` copy.
+When adding a script, edit it in place - do not commit a `.new` copy.
 
 ## Agentic Hooks (Claude Code)
 

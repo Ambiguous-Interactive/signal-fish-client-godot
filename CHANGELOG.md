@@ -1,13 +1,14 @@
 # Changelog
 
 User-facing changes only. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Versioning: [SemVer](https://semver.org/) — `vMAJOR.MINOR.PATCH`, pre-1.0 while the API stabilizes.
+Versioning: [SemVer](https://semver.org/) - `vMAJOR.MINOR.PATCH`, pre-1.0 while the API stabilizes.
 CI, tests, and internal tooling are not listed.
 
 ## [Unreleased]
 
 ### Changed
 
+- Documentation is now ASCII-only; wording is unchanged where possible.
 - A truncated replay (`missed_events` over the 256-entry decode cap) now
   keeps the newest entries and drops the oldest: `replay: truncated` means
   the wire array is the most-recent suffix, and the events closest to now
@@ -26,8 +27,8 @@ CI, tests, and internal tooling are not listed.
   JSON (some very small magnitudes) are refused with a diagnostic
   rather than silently altered.
 - `send_game_data` and `send_signal` now refuse non-finite floats
-  (`nan`/`inf`) and values JSON cannot represent — engine-only Variants
-  such as `Vector2`, `StringName`, or `Packed*Array` values — with
+  (`nan`/`inf`) and values JSON cannot represent - engine-only Variants
+  such as `Vector2`, `StringName`, or `Packed*Array` values - with
   `protocol_error` + `ERR_INVALID_DATA` instead of putting corrupted or
   unparseable frames on the wire. This also applies at the encode
   boundary to payloads that skip builder validation, such as
@@ -68,8 +69,8 @@ CI, tests, and internal tooling are not listed.
 - An unsolicited `Reconnected` (no reconnect handshake on this dial) now
   surfaces `protocol_error` instead of being dropped silently (#108).
 - MessagePack strings (opt-in payload decode) and binary-frame string fields
-  now decode as real UTF-8: multi-byte strings such as `"héllo"` or emoji
-  arrived byte-mapped as mojibake, and the codec's own encode/decode
+  now decode as real UTF-8: multi-byte strings such as `"héllo"` <!-- sf-allow:non-ascii -->
+  or emoji arrived byte-mapped as mojibake, and the codec's own encode/decode
   round-trip broke for any non-ASCII character (#99).
 - A `LobbyStateChanged` frame received without a room baseline is now
   informational only: it could previously forge an in-room session state,
@@ -77,7 +78,7 @@ CI, tests, and internal tooling are not listed.
   `Ping`/`PlayerReady` frames onto the wire pre-authentication (#100).
 - A hostile webrtc `ice_candidates` array on a directly constructed
   `ConnectionInfo` no longer silently drops wrong-typed entries on the
-  documented `to_dict()` resend path — the verbatim entries let the
+  documented `to_dict()` resend path - the verbatim entries let the
   outbound validation refuse the message loudly instead (#97). The same
   no-silent-loss contract now holds for roster round-trips
   (`RoomJoinedInfo`/`SpectatorJoinedInfo`): wrong-typed roster entries pass
@@ -86,7 +87,7 @@ CI, tests, and internal tooling are not listed.
   only valid entries; the unfiltered view stays in `raw`.
 - An explicit `close()` on a transport whose peer already reached
   `STATE_CLOSED` now drains queued data frames before emitting `closed`,
-  matching the poll path — a consumer close could previously race the
+  matching the poll path - a consumer close could previously race the
   final frames out of the queue (#101).
 - The WebRTC mesh now flips its transport-status boundary only when the
   report send succeeds: a report refused under backpressure stays armed
@@ -94,7 +95,7 @@ CI, tests, and internal tooling are not listed.
   backpressured beats) instead of being lost for the session (#102).
 - Inbound text frames containing a repeated JSON key (for example a second
   `"type"`) now fail closed with `protocol_error` instead of letting the
-  engine's last-wins parser silently substitute fields — a smuggled
+  engine's last-wins parser silently substitute fields - a smuggled
   duplicate could previously wipe room state or replace the retained
   reconnection identity. This matches the duplicate rejection upstream
   applies and the binary envelope path already enforced; keys compare
@@ -190,7 +191,7 @@ CI, tests, and internal tooling are not listed.
   Asset Library-ready.
 - `demo/p2p.tscn`: P2P example that negotiates a v3 session plan, attaches
   `SFWebRTCMesh`, and chats over mesh RPCs once peers connect.
-- `demo/main.tscn`: runnable demo scene (connect → join → game data → leave)
+- `demo/main.tscn`: runnable demo scene (connect -> join -> game data -> leave)
   with a log of client events, set as the project main scene. A "Web" export
   preset builds the demo straight to a browser build.
 - `SFWebRTCMesh` node (opt-in): turns negotiated v3 session plans into a

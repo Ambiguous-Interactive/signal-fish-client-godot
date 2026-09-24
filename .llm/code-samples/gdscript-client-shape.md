@@ -9,7 +9,7 @@ category: Code Sample
 The runtime addon ships `SignalFishClient` (Node) and `SignalFishConfig`
 (Resource) under `addons/signal_fish/`. This page maps the shipped API for AI
 context; the addon source is the design record. Everything is polled: call `poll()`
-(or leave `auto_poll` on) — no threads, no blocking, web-safe.
+(or leave `auto_poll` on) - no threads, no blocking, web-safe.
 
 ## Minimal usage
 
@@ -43,7 +43,7 @@ client.authenticated.connect(func(_app, _org, _limits) -> void:
   `max_inbound_packets_per_poll` (all default ~256 KiB / 64).
 - Reconnect: `reconnect_max_attempts` (default 5).
 - Heartbeat (off by default): `heartbeat_interval_sec` (0 = off),
-  `pong_timeout_sec` — a silent link past the deadline is torn down as a
+  `pong_timeout_sec` - a silent link past the deadline is torn down as a
   transport failure, so opt-in auto-reconnect can engage.
 - v3 session plan (omit to keep v2 wire bytes identical): `protocol_version`,
   `supported_transports`, `supported_topologies`, `requested_capabilities`.
@@ -148,14 +148,14 @@ peer_transport_status(peer_id, transport, connected)
 - Closed sets are enums: `SFTypes.LobbyState`, `GameDataEncoding`,
   `RelayTransport`, `SpectatorReason`, `ReplayStatus`; `SFErrorCodes.Code`;
   `SFSessionTypes.Topology`/`TransportKind`.
-- Optional wire values surface as decoded sentinels: missing strings → `""`,
-  missing arrays → empty, unknown enum strings → `UNKNOWN`, absent error codes
-  → `SFErrorCodes.Code.NONE`.
+- Optional wire values surface as decoded sentinels: missing strings -> `""`,
+  missing arrays -> empty, unknown enum strings -> `UNKNOWN`, absent error codes
+  -> `SFErrorCodes.Code.NONE`.
 - User game data stays `Variant`; binary is `PackedByteArray`.
 
 ## Behavior notes
 
-- Sends are backpressured: over `max_buffered_bytes` → `ERR_BUSY` +
+- Sends are backpressured: over `max_buffered_bytes` -> `ERR_BUSY` +
   `protocol_error`, nothing queued.
 - Frames over `max_inbound_frame_bytes` are dropped with `protocol_error`.
 - Malformed input never crashes: decode failures emit `protocol_error` and

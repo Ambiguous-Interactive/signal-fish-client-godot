@@ -28,9 +28,9 @@ PowerShell profile behavior, or post-create/post-start setup.
 
 ## Current Guarantees
 
-- The four terminal agent CLIs — OpenAI Codex (`@openai/codex`), OpenCode
+- The four terminal agent CLIs - OpenAI Codex (`@openai/codex`), OpenCode
   (`opencode-ai`), Nanocoder (`@nanocollective/nanocoder`), and Claude Code
-  (`@anthropic-ai/claude-code`) — are installed by
+  (`@anthropic-ai/claude-code`) - are installed by
   `.devcontainer/install-agent-tools.sh` into npm's global prefix.
 - `post-create.sh` invokes the installer strictly after the Node feature has
   made `node` (>= 22) and `npm` available, then verifies each of the four
@@ -51,7 +51,7 @@ PowerShell profile behavior, or post-create/post-start setup.
 - Health checks verdict on exit status, never on captured-output presence.
   The installer's verification runs each `--version` with stdout and stderr
   redirected to separate files: nonzero exit means broken (the first error
-  line is reported as the diagnostic — how the `~/.cache` EACCES class of
+  line is reported as the diagnostic - how the `~/.cache` EACCES class of
   failure is diagnosed), exit 0 with no output means missing, and only exit
   0 with output counts as ready (stderr is consulted when stdout is empty,
   because some CLIs print their version there). Merging the streams and

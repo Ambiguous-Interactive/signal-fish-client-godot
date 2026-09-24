@@ -23,12 +23,12 @@ Date: 2026-09-19
 
 ## What landed
 
-- `addons/signal_fish/signal_fish_config.gd` — `SignalFishConfig` Resource:
+- `addons/signal_fish/signal_fish_config.gd` - `SignalFishConfig` Resource:
   `app_id` + optional `sdk_version`/`platform`/`game_data_format`,
   `endpoint_url`, `auto_poll`, frame/buffer/packet caps, and the `credential`
   slot (#14) stored via `@export_storage`, excluded from `_to_string()`, and
   fed to the redacting logger.
-- `addons/signal_fish/signal_fish_client.gd` — `SignalFishClient` Node:
+- `addons/signal_fish/signal_fish_client.gd` - `SignalFishClient` Node:
   - 28 signals (1:1 with decoded events + lifecycle), ConnectionState and
     server-driven SessionState machines.
   - Auto-Authenticate on transport open; `JoinRoomParams`; guarded send
@@ -42,28 +42,28 @@ Date: 2026-09-19
   - API deviation: `is_connected()` -> `is_connected_to_server()`; Godot 4
     `Object.is_connected(signal, callable)` cannot be shadowed. Noted in
     PLAN.md P1.
-- `addons/signal_fish/protocol/sf_log.gd` (#15.2) — leveled logger with
+- `addons/signal_fish/protocol/sf_log.gd` (#15.2) - leveled logger with
   secret redaction; default level WARN keeps test output clean.
-- `tests/client/run_client_tests.gd` — 16 test functions covering configure
+- `tests/client/run_client_tests.gd` - 16 test functions covering configure
   validation, connect guards, authenticate wire bytes (optionals omitted),
   pre-auth guard data-driven across all 9 send methods, authenticated send
   surface (byte-exact vs builders), room lifecycle (waiting -> lobby ->
   finalized, GameStarting no-op on state), presence/data/spectator events,
   Reconnected state restore, backpressure, close/failure cleanup, frame cap,
   mixed-content guard table, log redaction, config `_to_string` hygiene.
-- `scripts/run-runtime-checks.sh` — runs the new client suite in the cold-copy
+- `scripts/run-runtime-checks.sh` - runs the new client suite in the cold-copy
   Godot gate.
-- `README.md` (#13) — what/install/auth primer/status, aligned with PLAN.
-- `gdlintrc` — `max-public-methods: 30` with a comment: the PLAN §4.2 client
+- `README.md` (#13) - what/install/auth primer/status, aligned with PLAN.
+- `gdlintrc` - `max-public-methods: 30` with a comment: the PLAN section 4.2 client
   API (15 accessors + 10 sends) intentionally exceeds the default 20.
-- `PLAN.md` — P1 boxes checked with notes; status header updated.
+- `PLAN.md` - P1 boxes checked with notes; status header updated.
 
 ## Deliberately deferred (next round)
 
 - P2 protocol depth: authority/spectator test depth is event-surface level
   here (full P2 matrix), manual `reconnect()` + auto-reconnect with backoff,
   MessagePack `sf_msgpack.gd`, `.llm/skills/reconnection-replay.md`.
-- Issue #12 (fixture re-pin to server v0.8.0 + sync automation) — needs
+- Issue #12 (fixture re-pin to server v0.8.0 + sync automation) - needs
   upstream fetching; recommend as the next focused surface.
 - Issue #15 items 5-6 (gdUnit4 migration decision, Godot 4.4 matrix row).
 
@@ -73,16 +73,16 @@ A zero-knowledge red-team sub-agent reviewed the diff (all claimed items
 DONE/CHANGED-with-note, none NOT-DONE). Findings and dispositions:
 
 - **Fixed:** `game_data_format` no longer accepts `message_pack`/`rkyv` until
-  P2 — the P1 client drops binary frames, so negotiating them would silently
+  P2 - the P1 client drops binary frames, so negotiating them would silently
   lose game data; `validation_error()` now rejects them loudly.
-- **Fixed:** `credential` is a plain (non-`@export`) var — the reviewer proved
+- **Fixed:** `credential` is a plain (non-`@export`) var - the reviewer proved
   `@export_storage` still serializes to `.tres` on save; a plain var makes
   "never serialized" literally true.
 - **Fixed:** added `_test_process_and_exit_tree_paths` (auto-poll drives the
   transport via a poll-counting fake; `_exit_tree` tears down to CLOSED with
   the transport released).
 - **Fixed:** close surfacing is data-driven across `(1000, "bye")` and the
-  abnormal `(-1, "")` case (PLAN §8 matrix row).
+  abnormal `(-1, "")` case (PLAN section 8 matrix row).
 - **Fixed:** `_apply_spectator_info` now records the validated
   `SpectatorJoinedInfo.lobby_state` (was left stale/UNKNOWN while SPECTATING).
 - **Fixed (docs):** `reconnected` signal documents the `protocol_error`
@@ -98,7 +98,7 @@ DONE/CHANGED-with-note, none NOT-DONE). Findings and dispositions:
 Bugbot's 3 findings were all confirmed real and fixed with regression tests:
 
 1. High: `_on_transport_opened` now guards on non-CONNECTING states both
-   before and after `connected.emit()` — a `connected` handler that closes
+   before and after `connected.emit()` - a `connected` handler that closes
    the client synchronously no longer attempts authenticate against a
    torn-down transport (`_send_envelope` also gained a null-transport guard).
 2. Medium: room/spectator rosters are duplicated in `_apply_room_info`/
@@ -110,7 +110,7 @@ Bugbot's 3 findings were all confirmed real and fixed with regression tests:
 
 While verifying, a GDScript lambda-capture bug surfaced in the new
 payload-stability test (lambdas capture locals by value; a reassigned capture
-variable aborted the test mid-way and leaked its client) — fixed with a
+variable aborted the test mid-way and leaked its client) - fixed with a
 mutable holder array; the suite now exits with zero leaked instances and zero
 script errors.
 
