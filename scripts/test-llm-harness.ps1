@@ -66,11 +66,13 @@ function Assert-Test {
         }
         return
     }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         & $Body
+        $sw.Stop()
         $script:passed++
         if ($VerboseOutput) {
-            Write-Host "[llm-test] PASS: $Name" -ForegroundColor Green
+            Write-Host ("[llm-test] PASS ({0:F1}s): {1}" -f $sw.Elapsed.TotalSeconds, $Name) -ForegroundColor Green
         }
     } catch {
         $script:failures.Add("$Name -> $($_.Exception.Message)")
