@@ -53,3 +53,8 @@ v2.0.16; `npm list` then contained only `@opencode/cli@2.0.16`.
   npm 11 rollback policy, dangling-link cleanup, and WSL path issues.
 - Separate implementation passes fixed each finding. The final adversarial
   review returned APPROVED with zero issues.
+
+## PR
+
+- PR #135 passed all Runtime CI, Docs Validation, and LLM Harness jobs with no
+  review threads or bot comments at the recorded head.
