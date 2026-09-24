@@ -97,7 +97,9 @@ Switch color themes with the `Preferences: Color Theme` command.
 - [`install-godot.sh`](./install-godot.sh) - deterministic Godot download
 - [`install-agent-tools.sh`](./install-agent-tools.sh) - agent CLI install/refresh
 - [`post-create.sh`](./post-create.sh) - git hooks + agent CLIs + toolchain summary
-- [`post-start.sh`](./post-start.sh) - git trust + best-effort agent CLI refresh
+- [`post-start.sh`](./post-start.sh) - git trust + best-effort agent CLI
+  refresh + Python automation deps (PyYAML user-site plus a complete
+  `.venv-ci`, matching CI so both local gates are green out of the box)
 
 ## Local font tip
 
@@ -125,6 +127,9 @@ overridable, e.g.
 because these CLIs publish several times a day. The registry version probe
 is bounded by `AGENT_TOOLS_NPM_FETCH_TIMEOUT_MS` (default 5000) so an
 offline start fails fast; the package install itself uses npm's defaults.
+The delay between failed install retries is
+`AGENT_TOOLS_RETRY_SLEEP_MS` (default 2000; the hermetic fake-npm test
+matrix sets 0).
 
 - **post-create** installs (or refreshes) all four and fails loudly on any
   error; the toolchain summary then reports every version and OpenCode must

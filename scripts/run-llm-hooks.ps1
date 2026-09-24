@@ -1238,17 +1238,83 @@ try {
 
     if ($Mode -in @('Full', 'CI') -and -not $SkipSelfTests) {
         Invoke-HookStage 'self-tests' {
-            Write-HookLine 'Running LLM harness self-tests...'
-            $testArgs = @('-NoProfile', '-File', $SelfTests)
-            if ($VerboseOutput) { $testArgs += '-VerboseOutput' }
-            & pwsh @testArgs
-            if ($LASTEXITCODE -ne 0) {
-                Write-HookLine "Self-tests failed (exit $LASTEXITCODE)." 'Red'
-                exit $LASTEXITCODE
+            # The suite runs as two concurrent shards (issue #132): the
+            # in-process half and the pwsh-forking behavioral half. Wall
+            # becomes max(halves) instead of the sum; every test still runs
+            # exactly once per gate, so coverage is unchanged. Output is
+            # buffered until both shards finish so the two logs do not
+            # interleave.
+            # Recursion contract (see test-llm-harness.ps1): a suite-spawned
+            # child inherits LLM_HARNESS_SKIP_BEHAVIORAL_TESTS=1. This stage
+            # honors that signature by spawning only the core shard, so a
+            # behavioral test that exercises Mode Full cannot fork-bomb.
+            $coreArgs = @('-NoProfile', '-File', "`"$SelfTests`"", '-SkipBehavioralTests')
+            if ($env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS -eq '1') {
+                Write-HookLine 'Nested self-test child detected; running only the core shard (behavioral tests are owned by the parent suite).'
+                $shardNames = @('core')
+            } else {
+                $shardNames = @('core', 'behavioral')
+            }
+            $behavioralArgs = @('-NoProfile', '-File', "`"$SelfTests`"", '-OnlyBehavioralTests')
+            if ($VerboseOutput) {
+                $coreArgs += '-VerboseOutput'
+                $behavioralArgs += '-VerboseOutput'
+            }
+            $allArgs = @{
+                core       = $coreArgs
+                behavioral = $behavioralArgs
+            }
+            # Quoted $SelfTests: Start-Process joins -ArgumentList with
+            # spaces, so a repo path containing a space would otherwise be
+            # split by the child pwsh.
+            $logs = @{}
+            foreach ($name in $shardNames) {
+                $logs[$name] = @{
+                    Out  = [System.IO.Path]::GetTempFileName()
+                    Err  = [System.IO.Path]::GetTempFileName()
+                    Args = $allArgs[$name]
+                }
+            }
+            try {
+                foreach ($name in $shardNames) {
+                    $entry = $logs[$name]
+                    $entry.Proc = Start-Process -FilePath 'pwsh' `
+                        -ArgumentList $entry.Args `
+                        -NoNewWindow -PassThru `
+                        -RedirectStandardOutput $entry.Out `
+                        -RedirectStandardError $entry.Err
+                }
+                $exitCodes = @{}
+                foreach ($name in $shardNames) {
+                    $proc = $logs[$name].Proc
+                    $proc.WaitForExit()
+                    $exitCodes[$name] = $proc.ExitCode
+                    $logs[$name].OutLines = @(Get-Content -LiteralPath $logs[$name].Out -ErrorAction SilentlyContinue)
+                    $logs[$name].ErrLines = @(Get-Content -LiteralPath $logs[$name].Err -ErrorAction SilentlyContinue)
+                }
+                foreach ($name in $shardNames) {
+                    Write-HookLine "--- self-tests shard: $name ---"
+                    foreach ($line in @($logs[$name].OutLines)) {
+                        Write-HookLine $line
+                    }
+                    foreach ($line in @($logs[$name].ErrLines)) {
+                        Write-HookLine $line
+                    }
+                }
+                $failedShards = @($shardNames | Where-Object { $exitCodes[$_] -ne 0 })
+                if ($failedShards.Count -gt 0) {
+                    $detail = ($failedShards | ForEach-Object { "$_ (exit $($exitCodes[$_]))" }) -join ', '
+                    Write-HookLine "Self-tests shard(s) failed: $detail" 'Red'
+                    exit $exitCodes[$failedShards[0]]
+                }
+            } finally {
+                foreach ($name in $shardNames) {
+                    Remove-Item -LiteralPath $logs[$name].Out, $logs[$name].Err -Force -ErrorAction SilentlyContinue
+                }
             }
         }
     } elseif ($Mode -in @('Full', 'CI') -and $SkipSelfTests) {
-        Write-HookLine 'Skipping behavioral subprocess self-tests (SkipSelfTests; a parallel CI job owns them).'
+        Write-HookLine 'Skipping the self-tests stage (both shards; a parallel CI job owns them).'
     } elseif ($toolingTouched) {
         Write-HookLine 'Skipping behavioral subprocess self-tests in fast mode; in-process static guards already ran. Run agent-check.ps1 -Full or Mode Full for exhaustive validation.'
     }

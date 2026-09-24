@@ -56,6 +56,15 @@ case "$npm_fetch_timeout_ms" in
     '' | *[!0-9]*) npm_fetch_timeout_ms=5000 ;;
 esac
 
+# Delay between failed `npm install` retry attempts. The hermetic
+# fake-npm self-test suite forces instant failures, so it sets 0 to keep
+# the state-machine matrix fast; real attach/post-create runs keep 2000 ms.
+retry_sleep_ms="${AGENT_TOOLS_RETRY_SLEEP_MS:-2000}"
+case "$retry_sleep_ms" in
+    '' | *[!0-9]*) retry_sleep_ms=2000 ;;
+esac
+retry_sleep="$((retry_sleep_ms / 1000)).$(printf '%03d' $((retry_sleep_ms % 1000)))"
+
 warn_or_fail() {
     local message="$1"
 
@@ -461,7 +470,9 @@ if [ "${#install_specs[@]}" -gt 0 ]; then
             sweep_dangling_bins
             if [ "$attempt" -lt "$attempts" ]; then
                 printf 'agent-tools: npm install of %s failed (attempt %d/%d); retrying\n' "$spec" "$attempt" "$attempts" >&2
-                sleep 2
+                if [ "$retry_sleep_ms" -gt 0 ]; then
+                    sleep "$retry_sleep"
+                fi
             fi
             attempt=$((attempt + 1))
         done

@@ -108,24 +108,39 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v7
 
-            - name: Preflight and behavioral self-tests
+            - name: Preflight and sharded self-tests
               # Same loud corruption gate as the validate job (issue #84
               # parallelism pattern): -NoAutoFix only parses tracked
               # sources, and the suite's destructive tests operate on temp
-              # copies, so the two run concurrently and the job wall clock
-              # is max(steps) instead of their sum. Both outcomes still
-              # gate the job; coverage is unchanged.
+              # copies, so preflight and both shards run concurrently and
+              # the job wall clock is max(steps) instead of their sum. The
+              # suite itself is sharded into its in-process half
+              # (-SkipBehavioralTests) and its pwsh-forking behavioral half
+              # (-OnlyBehavioralTests, issue #132), so the wall is
+              # max(shards) instead of their sum. The union of the two
+              # shards is exactly the full suite; coverage is unchanged.
+              # Output is buffered until all three processes finish so the
+              # logs do not interleave.
               shell: bash
               run: |
                   preflight_rc=0
                   pwsh -NoProfile -File scripts/preflight.ps1 -NoAutoFix -VerboseOutput >preflight.log 2>&1 &
                   preflight_pid=$!
-                  suite_rc=0
-                  pwsh -NoProfile -File scripts/test-llm-harness.ps1 -VerboseOutput || suite_rc=$?
+                  core_rc=0
+                  pwsh -NoProfile -File scripts/test-llm-harness.ps1 -SkipBehavioralTests -VerboseOutput >self-tests-core.log 2>&1 &
+                  core_pid=$!
+                  behavioral_rc=0
+                  pwsh -NoProfile -File scripts/test-llm-harness.ps1 -OnlyBehavioralTests -VerboseOutput >self-tests-behavioral.log 2>&1 &
+                  behavioral_pid=$!
                   wait "$preflight_pid" || preflight_rc=$?
-                  cat preflight.log || true
-                  rm -f preflight.log
-                  if [ "$suite_rc" -ne 0 ] || [ "$preflight_rc" -ne 0 ]; then
-                      printf '::error::self-tests job failed (preflight=%s suite=%s)\n' "$preflight_rc" "$suite_rc"
+                  wait "$core_pid" || core_rc=$?
+                  wait "$behavioral_pid" || behavioral_rc=$?
+                  for log in preflight.log self-tests-core.log self-tests-behavioral.log; do
+                      printf '=== %s ===\n' "$log"
+                      cat "$log" || true
+                      rm -f "$log"
+                  done
+                  if [ "$preflight_rc" -ne 0 ] || [ "$core_rc" -ne 0 ] || [ "$behavioral_rc" -ne 0 ]; then
+                      printf '::error::self-tests job failed (preflight=%s core=%s behavioral=%s)\n' "$preflight_rc" "$core_rc" "$behavioral_rc"
                       exit 1
                   fi

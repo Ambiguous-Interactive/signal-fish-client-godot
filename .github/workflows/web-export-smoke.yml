@@ -97,9 +97,42 @@ jobs:
               run: |
                   stamp="${HOME}/.cache/ms-playwright/.sf-system-deps"
                   mkdir -p "$(dirname "$stamp")"
+                  # Without a real image version (self-hosted runners) the
+                  # stamp could pin stale state across image updates, so it
+                  # is neither trusted nor written there.
                   if [ "${IMAGE_VERSION}" != "unknown" ] && [ -f "$stamp" ] \
                       && [ "$(cat "$stamp")" = "${IMAGE_VERSION} ${PLAYWRIGHT_VERSION}" ]; then
                       echo "chromium system dependencies already installed (stamp)"
+                      exit 0
+                  fi
+                  pkgs=$(npx playwright install-deps --dry-run chromium 2>/dev/null \
+                      | tr ' \\\t' '\n\n\n' \
+                      | grep -E '^[a-z0-9][a-z0-9+.~-]*$' \
+                      | grep -vE '^(sudo|apt|apt-get|install|update|cd)$' \
+                      | sort -u) || true
+                  missing=1
+                  if [ -n "$pkgs" ]; then
+                      missing=0
+                      for pkg in $pkgs; do
+                          # Exact status (not `dpkg -s`, which succeeds for
+                          # removed-but-rc packages whose files are gone).
+                          # The `|| status=` guard matters: GitHub runs this
+                          # as `bash -e`, and dpkg-query exits 1 for any
+                          # package absent from the dpkg database, the
+                          # normal case on a fresh runner — which must fall
+                          # through to the install path, not abort the step.
+                          status=$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null) || status=""
+                          if [ "$status" != "installed" ]; then
+                              missing=1
+                              break
+                          fi
+                      done
+                  fi
+                  if [ "$missing" -eq 0 ]; then
+                      echo "chromium system dependencies already present"
+                      if [ "${IMAGE_VERSION}" != "unknown" ]; then
+                          printf '%s %s\n' "${IMAGE_VERSION}" "${PLAYWRIGHT_VERSION}" > "$stamp"
+                      fi
                       exit 0
                   fi
                   sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
