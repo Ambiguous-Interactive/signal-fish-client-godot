@@ -559,10 +559,11 @@ run_changed() {
 		echo "working tree clean; nothing to check"
 		return 0
 	fi
-	local runtime_changed="" gd_suites=() md_only=1 file
+	local runtime_changed="" gd_suites=() md_only=1 dirty_docs="" file
 	while IFS= read -r file; do
 		case "${file}" in
 			*.md | llms.txt | .markdownlint* | LICENSE)
+				dirty_docs="1"
 				;;
 			*)
 				md_only=""
@@ -582,6 +583,12 @@ run_changed() {
 		echo "=== changed: docs-only edit -> style check (runtime suites unaffected) ==="
 		"${bootstrap_python}" scripts/check-docs-style.py
 		return
+	fi
+
+	# Mixed trees: runtime checks below never look at prose, so the dirty
+	# docs still get the style gate here (a ~0.4 s whole-tree scan).
+	if [[ -n "${dirty_docs}" ]]; then
+		"${bootstrap_python}" scripts/check-docs-style.py
 	fi
 
 	if [[ "${runtime_changed}" == "full" ]]; then

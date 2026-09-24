@@ -68,12 +68,16 @@ def find_violations(text):
 
 def run_check(paths):
     findings = []
-    files = paths if paths else tracked_doc_files()
+    explicit = bool(paths)
+    files = paths if explicit else tracked_doc_files()
     for path in files:
         try:
             text = open(path, encoding="utf-8").read()
         except FileNotFoundError:
-            # A deleted doc is a legitimate edit, not a style violation.
+            # A deleted tracked doc is a legitimate edit; an explicitly
+            # named missing path is a typo and stays an error.
+            if explicit:
+                findings.append((path, 0, 0, "not found"))
             continue
         except (OSError, UnicodeDecodeError) as exc:
             findings.append((path, 0, 0, f"unreadable: {exc}"))

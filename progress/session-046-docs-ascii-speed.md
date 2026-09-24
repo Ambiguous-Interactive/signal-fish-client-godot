@@ -13,24 +13,26 @@ decision-gated, so nothing on PLAN could move.
 
 ## ASCII docs policy ("no LLM-isms")
 
-The docs surface is all tracked Markdown plus `llms.txt` (91 files after
-this session's records). A mechanical sweep removed ~640 non-ASCII
+The docs surface is all tracked Markdown plus `llms.txt` (90 files at the
+sweep; 91 counting this record). A mechanical sweep removed ~640 non-ASCII
 characters: em/en dashes, arrows, middle dots, section signs, ellipses,
 math signs, and the site footer sign. It also removed the two contrast
-constructions found (the "not X; it is actually X" shape). The one
+hits found (both of the "not-just" filler family). The one
 intentional non-ASCII string (the changelog's multi-byte UTF-8 example)
 carries an inline `<!-- sf-allow:non-ascii -->` marker, which suppresses
 every check on its own line.
 
-`scripts/check-docs-style.py` (stdlib-only, ~0.4 s over 90 files, with a
-`--self-test`) enforces the policy: any non-ASCII character outside a marked
-line, plus four contrast/filler patterns. Wired into:
+`scripts/check-docs-style.py` (stdlib-only, ~0.4 s over the tracked docs,
+with a `--self-test`) enforces the policy: any non-ASCII character outside
+a marked line, plus four contrast/filler patterns. Wired into:
 
 - `docs-validation.yml` markdownlint job (one fast step, off the job
   critical path).
-- `run-runtime-checks.sh changed`: docs-only edits now get a real local
-  check instead of "no runtime checks". Red-green verified: a dirty Markdown
-  tree with a violation exits 1 with `file:line:col` output; clean exits 0.
+- `run-runtime-checks.sh changed`: doc edits now get a real local
+  check instead of "no runtime checks" (docs-only trees, and the dirty-doc
+  files of mixed edits). Red-green verified: a dirty Markdown
+  tree with a violation exits 1 with GitHub `::error file=,line=,col=`
+  annotations; clean exits 0.
 
 The durable rule lives in `.llm/context.md` (working rules).
 
