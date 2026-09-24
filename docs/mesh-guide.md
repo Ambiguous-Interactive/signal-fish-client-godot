@@ -50,6 +50,10 @@ multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
   survives.
 - It calls `send_transport_status` on the client only at the aggregate
   0↔1 connected-peer boundaries.
+- A signaling relay refused by backpressure or rate-limited by the server
+  is re-queued and redelivered in order (retries wait out one interval
+  each) instead of being lost, so congestion cannot stall negotiation
+  silently.
 - Peer ids derive deterministically from player UUIDs.
 
 ## Related signals

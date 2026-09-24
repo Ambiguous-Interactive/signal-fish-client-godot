@@ -15,6 +15,12 @@ A drop-in Godot 4 addon for the Signal Fish protocol. Copy one folder, add a
 typed methods and signals. No C#, no GDExtension, nothing to compile — it
 runs everywhere Godot runs, including web exports.
 
+!!! note "AI disclosure"
+
+    This project was developed with substantial assistance from Claude and
+    Codex. Humans created the protocol concepts and core design and retained
+    oversight of architecture and code review.
+
 [Get started](getting-started.md){ .md-button .md-button--primary .sf-home-action }
 [View on GitHub](https://github.com/Ambiguous-Interactive/signal-fish-client-godot){ .md-button .sf-home-action }
 

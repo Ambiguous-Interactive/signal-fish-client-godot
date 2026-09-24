@@ -164,6 +164,9 @@ var _reconnect_rng := RandomNumberGenerator.new()
 var _heartbeat_elapsed := 0.0
 var _awaiting_pong := false
 var _pong_elapsed := 0.0
+# True only while the last beat's send was accepted; a refused beat keeps
+# retrying each interval while the same pong deadline runs (issue #128).
+var _beat_in_flight := false
 # Effective negotiated game-data format. UNKNOWN = follow the configured
 # preference; the server may downgrade an unsupported preference to JSON at
 # Authenticate (an `Error{UnsupportedGameDataFormat}` event and/or an absence
@@ -560,7 +563,12 @@ func _process(delta: float) -> void:
 ## A link that stays silent for the pong window during AUTHENTICATING (where
 ## protocol Ping is not allowed) is dead the same way; issue #121. A CLOSING
 ## window that never completes (silent link death mid-close-handshake) is
-## bounded by the same deadline; issue #126.
+## bounded by the same deadline; issue #126. A beat refused under
+## backpressure arms the same deadline (issue #128): the beat keeps
+## retrying each interval, a live-but-congested link answers Pong once its
+## buffer drains, and a dead link fails instead of living CONNECTED
+## forever. Upstream keeps the beat manual (Rust `ping()` only), so the
+## refused-beat deadline is a Godot-client rule, not mirrored behavior.
 func _tick_heartbeat(delta: float) -> void:
 	if _config == null or _config.heartbeat_interval_sec <= 0.0:
 		return
@@ -592,25 +600,27 @@ func _tick_heartbeat(delta: float) -> void:
 		_pong_elapsed += delta
 		if _pong_elapsed >= _config.pong_timeout_sec:
 			_on_transport_failed("heartbeat pong timeout")
-		return
+			return
+		if _beat_in_flight:
+			return
+	# A refused beat falls through and retries after a full interval (a
+	# per-frame retry would spam protocol_error on a congested link) while
+	# the pong deadline it armed keeps running (issue #128).
 	_heartbeat_elapsed += delta
 	if _heartbeat_elapsed < _config.heartbeat_interval_sec:
 		return
-	# Retry only after a full interval when the send is refused (e.g.
-	# backpressure): a per-frame retry would spam protocol_error on a
-	# congested link. Tradeoff: a permanently backpressured link never arms
-	# a pong deadline, but every consumer send already fails loudly with
-	# ERR_BUSY there, so the dead-link question is moot in that state.
 	_heartbeat_elapsed = 0.0
-	if ping() == OK:
+	if not _awaiting_pong:
 		_awaiting_pong = true
 		_pong_elapsed = 0.0
+	_beat_in_flight = ping() == OK
 
 
 func _reset_heartbeat() -> void:
 	_heartbeat_elapsed = 0.0
 	_awaiting_pong = false
 	_pong_elapsed = 0.0
+	_beat_in_flight = false
 
 
 func _exit_tree() -> void:
@@ -1002,6 +1012,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# Any pong proves the link alive, solicited or not.
 			_awaiting_pong = false
 			_pong_elapsed = 0.0
+			_beat_in_flight = false
 			pong.emit()
 		&"signal_received":
 			signal_received.emit(event.args[0], event.args[1], event.args[2])

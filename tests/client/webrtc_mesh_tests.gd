@@ -8,6 +8,7 @@ extends RefCounted
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
+const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFWebRTCMeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
@@ -54,6 +55,7 @@ func run_all() -> void:
 		_test_new_peer_event_obey_flag,
 		_test_closing_window_suppresses_sends,
 		_test_transport_status_boundary_survives_backpressure,
+		_test_refused_relays_recover,
 		_test_teardown_paths,
 		_test_dropped_peer_connections_are_freed,
 		_test_out_of_tree_free_does_not_leak,
@@ -631,6 +633,212 @@ func _test_transport_status_boundary_survives_backpressure() -> void:
 	)
 	flap_mesh.free()
 	flap_client.free()
+	_done()
+
+
+## Issue #127: a relay refused locally (backpressure) or dropped remotely
+## (server `SIGNAL_RATE_LIMITED`) used to vanish, stalling negotiation
+## silently; each peer now keeps an ordered pending queue redelivered by
+## the throttled drain, with a budget-capped loud drop.
+
+
+func _relay_mesh(signal_retry_msec: int) -> Array:
+	var client := _make_in_room_client()
+	var errors := _track_protocol_errors(client)
+	var mesh := _make_mesh()
+	mesh.signal_retry_msec = signal_retry_msec
+	_attach(mesh, client)
+	_inject_plan(client, [_peer(PLAYER_B, true)])
+	var pc: FakePeerConnection = _mesh_peers(mesh)[0]
+	return [client, errors, mesh, pc]
+
+
+func _inject_server_error(client: SignalFishClientScript, code: String) -> void:
+	var fake_transport: SFFakeTransportScript = client.transport
+	fake_transport.inject_server_message(
+		{"type": "Error", "data": {"message": "refused", "error_code": code}}
+	)
+
+
+func _offer_signal() -> String:
+	return SFMessagesScript.encode(
+		SFMessagesScript.peer_signal(PLAYER_B, "gen-1", {"Offer": "v=0"})
+	)
+
+
+func _candidate_signal(candidate: String) -> String:
+	return SFMessagesScript.encode(
+		SFMessagesScript.peer_signal(PLAYER_B, "gen-1", {"IceCandidate": candidate})
+	)
+
+
+func _answer_signal() -> String:
+	return SFMessagesScript.encode(
+		SFMessagesScript.peer_signal(PLAYER_C, "gen-1", {"Answer": "v=1"})
+	)
+
+
+func _test_refused_relays_recover() -> void:
+	# A refused offer queues with its followers (no per-payload error spam)
+	# and redelivers in order once the link drains.
+	var recovered := _relay_mesh(0)
+	var client: SignalFishClientScript = recovered[0]
+	var errors: Array = recovered[1]
+	var mesh: SFWebRTCMeshScript = recovered[2]
+	var pc: FakePeerConnection = recovered[3]
+	var fake_transport: SFFakeTransportScript = client.transport
+	var baseline: int = fake_transport.sent_text.size()
+	fake_transport.buffered_amount = 262145  # over the client's 256 KiB cap
+	pc.emit_session_description_created("offer", "v=0")
+	pc.emit_ice_candidate_created("", 0, "cand:1")
+	_assert_equal(baseline, fake_transport.sent_text.size(), "refused relays are not lost")
+	_assert_equal(1, errors.size(), "only the direct refusal surfaces an error")
+	mesh.poll()
+	_assert_equal(baseline, fake_transport.sent_text.size(), "a saturated link stays quiet")
+	_assert_equal(2, errors.size(), "the drain retries the head once per interval")
+	fake_transport.buffered_amount = 0
+	mesh.poll()
+	_assert_equal(
+		[_offer_signal(), _candidate_signal("cand:1")],
+		_sent_after(client, baseline),
+		"the drained link redelivers the backlog in order"
+	)
+	mesh.poll()
+	_assert_equal(baseline + 2, fake_transport.sent_text.size(), "no duplicate redelivery")
+	mesh.free()
+	client.free()
+
+	# A retry interval far in the future keeps the drain quiet instead of
+	# erroring per poll.
+	var throttled := _relay_mesh(60000)
+	var throttled_client: SignalFishClientScript = throttled[0]
+	var throttled_errors: Array = throttled[1]
+	var throttled_mesh: SFWebRTCMeshScript = throttled[2]
+	var throttled_pc: FakePeerConnection = throttled[3]
+	var throttled_transport: SFFakeTransportScript = throttled_client.transport
+	var throttled_baseline: int = throttled_transport.sent_text.size()
+	throttled_transport.buffered_amount = 262145
+	throttled_pc.emit_session_description_created("offer", "v=0")
+	throttled_mesh.poll()
+	throttled_mesh.poll()
+	_assert_equal(
+		throttled_baseline,
+		throttled_transport.sent_text.size(),
+		"throttled relay stays silent for the interval"
+	)
+	_assert_equal(1, throttled_errors.size(), "throttle surfaces one error per interval")
+	throttled_mesh.free()
+	throttled_client.free()
+
+	# The budget bounds a permanently refused queue: after the cap, the
+	# queue drops loudly, stays dropped even through a later rate-limit
+	# error, and a fresh relay re-arms healing.
+	var exhausted := _relay_mesh(0)
+	var exhausted_client: SignalFishClientScript = exhausted[0]
+	var exhausted_errors: Array = exhausted[1]
+	var exhausted_mesh: SFWebRTCMeshScript = exhausted[2]
+	var exhausted_pc: FakePeerConnection = exhausted[3]
+	var exhausted_transport: SFFakeTransportScript = exhausted_client.transport
+	var exhausted_baseline: int = exhausted_transport.sent_text.size()
+	exhausted_mesh.signal_retry_budget = 2
+	exhausted_transport.buffered_amount = 262145
+	exhausted_pc.emit_session_description_created("offer", "v=0")
+	_assert_equal(1, exhausted_errors.size(), "the initial refusal consumes budget")
+	exhausted_mesh.poll()
+	_assert_equal(2, exhausted_errors.size(), "the budget drops the queue on the next retry")
+	exhausted_transport.buffered_amount = 0
+	exhausted_mesh.poll()
+	_inject_server_error(exhausted_client, "SIGNAL_RATE_LIMITED")
+	exhausted_mesh.poll()
+	_assert_equal(
+		exhausted_baseline,
+		exhausted_transport.sent_text.size(),
+		"an exhausted queue drops instead of resurrecting"
+	)
+	exhausted_pc.emit_ice_candidate_created("", 0, "cand:1")
+	_assert_equal(
+		[_candidate_signal("cand:1")],
+		_sent_after(exhausted_client, exhausted_baseline),
+		"a fresh relay rides the drained link"
+	)
+	_inject_server_error(exhausted_client, "SIGNAL_RATE_LIMITED")
+	exhausted_mesh.poll()
+	_assert_equal(
+		[_candidate_signal("cand:1"), _candidate_signal("cand:1")],
+		_sent_after(exhausted_client, exhausted_baseline),
+		"a fresh relay re-arms rate-limit healing"
+	)
+	exhausted_mesh.free()
+	exhausted_client.free()
+
+	# A server-side SIGNAL_RATE_LIMITED refused a relay that already
+	# returned OK locally: the last payload is re-queued behind the same
+	# throttle as any refused relay and redelivered once the interval
+	# passes.
+	var waiting := _relay_mesh(60000)
+	var waiting_client: SignalFishClientScript = waiting[0]
+	var waiting_mesh: SFWebRTCMeshScript = waiting[2]
+	var waiting_pc: FakePeerConnection = waiting[3]
+	var waiting_transport: SFFakeTransportScript = waiting_client.transport
+	var waiting_baseline: int = waiting_transport.sent_text.size()
+	waiting_pc.emit_session_description_created("offer", "v=0")
+	_inject_server_error(waiting_client, "SIGNAL_RATE_LIMITED")
+	waiting_mesh.poll()
+	_assert_equal(
+		waiting_baseline + 1,
+		waiting_transport.sent_text.size(),
+		"rate-limit healing waits out the interval"
+	)
+	waiting_mesh.free()
+	waiting_client.free()
+
+	var limited := _relay_mesh(0)
+	var limited_client: SignalFishClientScript = limited[0]
+	var limited_mesh: SFWebRTCMeshScript = limited[2]
+	var limited_pc: FakePeerConnection = limited[3]
+	var limited_transport: SFFakeTransportScript = limited_client.transport
+	var limited_baseline: int = limited_transport.sent_text.size()
+	limited_pc.emit_session_description_created("offer", "v=0")
+	_assert_equal([_offer_signal()], _sent_after(limited_client, limited_baseline), "offer sent")
+	_inject_server_error(limited_client, "SIGNAL_RATE_LIMITED")
+	limited_mesh.poll()
+	_assert_equal(
+		[_offer_signal(), _offer_signal()],
+		_sent_after(limited_client, limited_baseline),
+		"a rate-limited relay redelivers the last payload"
+	)
+	_inject_server_error(limited_client, "RATE_LIMIT_EXCEEDED")
+	limited_mesh.poll()
+	_assert_equal(
+		2, limited_transport.sent_text.size() - limited_baseline, "other errors heal nothing"
+	)
+	limited_mesh.free()
+	limited_client.free()
+
+	# The wire Error carries no target peer, so one rate-limit error
+	# re-queues every peer's last relay, each in its own order.
+	var pair_client := _make_in_room_client()
+	var pair_mesh := _make_mesh()
+	pair_mesh.signal_retry_msec = 0
+	_attach(pair_mesh, pair_client)
+	_inject_plan(pair_client, [_peer(PLAYER_B, true), _peer(PLAYER_C, false)])
+	var pair_pcs: Array = _mesh_peers(pair_mesh)
+	var pair_pc_b: FakePeerConnection = pair_pcs[0]
+	var pair_pc_c: FakePeerConnection = pair_pcs[1]
+	var pair_transport: SFFakeTransportScript = pair_client.transport
+	var pair_baseline: int = pair_transport.sent_text.size()
+	pair_pc_b.emit_session_description_created("offer", "v=0")
+	pair_pc_c.emit_session_description_created("answer", "v=1")
+	_assert_equal(2, pair_transport.sent_text.size() - pair_baseline, "both relays sent")
+	_inject_server_error(pair_client, "SIGNAL_RATE_LIMITED")
+	pair_mesh.poll()
+	_assert_equal(
+		[_offer_signal(), _answer_signal(), _offer_signal(), _answer_signal()],
+		_sent_after(pair_client, pair_baseline),
+		"one rate-limit error heals both peers in order"
+	)
+	pair_mesh.free()
+	pair_client.free()
 	_done()
 
 

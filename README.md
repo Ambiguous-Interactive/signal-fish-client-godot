@@ -14,6 +14,10 @@ A pure-GDScript client for the [Signal Fish](https://github.com/Ambiguous-Intera
 protocol. Drop the `addons/signal_fish` folder into any Godot 4 project — no C#, no
 GDExtension, no compilation — and it runs everywhere Godot runs, including web exports.
 
+> **AI disclosure:** This project was developed with substantial assistance
+> from Claude and Codex. Humans created the protocol concepts and core design
+> and retained oversight of architecture and code review.
+
 - **Protocol codec** for the Signal Fish v2 wire plus the v3 session-plan
   signaling surface: 14 client messages, 28 server events, the full v0.9.1
   error-code table (62 codes), MessagePack game data, strict binary game-data

@@ -34,6 +34,7 @@ func run_all() -> void:
 		_test_heartbeat_off_by_default,
 		_test_interval_pong_cycle_and_dead_link,
 		_test_backpressured_beats_retry_quietly,
+		_test_backpressured_dead_link_fails_and_reconnects,
 		_test_dead_link_arms_auto_reconnect,
 		_test_auth_window_silence_is_a_dead_link,
 		_test_auth_landing_disarms_the_watchdog,
@@ -89,19 +90,89 @@ func _test_interval_pong_cycle_and_dead_link() -> void:
 
 
 func _test_backpressured_beats_retry_quietly() -> void:
+	# Issue #128: a refused beat still arms the pong deadline, but the beat
+	# keeps retrying each interval and the deadline spares a link that
+	# drains and answers Pong — backpressure alone is not a dead link.
 	var config: SignalFishConfigScript = _runner.call("_make_config")
-	config.heartbeat_interval_sec = 5.0
-	config.pong_timeout_sec = 1.0
+	config.heartbeat_interval_sec = 1.0
+	config.pong_timeout_sec = 5.0
 	var client := _authenticated_client(config)
 	var transport: SFFakeTransportScript = client.transport
 	transport.buffered_amount = config.max_buffered_bytes + 1
 	var errors: Array = []
 	client.protocol_error.connect(func(error: String) -> void: errors.append(error))
-	client._process(5.0)
-	client._process(5.0)
+	client._process(1.0)
+	client._process(1.0)
+	client._process(1.0)
 	_assert_equal(0, _sent_type_count(transport, "Ping"), "backpressured beats send nothing")
-	_assert_equal(2, errors.size(), "each refused beat explains itself once")
+	_assert_equal(3, errors.size(), "each refused beat explains itself once")
 	_assert_connected(client, true, "backpressure alone does not kill the link")
+	# Any inbound Pong proves the link alive and clears the refused-beat
+	# deadline: the saturated link stays up past the original expiry
+	# (t=6 here) on the fresh window the next refused beat armed.
+	transport.inject_server_message({"type": "Pong"})
+	client._process(1.0)
+	client._process(1.0)
+	client._process(1.0)
+	client._process(1.0)
+	_assert_connected(client, true, "a Pong clears the refused-beat deadline")
+	_assert_equal(7, errors.size(), "each refused beat still explains itself once")
+	transport.buffered_amount = 0
+	client._process(1.0)
+	_assert_equal(1, _sent_type_count(transport, "Ping"), "a drained link delivers the beat")
+	transport.inject_server_message({"type": "Pong"})
+	client._process(1.0)
+	_assert_equal(2, _sent_type_count(transport, "Ping"), "pong re-arms the cycle")
+	_assert_connected(client, true, "the recovered link keeps beating")
+	client.free()
+	_done()
+
+
+func _test_backpressured_dead_link_fails_and_reconnects() -> void:
+	# Issue #128: under sustained backpressure a silently dead link used to
+	# sit CONNECTED forever because a refused beat never armed a pong
+	# deadline; the armed deadline must fail it and engage auto-reconnect.
+	var config: SignalFishConfigScript = _runner.call("_make_config")
+	config.heartbeat_interval_sec = 5.0
+	config.pong_timeout_sec = 1.0
+	var client: SignalFishClientScript = _runner.call("_connect_new_client", config)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_open()
+	transport.inject_server_message(
+		{"type": "Authenticated", "data": _runner.call("_authenticated_data")}
+	)
+	(
+		transport
+		. inject_server_message(
+			{
+				"type": "RoomJoined",
+				"data": _runner.call("_room_joined_data", {"reconnection_token": "bp-token"}),
+			}
+		)
+	)
+	client.set_auto_reconnect(true)
+	transport.buffered_amount = config.max_buffered_bytes + 1
+	var failures: Array = []
+	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	client._process(5.0)
+	_assert_equal(0, _sent_type_count(transport, "Ping"), "the refused beat sends nothing")
+	_assert_connected(client, true, "the armed deadline waits out the pong window")
+	client._process(1.0)
+	if _assert_equal(1, failures.size(), "a backpressured dead link fails"):
+		var failure: String = failures[0]
+		_assert(failure.contains("pong timeout"), "the failure names the pong timeout")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"the backpressured dead link ends FAILED"
+	)
+	client.transport = SFFakeTransportScript.new()
+	client._process(1.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTING,
+		client.get_connection_state(),
+		"auto-reconnect redials the backpressured dead link"
+	)
 	client.free()
 	_done()
 
