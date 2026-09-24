@@ -155,7 +155,11 @@ jobs:
               run: |
                   stamp="${HOME}/.cache/ms-playwright/.sf-system-deps"
                   mkdir -p "$(dirname "$stamp")"
-                  if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "${IMAGE_VERSION} ${PLAYWRIGHT_VERSION}" ]; then
+                  # Without a real image version (self-hosted runners) the
+                  # stamp could pin stale state across image updates, so it
+                  # is neither trusted nor written there.
+                  if [ "${IMAGE_VERSION}" != "unknown" ] && [ -f "$stamp" ] \
+                      && [ "$(cat "$stamp")" = "${IMAGE_VERSION} ${PLAYWRIGHT_VERSION}" ]; then
                       echo "chromium system dependencies already installed (stamp)"
                       exit 0
                   fi
@@ -184,13 +188,17 @@ jobs:
                   fi
                   if [ "$missing" -eq 0 ]; then
                       echo "chromium system dependencies already present"
-                      printf '%s %s\n' "${IMAGE_VERSION}" "${PLAYWRIGHT_VERSION}" > "$stamp"
+                      if [ "${IMAGE_VERSION}" != "unknown" ]; then
+                          printf '%s %s\n' "${IMAGE_VERSION}" "${PLAYWRIGHT_VERSION}" > "$stamp"
+                      fi
                       exit 0
                   fi
                   sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
                   for attempt in 1 2 3; do
                       if npx playwright install-deps chromium; then
-                          printf '%s %s\n' "${IMAGE_VERSION}" "${PLAYWRIGHT_VERSION}" > "$stamp"
+                          if [ "${IMAGE_VERSION}" != "unknown" ]; then
+                              printf '%s %s\n' "${IMAGE_VERSION}" "${PLAYWRIGHT_VERSION}" > "$stamp"
+                          fi
                           break
                       fi
                       if [ "${attempt}" -eq 3 ]; then

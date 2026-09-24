@@ -562,7 +562,7 @@ run_changed() {
 	local runtime_changed="" gd_suites=() md_only=1 file
 	while IFS= read -r file; do
 		case "${file}" in
-			*.md | .markdownlint* | LICENSE)
+			*.md | llms.txt | .markdownlint* | LICENSE)
 				;;
 			*)
 				md_only=""

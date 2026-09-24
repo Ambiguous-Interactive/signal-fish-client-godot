@@ -35,7 +35,8 @@ Date: 2026-09-19
 - `addons/signal_fish/protocol/sf_types.gd` - `RoomJoinedInfo.reconnection_token`
   ("" sentinel for absent/null per the data rulings); covers `RoomJoined` and
   `Reconnected` baselines through the shared decoder path.
-- `addons/signal_fish/signal_fish_client.gd` - - `reconnect(player_id, room_id, auth_token)`: fresh transport, `Reconnect`
+- `addons/signal_fish/signal_fish_client.gd`:
+  - `reconnect(player_id, room_id, auth_token)`: fresh transport, `Reconnect`
     handshake on open instead of `Authenticate`; guards for unconfigured,
     active connection, empty args, missing endpoint; dial credentials are
     consumed on success.

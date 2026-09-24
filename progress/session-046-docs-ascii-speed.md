@@ -13,12 +13,14 @@ decision-gated, so nothing on PLAN could move.
 
 ## ASCII docs policy ("no LLM-isms")
 
-The docs surface is all tracked Markdown plus `llms.txt` (90 files). A
-mechanical sweep removed 635 non-ASCII characters: em/en dashes, arrows,
-middle dots, section signs, ellipses, math signs, and the site footer sign.
-It also removed the two contrast constructions found ("not just X"). The one
-intentional non-ASCII string (the `"héllo"` UTF-8 example in the changelog)
-carries an inline `<!-- sf-allow:non-ascii -->` marker.
+The docs surface is all tracked Markdown plus `llms.txt` (91 files after
+this session's records). A mechanical sweep removed ~640 non-ASCII
+characters: em/en dashes, arrows, middle dots, section signs, ellipses,
+math signs, and the site footer sign. It also removed the two contrast
+constructions found (the "not X; it is actually X" shape). The one
+intentional non-ASCII string (the changelog's multi-byte UTF-8 example)
+carries an inline `<!-- sf-allow:non-ascii -->` marker, which suppresses
+every check on its own line.
 
 `scripts/check-docs-style.py` (stdlib-only, ~0.4 s over 90 files, with a
 `--self-test`) enforces the policy: any non-ASCII character outside a marked
@@ -71,4 +73,5 @@ The durable rule lives in `.llm/context.md` (working rules).
 - `validate-github-config.py` self-test + repo check green (also run by the
   pre-commit hook on each commit).
 - Red-green for the style checker itself is pinned by its `--self-test`
-  (14 assertions: banned chars, patterns, marker scope, clean pass).
+  (21 assertions: banned chars, patterns, code-fence skipping, marker
+  scope, clean pass).
