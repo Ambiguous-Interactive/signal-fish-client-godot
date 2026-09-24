@@ -66,6 +66,19 @@ The durable rule lives in `.llm/context.md` (working rules).
   cheap win: behavioral/non-behavioral sharding).
 - Dependabot alerts open: 0. No open dependency PRs.
 
+## Adversarial rounds
+
+- Round 1 (sub-agent) caught the record tripping its own gate, a deleted-doc
+  false red, the llms.txt fast-path gap, fenced-code false positives, a
+  collapsed nested list in session 007's record, annotation format, the
+  ImageVersion=unknown stamp staleness, and wrong stats. All fixed.
+- Round 2 (sub-agent) verified every fix and caught two prose-accuracy
+  regressions in this record plus a stale PR body. Fixed.
+- Bugbot flagged one real local gap this record's text above now covers
+  (untracked new docs escaping the local check) and a genuine subdirectory
+  enumeration bug in the checker (git ls-files paths are relative to the
+  invocation directory). Both fixed with execution-verified red-green runs.
+
 ## Checks
 
 - `run-runtime-checks.sh all` green (5.0 s); `changed` red-green for the
