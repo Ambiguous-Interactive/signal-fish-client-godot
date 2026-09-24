@@ -31,9 +31,14 @@ echo "==> Ensuring Python automation dependencies (warn-only)"
 # and PyYAML for the harness (llm-harness.yml).
 cd "${REPO_ROOT}"
 venv_ok() {
-    . .venv-ci/bin/activate \
-        && python -c 'import yaml' >/dev/null 2>&1 \
-        && gdformat --version >/dev/null 2>&1
+    # Subshell: sourcing activate must never leak a (possibly broken) venv
+    # onto this shell's PATH, or the heal below would run inside the very
+    # environment it is trying to repair.
+    (
+        . .venv-ci/bin/activate \
+            && python -c 'import yaml' >/dev/null 2>&1 \
+            && gdformat --version >/dev/null 2>&1
+    )
 }
 if ! python3 -c 'import yaml' >/dev/null 2>&1; then
     if python3 -m pip install --user -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1 \
@@ -55,8 +60,8 @@ if [ ! -f ".venv-ci/bin/activate" ] || ! venv_ok; then
     # Re-provisioning an existing venv is safe: `venv` upgrades in place and
     # pip install is idempotent, so a halfway-failed install heals here.
     if python3 -m venv .venv-ci \
-        && . .venv-ci/bin/activate \
-        && python -m pip install -r "${REPO_ROOT}/requirements-ci.txt" -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1 \
+        && ( . .venv-ci/bin/activate \
+            && python -m pip install -r "${REPO_ROOT}/requirements-ci.txt" -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1 ) \
         && venv_ok; then
         echo "==> .venv-ci ready with runtime and automation dependencies"
     else

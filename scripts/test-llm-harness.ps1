@@ -1936,6 +1936,11 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
                  Pattern     = 'WARN: could not provision \.venv-ci'
                  Requirement = 'warn instead of blocking attach when the venv bootstrap fails (e.g. offline)'
                  Diagnostic  = 'WARN|venv'
+             },
+             [pscustomobject]@{
+                 Pattern     = '\(\s*\. \.venv-ci/bin/activate'
+                 Requirement = 'verify and install inside subshells so a broken venv never leaks onto the healing shell PATH'
+                 Diagnostic  = 'subshell|activate|PATH'
              }
 
         )) {
