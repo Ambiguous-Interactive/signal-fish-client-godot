@@ -78,6 +78,10 @@ The durable rule lives in `.llm/context.md` (working rules).
   (untracked new docs escaping the local check) and a genuine subdirectory
   enumeration bug in the checker (git ls-files paths are relative to the
   invocation directory). Both fixed with execution-verified red-green runs.
+- Round 3 (sub-agent) caught the changed-mode pass handing trigger-only
+  files (the markdownlint config with its own comment dashes) to the
+  checker; those now stay triggers, so such edits scan the tracked doc
+  tree, matching CI scope.
 
 ## Checks
 
