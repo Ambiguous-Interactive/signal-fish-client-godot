@@ -26,6 +26,15 @@ extends Node
 ##   logs (PLAN §12).
 ## - [method SignalFishClient.send_transport_status] is reported only at the
 ##   aggregate 0↔1 connected-peer boundaries.
+## - A signaling relay refused by the client (backpressure `ERR_BUSY`) or
+##   dropped by the server (`SIGNAL_RATE_LIMITED` via [signal server_error])
+##   is re-queued per peer and redelivered in order; retries wait out one
+##   interval each (issue #127, the issue-#102 pattern), and a recovered
+##   link flushes the backlog. Redelivered ICE candidates are idempotent;
+##   redelivered SDP relies on the remote tolerating reapplication (the
+##   next plan/generation reconciles roles). A queue that keeps being
+##   refused locally is dropped loudly after a retry budget — a
+##   new-generation plan or membership change rebuilds the peer.
 ## - The mesh is torn down on [signal room_joined] (fresh baseline),
 ##   [signal room_left], [signal disconnected],
 ##   [signal connection_failed], [signal reconnected], and
@@ -48,6 +57,7 @@ extends Node
 
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
+const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 
 ## FNV-1a 64-bit constants for the deterministic UUID → peer-id mapping. The
@@ -70,6 +80,16 @@ var multiplayer_peer_factory: Callable = Callable()
 ## protocol_error per interval instead of one per poll. Injectable for
 ## deterministic tests.
 var transport_status_retry_msec := 1000
+
+## A signaling relay refused locally (backpressure) or dropped remotely
+## (server `SIGNAL_RATE_LIMITED`) is re-queued and redelivered at most once
+## per interval (issue #127). Injectable for deterministic tests.
+var signal_retry_msec := 1000
+
+## Consecutive refused attempts (the initial send plus drain retries) one
+## relay payload may consume before the mesh logs a diagnostic and drops
+## its pending queue (issue #127).
+var signal_retry_budget := 10
 
 var _client: SignalFishClientScript = null
 # Distinguishes "never attached / detached" from "the attached client node was
@@ -107,6 +127,7 @@ func attach(client: SignalFishClientScript) -> Error:
 	client.disconnected.connect(_on_client_disconnected)
 	client.connection_failed.connect(_on_client_connection_failed)
 	client.reconnected.connect(_on_client_reconnected)
+	client.server_error.connect(_on_client_server_error)
 	return OK
 
 
@@ -125,6 +146,7 @@ func detach() -> void:
 	_client.disconnected.disconnect(_on_client_disconnected)
 	_client.connection_failed.disconnect(_on_client_connection_failed)
 	_client.reconnected.disconnect(_on_client_reconnected)
+	_client.server_error.disconnect(_on_client_server_error)
 	_client = null
 	_attached = false
 	_reset_mesh()
@@ -146,6 +168,7 @@ func poll() -> void:
 		if entry == null:
 			continue
 		entry.connection.poll()
+		_drain_relay(entry)
 	_update_transport_status()
 
 
@@ -458,7 +481,89 @@ func _on_peer_ice_candidate(entry, _media: String, _index: int, candidate: Strin
 func _send_signal_to(entry, payload: Dictionary) -> void:
 	if not _client_connected():
 		return
-	_client.send_signal(entry.uuid, entry.generation, payload)
+	# A fresh relay attempt re-arms rate-limit healing for this peer.
+	entry.relay_dropped = false
+	# The freshest payload per peer doubles as the rate-limit healing
+	# candidate: a server-refused relay re-queues exactly this payload.
+	entry.last_relayed = payload
+	if not entry.pending_signals.is_empty():
+		# Order matters (an Offer must precede its candidates at the remote),
+		# and hammering a backpressured link would spam protocol_error: queue
+		# behind the pending head and let the throttled drain deliver it.
+		_enqueue_relay(entry, payload)
+		return
+	_dispatch_relay(entry, payload)
+
+
+func _dispatch_relay(entry, payload: Dictionary) -> void:
+	if _client.send_signal(entry.uuid, entry.generation, payload) == OK:
+		return
+	# The initial refusal consumes budget like any retry (issue #127).
+	entry.relay_attempts += 1
+	_enqueue_relay(entry, payload)
+
+
+func _enqueue_relay(entry, payload: Dictionary) -> void:
+	entry.pending_signals.append(payload)
+	if entry.pending_signals.size() == 1:
+		entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
+
+
+# Issue #127: a refused relay must reach the peer or the mesh stalls in
+# negotiation. The queue redelivers in order; each refused attempt waits
+# out one interval (the issue-#102 throttle) while a recovered link
+# flushes the backlog, and a head still refused past the budget drops the
+# queue with one loud diagnostic.
+func _drain_relay(entry) -> void:
+	if _peers.get(entry.uuid) != entry:
+		# Orphaned by a re-entrant drop during this poll's callbacks.
+		return
+	if entry.pending_signals.is_empty() or not _client_connected():
+		return
+	if entry.relay_due_msec > Time.get_ticks_msec():
+		return
+	while not entry.pending_signals.is_empty():
+		var payload: Dictionary = entry.pending_signals[0]
+		if _client.send_signal(entry.uuid, entry.generation, payload) != OK:
+			entry.relay_attempts += 1
+			if entry.relay_attempts >= signal_retry_budget:
+				SFLogScript.error(
+					(
+						"mesh: signal relay to %s dropped after %d refused attempts"
+						% [entry.uuid, entry.relay_attempts]
+					)
+				)
+				entry.pending_signals.clear()
+				entry.relay_attempts = 0
+				entry.relay_due_msec = 0
+				entry.relay_dropped = true
+			else:
+				entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
+			return
+		entry.pending_signals.pop_front()
+		entry.relay_attempts = 0
+
+
+func _on_client_server_error(_message: String, error_code: int) -> void:
+	# A server-side `SIGNAL_RATE_LIMITED` refused a relay that already
+	# returned OK locally, so no retry is armed. The wire Error carries no
+	# target peer, so each peer's last relayed payload is re-queued (the
+	# freshest probe; re-relaying is idempotent at the signal layer) with
+	# the standard throttle. A queue already dropped by the budget stays
+	# dropped (issue #127).
+	if error_code != SFErrorCodesScript.Code.SIGNAL_RATE_LIMITED:
+		return
+	if not _client_connected():
+		return
+	for uuid: String in _peers:
+		var entry = _peers[uuid]
+		if entry.relay_dropped or entry.last_relayed == null:
+			continue
+		if entry.pending_signals.has(entry.last_relayed):
+			continue
+		# Front of the queue: this payload predates anything still pending.
+		entry.pending_signals.push_front(entry.last_relayed)
+		entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
 
 
 ## The mesh may only emit while the client's transport is CONNECTED; CLOSING
@@ -514,3 +619,9 @@ class _MeshPeer:
 	var generation: String = ""
 	var session_cb: Callable = Callable()
 	var ice_cb: Callable = Callable()
+	# Refused/dropped relays awaiting the throttled redelivery (issue #127).
+	var pending_signals: Array = []
+	var relay_due_msec: int = 0
+	var relay_attempts: int = 0
+	var relay_dropped: bool = false
+	var last_relayed: Variant = null
