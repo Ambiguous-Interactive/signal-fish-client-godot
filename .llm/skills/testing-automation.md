@@ -52,11 +52,16 @@ These checks enforce:
   no generator/linter child `pwsh`, and staged-aware scoping for ordinary
   commits. Tooling changes use in-process PowerShell parse/static guards;
   `Full` and `CI` keep the exhaustive sandbox coverage.
-- Where the full self-test suite runs, it runs as two concurrent shards
-  (issue #132): `-SkipBehavioralTests` (in-process tests) and
-  `-OnlyBehavioralTests` (pwsh-forking tests) in the llm-harness `self-tests`
-  job alongside preflight. The union of the shards is exactly the full
-  suite; the behavioral flag wins over `LLM_HARNESS_SKIP_BEHAVIORAL_TESTS`
+- Where the full self-test suite runs, it runs as concurrent shards
+  (issue #132): `-SkipBehavioralTests` (in-process tests) plus
+  `-OnlyBehavioralTests` (pwsh-forking tests), which itself splits
+  round-robin into two passes via `-BehavioralSubshard k
+  -BehavioralSubshardCount 2` (requires `-OnlyBehavioralTests`; the union
+  of the passes is exactly the behavioral subset). The llm-harness
+  `self-tests` job runs preflight, the core shard, and both behavioral
+  passes concurrently; Mode Full runs the same three shards. The union of
+  the shards is exactly the full suite; the behavioral flag wins over
+  `LLM_HARNESS_SKIP_BEHAVIORAL_TESTS`
   so a shard can never pass vacuously. Recursion rule: the runner's
   self-tests stage treats `LLM_HARNESS_SKIP_BEHAVIORAL_TESTS=1` as the
   "I am a suite-spawned child" signature and then runs only the core shard,
@@ -186,10 +191,12 @@ and every suffix test fails.
 
 Cache-stamp rule (same rounds): a cached skip-the-install decision must
 carry the identity of what it certifies. The Playwright system-deps stamps
-(docs-validation.yml, web-export-smoke.yml) store runner image + Playwright
-version, live inside the cached directory they vouch for, and are neither
-trusted nor written when the image version is unknown, so self-hosted
-runners cannot pin stale state across image refreshes.
+live in the shared composite action
+(`.github/actions/playwright-chromium`, issue #137; consumed by
+docs-validation.yml and web-export-smoke.yml). They store runner image +
+Playwright version, live inside the cached directory they vouch for, and
+are neither trusted nor written when the image version is unknown, so
+self-hosted runners cannot pin stale state across image refreshes.
 
 Docs policy checks (`scripts/check-docs-style.py`): tracked `*.md` plus
 `llms.txt` must be ASCII with no contrast/filler prose patterns. Pattern
