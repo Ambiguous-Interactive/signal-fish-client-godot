@@ -28,19 +28,19 @@ PowerShell profile behavior, or post-create/post-start setup.
 
 ## Current Guarantees
 
-- The four terminal agent CLIs - OpenAI Codex (`@openai/codex`), OpenCode
-  (`opencode-ai`), Nanocoder (`@nanocollective/nanocoder`), and Claude Code
+- The four terminal agent CLIs - OpenAI Codex (`@openai/codex`), OpenCode v2
+  (`@opencode/cli`), Nanocoder (`@nanocollective/nanocoder`), and Claude Code
   (`@anthropic-ai/claude-code`) - are installed by
   `.devcontainer/install-agent-tools.sh` into npm's global prefix.
 - `post-create.sh` invokes the installer strictly after the Node feature has
   made `node` (>= 22) and `npm` available, then verifies each of the four
   binaries is on PATH and includes all four versions in the toolchain summary.
   Any install or verification failure fails post-create.
-- `post-start.sh` runs on every container start/attach: it re-applies the git
-  `safe.directory` trust and re-runs the installer with `--update`, which
-  probes the registry in parallel and reinstalls only outdated or missing
-  CLIs. `--update` is warn-only: a registry outage degrades to the installed
-  toolchain and never blocks attaching.
+- `post-start.sh` runs after every successful container start: it re-applies
+  the git `safe.directory` trust and re-runs the installer with `--update`,
+  which probes the registry in parallel and reinstalls only outdated or
+  missing CLIs. `--update` is warn-only: a registry outage degrades to the
+  installed toolchain and never blocks attaching.
 - The installer installs each package with its own `npm install --global`
   (npm treats one multi-package command as a single transaction, so one
   failing postinstall used to roll back every package while leaving their
@@ -54,17 +54,26 @@ PowerShell profile behavior, or post-create/post-start setup.
   line is reported as the diagnostic - how the `~/.cache` EACCES class of
   failure is diagnosed), exit 0 with no output means missing, and only exit
   0 with output counts as ready (stderr is consulted when stdout is empty,
-  because some CLIs print their version there). Merging the streams and
-  treating any non-empty line as a version once marked dying binaries as
-  ready; the harness self-tests now reject that pattern.
+  because some CLIs print their version there). OpenCode must additionally
+  report major version 2. Merging the streams and treating any non-empty
+  line as a version once marked dying binaries as ready; the harness
+  self-tests now reject that pattern.
 - The installer derives npm's global prefix, prepends its `bin` directory to
   PATH, and passes npm 11's `--allow-scripts` (npm blocks lifecycle scripts on
-  global installs by default; `opencode-ai` needs its postinstall to select
+  global installs by default; `@opencode/cli` needs its postinstall to select
   the platform binary). The flag is only passed on npm >= 11; npm 10 (bundled
-  with Node 22) predates the policy and runs scripts as before. Specs are
-  overridable via `CODEX_NPM_SPEC`, `OPENCODE_NPM_SPEC`, `NANOCODER_NPM_SPEC`,
-  and `CLAUDE_NPM_SPEC`; `AGENT_TOOLS_NPM_FETCH_TIMEOUT_MS` (default 5000)
-  bounds only the registry version probe, not the install itself.
+  with Node 22) predates the policy and runs scripts as before. OpenCode v2 is
+  staged in an isolated npm prefix and its binary must report major version 2
+  before the package-managed v1 `opencode-ai` is removed. If staging or
+  activation fails, v1 remains active when restoration succeeds; a failed
+  restoration is a strict failure and a warn-only update failure. An offline
+  update also retains v1 when v2 is absent; if both records exist and the
+  active binary is proven v2, v1 is removed without a registry request. Specs
+  are overridable via
+  `CODEX_NPM_SPEC`, `OPENCODE_NPM_SPEC`,
+  `NANOCODER_NPM_SPEC`, and `CLAUDE_NPM_SPEC`;
+  `AGENT_TOOLS_NPM_FETCH_TIMEOUT_MS` (default 5000) bounds only the registry
+  version probe, not the install itself.
 - `post-create.sh` repairs root-owned mounted directories such as
   `/commandhistory` and `~/.cache` (Docker creates volume-mount parents as
   root; a root-owned `~/.cache` crashed opencode's postinstall verify step and

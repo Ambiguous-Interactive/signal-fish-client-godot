@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Post-start lifecycle: runs on every container start/attach.
+# Post-start lifecycle: runs after every successful container start.
 #   1. Keep the workspace trusted for git (cheap, idempotent).
 #   2. Refresh the agent CLIs warn-only via `install-agent-tools.sh --update`;
 #      a registry outage must never block VS Code from attaching.
@@ -18,7 +18,7 @@ fi
 
 echo "==> Checking agent CLI versions (best-effort refresh)"
 if bash "${REPO_ROOT}/.devcontainer/install-agent-tools.sh" --update; then
-    echo "==> Agent CLIs checked"
+    echo "==> Agent CLI refresh attempted"
 else
     echo "WARN: agent CLI refresh failed; using installed versions." >&2
 fi
