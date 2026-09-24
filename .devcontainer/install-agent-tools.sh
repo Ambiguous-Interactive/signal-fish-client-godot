@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install or refresh the dev container's terminal agent CLIs:
-#   codex (OpenAI), opencode, nanocoder, claude (Anthropic).
+#   codex (OpenAI), OpenCode v2, nanocoder, claude (Anthropic).
 #
 # Modes:
 #   (no args)  post-create install: strict; any failure exits non-zero.
@@ -30,20 +30,23 @@ unset GITHUB_TOKEN GH_TOKEN GITHUB_MCP_PAT Z_AI_API_KEY Z_AI_MODE CONTEXT7_API_K
 
 PACKAGES=(
     "${CODEX_NPM_SPEC:-@openai/codex@latest}"
-    "${OPENCODE_NPM_SPEC:-opencode-ai@latest}"
+    "${OPENCODE_NPM_SPEC:-@opencode/cli@latest}"
     "${NANOCODER_NPM_SPEC:-@nanocollective/nanocoder@latest}"
     "${CLAUDE_NPM_SPEC:-@anthropic-ai/claude-code@latest}"
 )
 BINARIES=(codex opencode nanocoder claude)
+DANGLING_BINARIES=("${BINARIES[@]}" opencode2)
+OPENCODE_V1_PACKAGE="opencode-ai"
+OPENCODE_V2_PACKAGE="@opencode/cli"
 
 # npm 11 blocks lifecycle scripts on global installs unless explicitly
 # allowed. Every entry ships a postinstall that must run:
-#   - opencode-ai: selects/copies its platform binary
+#   - @opencode/cli: selects/copies its platform binary
 #   - @nanocollective/nanocoder: postinstall asset setup
 #   - @anthropic-ai/claude-code, @openai/codex: platform package wiring
 #   - @github/keytar, node-pty: native modules in these CLIs' dependency
 #     trees (observed in the signal-fish-cloud devcontainer)
-ALLOW_SCRIPTS="opencode-ai,@nanocollective/nanocoder,@anthropic-ai/claude-code,@openai/codex,@github/keytar,node-pty"
+ALLOW_SCRIPTS="@opencode/cli,@nanocollective/nanocoder,@anthropic-ai/claude-code,@openai/codex,@github/keytar,node-pty,opencode-ai"
 
 # Bounds only the registry version probe so an offline launch fails fast; the
 # install leg uses npm's own (much larger) defaults because the package
@@ -76,7 +79,7 @@ warn_or_fail() {
 # to "absent" (which the probe below reinstalls) instead of "poisoned".
 sweep_dangling_bins() {
     local binary link
-    for binary in "${BINARIES[@]}"; do
+    for binary in "${DANGLING_BINARIES[@]}"; do
         link="${npm_bin_dir}/${binary}"
         if [ -L "$link" ] && [ ! -e "$link" ]; then
             if rm -f "$link"; then
@@ -111,10 +114,7 @@ if [ -z "$npm_prefix" ]; then
 fi
 
 npm_bin_dir="${npm_prefix}/bin"
-case ":${PATH}:" in
-    *":${npm_bin_dir}:"*) ;;
-    *) export PATH="${npm_bin_dir}:${PATH}" ;;
-esac
+export PATH="${npm_bin_dir}:${PATH}"
 
 # A not-yet-created user prefix (e.g. NPM_CONFIG_PREFIX=$HOME/.npm-global) is
 # fine when its parent is writable; only an unwritable established prefix is
@@ -148,14 +148,241 @@ done
 
 installed_json="$(npm list --global --depth=0 --json 2>/dev/null || true)"
 
-registry_ok=1
-for pid in "${pids[@]}"; do
-    if ! wait "$pid"; then
-        registry_ok=0
+global_package_version() {
+    local package_name="$1"
+
+    npm_package_name="${package_name}" node -e '
+        let raw = "";
+        process.stdin.on("data", (chunk) => { raw += chunk; });
+        process.stdin.on("end", () => {
+            try {
+                const deps = JSON.parse(raw).dependencies || {};
+                const entry = deps[process.env.npm_package_name];
+                process.stdout.write(
+                    entry && typeof entry.version === "string" ? entry.version : ""
+                );
+            } catch { process.stdout.write(""); }
+        });
+    ' <<<"$installed_json"
+}
+
+opencode_major_from_version() {
+    local version="$1"
+
+    version="${version#opencode }"
+    version="${version#v}"
+    version="${version#=}"
+    version="${version%% *}"
+    case "${version%%.*}" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s' "${version%%.*}"
+}
+
+read_opencode_version() {
+    local binary="$1"
+    local output_prefix="$2"
+    local status=0
+
+    "$binary" --version >"${output_prefix}.out" 2>"${output_prefix}.err" || status=$?
+    [ "$status" -eq 0 ] || return 1
+    OPENCODE_VERSION="$(head -n 1 "${output_prefix}.out")"
+    if [ -z "$OPENCODE_VERSION" ]; then
+        OPENCODE_VERSION="$(head -n 1 "${output_prefix}.err")"
+    fi
+    [ -n "$OPENCODE_VERSION" ]
+}
+
+opencode_binary_is_owned_by_package() {
+    local binary="$1"
+    local package_root="$2"
+    local target
+
+    [ -L "$binary" ] || return 1
+    [ -f "${package_root}/package.json" ] || return 1
+    target="$(readlink -f -- "$binary" 2>/dev/null)" || return 1
+    case "$target" in
+        "${package_root}"/*) ;;
+        *) return 1 ;;
+    esac
+}
+
+active_opencode_is_v2() {
+    local output_prefix="${probe_dir}/active-opencode-check"
+    local package_root="${npm_prefix}/lib/node_modules/@opencode/cli"
+    local major
+
+    opencode_binary_is_owned_by_package "${npm_bin_dir}/opencode" "$package_root" || return 1
+    [ -n "$(global_package_version "$OPENCODE_V2_PACKAGE")" ] || return 1
+    read_opencode_version "${npm_bin_dir}/opencode" "$output_prefix" || return 1
+    major="$(opencode_major_from_version "$OPENCODE_VERSION")" || return 1
+    [ "$major" = 2 ]
+}
+
+candidate_opencode_is_v2() {
+    local candidate_prefix="$1"
+    local candidate_binary="${candidate_prefix}/bin/opencode"
+    local output_prefix="${probe_dir}/candidate-opencode"
+    local package_root="${candidate_prefix}/lib/node_modules/@opencode/cli"
+    local major
+
+    opencode_binary_is_owned_by_package "$candidate_binary" "$package_root" || return 1
+    read_opencode_version "$candidate_binary" "$output_prefix" || return 1
+    major="$(opencode_major_from_version "$OPENCODE_VERSION")" || return 1
+    [ "$major" = 2 ]
+}
+
+save_active_opencode_v2_bins() {
+    local alias
+    local source_alias
+    local backup_dir="${probe_dir}/active-opencode-v2-bins"
+
+    mkdir -p "$backup_dir"
+    for alias in opencode opencode2; do
+        source_alias="$alias"
+        if [ ! -e "${npm_bin_dir}/${source_alias}" ] && [ ! -L "${npm_bin_dir}/${source_alias}" ]; then
+            if [ "$alias" = opencode ]; then
+                source_alias=opencode2
+            else
+                source_alias=opencode
+            fi
+        fi
+        if [ ! -e "${npm_bin_dir}/${source_alias}" ] && [ ! -L "${npm_bin_dir}/${source_alias}" ]; then
+            return 1
+        fi
+        cp -a "${npm_bin_dir}/${source_alias}" "${backup_dir}/${alias}" || return 1
+    done
+}
+
+restore_active_opencode_v2_bins() {
+    local backup_dir="${probe_dir}/active-opencode-v2-bins"
+    local alias
+    local restore_ok=1
+
+    for alias in opencode opencode2; do
+        if [ ! -e "${backup_dir}/${alias}" ] && [ ! -L "${backup_dir}/${alias}" ]; then
+            continue
+        fi
+        rm -f "${npm_bin_dir}/${alias}"
+        cp -a "${backup_dir}/${alias}" "${npm_bin_dir}/${alias}" || restore_ok=0
+    done
+    [ "$restore_ok" = 1 ]
+}
+
+remove_opencode_v1() {
+    local uninstall_status=0
+
+    save_active_opencode_v2_bins || return 1
+    npm uninstall --global "${OPENCODE_V1_PACKAGE}" || uninstall_status=$?
+    restore_active_opencode_v2_bins || return 1
+    active_opencode_is_v2 || return 1
+    return "$uninstall_status"
+}
+
+remove_opencode_aliases() {
+    rm -f "${npm_bin_dir}/opencode" "${npm_bin_dir}/opencode2"
+}
+
+restore_opencode_v1() {
+    local version="$1"
+    local major
+
+    npm uninstall --global "@opencode/cli" >/dev/null 2>&1 || true
+    sweep_dangling_bins
+    if ! npm install --global --no-audit --no-fund \
+        "${npm_allow_scripts_args[@]}" "${OPENCODE_V1_PACKAGE}@${version}"; then
+        remove_opencode_aliases
+        return 1
+    fi
+    if ! read_opencode_version "${npm_bin_dir}/opencode" "${probe_dir}/restored-opencode-v1"; then
+        remove_opencode_aliases
+        return 1
+    fi
+    if ! major="$(opencode_major_from_version "$OPENCODE_VERSION")"; then
+        remove_opencode_aliases
+        return 1
+    fi
+    if [ "$major" != 1 ]; then
+        remove_opencode_aliases
+        return 1
+    fi
+}
+
+promote_opencode_v2() {
+    local spec="$1"
+    local v1_version="$2"
+    local candidate_prefix="${probe_dir}/opencode-v2-prefix"
+
+    if ! npm install --global --prefix "$candidate_prefix" --no-audit --no-fund \
+        "${npm_allow_scripts_args[@]}" "$spec"; then
+        return 1
+    fi
+    if ! candidate_opencode_is_v2 "$candidate_prefix"; then
+        return 1
+    fi
+
+    if ! npm uninstall --global "${OPENCODE_V1_PACKAGE}"; then
+        if restore_opencode_v1 "$v1_version"; then
+            return 1
+        fi
+        return 2
+    fi
+    if ! npm install --global --no-audit --no-fund \
+        "${npm_allow_scripts_args[@]}" "$spec"; then
+        sweep_dangling_bins
+        if restore_opencode_v1 "$v1_version"; then
+            return 1
+        fi
+        return 2
+    fi
+    installed_json="$(npm list --global --depth=0 --json 2>/dev/null || true)"
+    if ! active_opencode_is_v2; then
+        if restore_opencode_v1 "$v1_version"; then
+            return 1
+        fi
+        return 2
+    fi
+    opencode_v1_installed=""
+}
+
+probe_ok=()
+for index in "${!pids[@]}"; do
+    if wait "${pids[$index]}"; then
+        probe_ok[$index]=1
+    else
+        probe_ok[$index]=0
+        echo "agent-tools: WARNING: npm registry probe failed for ${PACKAGES[$index]}" >&2
     fi
 done
-if [ "$registry_ok" != 1 ]; then
-    echo "agent-tools: WARNING: npm registry version probe incomplete; treating installed versions as unknown" >&2
+
+opencode_v1_installed="$(global_package_version "${OPENCODE_V1_PACKAGE}")"
+opencode_migration_blocked=0
+if [ -n "$opencode_v1_installed" ]; then
+    if active_opencode_is_v2; then
+        printf 'agent-tools: removing OpenCode v1 package %s after proving the active binary is v2\n' "$opencode_v1_installed"
+        if remove_opencode_v1; then
+            opencode_v1_installed=""
+            installed_json="$(npm list --global --depth=0 --json 2>/dev/null || true)"
+        else
+            warn_or_fail "could not remove OpenCode v1 after activating v2" || exit 1
+            exit 0
+        fi
+    elif [ "${probe_ok[1]}" = 1 ]; then
+        printf 'agent-tools: staging OpenCode v2 before replacing v1 %s\n' "$opencode_v1_installed"
+        opencode_migration_status=0
+        promote_opencode_v2 "${PACKAGES[1]}" "$opencode_v1_installed" || opencode_migration_status=$?
+        if [ "$opencode_migration_status" -ne 0 ]; then
+            opencode_migration_blocked=1
+            if [ "$opencode_migration_status" = 2 ]; then
+                warn_or_fail "could not prove and activate OpenCode v2; OpenCode v1 could not be restored" || exit 1
+            else
+                warn_or_fail "could not prove and activate OpenCode v2; retaining OpenCode v1" || exit 1
+            fi
+        fi
+    else
+        opencode_migration_blocked=1
+        echo "agent-tools: WARNING: retaining OpenCode v1 because the v2 package is unavailable" >&2
+    fi
 fi
 
 install_specs=()
@@ -170,37 +397,33 @@ for index in "${!PACKAGES[@]}"; do
     binary="${BINARIES[$index]}"
 
     latest=""
-    if [ -s "${probe_dir}/${index}" ]; then
+    if [ "${probe_ok[$index]}" = 1 ] && [ -s "${probe_dir}/${index}" ]; then
         latest="$(tr -d '[:space:]' <"${probe_dir}/${index}")"
     fi
 
-    installed="$(npm_spec_package="$package" node -e '
-        let raw = "";
-        process.stdin.on("data", (chunk) => { raw += chunk; });
-        process.stdin.on("end", () => {
-            try {
-                const deps = JSON.parse(raw).dependencies || {};
-                const entry = deps[process.env.npm_spec_package];
-                process.stdout.write(
-                    entry && typeof entry.version === "string" ? entry.version : ""
-                );
-            } catch { process.stdout.write(""); }
-        });
-    ' <<<"$installed_json")"
+    installed="$(global_package_version "$package")"
+
+    if [ "$index" = 1 ] && [ -n "$opencode_v1_installed" ] \
+        && { [ "$opencode_migration_blocked" = 1 ] || [ "${probe_ok[$index]}" != 1 ]; }; then
+        printf 'agent-tools: deferring OpenCode v2 install for %s while retaining v1\n' "$binary" >&2
+        continue
+    fi
 
     # In --update mode, an unreachable registry plus an absent CLI means every
     # install attempt is doomed; skip instead of paying it on every attach.
-    if [ "$MODE" = "--update" ] && [ "$registry_ok" != 1 ] \
+    if [ "$MODE" = "--update" ] && [ "${probe_ok[$index]}" != 1 ] \
         && [ -z "$installed" ] && [ ! -x "${npm_bin_dir}/${binary}" ]; then
         printf 'agent-tools: skipping %s: registry unreachable and not installed (rerun post-create when online)\n' "$binary" >&2
         continue
     fi
 
-    # Skip only when the binary is present, a version is recorded, and the
-    # registry (if reachable) reports nothing newer. An unreachable registry
-    # keeps whatever is already installed.
+    opencode_needs_install=0
+    if [ "$index" = 1 ] && ! active_opencode_is_v2; then
+        opencode_needs_install=1
+    fi
     if [ ! -x "${npm_bin_dir}/${binary}" ] \
         || [ -z "$installed" ] \
+        || [ "$opencode_needs_install" = 1 ] \
         || { [ -n "$latest" ] && [ "$installed" != "$latest" ]; }; then
         install_specs+=("$spec")
     fi
@@ -210,7 +433,7 @@ done
 
 # Each package is installed by its own `npm install --global` invocation.
 # npm treats one multi-package command as a single transaction: if ANY
-# postinstall fails (opencode-ai's did, when a root-owned ~/.cache crashed its
+# postinstall fails (OpenCode's did, when a root-owned ~/.cache crashed its
 # verify step), npm rolls back EVERY package in the command while leaving
 # their bin symlinks behind -- so one broken package used to destroy the
 # whole toolchain. Per-package installs bound the blast radius to that
@@ -228,6 +451,7 @@ if [ "${#install_specs[@]}" -gt 0 ]; then
             if npm install --global --no-audit --no-fund \
                 "${npm_allow_scripts_args[@]}" \
                 "$spec"; then
+                installed_json="$(npm list --global --depth=0 --json 2>/dev/null || true)"
                 spec_ok=1
                 break
             fi
@@ -292,6 +516,10 @@ for index in "${!BINARIES[@]}"; do
     fi
     if [ -z "$version" ]; then
         missing+=("$binary")
+        continue
+    fi
+    if [ "$binary" = "opencode" ] && ! active_opencode_is_v2; then
+        missing+=("opencode (active binary is not an owned @opencode/cli package or is not major 2)")
         continue
     fi
     ready+=("${binary}@${version}")

@@ -31,7 +31,7 @@ tooling for manual `.pre-commit-config.yaml` runs.
 | PowerShell  | 7.x via `ghcr.io/devcontainers/features/powershell` |
 | Python      | 3.12 via devcontainer feature                       |
 | Node.js     | LTS via devcontainer feature (>= 22 required)       |
-| Agent CLIs  | `codex`, `opencode`, `nanocoder`, `claude` at `@latest` via post-create; refreshed at start |
+| Agent CLIs  | `codex`, OpenCode v2, `nanocoder`, `claude` at `@latest`; installed at create and refreshed at start |
 | GitHub CLI  | Latest via devcontainer feature                     |
 | Git hooks   | Direct `git rev-parse --git-path hooks` shim via post-create |
 | pre-commit  | Optional compatibility CLI; no framework hook install |
@@ -115,17 +115,24 @@ matching arg in [`Dockerfile`](./Dockerfile)). Rebuild the container via
 
 The four terminal agent CLIs are installed by
 [`install-agent-tools.sh`](./install-agent-tools.sh) through their official
-npm packages at `@latest`. Each CLI's spec is overridable, e.g.
+npm packages at `@latest`. OpenCode v2 uses `@opencode/cli`; the installer
+stages it in an isolated npm prefix and verifies the candidate binary reports
+major version 2 before replacing the package-managed v1 `opencode-ai`. If
+activation fails, v1 is restored when possible; a failed restoration is a
+strict failure and a warn-only update failure. Each CLI's spec is
+overridable, e.g.
 `CODEX_NPM_SPEC="@openai/codex@0.135.0"`, but the defaults track `@latest`
 because these CLIs publish several times a day. The registry version probe
 is bounded by `AGENT_TOOLS_NPM_FETCH_TIMEOUT_MS` (default 5000) so an
 offline start fails fast; the package install itself uses npm's defaults.
 
 - **post-create** installs (or refreshes) all four and fails loudly on any
-  error; the toolchain summary then reports every version.
-- **post-start** re-checks versions on every container start and reinstalls
-  only what is outdated or missing. This refresh is warn-only: a registry
-  outage leaves the installed toolchain in place and never blocks attaching.
+  error; the toolchain summary then reports every version and OpenCode must
+  report major version 2.
+- **post-start** re-checks versions on every successful container start and
+  reinstalls only what is outdated or missing. This refresh is warn-only: a
+  registry outage leaves the installed toolchain in place and never blocks
+  attaching.
 
 Authentication is intentionally not automated. Run each CLI interactively
 inside the container and sign in according to its vendor's docs.

@@ -1349,7 +1349,7 @@ Assert-Test 'devcontainer agent CLI installer is complete, parseable, and valida
     # paired with its binary name, and verified after provisioning.
     $agentClis = @(
         [pscustomobject]@{ Package = '@openai/codex'; Binary = 'codex' },
-        [pscustomobject]@{ Package = 'opencode-ai'; Binary = 'opencode' },
+        [pscustomobject]@{ Package = '@opencode/cli'; Binary = 'opencode' },
         [pscustomobject]@{ Package = '@nanocollective/nanocoder'; Binary = 'nanocoder' },
         [pscustomobject]@{ Package = '@anthropic-ai/claude-code'; Binary = 'claude' }
     )
@@ -1417,14 +1417,29 @@ Assert-Test 'devcontainer agent CLI installer is complete, parseable, and valida
                 Diagnostic  = 'npm install|install_specs'
             },
             [pscustomobject]@{
+                Pattern     = 'npm uninstall --global\s+"\$\{OPENCODE_V1_PACKAGE\}"'
+                Requirement = 'remove package-managed OpenCode v1 only after proving the active binary is v2'
+                Diagnostic  = 'npm uninstall|active binary|v2|opencode-ai|migration'
+            },
+            [pscustomobject]@{
+                Pattern     = 'DANGLING_BINARIES=\("\$\{BINARIES\[@\]\}" opencode2\)'
+                Requirement = 'sweep both OpenCode bin aliases when removing dangling links'
+                Diagnostic  = 'DANGLING_BINARIES|opencode2|dangling'
+            },
+            [pscustomobject]@{
+                Pattern     = 'probe_ok\[\$index\]'
+                Requirement = 'track registry probe results per package'
+                Diagnostic  = 'probe_ok|per-package|registry probe'
+            },
+            [pscustomobject]@{
                 Pattern     = '--allow-scripts="\$ALLOW_SCRIPTS"'
                 Requirement = 'pass the reviewed lifecycle-script allow list to npm install'
                 Diagnostic  = 'allow-scripts|ALLOW_SCRIPTS'
             },
             [pscustomobject]@{
-                Pattern     = 'ALLOW_SCRIPTS="opencode-ai,@nanocollective/nanocoder,@anthropic-ai/claude-code,@openai/codex,@github/keytar,node-pty"'
+                Pattern     = 'ALLOW_SCRIPTS="@opencode/cli,@nanocollective/nanocoder,@anthropic-ai/claude-code,@openai/codex,@github/keytar,node-pty,opencode-ai"'
                 Requirement = 'keep the reviewed lifecycle-script allow list intact; its postinstalls select platform binaries and build native modules'
-                Diagnostic  = 'ALLOW_SCRIPTS|opencode-ai'
+                Diagnostic  = 'ALLOW_SCRIPTS|@opencode/cli'
             },
             [pscustomobject]@{
                 Pattern     = '-ge 11'
@@ -1435,6 +1450,11 @@ Assert-Test 'devcontainer agent CLI installer is complete, parseable, and valida
                 Pattern     = 'npm view'
                 Requirement = 'probe the registry for the latest versions before installing'
                 Diagnostic  = 'npm view|latest|probe'
+            },
+            [pscustomobject]@{
+                Pattern     = '\[\s*"\$major"\s*=\s*2\s*\]'
+                Requirement = 'reject an OpenCode version outside major version 2'
+                Diagnostic  = 'opencode_major|version 2| -ne 2'
             }
         )) {
         Assert-TextMatches `
@@ -1447,6 +1467,310 @@ Assert-Test 'devcontainer agent CLI installer is complete, parseable, and valida
 
     Assert-ScriptParsesWithBash -Path $installer -Name 'install-agent-tools.sh'
 }
+
+Assert-Test 'devcontainer OpenCode migration preserves v1 until v2 is proven' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $tempRootName = ".opencode-migration-$([Guid]::NewGuid())"
+    $tempRoot = Join-Path $repoRoot $tempRootName
+    $fakeNpm = @'
+#!/usr/bin/env bash
+set -u
+state="${FAKE_NPM_STATE:?}"
+prefix="${FAKE_NPM_PREFIX:?}"
+packages="${state}/packages"
+log="${state}/events"
+case "${1:-}" in
+    --version)
+        printf '11.0.0\n'
+        ;;
+    config)
+        resolved_prefix="$(cd "$prefix" && pwd -P)" || exit 1
+        printf '%s\n' "$resolved_prefix"
+        ;;
+    view)
+        spec="${2:-}"
+        if [ -n "${FAKE_NPM_FAIL_PROBE:-}" ] && { [ "$FAKE_NPM_FAIL_PROBE" = '*' ] || [ "$FAKE_NPM_FAIL_PROBE" = "$spec" ]; }; then
+            exit 1
+        fi
+        case "$spec" in
+            '@openai/codex'|'@nanocollective/nanocoder'|'@anthropic-ai/claude-code') printf '1.0.0\n' ;;
+            '@opencode/cli'*) printf '2.4.0\n' ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    list)
+        printf '{"dependencies":{'
+        separator=''
+        while IFS=' ' read -r package version; do
+            [ -n "$package" ] || continue
+            if [ "$package" = '@opencode/cli' ] && [ ! -f "$prefix/lib/node_modules/@opencode/cli/package.json" ]; then
+                continue
+            fi
+            printf '%s"%s":{"version":"%s"}' "$separator" "$package" "$version"
+            separator=','
+        done <"$packages"
+        printf '}}\n'
+        ;;
+    install)
+        target="$prefix"
+        spec=''
+        allow_scripts=''
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --prefix) target="$2"; shift 2 ;;
+                --global|--no-audit|--no-fund) shift ;;
+                --allow-scripts=*) allow_scripts="${1#*=}"; shift ;;
+                *) spec="$1"; shift ;;
+            esac
+        done
+        printf 'install:%s:%s\n' "$target" "$spec" >>"$log"
+        if [ "${spec#opencode-ai@}" != "$spec" ]; then
+            case ",$allow_scripts," in
+                *,opencode-ai,*) ;;
+                *) exit 45 ;;
+            esac
+            if [ "${FAKE_NPM_FAIL_V1_RESTORE:-}" = 1 ]; then
+                rm -f "$prefix/bin/opencode" "$prefix/bin/opencode2"
+                ln -s ../lib/node_modules/opencode-ai/missing "$prefix/bin/opencode"
+                ln -s ../lib/node_modules/opencode-ai/missing "$prefix/bin/opencode2"
+                exit 46
+            fi
+        fi
+        if [ "${FAKE_NPM_FAIL_CANDIDATE:-}" = 1 ] && [ "$target" != "$prefix" ] && [ "${spec#@opencode/cli}" != "$spec" ]; then
+            exit 42
+        fi
+        if [ "${FAKE_NPM_FAIL_ACTIVE:-}" = 1 ] && [ "$target" = "$prefix" ] && [ "${spec#@opencode/cli}" != "$spec" ]; then
+            rm -f "$prefix/bin/opencode"
+            ln -s ../lib/node_modules/@opencode/cli/bin/opencode.exe "$prefix/bin/opencode"
+            exit 44
+        fi
+
+        case "$spec" in
+            '@opencode/cli'*)
+                package_dir="$target/lib/node_modules/@opencode/cli"
+                mkdir -p "$package_dir/bin" "$target/bin"
+                printf '{"name":"@opencode/cli","version":"2.4.0"}\n' >"$package_dir/package.json"
+                if [ "${FAKE_NPM_FAIL_ACTIVATION:-}" = 1 ] && [ "$target" = "$prefix" ]; then
+                    cat >"$package_dir/bin/opencode" <<'BIN'
+#!/usr/bin/env bash
+printf '%s\n' 'opencode 1.9.9'
+BIN
+                else
+                    cat >"$package_dir/bin/opencode" <<'BIN'
+#!/usr/bin/env bash
+printf '%s\n' "${FAKE_OPENCODE_VERSION:-}"
+BIN
+                fi
+                chmod +x "$package_dir/bin/opencode"
+                ln -s ../lib/node_modules/@opencode/cli/bin/opencode "$target/bin/opencode"
+                ln -s ../lib/node_modules/@opencode/cli/bin/opencode "$target/bin/opencode2"
+                if [ "$target" = "$prefix" ]; then
+                    printf '@opencode/cli 2.4.0\n' >>"$packages"
+                fi
+                ;;
+            'opencode-ai@'*)
+                version="${spec#opencode-ai@}"
+                package_dir="$target/lib/node_modules/opencode-ai"
+                mkdir -p "$package_dir/bin" "$target/bin"
+                printf '{"name":"opencode-ai","version":"%s"}\n' "$version" >"$package_dir/package.json"
+                cat >"$package_dir/bin/opencode" <<BIN
+#!/usr/bin/env bash
+printf '%s\n' 'opencode $version'
+BIN
+                chmod +x "$package_dir/bin/opencode"
+                ln -s ../lib/node_modules/opencode-ai/bin/opencode "$target/bin/opencode"
+                if [ "$target" = "$prefix" ]; then
+                    printf 'opencode-ai %s\n' "$version" >>"$packages"
+                fi
+                ;;
+            '@openai/codex'*)
+                mkdir -p "$target/bin"
+                printf '#!/usr/bin/env bash\nprintf "codex 1.0.0\\n"\n' >"$target/bin/codex"
+                ;;
+            '@nanocollective/nanocoder'*)
+                mkdir -p "$target/bin"
+                printf '#!/usr/bin/env bash\nprintf "nanocoder 1.0.0\\n"\n' >"$target/bin/nanocoder"
+                ;;
+            '@anthropic-ai/claude-code'*)
+                mkdir -p "$target/bin"
+                printf '#!/usr/bin/env bash\nprintf "claude 1.0.0\\n"\n' >"$target/bin/claude"
+                ;;
+            *) exit 2 ;;
+        esac
+        ;;
+    uninstall)
+        requested=''
+        for argument in "$@"; do
+            case "$argument" in
+                '@opencode/cli'|'opencode-ai') requested="$argument" ;;
+            esac
+        done
+        printf 'uninstall:%s\n' "$requested" >>"$log"
+        [ -n "$requested" ] || exit 2
+        [ "${FAKE_NPM_FAIL_UNINSTALL:-0}" = 0 ] || exit 43
+        temp_packages="${state}/packages.next"
+        : >"$temp_packages"
+        while IFS=' ' read -r package version; do
+            [ "$package" = "$requested" ] || printf '%s %s\n' "$package" "$version"
+        done <"$packages" >"$temp_packages"
+        mv "$temp_packages" "$packages"
+        case "$requested" in
+            '@opencode/cli')
+                rm -rf "$prefix/lib/node_modules/@opencode/cli"
+                rm -f "$prefix/bin/opencode" "$prefix/bin/opencode2"
+                ;;
+            opencode-ai)
+                rm -rf "$prefix/lib/node_modules/opencode-ai"
+                rm -f "$prefix/bin/opencode" "$prefix/bin/opencode2"
+                ;;
+        esac
+        ;;
+    *) exit 2 ;;
+esac
+'@
+    $cases = @(
+        [pscustomobject]@{ Name = 'online v1 to v2'; Mode = '--update'; FailProbe = ''; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = 'opencode 2.4.0'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 0; V1 = $false; V1Reinstalled = $false; Major = '2'; ActivePresent = $true; FinalReady = $true },
+        [pscustomobject]@{ Name = 'reachable OpenCode beats unrelated probe failure'; Mode = '--update'; FailProbe = '@openai/codex'; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = 'v2.4.0'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 0; V1 = $false; V1Reinstalled = $false; Major = '2'; ActivePresent = $true; FinalReady = $true },
+        [pscustomobject]@{ Name = 'offline v1 retained'; Mode = '--update'; FailProbe = '*'; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = 'opencode 2.4.0'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $true; Exit = 0; V1 = $true; V1Reinstalled = $false; Major = '1'; ActivePresent = $true; FinalReady = $false },
+        [pscustomobject]@{ Name = 'candidate install failure retains v1'; Mode = 'install'; FailProbe = ''; FailCandidate = $true; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = 'opencode 2.4.0'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 1; V1 = $true; V1Reinstalled = $false; Major = '1'; ActivePresent = $true; FinalReady = $false },
+        [pscustomobject]@{ Name = 'active install failure restores v1'; Mode = 'install'; FailProbe = ''; FailCandidate = $false; FailActive = $true; FailActivation = $false; FailV1Restore = $false; CandidateVersion = 'opencode 2.4.0'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 1; V1 = $true; V1Reinstalled = $true; Major = '1'; ActivePresent = $true; FinalReady = $false },
+        [pscustomobject]@{ Name = 'active activation failure restores v1'; Mode = 'install'; FailProbe = ''; FailCandidate = $false; FailActive = $false; FailActivation = $true; FailV1Restore = $false; CandidateVersion = 'opencode 2.4.0'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 1; V1 = $true; V1Reinstalled = $true; Major = '1'; ActivePresent = $true; FinalReady = $false },
+        [pscustomobject]@{ Name = 'rollback failure is strict'; Mode = 'install'; FailProbe = ''; FailCandidate = $false; FailActive = $true; FailActivation = $false; FailV1Restore = $true; CandidateVersion = 'opencode 2.4.0'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 1; V1 = $false; V1Reinstalled = $true; Major = ''; ActivePresent = $false; FinalReady = $false },
+        [pscustomobject]@{ Name = 'rollback failure is warn-only'; Mode = '--update'; FailProbe = ''; FailCandidate = $false; FailActive = $true; FailActivation = $false; FailV1Restore = $true; CandidateVersion = 'opencode 2.4.0'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 0; V1 = $false; V1Reinstalled = $true; Major = ''; ActivePresent = $false; FinalReady = $false },
+        [pscustomobject]@{ Name = 'existing v2 allows offline v1 removal'; Mode = '--update'; FailProbe = '*'; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = 'opencode 2.4.0'; InitialV2 = $true; ForeignV2 = $false; DanglingV2 = $false; Exit = 0; V1 = $false; V1Reinstalled = $false; Major = '2'; ActivePresent = $true; FinalReady = $true },
+        [pscustomobject]@{ Name = 'foreign v2 binary does not prove ownership'; Mode = 'install'; FailProbe = '*'; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = 'opencode 2.4.0'; InitialV2 = $false; ForeignV2 = $true; DanglingV2 = $false; Exit = 1; V1 = $true; V1Reinstalled = $false; Major = '2'; ActivePresent = $true; FinalReady = $false },
+        [pscustomobject]@{ Name = 'bare v2 version accepted'; Mode = '--update'; FailProbe = ''; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = '2.5.0'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 0; V1 = $false; V1Reinstalled = $false; Major = '2'; ActivePresent = $true; FinalReady = $true },
+        [pscustomobject]@{ Name = 'v1 version rejected'; Mode = 'install'; FailProbe = ''; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = 'opencode 1.9.0'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 1; V1 = $true; V1Reinstalled = $false; Major = '1'; ActivePresent = $true; FinalReady = $false },
+        [pscustomobject]@{ Name = 'malformed version rejected'; Mode = 'install'; FailProbe = ''; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = '2beta'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 1; V1 = $true; V1Reinstalled = $false; Major = '1'; ActivePresent = $true; FinalReady = $false }
+    )
+    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+    $envNames = @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_PROBE', 'FAKE_NPM_FAIL_CANDIDATE', 'FAKE_NPM_FAIL_ACTIVE', 'FAKE_NPM_FAIL_ACTIVATION', 'FAKE_NPM_FAIL_V1_RESTORE', 'FAKE_OPENCODE_VERSION', 'FAKE_NPM_FAIL_UNINSTALL', 'PATH')
+    $snapshots = @($envNames | ForEach-Object { Save-EnvVar $_ })
+    try {
+        Push-Location $repoRoot
+        try {
+            foreach ($case in $cases) {
+                $caseRoot = "$tempRootName/$([Guid]::NewGuid().ToString('N'))"
+                $state = "$caseRoot/state"
+                $prefix = "$caseRoot/prefix"
+                $bin = "$prefix/bin"
+                $foreignEarlierBin = "$caseRoot/foreign-bin"
+                New-Item -ItemType Directory -Path $state, $bin, $foreignEarlierBin -Force | Out-Null
+                Write-TestUtf8NoBomFile -Path "$foreignEarlierBin/opencode" -Content "#!/usr/bin/env bash`nprintf '%s\n' 'opencode 2.4.0'`n" -LfNewlines
+                Write-TestUtf8NoBomFile -Path "$bin/npm" -Content $fakeNpm -LfNewlines
+                Write-TestUtf8NoBomFile -Path "$state/events" -Content ''
+                $packageLines = @(
+                    '@openai/codex 1.0.0',
+                    '@nanocollective/nanocoder 1.0.0',
+                    '@anthropic-ai/claude-code 1.0.0',
+                    'opencode-ai 1.2.3'
+                )
+                Write-TestUtf8NoBomFile -Path "$state/packages" -Content (($packageLines -join "`n") + "`n") -LfNewlines
+                foreach ($entry in @(
+                        [pscustomobject]@{ Name = 'codex'; Version = 'codex 1.0.0' },
+                        [pscustomobject]@{ Name = 'nanocoder'; Version = 'nanocoder 1.0.0' },
+                        [pscustomobject]@{ Name = 'claude'; Version = 'claude 1.0.0' },
+                        [pscustomobject]@{ Name = 'opencode'; Version = 'opencode 1.2.3' }
+                    )) {
+                    $scriptPath = "$bin/$($entry.Name)"
+                    Write-TestUtf8NoBomFile -Path $scriptPath -Content "#!/usr/bin/env bash`nprintf '%s\n' '$($entry.Version)'`n" -LfNewlines
+                }
+                if ($case.ForeignV2) {
+                    $foreignBinary = "$caseRoot/foreign-opencode"
+                    Write-TestUtf8NoBomFile -Path $foreignBinary -Content "#!/usr/bin/env bash`nprintf '%s\n' 'opencode 2.4.0'`n" -LfNewlines
+                    & bash -c 'ln -sfn "$1" "$2"' -- '../../foreign-opencode' "$bin/opencode"
+                }
+                if ($case.InitialV2) {
+
+                    $packageLines += '@opencode/cli 2.4.0'
+                    Write-TestUtf8NoBomFile -Path "$state/packages" -Content (($packageLines -join "`n") + "`n") -LfNewlines
+                    $initialPackageText = Get-Content -LiteralPath "$state/packages" -Raw
+                    if ($initialPackageText -notmatch '(?m)^opencode-ai ' -or
+                        $initialPackageText -notmatch '(?m)^@opencode/cli ') {
+                        throw "$($case.Name): setup must start with both v1 and v2 package records"
+                    }
+                    $v2Package = "$prefix/lib/node_modules/@opencode/cli"
+                    New-Item -ItemType Directory -Path "$v2Package/bin" -Force | Out-Null
+                    Write-TestUtf8NoBomFile -Path "$v2Package/package.json" -Content '{"name":"@opencode/cli","version":"2.4.0"}' -LfNewlines
+                    Write-TestUtf8NoBomFile -Path "$v2Package/bin/opencode" -Content "#!/usr/bin/env bash`nprintf '%s\n' 'opencode 2.4.0'`n" -LfNewlines
+                    & bash -c 'ln -sfn "$1" "$2"; ln -sfn "$1" "$3"' -- '../lib/node_modules/@opencode/cli/bin/opencode' "$bin/opencode" "$bin/opencode2"
+                }
+                if ($case.DanglingV2) {
+                    & bash -c 'ln -sfn "$1" "$2"' -- '../lib/node_modules/@opencode/cli/bin/opencode2' "$bin/opencode2"
+                }
+                $executablePaths = @(
+                    "$bin/npm",
+                    "$bin/codex",
+                    "$bin/nanocoder",
+                    "$bin/claude",
+                    "$bin/opencode",
+                    "$foreignEarlierBin/opencode"
+                )
+                if ($case.InitialV2) { $executablePaths += "$prefix/lib/node_modules/@opencode/cli/bin/opencode" }
+                & bash -c 'chmod +x "$@"' -- $executablePaths
+
+                $env:FAKE_NPM_STATE = $state
+                $env:FAKE_NPM_PREFIX = $prefix
+                $env:FAKE_NPM_FAIL_PROBE = $case.FailProbe
+                $env:FAKE_NPM_FAIL_CANDIDATE = if ($case.FailCandidate) { '1' } else { '0' }
+                $env:FAKE_NPM_FAIL_ACTIVE = if ($case.FailActive) { '1' } else { '0' }
+                $env:FAKE_NPM_FAIL_ACTIVATION = if ($case.FailActivation) { '1' } else { '0' }
+                $env:FAKE_NPM_FAIL_V1_RESTORE = if ($case.FailV1Restore) { '1' } else { '0' }
+                $env:FAKE_OPENCODE_VERSION = $case.CandidateVersion
+
+                $env:FAKE_NPM_FAIL_UNINSTALL = '0'
+                $env:PATH = "${foreignEarlierBin}:${bin}:$($env:PATH)"
+                $output = @(& bash '.devcontainer/install-agent-tools.sh' $case.Mode 2>&1)
+                $exitCode = $LASTEXITCODE
+                Expect-Equal $exitCode $case.Exit "$($case.Name): $($output -join '; ')"
+                $packageText = Get-Content -LiteralPath "$state/packages" -Raw
+                $v1PackageVersion = if ($packageText -match '(?m)^opencode-ai ([^\s]+)') { $Matches[1] } else { '' }
+                Expect-Equal ($v1PackageVersion -ne '') $case.V1 "$($case.Name): v1 package state"
+                if ($case.V1) {
+                    Expect-Equal $v1PackageVersion '1.2.3' "$($case.Name): recorded v1 package version"
+                }
+                if ($case.ActivePresent) {
+                    $version = @(& bash "$bin/opencode" --version 2>&1)
+                    Expect-Equal $LASTEXITCODE 0 "$($case.Name): active OpenCode"
+                    $versionValue = $version[0] -replace '^opencode\s+', '' -replace '^v', ''
+                    if ($case.Major) {
+                        Expect-Equal ($versionValue -match "^$($case.Major)(?:\.|$)") $true "$($case.Name): active version '$($version -join ' ')'"
+                    }
+                    if ($case.V1 -and -not $case.ForeignV2) {
+                        Expect-Equal $versionValue '1.2.3' "$($case.Name): active v1 version"
+                    }
+                } elseif (Test-Path -LiteralPath "$bin/opencode") {
+                    throw "$($case.Name): active OpenCode was retained after rollback failure"
+                }
+                $outputText = $output -join "`n"
+                if ($case.FinalReady) {
+                    Expect-Equal ($outputText -match 'agent-tools: ready:') $true "$($case.Name): final verification was not green"
+                } else {
+                    Expect-Equal ($outputText -match 'agent-tools: ready:') $false "$($case.Name): final verification was falsely green"
+                }
+                if ($case.FailV1Restore) {
+                    Expect-Equal ($outputText -match 'retaining OpenCode v1') $false "$($case.Name): rollback failure claimed v1 retention"
+                    & bash -c 'for alias in "$@"; do [ ! -e "$alias" ] && [ ! -L "$alias" ] || exit 1; done' -- "$bin/opencode" "$bin/opencode2"
+                    Expect-Equal $LASTEXITCODE 0 "$($case.Name): broken OpenCode aliases survived failed v1 restoration"
+                }
+
+                $events = Get-Content -LiteralPath "$state/events" -Raw
+                if ($null -eq $events) { $events = '' }
+                $v1Install = "install:${prefix}:opencode-ai@1.2.3"
+                Expect-Equal $events.Contains($v1Install) $case.V1Reinstalled "$($case.Name): exact v1 reinstall"
+                if ($case.DanglingV2) {
+                    & bash -c '[ ! -e "$1" ] && [ ! -L "$1" ]' -- "$bin/opencode2"
+                    Expect-Equal $LASTEXITCODE 0 "$($case.Name): dangling opencode2 was retained"
+                }
+            }
+        } finally {
+            Pop-Location
+        }
+    } finally {
+        foreach ($snapshot in $snapshots) { Restore-EnvVar $snapshot }
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
 
 Assert-Test 'devcontainer post-create installs direct hooks, agent CLIs, and reports summary' {
     $repoRoot = Split-Path -Parent $ScriptsDir
@@ -1549,11 +1873,17 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
                 Requirement = 'refresh agent CLIs via install-agent-tools.sh --update'
                 Diagnostic  = 'agent-tools|--update|refresh'
             },
-            [pscustomobject]@{
-                Pattern     = 'WARN: agent CLI refresh failed'
-                Requirement = 'warn instead of failing when the registry refresh fails'
-                Diagnostic  = 'WARN|refresh|installed versions'
-            }
+             [pscustomobject]@{
+                 Pattern     = 'WARN: agent CLI refresh failed'
+                 Requirement = 'warn instead of failing when the registry refresh fails'
+                 Diagnostic  = 'WARN|refresh|installed versions'
+             },
+             [pscustomobject]@{
+                 Pattern     = 'Agent CLI refresh attempted'
+                 Requirement = 'say the refresh was attempted after warn-only migration failures'
+                 Diagnostic  = 'refresh attempted|Agent CLIs checked'
+             }
+
         )) {
         Assert-TextMatches `
             -Subject '.devcontainer/post-start.sh' `
