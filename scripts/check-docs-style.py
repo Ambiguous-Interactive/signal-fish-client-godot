@@ -71,6 +71,7 @@ def find_violations(text):
 
 def run_check(paths):
     findings = []
+    scanned = 0
     explicit = bool(paths)
     files = paths if explicit else tracked_doc_files()
     for path in files:
@@ -85,9 +86,10 @@ def run_check(paths):
         except (OSError, UnicodeDecodeError) as exc:
             findings.append((path, 0, 0, f"unreadable: {exc}"))
             continue
+        scanned += 1
         for line, col, message in find_violations(text):
             findings.append((path, line, col, message))
-    return findings
+    return findings, scanned
 
 
 def self_test():
@@ -140,7 +142,7 @@ def main():
     args = parser.parse_args()
     if args.self_test:
         return self_test()
-    findings = run_check(args.paths)
+    findings, scanned = run_check(args.paths)
     top = ""
     if not args.paths:
         top = subprocess.run(
@@ -158,7 +160,7 @@ def main():
         )
         return 1
     files = args.paths if args.paths else tracked_doc_files()
-    print(f"check-docs-style OK ({len(files)} file(s))")
+    print(f"check-docs-style OK ({scanned} file(s) scanned)")
     return 0
 
 

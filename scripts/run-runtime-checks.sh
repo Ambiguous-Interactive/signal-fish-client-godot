@@ -563,11 +563,17 @@ run_changed() {
 	local docs_files=()
 	while IFS= read -r file; do
 		case "${file}" in
-			*.md | llms.txt | .markdownlint* | LICENSE)
+			# Only files inside the checker's scope are passed explicitly;
+			# .markdownlint*/LICENSE stay docs-only triggers, so those edits
+			# scan the whole tracked tree like CI does.
+			*.md | llms.txt)
 				dirty_docs=1
 				# The style tools cannot read a deleted file; deleted docs
 				# are legitimately absent and simply escape the local check.
 				[[ -f "${file}" ]] && docs_files+=("${file}")
+				;;
+			.markdownlint* | LICENSE)
+				dirty_docs=1
 				;;
 			*)
 				md_only=""
