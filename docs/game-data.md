@@ -25,10 +25,10 @@ written with full round-trip precision, and JSON `null` passes through
 verbatim. Values that cannot be represented losslessly are refused with
 `protocol_error` (and nothing is sent) rather than corrupted:
 
-- Engine-only Variants (`Vector2`, `Color`, objects, ...) — including
+- Engine-only Variants (`Vector2`, `Color`, objects, ...) - including
   the Godot conveniences `StringName` and `Packed*Array` values.
   Convert them to plain JSON data at the call site.
-- Non-finite floats (`nan`, `inf`) — no JSON parser accepts them.
+- Non-finite floats (`nan`, `inf`) - no JSON parser accepts them.
 - Floats the engine's own JSON formatters cannot round-trip (observed
   only for very small magnitudes, which come back re-rounded or
   flattened rather than preserved).

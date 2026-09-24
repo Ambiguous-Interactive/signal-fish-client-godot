@@ -49,6 +49,9 @@ point here unless a tool requires a tiny wrapper format.
 - Keep user-facing copy (commits, PRs, changelogs, docs, code comments)
   extremely short, simple, and to the point (STE style). Omit internal-only
   detail; changelogs list user-relevant changes only.
+- Docs (tracked Markdown + `llms.txt`) stay ASCII-only and skip contrast
+  constructions; `scripts/check-docs-style.py` enforces this in CI and in
+  `run-runtime-checks.sh changed`.
 - Keep code comments minimal: comments carry only non-inferable rationale
   (upstream/issue citations, behavioral "why"). No comments on internal
   helpers; keep `##` docs on public API; naming and structure carry the rest.
@@ -65,7 +68,7 @@ point here unless a tool requires a tiny wrapper format.
 | # | Decision | Choice |
 |---|---|---|
 | 1 | Implementation | Pure GDScript addon (no C#, no Rust/GDExtension). The Rust client is the behavioral reference only; the wire protocol is re-implemented in GDScript (zero compilation, web-export + drag-drop Asset Library friendly). |
-| 2 | Public API | Rich, typed, idiomatic API mirroring the Rust client: per-message methods + one snake_case signal per event, typed payload objects — not a thin `send_message(Dictionary)`. |
+| 2 | Public API | Rich, typed, idiomatic API mirroring the Rust client: per-message methods + one snake_case signal per event, typed payload objects - not a thin `send_message(Dictionary)`. |
 | 3 | v1 scope | Everything: core + authority + spectators + reconnection/replay + MessagePack binary game data + an optional WebRTC P2P helper. |
 | 4 | Test framework | Deterministic custom `SceneTree` runners (`godot --headless --script`) with byte-pinned fixtures, injected clocks, and fake transports; no gdUnit4 (extra dependency + async harness without added coverage). |
 | 5 | Engine target | Godot 4 first (MVP rule below). Godot 3.6 only post-v1 behind a separate compatibility decision. |

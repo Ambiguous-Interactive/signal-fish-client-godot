@@ -21,7 +21,7 @@ Date: 2026-09-20
   v2-route `json`/`rkyv` frames are raw payload bytes, no envelope; v3 frames
   (`V3BinaryGameDataFrame`) add non-zero `seq`/`epoch` and wider encoding
   tokens, and only ever arrive on the separate v3 WebSocket route.
-- server `src/websocket/connection.rs`: client→server binary = raw payload
+- server `src/websocket/connection.rs`: client->server binary = raw payload
   bytes; the server tags inbound binary with the negotiated format and drops
   binary on `json` connections with `InvalidInput`.
 - rust client `src/protocol/binary.rs` @ `main` (ported from server v0.4.0):
@@ -51,10 +51,10 @@ Date: 2026-09-20
   non-empty, refused with `ERR_UNAVAILABLE` under JSON negotiation since the
   server drops binary there anyway, backpressure-aware, raw bytes on the
   wire); binary receive path dispatches per negotiated format:
-  `message_pack` → strict envelope → bytes signal (default) or decoded
+  `message_pack` -> strict envelope -> bytes signal (default) or decoded
   `game_data_received` (opt-in, with a raw-bytes fallback + `protocol_error`
-  when a payload is undecodable), `rkyv` → raw pass-through with `from_player
-  = ""` (no envelope exists upstream), JSON/unset → dropped with
+  when a payload is undecodable), `rkyv` -> raw pass-through with `from_player
+  = ""` (no envelope exists upstream), JSON/unset -> dropped with
   `protocol_error`, link stays up.
 - Tests: `tests/protocol/binary_frame_tests.gd` (hand-pinned canonical v2
   envelope bytes, variant matrix incl. map16 header/shuffled order/empty
@@ -63,7 +63,7 @@ Date: 2026-09-20
   v3 half/zero/negative/string stamps, msgpack decode/encode width vectors,
   round-trip matrix, depth bomb) wired into `run_protocol_tests.gd`; client
   suite `tests/client/run_client_tests.gd` gains `_test_binary_game_data_paths`
-  (send guards + wire bytes, envelope → bytes event, hostile envelope keeps
+  (send guards + wire bytes, envelope -> bytes event, hostile envelope keeps
   the link up, opt-in decode + fallback, rkyv pass-through) and updated config
   validation for the unblocked formats.
 - Docs: `PLAN.md` P2 marked complete (all five checkboxes), `send_game_data_binary`

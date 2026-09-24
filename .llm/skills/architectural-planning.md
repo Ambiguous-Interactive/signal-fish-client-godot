@@ -52,7 +52,7 @@ Use compact ASCII diagrams when they clarify behavior:
 
 `PLAN.md` is a going-forward roadmap, not a log or a knowledge base. Keeping
 the three functions in separate files is what prevents context rot; merging
-them is how plans bloat (PLAN.md once grew 689 → 1019 lines without a single
+them is how plans bloat (PLAN.md once grew 689 -> 1019 lines without a single
 shrinking commit).
 
 - `PLAN.md` holds only: a short status line, in-progress/next work with

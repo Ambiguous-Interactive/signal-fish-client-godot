@@ -1,7 +1,7 @@
-# Session 013 — Protocol v3 Session-Plan Signaling Surface (P3 groundwork)
+# Session 013 - Protocol v3 Session-Plan Signaling Surface (P3 groundwork)
 
 **Date:** 2026-09-20
-**Branch:** `p3-v3-signaling-surface` → PR to `main`
+**Branch:** `p3-v3-signaling-surface` -> PR to `main`
 **Goal:** Advance PLAN.md to the next milestone (P3 WebRTC P2P helper). Drift check found main
 green, no open issues, no open PRs; this session delivers the protocol foundation P3's mesh
 node consumes, scoped to one focused surface.
@@ -12,27 +12,27 @@ node consumes, scoped to one focused surface.
 
 - **`SignalFishConfig` capability fields** (upstream `Authenticate` v3 additions):
   `protocol_version` (0 = omit), `supported_transports`, `supported_topologies`,
-  `requested_capabilities` (empty = omit — absent means relay-only upstream, even on
+  `requested_capabilities` (empty = omit - absent means relay-only upstream, even on
   `/v3/ws`). Validation at `configure()`; the builder re-validates. Unset fields keep the
   Authenticate bytes byte-identical to v2 (pinned by test).
 - **`addons/signal_fish/protocol/sf_session_types.gd`** (new, `class_name SFSessionTypes`):
-  v3 value objects — `SessionPlanInfo` (generation/topology/transport/host/direct_endpoint/
+  v3 value objects - `SessionPlanInfo` (generation/topology/transport/host/direct_endpoint/
   peers/ice_servers/fallback), `SessionPeerInfo` (server-assigned `initiate` offerer flag),
   `DirectEndpointInfo`, `IceServerInfo` (TURN credentials redacted from `_to_string`),
-  `NewPeerInfo`, `PeerTransportStatusInfo` — plus `Topology`/`TransportKind` enums, token
+  `NewPeerInfo`, `PeerTransportStatusInfo` - plus `Topology`/`TransportKind` enums, token
   tables, converters, and strict validators. Split from `sf_types.gd` (1200-line lint cap).
 - **Builders** (`sf_messages.gd`): `peer_signal(to, generation, payload)` (upstream
   `ClientMessage::Signal`; named `peer_signal` because `signal` is a GDScript keyword;
-  "" generation omits the field for legacy Server 0.4 plans — rust-client parity) and
+  "" generation omits the field for legacy Server 0.4 plans - rust-client parity) and
   `transport_status(transport, connected)`. `authenticate()` grew the four capability
   params. The signal payload is whitelist-checked recursively (JSON scalars/arrays/objects,
   depth 16) so engine-only Variants (e.g. a nested `Vector2`) are refused locally instead of
   being silently stringified onto the wire.
-- **Decoders** (`sf_events.gd`): `SessionPlan`, `NewPeer`, `Signal`, `PeerTransportStatus` →
+- **Decoders** (`sf_events.gd`): `SessionPlan`, `NewPeer`, `Signal`, `PeerTransportStatus` ->
   new events `session_plan`, `new_peer`, `signal_received`, `peer_transport_status`.
   Required enum-likes (topology/transport/fallback) decode strictly per the
   `LobbyStateChanged` precedent; the `Signal` payload passes through verbatim (including
-  JSON null — documented). v3 plans inside `missed_events` decode like any other event.
+  JSON null - documented). v3 plans inside `missed_events` decode like any other event.
 - **Client**: the 4 signals + `send_signal()`/`send_transport_status()` (pre-auth guarded;
   invalid arguments refused locally with nothing on the wire).
 - **ICE pre-gather**: `RoomJoinedInfo.ice_servers` (covers `RoomJoined` + `Reconnected`;
@@ -50,7 +50,7 @@ node consumes, scoped to one focused surface.
 
 - **`connected_at` is now optional on `PlayerInfo`/`SpectatorInfo`** (P1): upstream v3 room
   snapshots trim the field; the old required-string validator made every v3 room baseline
-  decode as `protocol_error` — the new v3 path could never join a room. Absent/null → ""
+  decode as `protocol_error` - the new v3 path could never join a room. Absent/null -> ""
   sentinel; a present value must be a string; null no longer aborts the player parse.
 - `ProtocolInfo.max_outbound_message_size` validated as a non-negative integer (upstream
   `usize`, 64-bit) instead of a u32-bounded field mislabeled "u64".
@@ -67,7 +67,7 @@ node consumes, scoped to one focused surface.
 ### Refactor
 
 - Pure game-data-format negotiation decisions (`negotiated`/`label`/`downgrade_reason`)
-  moved from the client into `protocol/sf_game_data_format.gd` — behavior-preserving, keeps
+  moved from the client into `protocol/sf_game_data_format.gd` - behavior-preserving, keeps
   the client under the line cap, puts protocol decisions in the protocol layer.
 
 ## Verification
@@ -82,9 +82,9 @@ node consumes, scoped to one focused surface.
 
 ## Deferred (filed as issues)
 
-- P3 remainder: `webrtc/sf_webrtc_mesh.gd` — the mesh node that consumes session plans
+- P3 remainder: `webrtc/sf_webrtc_mesh.gd` - the mesh node that consumes session plans
   (behavioral spec anchored to rust `src/webrtc.rs`/`src/mesh.rs`).
 - Upstream v0.14.0 already carries `Authenticate.connect_token` (tenant credential); the
   config's `credential` slot framing should be revisited when that lands here.
 - Remaining v3 surface (classified delivery: `DeliveryReport`/`RelayStats`/`GoingAway`,
-  room operations, replay status/sender watermarks) — separate milestone.
+  room operations, replay status/sender watermarks) - separate milestone.

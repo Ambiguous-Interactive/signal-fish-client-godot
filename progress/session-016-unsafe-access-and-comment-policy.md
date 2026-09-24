@@ -1,11 +1,11 @@
-# Session 016 — Unsafe-Access Warnings + Comment Policy
+# Session 016 - Unsafe-Access Warnings + Comment Policy
 
 **Date:** 2026-09-20
-**Branch:** `quality/unsafe-access-comment-policy` → PR to `main`
+**Branch:** `quality/unsafe-access-comment-policy` -> PR to `main`
 **Goal:** One focused surface (issue #42) plus issue-debt reduction (#37) and a
 small CI-step merge. CI time does not increase (two fewer step boundaries);
 test coverage unchanged (no test, assertion, or case removed; zero addon
-behavior changes — addon files are diff-free).
+behavior changes - addon files are diff-free).
 
 ## Drift check
 
@@ -18,7 +18,7 @@ tree clean, branch up to date with `origin/main`.
 
 - `project.godot`: `unsafe_property_access`, `unsafe_method_access`,
   `unsafe_call_argument`, `unsafe_cast` all `=2`. Enforced by the existing
-  Godot suite steps — promoted warnings are parse errors, so no new CI step
+  Godot suite steps - promoted warnings are parse errors, so no new CI step
   and no wall-clock cost.
 - Swept ~460 sites across the 11 test runner/suite files (measurement: per
   file `--check-only` counts under a promoted-settings cold copy; addon code
@@ -30,10 +30,10 @@ tree clean, branch up to date with `origin/main`.
   locals before method calls on Variant. One structural case: `_runner`
   typed `Object` + `.call()` (a runner-script type would create a preload
   cycle; proven experimentally).
-- `gdlintrc` `max-file-lines` 1200 → 1250: mandatory annotations plus
+- `gdlintrc` `max-file-lines` 1200 -> 1250: mandatory annotations plus
   formatter re-wraps grew the largest runner past the old cap.
-- Enforcement verified both ways: injected unsafe/untyped code → suites exit
-  1; clean code → all 5 suites pass.
+- Enforcement verified both ways: injected unsafe/untyped code -> suites exit
+  1; clean code -> all 5 suites pass.
 
 ### Minimal-comment policy (issue #37)
 
@@ -44,19 +44,19 @@ tree clean, branch up to date with `origin/main`.
   citations condensed (wrapped to the 100-char lint cap); all `##` doc
   comments and fixture source attribution untouched.
 - Addon audit: plain `#` comments there are rationale-bearing (upstream
-  citations, guards, invariants) — already compliant; `##` docs are the
+  citations, guards, invariants) - already compliant; `##` docs are the
   public API reference.
 
 ### CI static steps merged
 
 - `run-runtime-checks.sh` gains a `static` subcommand (private-helpers +
   format + lint, same order, `set -e` short-circuit preserved); `ci.yml`
-  runs the three checks as one step (3 → 1 step, two fewer step boundaries).
+  runs the three checks as one step (3 -> 1 step, two fewer step boundaries).
   Same checks, no coverage change.
 
 ## Issue debt
 
-- **#42 closed:** acceptance met — all four warnings promoted, all suites
+- **#42 closed:** acceptance met - all four warnings promoted, all suites
   green, no new CI steps.
 - **#37 closed:** future rule enforced (context.md), test-suite comment debt
   swept, addon audited compliant.

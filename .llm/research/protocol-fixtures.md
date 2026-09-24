@@ -142,7 +142,7 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
   (v2-vs-v3 mental model, capability negotiation, selection ladder),
   rust `src/webrtc.rs` + `src/mesh.rs` (signaling choreography: obey the
   per-peer `initiate` flag verbatim; latest plan wins; reject signals from
-  other generations; `TransportStatus` only at the aggregate 0↔1 boundaries).
+  other generations; `TransportStatus` only at the aggregate 0<->1 boundaries).
 
 Each fixture file starts with comment metadata. Future fixture readers must skip
 blank lines and lines beginning with `#`.
@@ -188,10 +188,10 @@ blank lines and lines beginning with `#`.
 - Binary game-data frames (pinned 2026-09-20; stable since server v0.4.0,
   rust `src/protocol/binary.rs` port note; re-verified against server
   `main` @ v0.9.1 `src/websocket/sending.rs`):
-  - Client→server binary frames are the raw payload bytes only. The server
+  - Client->server binary frames are the raw payload bytes only. The server
     tags them with the negotiated format and drops binary on `json`
     connections with `InvalidInput` (server `websocket/connection.rs`).
-  - Server→client v2-route `message_pack` frames are a MessagePack named map:
+  - Server->client v2-route `message_pack` frames are a MessagePack named map:
     `from_player` (16-byte binary UUID; `PlayerId = uuid::Uuid` serializes as
     bytes in non-human-readable formats), `encoding` (`"message_pack"`), and
     `payload` (binary). v2-route `rkyv` frames are the raw payload bytes with

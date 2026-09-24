@@ -1,7 +1,7 @@
-# Session 037 — Decode fidelity + state-machine hardening (#97, #99–#102) + local iteration speed
+# Session 037 - Decode fidelity + state-machine hardening (#97, #99-#102) + local iteration speed
 
-Date: 2026-09-23. Scope: one focused surface — an adversarial two-agent
-sweep over the protocol and client/transport/mesh layers — plus issue #97
+Date: 2026-09-23. Scope: one focused surface - an adversarial two-agent
+sweep over the protocol and client/transport/mesh layers - plus issue #97
 (deferred from session 036) and a local iteration-speed pass on the suite
 runner. Drift check first: main green on `266f8b6` (PR #98), local ==
 origin/main, one open issue (#97), no open PRs, baseline
@@ -10,9 +10,9 @@ origin/main, one open issue (#97), no open PRs, baseline
 ## Issue debt (filed + fixed this session)
 
 - **#99 (P1, silent corruption):** `StreamPeerBuffer.get_string()` maps
-  bytes 1:1 to code points — every multi-byte UTF-8 string in decoded
+  bytes 1:1 to code points - every multi-byte UTF-8 string in decoded
   MessagePack game data (opt-in `decode_msgpack_payloads`) arrived as
-  mojibake, and the codec's own round-trip broke for any char ≥ U+0080.
+  mojibake, and the codec's own round-trip broke for any char >= U+0080.
   The class doc's replacement-character promise was also false. Fix:
   `get_utf8_string()` at both string reads (`sf_msgpack.gd`,
   `sf_binary_frames.gd`); pinned with multi-byte round-trip values, a
@@ -21,7 +21,7 @@ origin/main, one open issue (#97), no open PRs, baseline
   exact-match checks.
 - **#100 (P2, guard bypass):** a roomless `LobbyStateChanged` mapped
   lobby state onto in-room session states, so one off-contract frame
-  forged `IN_ROOM_*` with no baseline — flipping `is_authenticated()`
+  forged `IN_ROOM_*` with no baseline - flipping `is_authenticated()`
   pre-`Authenticated` and putting `Ping`/`PlayerReady` on the wire
   pre-auth (the pinned server rejects any pre-auth frame). Fix: the
   handler's cache write and state mapping are gated on a room baseline
@@ -52,14 +52,14 @@ origin/main, one open issue (#97), no open PRs, baseline
   cap and cap-deferred (follow-up poll completes the close).
 - **#102 (P3):** the mesh flipped `_reported_connected` before calling
   `send_transport_status` and ignored the return code, so a report
-  refused under backpressure consumed the boundary edge — the server
+  refused under backpressure consumed the boundary edge - the server
   never learned the data path connected. Fix: flip only on `OK`; a
   refused report stays armed and retries. Test drives the boundary
   through a real backpressured fake transport.
 - **Adversarial loop results (review round):** the zero-knowledge
   red-team verified all six claims red-green and probed UTF-8 key
   forgery, re-entrant closes, mid-drain redials, tar edge cases, and
-  warm-mode races — one P2 (the tar stream swallowed deleted-in-
+  warm-mode races - one P2 (the tar stream swallowed deleted-in-
   worktree files noisily; now filtered and loud through pipefail) and
   the actionable P3s landed: the roster round-trip helper is shared
   (one copy, not two), the #101 close-drain read-error path is pinned,
@@ -78,10 +78,10 @@ Two zero-context sub-agents adversarially hunted the protocol layer
 client/transport/mesh layer (state machines, redaction, peer
 lifecycle), each required to verify findings with godot probes against
 HEAD; every confirmed finding became an issue above. Verified-clean
-surfaces recorded for future sweeps: json dup-key guard (15×15
+surfaces recorded for future sweeps: json dup-key guard (15x15
 spelling oracle, 0 bypasses), binary envelope (6000 mutation-fuzzed
 frames), msgpack non-string surface (12k random decodes + 4k round-
-trips), error-code table, timer/negative-delta handling, heartbeat ×
+trips), error-code table, timer/negative-delta handling, heartbeat x
 auto-reconnect interplay, mesh plan-churn peer accounting, secret
 redaction. The base64 trailing-bits parity nit (#99 probe finding 2)
 was assessed as a P3 leniency whose decoded bytes are identical to the
@@ -92,10 +92,10 @@ canonical spelling; left alone.
 - `run-runtime-checks.sh godot` accepts a suite selector
   (`protocol transport client binary reconnect demo_boot p2p_boot`);
   an explicit single suite runs warm in-tree (live `.godot` cache, no
-  cold copy) — `SF_COLD=1` forces the CI-identical cold copy.
+  cold copy) - `SF_COLD=1` forces the CI-identical cold copy.
   Multi-suite selections keep the concurrent cold-copy isolation.
-  Local loop: edit → affected suite ≈ 2.9 s (was 5.5 s for the full
-  gate); full `godot` gate 5.5 s → 2.3 s; `all` ≈ 11.3 s → 6.6 s.
+  Local loop: edit -> affected suite ~ 2.9 s (was 5.5 s for the full
+  gate); full `godot` gate 5.5 s -> 2.3 s; `all` ~ 11.3 s -> 6.6 s.
 - The per-file `mkdir`/`cp` cold-copy loop became one tar stream over
   `git ls-files -z` (same file set, symlinks included), which is where
   the full-gate wall dropped; CI's test legs share the runner, so their
@@ -117,8 +117,7 @@ canonical spelling; left alone.
   swept across the runtime by a fresh probe-armed sub-agent:
   - *Diagnostic amplification* (a refused send retried per frame floods
     `protocol_error`): all emit sites traced; the two known instances
-    (heartbeat, mesh status) are the only frame-rate-adjacent retries —
-    clean elsewhere.
+    (heartbeat, mesh status) are the only frame-rate-adjacent retries - clean elsewhere.
   - *Stale armed-state across flap/re-entrancy/session-swap*: every
     pending/deadline/latch var in the client, mesh, and transports audited
     against all three axes; one more real bug found and fixed.
@@ -145,12 +144,12 @@ canonical spelling; left alone.
 - Bugbot flagged the new exhaustion test: the handler redial ran on a
   nulled transport, so `_open_transport` constructed a **real**
   `SFWebSocketTransport` (a live socket in a fake-only gate), and the
-  follow-up typed assignment errored — aborting the test function so its
+  follow-up typed assignment errored - aborting the test function so its
   remaining assertions never ran (a vacuous green). Fix: the handler
   assigns a fresh fake before redialing (the sibling-test pattern), a loud
   `is SFFakeTransportScript` guard pins the transport type, and the
-  assertions now match the real cascade (refused dial → pre-open failure
-  notice → fresh terminal exhaustion, identity retained through it all).
+  assertions now match the real cascade (refused dial -> pre-open failure
+  notice -> fresh terminal exhaustion, identity retained through it all).
   Proper red-green re-verified by swapping in the pre-fix client file
   (an empty `git stash` had made the earlier red check vacuous).
 - Meta-lesson filed as #104: a runtime error aborts only the current test
@@ -159,12 +158,12 @@ canonical spelling; left alone.
 
 ## Leftovers / follow-ups
 
-- PLAN §13 items 4–8, 10 (upstream verification) remain open; P7
+- PLAN section 13 items 4-8, 10 (upstream verification) remain open; P7
   (Godot 3.6, rkyv) behind their gates.
 - v3 `seq`/`epoch` stamps are still decoded-and-dropped (feature
   decision, session 033 leftover).
 - Possible future guard: duplicate off-baseline `RoomJoined` re-emits
-  (noted during the sweep, weaker than #100 — no once-per-baseline
+  (noted during the sweep, weaker than #100 - no once-per-baseline
   latch yet).
 - #104: per-test completion sentinels (or equivalent) against vacuous
   passes after mid-test runtime errors.

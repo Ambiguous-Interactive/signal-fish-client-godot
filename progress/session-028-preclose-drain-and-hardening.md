@@ -1,6 +1,6 @@
-# Session 028 — Pre-close packet loss + hostile-input hardening
+# Session 028 - Pre-close packet loss + hostile-input hardening
 
-Date: 2026-09-22. Scope: one focused surface — a zero-knowledge adversarial
+Date: 2026-09-22. Scope: one focused surface - a zero-knowledge adversarial
 audit of all three runtime layers (client/reconnect, protocol codec, WebRTC
 mesh) with the confirmed findings fixed. Drift check first: main was green on
 `000b4b0`, local main matched origin/main, 0 open issues, 0 open PRs, no
@@ -9,7 +9,7 @@ in-progress work.
 ## Issue debt
 
 - Open issues were 0, so this session created the debt it paid down: filed
-  #70–#73 from the audit, fixed #70/#71/#72 in this PR, and left #73 as the
+  #70-#73 from the audit, fixed #70/#71/#72 in this PR, and left #73 as the
   recorded hardening backlog (7 low-severity/design-gray items).
 - Backlog item 7 (Reconnected diagnostics mislabel the payload as RoomJoined)
   was fixed in passing; the issue body was updated accordingly.
@@ -31,7 +31,7 @@ reconnect budget/sticky-close machinery all survived review.
    Fix: drain in CLOSED before emitting `closed`, deferring the close
    emission across polls while the per-poll cap leaves packets queued.
    Engine research (documented on #70): the web peer keeps packets queued at
-   CLOSED (so this fix recovers them — web is the primary export target);
+   CLOSED (so this fix recovers them - web is the primary export target);
    native wslay wipes them engine-side (`WSLPeer::close()` clears
    `in_buffer`), an upstream limitation no GDScript layer can recover.
    Coverage: data-driven transport unit tests (drain-within-cap,
@@ -48,7 +48,7 @@ reconnect budget/sticky-close machinery all survived review.
    (echoed back on `Reconnect`, so security-adjacent) skipped validation
    while every other optional string in the codec is gated; a full sweep of
    `_string_or_empty` consumers confirmed these were the only two. Fix:
-   optional-string validation → `protocol_error`, link stays up. Covered by
+   optional-string validation -> `protocol_error`, link stays up. Covered by
    a data-driven hardening test across absent/null/valid/wrong-type for both
    fields and both RoomJoined/Reconnected envelopes.
 4. **#73 item 7:** `Reconnected` decode diagnostics now name the envelope
@@ -58,7 +58,7 @@ reconnect budget/sticky-close machinery all survived review.
 
 - Adversarial review round (zero-knowledge red team over the full diff):
   confirmed the three fixes and their pins; caught one new P2 my first
-  transport revision introduced — a synchronous redial from a
+  transport revision introduced - a synchronous redial from a
   `packet_received` handler during the CLOSED-state drain acted on the
   replacement peer and failed the fresh dial with the old session's close.
   Fixed with a peer-identity re-check after the drain and pinned by a

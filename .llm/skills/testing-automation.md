@@ -40,8 +40,8 @@ These checks enforce:
   `scripts/test-llm-harness.ps1`.
 - Generator and linter both import the shared
   `scripts/lib/LlmHarness.psm1` module instead of redefining helpers.
-- Pre-commit hook detects untracked generated files (not just unstaged
-  modifications) so a fresh-from-generator file cannot slip through.
+- Pre-commit hook detects untracked generated files in addition to unstaged
+  modifications, so a fresh-from-generator file cannot slip through.
 - Generated-file status parsing treats Git porcelain index/worktree columns as
   separate fields. Staged-only generated changes do not need worktree staging;
   untracked or worktree-dirty generated files do.
@@ -114,7 +114,7 @@ isolated.
 Slow workflows stay off the fast gate: `web-export-smoke.yml` (import, export
 the Web preset, assert `index.html`+`index.wasm`, browser checklist) and
 `protocol-sync.yml` (fails when upstream moves past the pinned fixture SHAs)
-run on a weekly cron + `workflow_dispatch` only — never on push/PR. Third-party
+run on a weekly cron + `workflow_dispatch` only - never on push/PR. Third-party
 actions are pinned to commit SHAs; `actions/*` may stay on major tags. The
 release flow is dispatch-only and documented in
 `.llm/skills/asset-library-release.md`.
@@ -124,14 +124,14 @@ writable deterministic `HOME`, activates `.venv-ci` when present, and exposes
 `private-helpers`, `format`, `lint`, `godot`, `all`, `changed`, and `smoke`
 subcommands so CI can keep separate step names without drifting from local
 reproduction commands. The `all` subcommand runs the static checks and the
-godot suites concurrently — the gate wall is the slower half, not the sum.
+godot suites concurrently - the gate wall is the slower half, not the sum.
 The `godot` subcommand accepts suite names (`protocol transport
 client binary reconnect demo_boot p2p_boot`); one explicit suite runs warm
 in-tree against the live `.godot` cache for fast local iteration, while
 no-argument and multi-suite runs extract a tree archive built once per
 invocation into fresh temporary projects and clone a warm `.godot` import
 cache snapshot into each, so local boots skip the cold reimport (~1.3 s ->
-~0.3 s). `SF_COLD=1` forces the CI-identical cold import — keep it honest
+~0.3 s). `SF_COLD=1` forces the CI-identical cold import - keep it honest
 before pushing: a warm cache can mask cold-cache-only failures (global
 `class_name` registration) that a clean CI checkout would surface; the
 pre-push contract stays `all` with `SF_COLD` unset on machines that have a
@@ -140,14 +140,13 @@ warm cache. CI checkouts have no `.godot`, so CI boots are unchanged.
 The `changed` subcommand is the agent fast loop (issue #117): it checks only
 what the dirty tree can affect. Test `.gd` files map to the suites whose
 runners transitively preload them (BFS over the runners' `res://` preload
-strings — no hand-maintained map to drift), scoped static checks run over the
+strings - no hand-maintained map to drift), scoped static checks run over the
 changed files only (the ~2 s analyzer self-test stays a CI/full-gate guard),
 and production-side edits escalate to the full gate loudly. The full gate
 remains the pre-push contract; `changed` only narrows the inner loop.
 
 Deletion rule (Bugbot round on PR #116): a path collected in one phase and
-consumed in another must be re-validated at the consumption boundary —
-deletions and renames are the classic divergence. `changed` therefore still
+consumed in another must be re-validated at the consumption boundary - deletions and renames are the classic divergence. `changed` therefore still
 maps deleted helpers to their suites (the runner's stale preload keeps the
 suite honestly red) but drops them from the static file list, and an empty
 static list is a no-op (never fall back to a whole-tree sweep). The same
@@ -156,7 +155,35 @@ deleted files out of the tar manifest, the analyzer reports missing paths
 legibly (exit 2), the sh shim and pwsh predicates match names only, and the
 cold-copy tar errors stay loud by design.
 
-A GDScript runtime error aborts only the running function — a green suite
+Scope-drift rule (Bugbot rounds on PR #133): when a CI job and a local fast
+loop validate the same surface, the file scope must live in exactly one
+place. `changed` only classifies whether docs changed; what gets scanned is
+the checker's own scope, derived from git (`scripts/check-docs-style.py
+--changed`). Re-encoding that scope in shell patterns produced three real
+misses in one round: `llms.txt` skipped, untracked new docs skipped, and a
+trigger file (the markdownlint config) handed to the scanner, which failed
+on its own pre-existing characters. Related traps, same round: `git
+ls-files`/`git diff` paths are relative to the invocation directory, so
+anything deriving paths from git porcelain must pin `cwd` to the repo root
+and ask for root-relative names (`-z --full-name`); and `-z` vs newline
+termination is load-bearing - splitting newline output on NUL merges entries
+and every suffix test fails.
+
+Cache-stamp rule (same rounds): a cached skip-the-install decision must
+carry the identity of what it certifies. The Playwright system-deps stamps
+(docs-validation.yml, web-export-smoke.yml) store runner image + Playwright
+version, live inside the cached directory they vouch for, and are neither
+trusted nor written when the image version is unknown, so self-hosted
+runners cannot pin stale state across image refreshes.
+
+Docs policy checks (`scripts/check-docs-style.py`): tracked `*.md` plus
+`llms.txt` must be ASCII with no contrast/filler prose patterns. Pattern
+checks skip fenced code blocks; an inline `<!-- sf-allow:non-ascii -->`
+marker suppresses every check on its own line. CI runs it arg-less (whole
+tree) in the docs markdownlint job; the local `changed` loop runs it with
+`--changed` (dirty docs only).
+
+A GDScript runtime error aborts only the running function - a green suite
 whose test died mid-way is a vacuous pass (issue 104). Two nets close the
 class: every test function ends with the owner's `_done()` and is driven
 through `tests/completion_guard.gd` (`drive` flags a test that never

@@ -1,4 +1,4 @@
-# Session 040 — Iteration speed + hardening sweep
+# Session 040 - Iteration speed + hardening sweep
 
 Date: 2026-09-23. Scope: local agentic iteration speed (#112) plus an
 adversarial issue sweep, since the tracker had zero open issues. Drift
@@ -38,8 +38,8 @@ review round returned no P1/P2 findings, and its four P3s are fixed.
 
 - **Fast pre-commit path:** the shim evaluates the staged-path predicate
   in POSIX sh; commits touching no harness predicate verify the two
-  generated files and exit without booting pwsh. Measured: 2.7 s →
-  0.15 s per commit (~18×); harness-touching commits keep the full pwsh
+  generated files and exit without booting pwsh. Measured: 2.7 s ->
+  0.15 s per commit (~18x); harness-touching commits keep the full pwsh
   bootstrap. Predicate parity across `run-llm-hooks.ps1` and both shims
   is pinned by a new self-test (mutation-verified on four drift
   classes). Disclosed divergences: stray-artifact AutoFix and
@@ -50,7 +50,7 @@ review round returned no P1/P2 findings, and its four P3s are fixed.
 - **Sharded static checks:** gdformat/gdlint run as four parallel
   shards over the same file set (verbatim per-shard output; red-green
   verified). The static half dominated the local gate; A/B under equal
-  box load: gate 10.4 s → 8.1 s (low-load ~5.4 s → ~3 s). CI runs the
+  box load: gate 10.4 s -> 8.1 s (low-load ~5.4 s -> ~3 s). CI runs the
   same script, so its static job shrinks too; no other CI change.
 - **Leak fixes:** cold-copy manifests now live under the worker's temp
   parent and static outputs in one subshell-trapped temp dir; aborted
@@ -60,7 +60,7 @@ review round returned no P1/P2 findings, and its four P3s are fixed.
 ## Carry-forward
 
 A parallel plan-hygiene session's uncommitted work was bundled per
-GOAL: PLAN.md 1019 → 58 lines with a routing policy that stops the
+GOAL: PLAN.md 1019 -> 58 lines with a routing policy that stops the
 regrowth (its own note: `session-039-plan-hygiene.md`).
 
 ## Process note
@@ -74,7 +74,7 @@ committing after every verified step. The live hook at
 
 - Static wall is now the private-helper analyzer (~3 s self-test +
   analysis, sequential in-process); further gains would need
-  multiprocessing inside the guarded script — not worth it this round.
+  multiprocessing inside the guarded script - not worth it this round.
 - The analyzer's call-references counting remains deliberately
   permissive (Callable tables are roots); tightening trades false
   positives for dead-code misses, recorded here instead of an issue.

@@ -1,7 +1,7 @@
-# Session 022 — Demo P2P Example
+# Session 022 - Demo P2P Example
 
 **Date:** 2026-09-21
-**Branch:** `feat/demo-p2p-example` → PR to `main`
+**Branch:** `feat/demo-p2p-example` -> PR to `main`
 **Goal:** Land the last P3 deliverable (the demo P2P example, slated to land
 with the P4 demo work) and keep every gate green.
 
@@ -14,7 +14,7 @@ v0.9.2 pin recorded in session 021 stands, so no upstream drift to absorb.
 
 ## What landed
 
-### P3 leftover — `demo/p2p.tscn` + `demo/p2p_client.gd`
+### P3 leftover - `demo/p2p.tscn` + `demo/p2p_client.gd`
 
 - Second runnable demo scene: connect with a v3 config
   (`protocol_version = 3`, `supported_transports = [relay, webrtc]`,
@@ -25,7 +25,7 @@ v0.9.2 pin recorded in session 021 stands, so no upstream drift to absorb.
   peer count), new-peer roles, and peer transport-status boundaries.
 - The mesh multiplayer peer is assigned to the scene tree's
   `MultiplayerAPI` from `_process` whenever the mesh's peer changes, and
-  reset to null when the mesh tears down — the one integration step the
+  reset to null when the mesh tears down - the one integration step the
   addon leaves to the consumer, shown in ~10 lines.
 - Two instances joining the same room see the peer connection form; the
   server decides who offers (roles are never computed locally).
@@ -36,7 +36,7 @@ v0.9.2 pin recorded in session 021 stands, so no upstream drift to absorb.
 ### Review-driven fixes (adversarial loop)
 
 - P2: `_log_line` used `RichTextLabel.append_text()`, which parses BBCode
-  regardless of `bbcode_enabled` — a peer-controlled chat/game-data string
+  regardless of `bbcode_enabled` - a peer-controlled chat/game-data string
   could forge log lines or inject links. Switched to raw `add_text()` in
   **both** demo scripts (the same latent class existed in
   `demo/demo_client.gd` via `game_data_received`).
@@ -57,4 +57,4 @@ v0.9.2 pin recorded in session 021 stands, so no upstream drift to absorb.
 - `bash scripts/run-runtime-checks.sh all` green: private-helper guard,
   gdformat, gdlint, all 5 Godot suites, both demo scene boots (local 4.3).
 - PLAN P3 item checked off; P4/P5 notes updated; README demo section and
-  CHANGELOG (Unreleased → Added) updated.
+  CHANGELOG (Unreleased -> Added) updated.

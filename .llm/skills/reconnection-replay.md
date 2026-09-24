@@ -18,18 +18,18 @@ any test that simulates disconnect/retry timing.
 
 - Ordered oldest -> newest (server `reconnection.rs` `EventBuffer`, forward
   iteration); entries carry no wire sequence numbers (the server's global
-  replay counter is internal only), so wire-level dedup is impossible — the
+  replay counter is internal only), so wire-level dedup is impossible - the
   client's verbatim, order-preserving replay is the correct contract.
 - Only control events are buffered (`PlayerJoined`/`PlayerLeft`/
   `PlayerReconnected`/`NewSpectatorJoined`/`SpectatorDisconnected`/
-  `LobbyStateChanged`/`AuthorityChanged`); `GameData` is never replayed — a
+  `LobbyStateChanged`/`AuthorityChanged`); `GameData` is never replayed - a
   reconnecting client resyncs from the room snapshot. The server also filters
   the replay per recipient (drops the reconnector's own join/leave deltas,
   re-projects authority).
 - Ring is bounded (config default 100, hard cap 65536); truncation is
   reported v3-only via `replay: complete|truncated|unavailable` +
   `sender_watermarks` (gap recovery via `DeliveryReport`; per-sender `seq`
-  starts at 1). v2 wire has no truncation flag — our client's
+  starts at 1). v2 wire has no truncation flag - our client's
   `MAX_MISSED_EVENTS` decode cap + `protocol_error` sentinel is the only
   client-side guard. Both decode as typed `RoomJoinedInfo.replay_status` /
   `sender_watermarks` (issue #114); absent keys decode to `UNKNOWN` / `[]`.
@@ -38,7 +38,7 @@ any test that simulates disconnect/retry timing.
 
 `4000` shutdown, `4001` auth timeout, `4002` slow consumer, `4003` activity
 timeout, `4004` idle timeout, `4005` room inactive, `4006` inbound rate
-limited, `4007` kicked, plus RFC-standard `1000` (unregistered — normal) and
+limited, `4007` kicked, plus RFC-standard `1000` (unregistered - normal) and
 `1009` (outbound message too large). `4007` implies no reconnection; during
 drain v3 clients get a best-effort `GoingAway` before the `4000` close.
 
@@ -70,7 +70,7 @@ drain v3 clients get a best-effort `GoingAway` before the `4000` close.
 - The server issues the token inside every `RoomJoined`/`Reconnected`
   baseline (`RoomJoinedInfo.reconnection_token`, `""` when absent/null).
 - Every authoritative baseline replaces the retained context; a baseline
-  without a token clears it. Spectator baselines clear it — the protocol has
+  without a token clears it. Spectator baselines clear it - the protocol has
   no spectator reconnect. Leaving the room (`room_left`) and a user
   `close()` also clear it: nothing after a leave or clean close may silently
   rejoin a room.
@@ -113,7 +113,7 @@ drain v3 clients get a best-effort `GoingAway` before the `4000` close.
   fraction 0.25, budget `config.reconnect_max_attempts` (default 5). A failed
   dial emits `connection_failed` (the transport failure) and then arms the
   next attempt; a dial refused synchronously re-enters scheduling so the
-  episode never stalls — it either arms the next backoff window or ends with
+  episode never stalls - it either arms the next backoff window or ends with
   the exhaustion notice. When the budget is exhausted, a final
   "auto-reconnect exhausted" `connection_failed` follows the last attempt's
   failure, the retained token is dropped, and retrying stops. The budget
@@ -129,7 +129,7 @@ drain v3 clients get a best-effort `GoingAway` before the `4000` close.
 - Close code `4007` (`kicked`) ends the episode without retrying and clears
   the retained identity: the server removes the reconnection record on kick.
   All other codes keep the "not user-initiated -> retry" rule.
-- All timing accumulates `_process(delta)` — no threads, no `OS.delay`, web
+- All timing accumulates `_process(delta)` - no threads, no `OS.delay`, web
   safe. Tests inject deltas (`client._process(dt)`), never wall clocks.
 
 ## Testing rules

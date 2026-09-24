@@ -18,24 +18,24 @@ Date: 2026-09-19
 ## What landed
 
 - `addons/signal_fish/signal_fish_client.gd`:
-  - Bugbot High — reconnect dials now target the last dialed URL
+  - Bugbot High - reconnect dials now target the last dialed URL
     (`_last_dial_url`, set in `_open_transport`; explicit
     `connect_to_server` override wins, `endpoint_url` fallback). A
     synchronously refused auto-reconnect dial re-enters scheduling, so a
     retry episode can no longer stall silently (it backs off again or ends
     with the exhaustion notice).
-  - Bugbot Medium — the retained reconnection context is cleared on
+  - Bugbot Medium - the retained reconnection context is cleared on
     `room_left` and on any user `close()` (upstream `clear_room` parity), so
     a later dropped session can no longer silently rejoin a room the user
     left or closed. `spectator_left` mirrors `room_left`.
-  - Bugbot round-2 Medium — inbound decoded events are ignored while
+  - Bugbot round-2 Medium - inbound decoded events are ignored while
     `CLOSING` (the client polls for the close frame): a late baseline can no
     longer resurrect the room state or re-capture a cleared identity.
-  - Bugbot round-2 Medium — `authenticated` is no longer emitted on
+  - Bugbot round-2 Medium - `authenticated` is no longer emitted on
     reconnect dials (re-authentication is internal; visible flow is
     `connected` -> `reconnected`/`reconnection_failed`), so a join-on-auth
     handler cannot race the handshake with a fresh `JoinRoom`.
-  - Pre-existing P1 surfaced by adversarial review — reconnect dials now
+  - Pre-existing P1 surfaced by adversarial review - reconnect dials now
     authenticate first and send the directed `Reconnect` only after
     `Authenticated` (upstream parity). Verified against pinned upstream:
     server `src/websocket/connection.rs` @ `eaae1ca3` answers any pre-auth
@@ -46,13 +46,13 @@ Date: 2026-09-19
   - configure() keeps retained reconnect identities on the redaction list
     (the list itself is rebuilt on reconfigure).
   - clean `close()` also resets the pending retry delay.
-- `tests/client/run_reconnect_tests.gd` — wire-byte assertions updated to
-  the Authenticate → Reconnect sequence; new tests: reconnect reuses the
+- `tests/client/run_reconnect_tests.gd` - wire-byte assertions updated to
+  the Authenticate -> Reconnect sequence; new tests: reconnect reuses the
   last dialed URL (3-case table), `room_left`/clean-close clear the context,
   refused auto-dial does not stall (exhaustion path), timer-dial sync refusal
   arms exactly one next attempt, late-baseline-while-CLOSING ignored,
   dial `authenticated` silence, redaction survives reconfigure.
-- Docs: PLAN §4.4/P2 notes corrected to the authenticate-first flow;
+- Docs: PLAN section 4.4/P2 notes corrected to the authenticate-first flow;
   `.llm/skills/reconnection-replay.md` records the enforcing-server gate
   (`websocket/connection.rs`), the dial-target rules, the dial event flow,
   and the CLOSING guard.
@@ -63,10 +63,10 @@ Date: 2026-09-19
   suites); `agent-check.ps1` green after `.llm` edits.
 - Adversarial rounds: 2 sub-agent reviews (round 1 confirmed both Bugbot
   fixes via mutation testing and surfaced the pre-existing auth-first P1
-  plus a P2 — both fixed; round 2 returned DONE with P3 nits, three
+  plus a P2 - both fixed; round 2 returned DONE with P3 nits, three
   implemented). Bugbot re-reviewed the pushed commit and raised 2 new
   Medium findings (late-baseline identity resurrection while CLOSING;
-  `authenticated` racing the handshake) — both fixed and pinned above.
+  `authenticated` racing the handshake) - both fixed and pinned above.
 
 ## Follow-ups / deferred
 

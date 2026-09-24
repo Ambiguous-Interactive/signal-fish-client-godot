@@ -1,7 +1,7 @@
-# Session 024 — P4 WebSocket Smoke + Architecture Docs
+# Session 024 - P4 WebSocket Smoke + Architecture Docs
 
 **Date:** 2026-09-21
-**Branch:** `feat/p4-websocket-smoke` → PR to `main`
+**Branch:** `feat/p4-websocket-smoke` -> PR to `main`
 **Goal:** Close the P4 verification gap (headless `WebSocketPeer` smoke test)
 and align the `.llm` API docs with the shipped runtime (shape page +
 `runtime-architecture` skill).
@@ -18,13 +18,13 @@ item) plus the P4 doc items.
 ### Opt-in headless WebSocket smoke test (PLAN P4)
 
 - `tests/smoke/ws_test_server.gd`: minimal RFC 6455 server bound to
-  `127.0.0.1` — HTTP upgrade handshake (SHA-1 accept key), masked-frame parse,
-  text/binary echo, ping→pong, close handshake in both directions. One
+  `127.0.0.1` - HTTP upgrade handshake (SHA-1 accept key), masked-frame parse,
+  text/binary echo, ping->pong, close handshake in both directions. One
   connection slot with takeover, 1 MiB frame cap.
 - `tests/smoke/run_websocket_smoke.gd`: `SceneTree` runner driving the real
-  `SFWebSocketTransport` through open → text/binary echo round-trip →
+  `SFWebSocketTransport` through open -> text/binary echo round-trip ->
   client-initiated close (3400/"smoke-done" code+reason verified on both
-  sides) → server-initiated close (4321/"server-bye") → refused dial to a dead
+  sides) -> server-initiated close (4321/"server-bye") -> refused dial to a dead
   port (terminal `failed`, no `opened`/`closed`). Frame pumping lives in
   `SceneTree._process`; per-wait 5s timeouts, 30s watchdog, state diagnostics
   on timeout. Phase gating reports aborts (a broken preload can no longer
@@ -46,11 +46,11 @@ item) plus the P4 doc items.
 
 - `.llm/code-samples/gdscript-client-shape.md`: rewritten from the old
   pre-runtime sketch to a map of the shipped API (config fields, 30 methods,
-  32 signals, value objects/sentinels, behavior notes) — it was still the
+  32 signals, value objects/sentinels, behavior notes) - it was still the
   stale "single source" R10 referenced.
 - `.llm/skills/runtime-architecture.md`: new Core skill recording the
   layer map, polling model, state machines, decode policy, transport seam,
-  mesh boundaries, and the suite map (PLAN §7 pre-registered this file).
+  mesh boundaries, and the suite map (PLAN section 7 pre-registered this file).
 - `.llm/context.md` + `.llm/skills/testing-automation.md`: document the
   `smoke` subcommand; index regenerated; `agent-check.ps1` green.
 - `README.md`: Development section shows the smoke command.
@@ -58,12 +58,12 @@ item) plus the P4 doc items.
 
 ## Verification
 
-- `bash scripts/run-runtime-checks.sh smoke` — green, 4/4 stable repeat runs.
+- `bash scripts/run-runtime-checks.sh smoke` - green, 4/4 stable repeat runs.
 - Mutation check: flipping the expected close code to 3401 fails loudly with
   3 precise assertion messages (close code/reason on both sides + phase gate).
-- `bash scripts/run-runtime-checks.sh all` — green (static + 5 suites).
-- `pwsh -NoProfile -File scripts/agent-check.ps1` — green.
-- `check-gdscript-private-helpers.py --self-test` — green (new cases pinned).
+- `bash scripts/run-runtime-checks.sh all` - green (static + 5 suites).
+- `pwsh -NoProfile -File scripts/agent-check.ps1` - green.
+- `check-gdscript-private-helpers.py --self-test` - green (new cases pinned).
 
 ## Known limits / follow-ups
 
@@ -72,6 +72,6 @@ item) plus the P4 doc items.
   PLAN.md.
 - The smoke test binds `127.0.0.1`; CI runners could run it later as a
   scheduled/optional step if localhost sockets are available (opt-in today by
-  design — network-gated per PLAN).
+  design - network-gated per PLAN).
 - P6 store publish still waits on the one-time human bootstrap (secrets +
   first submission).

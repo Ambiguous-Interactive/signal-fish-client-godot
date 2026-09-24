@@ -559,10 +559,14 @@ run_changed() {
 		echo "working tree clean; nothing to check"
 		return 0
 	fi
-	local runtime_changed="" gd_suites=() md_only=1 file
+	local runtime_changed="" gd_suites=() md_only=1 dirty_docs=0 file
 	while IFS= read -r file; do
 		case "${file}" in
-			*.md | .markdownlint* | LICENSE)
+			# Docs-ish edits only decide WHEN the style gate runs; WHAT it
+			# scans is the checker's own scope (--changed), so this list
+			# cannot drift from CI the way the file list once did.
+			*.md | llms.txt | .markdownlint* | LICENSE)
+				dirty_docs=1
 				;;
 			*)
 				md_only=""
@@ -579,8 +583,15 @@ run_changed() {
 	done <<<"${files}"
 
 	if [[ -n "${md_only}" ]]; then
-		echo "docs-only change: no runtime checks; run agent-check.ps1 for .llm edits"
-		return 0
+		echo "=== changed: docs-only edit -> style check (runtime suites unaffected) ==="
+		"${bootstrap_python}" scripts/check-docs-style.py --changed
+		return
+	fi
+
+	# Mixed trees: runtime checks below never look at prose, so the dirty
+	# docs still get the style gate here (a sub-second scan).
+	if [[ "${dirty_docs}" -eq 1 ]]; then
+		"${bootstrap_python}" scripts/check-docs-style.py --changed
 	fi
 
 	if [[ "${runtime_changed}" == "full" ]]; then

@@ -94,9 +94,9 @@ that leak envelopes containing tokens.
 
 The demo project in this repository has two runnable scenes:
 
-- `demo/main.tscn`: connect → join → game data → leave. Open the project in
+- `demo/main.tscn`: connect -> join -> game data -> leave. Open the project in
   the editor, press Play, fill in your server endpoint and app id, then
-  Connect → Join room. This scene is also the target of the "Web" export
+  Connect -> Join room. This scene is also the target of the "Web" export
   preset.
 - `demo/p2p.tscn`: the same flow over the opt-in WebRTC mesh. It connects
   with a v3 config, attaches `SFWebRTCMesh`, and chats over mesh RPCs once

@@ -26,6 +26,9 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v7
 
+            - name: Docs style (ASCII, no LLM-isms)
+              run: python3 scripts/check-docs-style.py
+
             - name: Run markdownlint
               uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24
               with:
@@ -57,18 +60,32 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v7
 
-            - name: Set up Python (with pip cache)
+            - name: Set up Python
+              id: setup-python
               uses: actions/setup-python@v7
               with:
                   python-version: "3.12"
-                  cache: pip
-                  cache-dependency-path: requirements-docs.txt
+
+            # The venv is rebuilt only when the pinned docs tooling or the
+            # resolved Python version changes; otherwise restore and run
+            # directly (same pattern as ci.yml and llm-harness.yml, #111).
+            - name: Cache docs venv
+              id: docs-venv-cache
+              uses: actions/cache@v6
+              with:
+                  path: .venv-docs
+                  key: venv-docs-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-docs.txt') }}
 
             - name: Install MkDocs dependencies
-              run: pip install -r requirements-docs.txt
+              if: steps.docs-venv-cache.outputs.cache-hit != 'true'
+              run: |
+                  python3 -m venv .venv-docs
+                  . .venv-docs/bin/activate
+                  python -m pip install -r requirements-docs.txt
 
             - name: Build MkDocs site strictly
               run: |
+                  . .venv-docs/bin/activate
                   mkdocs build --strict
                   test -f site/llms.txt
 
@@ -100,6 +117,9 @@ jobs:
                   path: site/
                   retention-days: 1
 
+            - name: Record runner image version
+              run: echo "IMAGE_VERSION=${ImageVersion:-unknown}" >> "$GITHUB_ENV"
+
             - name: Cache Playwright Chromium
               id: playwright-cache
               uses: actions/cache@v6
@@ -107,10 +127,10 @@ jobs:
                   path: |
                       ~/.cache/ms-playwright
                       node_modules
-                  # v2: the entry now also carries node_modules; a fresh key
-                  # avoids restoring the pre-node_modules cache and skipping
-                  # the npm install step against a missing package.
-                  key: playwright-chromium-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.PLAYWRIGHT_VERSION }}
+                  # v3: the entry now also carries the system-deps stamp, and
+                  # the key includes the runner image version so an image
+                  # refresh cannot pair a stale stamp with changed libraries.
+                  key: playwright-chromium-v3-${{ runner.os }}-${{ runner.arch }}-${{ env.IMAGE_VERSION }}-${{ env.PLAYWRIGHT_VERSION }}
 
             - name: Install pinned Playwright package
               if: steps.playwright-cache.outputs.cache-hit != 'true'
@@ -124,11 +144,25 @@ jobs:
             # browser cache hits, but apt-get update (which Playwright's
             # installer runs internally, and where the runner image's
             # third-party Google Chrome repo can be mid-publish) is the
-            # slowest step of this job. Ask Playwright for its own package
-            # list and skip apt entirely when dpkg already satisfies it;
-            # any parse surprise falls back to the original install path.
+            # slowest step of this job. A stamp file inside the cached
+            # browser directory records a completed install for this runner
+            # image + Playwright pair (the cache key also carries both), so
+            # warm runs skip the ~9 s npx probe and the apt cycle entirely.
+            # On any miss, ask Playwright for its own package list and skip
+            # apt entirely when dpkg already satisfies it; any parse
+            # surprise falls back to the original install path.
             - name: Install Chromium system dependencies
               run: |
+                  stamp="${HOME}/.cache/ms-playwright/.sf-system-deps"
+                  mkdir -p "$(dirname "$stamp")"
+                  # Without a real image version (self-hosted runners) the
+                  # stamp could pin stale state across image updates, so it
+                  # is neither trusted nor written there.
+                  if [ "${IMAGE_VERSION}" != "unknown" ] && [ -f "$stamp" ] \
+                      && [ "$(cat "$stamp")" = "${IMAGE_VERSION} ${PLAYWRIGHT_VERSION}" ]; then
+                      echo "chromium system dependencies already installed (stamp)"
+                      exit 0
+                  fi
                   pkgs=$(npx playwright install-deps --dry-run chromium 2>/dev/null \
                       | tr ' \\\t' '\n\n\n' \
                       | grep -E '^[a-z0-9][a-z0-9+.~-]*$' \
@@ -142,7 +176,7 @@ jobs:
                           # removed-but-rc packages whose files are gone).
                           # The `|| status=` guard matters: GitHub runs this
                           # as `bash -e`, and dpkg-query exits 1 for any
-                          # package absent from the dpkg database — the
+                          # package absent from the dpkg database, the
                           # normal case on a fresh runner — which must fall
                           # through to the install path, not abort the step.
                           status=$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null) || status=""
@@ -154,11 +188,17 @@ jobs:
                   fi
                   if [ "$missing" -eq 0 ]; then
                       echo "chromium system dependencies already present"
+                      if [ "${IMAGE_VERSION}" != "unknown" ]; then
+                          printf '%s %s\n' "${IMAGE_VERSION}" "${PLAYWRIGHT_VERSION}" > "$stamp"
+                      fi
                       exit 0
                   fi
                   sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
                   for attempt in 1 2 3; do
                       if npx playwright install-deps chromium; then
+                          if [ "${IMAGE_VERSION}" != "unknown" ]; then
+                              printf '%s %s\n' "${IMAGE_VERSION}" "${PLAYWRIGHT_VERSION}" > "$stamp"
+                          fi
                           break
                       fi
                       if [ "${attempt}" -eq 3 ]; then

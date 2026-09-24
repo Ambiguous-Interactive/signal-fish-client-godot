@@ -1,7 +1,7 @@
-# Session 025 — GitHub Pages docs site (issue #64)
+# Session 025 - GitHub Pages docs site (issue #64)
 
 Date: 2026-09-21
-Goal: `GOAL.md` — advance PLAN.md, address open issues (issue #64), one PR, green CI.
+Goal: `GOAL.md` - advance PLAN.md, address open issues (issue #64), one PR, green CI.
 
 ## What landed
 
@@ -35,15 +35,14 @@ repo, with the shared Signal Fish branding (issue #64):
 ## Sweep fixes (same failure class)
 
 The new repo-wide markdownlint gate exposed pre-existing lint debt; fixed
-every instance rather than excluding files: bare URLs → `<autolinks>`,
-double blank lines collapsed, missing fence languages added (```text) —
-fence-aware script, code-fence content byte-identical. Files touched:
+every instance rather than excluding files: bare URLs -> `<autolinks>`,
+double blank lines collapsed, missing fence languages added (```text) - fence-aware script, code-fence content byte-identical. Files touched:
 `.llm/research/*`, `.llm/skills/*`, `.llm/README.md`, vendor pointers
 (AGENTS/CLAUDE/GEMINI/CHATGPT/CODEX), PLAN.md.
 
 Also fixed the `from_dict()` doc drift (no such API in the addon; payloads
 are built in `_init`, expose `to_dict()`/`raw`): `docs/events.md`,
-`.llm/code-samples/gdscript-client-shape.md`, PLAN.md §4.3/§4.6/§13.
+`.llm/code-samples/gdscript-client-shape.md`, PLAN.md section 4.3/section 4.6/section 13.
 
 ## Validation
 
@@ -52,7 +51,7 @@ are built in `_init`, expose `to_dict()`/`raw`): `docs/events.md`,
 - `scripts/validate-github-config.py --self-test` + `--repo-root .`: pass.
 - `agent-check.ps1` + `generate-llm-index.ps1`: pass; generated files
   byte-identical (no diff).
-- Adversarial sub-agent review → 1 P1 + 1 P2 fixed (`from_dict` claim,
+- Adversarial sub-agent review -> 1 P1 + 1 P2 fixed (`from_dict` claim,
   mesh teardown list missing `connection_failed`), accuracy P3s fixed
   (raw aliasing wording, v3 signal gating, lowercase site_url); focused
   re-review: MERGE-READY.
@@ -60,7 +59,7 @@ are built in `_init`, expose `to_dict()`/`raw`): `docs/events.md`,
 ## Follow-ups
 
 - Port the upstream Playwright docs-accessibility automation
-  (responsive drawer/search keyboard checks) — deferred; heavy dependency.
+  (responsive drawer/search keyboard checks) - deferred; heavy dependency.
 - Browser-export manual checklist (P4) still open (needs a hosted build).
 - Asset Library one-time bootstrap (P6) still needs human credentials.
 - `overrides/partials/nav.html` mirrors Material 9.5 internals; re-check on

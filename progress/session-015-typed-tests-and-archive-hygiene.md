@@ -1,7 +1,7 @@
-# Session 015 — Typed-Tests Enforcement + Archive Hygiene
+# Session 015 - Typed-Tests Enforcement + Archive Hygiene
 
 **Date:** 2026-09-20
-**Branch:** `quality/typed-tests-issue-debt` → PR to `main`
+**Branch:** `quality/typed-tests-issue-debt` -> PR to `main`
 **Goal:** One focused surface (issue #35 local correctness) plus cheap issue-debt
 reduction (#38, #41) and one PLAN P6 item. CI time unchanged (no new steps; the
 existing Godot suites now enforce the gate). Test coverage unchanged (no tests
@@ -16,7 +16,7 @@ work, branch up to date with `origin/main`.
 
 ### Explicit typing enforced CI-wide (issue #35)
 
-- `project.godot`: `debug/gdscript/warnings/untyped_declaration=2` — missing
+- `project.godot`: `debug/gdscript/warnings/untyped_declaration=2` - missing
   static types are parse errors, so any untyped declaration fails the existing
   Godot suite steps (exit 1, no new CI step, no wall-clock cost).
 - Typed the 8 headless test runners (~117 declarations): preload-const type
@@ -30,7 +30,7 @@ work, branch up to date with `origin/main`.
   helper-method pattern so every table-driven lambda stays a parseable
   single line (`_send_binary_game_data`, `_join_as_spectator`,
   `_send_signal_fixture`, `_send_webrtc_status`, `_send_conn_info`).
-- Enforcement verified both ways: untyped code → suites exit 1; typed code →
+- Enforcement verified both ways: untyped code -> suites exit 1; typed code ->
   all 5 suites pass (`run-runtime-checks.sh all` green).
 
 ### Dev-only paths excluded from git archives (PLAN P6)

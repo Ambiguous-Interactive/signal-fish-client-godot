@@ -4,7 +4,7 @@ site_url: https://ambiguous-interactive.github.io/signal-fish-client-godot/
 repo_url: https://github.com/Ambiguous-Interactive/signal-fish-client-godot
 repo_name: signal-fish-client-godot
 edit_uri: edit/main/docs/
-copyright: © 2026 Ambiguous Interactive
+copyright: Copyright (c) 2026 Ambiguous Interactive
 
 hooks:
   - hooks/llms_txt.py

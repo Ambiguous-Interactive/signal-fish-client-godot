@@ -44,19 +44,19 @@ waits in the moderation queue (see *After release* below).
 
 ## One-time: configure repository secrets
 
-In **Settings → Secrets and variables → Actions**, add:
+In **Settings -> Secrets and variables -> Actions**, add:
 
-- Secret `GODOT_ASSET_LIBRARY_USERNAME` — your Asset Library username.
-- Secret `GODOT_ASSET_LIBRARY_PASSWORD` — your Asset Library password.
+- Secret `GODOT_ASSET_LIBRARY_USERNAME` - your Asset Library username.
+- Secret `GODOT_ASSET_LIBRARY_PASSWORD` - your Asset Library password.
   Use a password without quotes, backslashes, or control characters.
-- Variable `GODOT_ASSET_LIBRARY_ASSET_ID` — the numeric asset ID from above.
+- Variable `GODOT_ASSET_LIBRARY_ASSET_ID` - the numeric asset ID from above.
 
 ## Every release (automated)
 
 1. Make sure `CHANGELOG.md` has a section for the new version and
    `addons/signal_fish/plugin.cfg` `version` matches it (without the `v`).
 2. On GitHub, run the **Release** workflow
-   ([Actions → Release → Run workflow](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/release.yml))
+   ([Actions -> Release -> Run workflow](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/release.yml))
    with the version, e.g. `v0.1.0`.
 3. The workflow:
    - validates the tag format,
@@ -77,7 +77,7 @@ release.
 ## Troubleshooting
 
 - **Store step skipped.** A secret or the asset ID variable is missing. Check
-  the names above — they must match exactly.
+  the names above - they must match exactly.
 - **Submission failed.** The action logs its render env, so a leaked password
   is possible with exotic characters; see the password rule above.
 - **Manual fallback.** Submit the edit by hand with the form values from the

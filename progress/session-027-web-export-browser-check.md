@@ -1,7 +1,7 @@
-# Session 027 — Web-export browser checklist automation
+# Session 027 - Web-export browser checklist automation
 
-Date: 2026-09-21. Scope: one focused surface — the last automatable P4 item
-(the browser-export manual checklist) — plus issue-debt cleanup. Drift check
+Date: 2026-09-21. Scope: one focused surface - the last automatable P4 item
+(the browser-export manual checklist) - plus issue-debt cleanup. Drift check
 first: main was green on `b1bbde8`, local main matched origin/main, no open
 PRs, no in-progress work to carry forward.
 
@@ -33,7 +33,7 @@ PRs, no in-progress work to carry forward.
      unexpected connects, or page errors. A planned browser-native
      `ws://` probe was dropped after an empirical check: Chromium treats
      loopback as potentially trustworthy, so `ws://` to loopback from an
-     HTTPS page is allowed by design — the browser-level block only
+     HTTPS page is allowed by design - the browser-level block only
      applies to production (non-loopback) hosts, and the enforced
      guarantee here is the client predial check.
    - `web-export-smoke.yml` (weekly + dispatch only; fast gates untouched):

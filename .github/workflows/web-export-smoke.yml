@@ -63,6 +63,9 @@ jobs:
                       -subj "/CN=localhost" \
                       -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
+            - name: Record runner image version
+              run: echo "IMAGE_VERSION=${ImageVersion:-unknown}" >> "$GITHUB_ENV"
+
             - name: Cache Playwright Chromium
               id: playwright-cache
               uses: actions/cache@v6
@@ -70,10 +73,11 @@ jobs:
                   path: |
                       ~/.cache/ms-playwright
                       node_modules
-                  # v2: the entry now also carries node_modules; a fresh key
-                  # avoids restoring the pre-node_modules cache and skipping
-                  # the npm install step against a missing package.
-                  key: playwright-chromium-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.PLAYWRIGHT_VERSION }}
+                  # v3: the entry now also carries the system-deps stamp, and
+                  # the key includes the runner image version so an image
+                  # refresh cannot pair a stale stamp with changed libraries
+                  # (same pattern as docs-validation.yml).
+                  key: playwright-chromium-v3-${{ runner.os }}-${{ runner.arch }}-${{ env.IMAGE_VERSION }}-${{ env.PLAYWRIGHT_VERSION }}
 
             - name: Install pinned Playwright package
               if: steps.playwright-cache.outputs.cache-hit != 'true'
@@ -83,14 +87,27 @@ jobs:
               if: steps.playwright-cache.outputs.cache-hit != 'true'
               run: npx playwright install chromium
 
-            # Fresh runners always need the system libraries; the google-chrome
-            # apt source is dropped because it can be mid-publish (same
-            # workaround as docs-validation.yml).
+            # Same stamp pattern as docs-validation.yml: a completed install
+            # for this runner image + Playwright pair is recorded inside the
+            # cached browser directory, so warm runs skip the npx probe and
+            # the apt cycle entirely. The google-chrome apt source is dropped
+            # because it can be mid-publish. Without a real image version
+            # (self-hosted runners) the stamp is neither trusted nor written.
             - name: Install Chromium system dependencies
               run: |
+                  stamp="${HOME}/.cache/ms-playwright/.sf-system-deps"
+                  mkdir -p "$(dirname "$stamp")"
+                  if [ "${IMAGE_VERSION}" != "unknown" ] && [ -f "$stamp" ] \
+                      && [ "$(cat "$stamp")" = "${IMAGE_VERSION} ${PLAYWRIGHT_VERSION}" ]; then
+                      echo "chromium system dependencies already installed (stamp)"
+                      exit 0
+                  fi
                   sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
                   for attempt in 1 2 3; do
                       if npx playwright install-deps chromium; then
+                          if [ "${IMAGE_VERSION}" != "unknown" ]; then
+                              printf '%s %s\n' "${IMAGE_VERSION}" "${PLAYWRIGHT_VERSION}" > "$stamp"
+                          fi
                           break
                       fi
                       if [ "${attempt}" -eq 3 ]; then

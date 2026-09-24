@@ -1,8 +1,7 @@
-# Session 034 — Dead-link heartbeat + issue-debt sweep (#86–#92)
+# Session 034 - Dead-link heartbeat + issue-debt sweep (#86-#92)
 
-Date: 2026-09-22. Scope: one focused surface — the last unimplemented PLAN
-§4.7 reliability item (heartbeat/pong-timeout dead-link detection, #91) —
-plus a six-issue debt sweep filed and fixed same-session. Drift check first:
+Date: 2026-09-22. Scope: one focused surface - the last unimplemented PLAN
+section 4.7 reliability item (heartbeat/pong-timeout dead-link detection, #91) - plus a six-issue debt sweep filed and fixed same-session. Drift check first:
 main green on `f967ff9`, local == origin/main, zero open issues/PRs,
 protocol-sync OK (server 0.9.1 @ `24a5d10b` matches 6 pins), baseline
 `run-runtime-checks.sh all` + `smoke` green, no in-progress work.
@@ -10,14 +9,14 @@ protocol-sync OK (server 0.9.1 @ `24a5d10b` matches 6 pins), baseline
 ## Issue debt
 
 No open issues existed, so (as in session 033) this session hunted, filed,
-and fixed six (#86–#91), plus one detailed deferred (#92). Findings came from
+and fixed six (#86-#91), plus one detailed deferred (#92). Findings came from
 three parallel hunter sub-agents (client state machine; codec wire fidelity;
 mesh/docs drift), every candidate re-verified against the code before filing.
 
-- **#91 (P2, the focused surface):** PLAN §4.7 specified an optional
+- **#91 (P2, the focused surface):** PLAN section 4.7 specified an optional
   heartbeat (`heartbeat_interval_sec`, `pong_timeout_sec`) but neither the
   config fields nor the logic existed. Silent link death (NAT rebinding,
-  radio loss — no FIN/RST) left the client CONNECTED forever:
+  radio loss - no FIN/RST) left the client CONNECTED forever:
   auto-reconnect never fired (it requires an observed termination) and sends
   degraded to permanent `ERR_BUSY`. Fix: delta-accumulated ping while
   connected + authenticated (no timers/threads); a missing `pong` past the
@@ -28,19 +27,19 @@ mesh/docs drift), every candidate re-verified against the code before filing.
   so synchronous test redials cannot inherit a stale pong deadline; user
   close wins (state gate in the tick).
 - **#87 (P1):** `get_players()`/`get_spectators()` handed out the live
-  internal roster arrays — one `clear()` by game code corrupted presence
+  internal roster arrays - one `clear()` by game code corrupted presence
   handling silently (leaves no-op, authority migration reads an empty room).
   Fix: defensive `duplicate()` copies, matching the documented (and
   test-locked) event-payload isolation one layer down.
 - **#86 (P1):** `_drop_peer` never disconnected the two signal lambdas that
-  capture the mesh `entry` (which holds the connection) — a RefCounted cycle
+  capture the mesh `entry` (which holds the connection) - a RefCounted cycle
   leaking a `WebRTCPeerConnection` + closures on every plan rebuild
   (generation/role changes rebuild all retained peers). Fix: callables
   stored on the entry, disconnected and cleared in `_drop_peer`.
 - **#88 (P2):** the advertised `MAX_MESSAGE_DEPTH` cap never reached the
   consumer-facing passthrough trees (`GameData.data`, `Signal.signal`), and
-  non-finite numbers decoded fail-open (`1e400` → `inf` via the engine JSON
-  parser; MessagePack float markers accepted NaN/±Inf) — while the encode
+  non-finite numbers decoded fail-open (`1e400` -> `inf` via the engine JSON
+  parser; MessagePack float markers accepted NaN/+/-Inf) - while the encode
   side already refuses both (#83/#76), so such payloads were one-sided
   poisons game code could not even echo. Upstream serde rejects both
   classes. Fix: shared `SFTypeUtils.passthrough_payload_error` walk
@@ -53,7 +52,7 @@ mesh/docs drift), every candidate re-verified against the code before filing.
   `to_dict()` resend path. Fix: `is_integral_number` gate; integral floats
   (`7.0`) stay accepted (no false positive).
 - **#90 (P1 docs usability):** the shape doc's minimal-usage sample called
-  `join_room` synchronously after the dial — refused on every run
+  `join_room` synchronously after the dial - refused on every run
   (`ERR_UNAUTHORIZED` pre-auth); the shipped README/getting-started had the
   fix but the AI-facing canonical mirror never got it. Also fixed there:
   stale `send_transport_status(transport, ...)` parameter name, and the
@@ -73,12 +72,12 @@ mesh/docs drift), every candidate re-verified against the code before filing.
 - Runtime CI unchanged structurally; new suites add milliseconds.
 - Docs Validation's Accessibility job (the longest PR gate, ~62s) ran
   `playwright install-deps` (apt-get update + install) on every run even on
-  browser-cache hits — 29s of its wall time. It now asks Playwright for its
+  browser-cache hits - 29s of its wall time. It now asks Playwright for its
   own package list (`install-deps --dry-run`), checks them with `dpkg -s`,
   and skips apt entirely when satisfied; any parse surprise falls back to
   the original retry path. Verified the parse pipeline against
   representative dry-run output locally.
-- `gdlintrc` `max-file-lines` 1250 → 1320 (precedent: #63 raised it 1200 →
+- `gdlintrc` `max-file-lines` 1250 -> 1320 (precedent: #63 raised it 1200 ->
   1250 for legitimate runner growth); the client gained the heartbeat and
   the runners gained the heartbeat suites.
 
@@ -86,9 +85,9 @@ mesh/docs drift), every candidate re-verified against the code before filing.
 
 Coverage only added, none removed or weakened: heartbeat matrix
 (off-by-default, interval/pong cycle, pong-timeout teardown, backpressured
-retry quietness, auto-reconnect redial — all injected-delta), roster-copy
+retry quietness, auto-reconnect redial - all injected-delta), roster-copy
 isolation (`is_same` identity + presence-after-external-clear), mesh leak
-(weakref must go dead after a drop — behavioral red verified against the
+(weakref must go dead after a drop - behavioral red verified against the
 old mesh), passthrough hostile/acceptance matrix + replay-path refusal +
 exact depth boundary, msgpack non-finite decode vectors, client_id
 laundering + integral-float positive. The passthrough suite lives in
@@ -110,10 +109,10 @@ runner line caps.
 A zero-knowledge red-team sub-agent reviewed the full session diff and
 **executed** the suites on both HEAD and the base commit (grafting the new
 leak test onto the old mesh to confirm the red independently). Verdict:
-zero P1, one P2, five P3s — all addressed:
+zero P1, one P2, five P3s - all addressed:
 
 - **P2 (fixed + red-verified):** the #86 fix itself traded in a narrower
-  regression — a mesh `free()`d while outside the tree (no `_exit_tree`)
+  regression - a mesh `free()`d while outside the tree (no `_exit_tree`)
   could not run `_drop_peer`, so the new entry-lambda cluster outlived the
   node where the base was clean. Fix: `NOTIFICATION_PREDELETE` now calls
   `_reset_mesh()`; the new `_test_out_of_tree_free_does_not_leak` fails on
@@ -138,7 +137,7 @@ clean and caught one more P2: under GitHub's `bash -e` default,
 `dpkg-query` exiting 1 for a package absent from the dpkg database (the
 normal fresh-runner case) aborted the docs step instead of falling back.
 Fixed with the `|| status=""` guard and verified both branches locally
-(missing → install fallback, all present → apt skipped).
+(missing -> install fallback, all present -> apt skipped).
 
 ## Leftovers / follow-ups
 
@@ -146,5 +145,5 @@ Fixed with the `|| status=""` guard and verified both branches locally
 - Session 033 leftovers unchanged: typed-object constructor coercion on
   direct construction (residual #72-class), `downgrade_reason` raw-string
   array latency, v3 `seq`/`epoch` stamps dropped (feature decision).
-- PLAN §13 item 3 (config field defaults vs upstream `client.rs`) and item
+- PLAN section 13 item 3 (config field defaults vs upstream `client.rs`) and item
   9/10 decisions remain open verification work.

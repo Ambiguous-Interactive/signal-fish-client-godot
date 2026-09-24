@@ -1,6 +1,6 @@
-# Session 033 — Decode fail-closed hardening + dial-contract latch + CI split
+# Session 033 - Decode fail-closed hardening + dial-contract latch + CI split
 
-Date: 2026-09-22. Scope: one focused surface — the decode path's
+Date: 2026-09-22. Scope: one focused surface - the decode path's
 wrong-typed-value behavior (issue #81) plus the reconnect-dial contract
 (#82) and the MessagePack non-finite gap (#83), filed and fixed same-session,
 with the LLM Harness job split for wall time (#84). Drift check first: main
@@ -31,7 +31,7 @@ No open issues existed, so this session hunted, filed, and fixed four:
   `_reconnect_dial` latch (recorded while credentials are live) drives the
   authenticated handler; the `reconnected` guard requires this dial's
   handshake to have been sent; `_protocol_info_seen` once-per-dial guard.
-- **#83 (P2):** `SFMsgpack.encode` put NaN/±Inf on the wire (#76-class
+- **#83 (P2):** `SFMsgpack.encode` put NaN/+/-Inf on the wire (#76-class
   survivor); the server-side JSON decode collapses them. The TYPE_FLOAT
   encode branch now refuses non-finite with a diagnostic.
 - **#84 (P3):** LLM Harness job wall time (~66s CI) was ~93% behavioral
@@ -41,11 +41,11 @@ No open issues existed, so this session hunted, filed, and fixed four:
   (wall = max(jobs)), and both jobs cache the automation deps via
   `actions/setup-python`. Coverage unchanged: every self-test still runs
   on every PR; preflight, generated-diff, and the 5000ms guard stay on
-  the validate job. Local validate path: 93s → 9.6s.
+  the validate job. Local validate path: 93s -> 9.6s.
 
 ## Test shifts (honesty note)
 
-Two existing tests injected `Reconnected` into a normal-auth session — a
+Two existing tests injected `Reconnected` into a normal-auth session - a
 wire shape upstream never produces (the server sends `Reconnected` only in
 response to the directed handshake). After the #82 latch they became
 red for the wrong reason; both were rewritten to drive a real reconnect
@@ -80,11 +80,11 @@ post-reconnected state, now through the realistic path.
 
 - Typed-object constructors still coerce when a caller constructs them
   directly with wrong-typed dicts (not wire-reachable; every decode path
-  validates first) — residual #72-class surface, deferred.
+  validates first) - residual #72-class surface, deferred.
 - `downgrade_reason` treats a raw-string format array as membership
   candidates (latent; the only caller passes coerced ints).
 - v3 binary frames' `seq`/`epoch` stamps are validated but dropped, so
-  consumers cannot dedupe/order — feature decision, upstream-parity
+  consumers cannot dedupe/order - feature decision, upstream-parity
   unverified.
 - PLAN P5's "do not touch llm-harness.yml" is amended: the workflow was
   split into parallel jobs (guard + stages intact); the rule's intent

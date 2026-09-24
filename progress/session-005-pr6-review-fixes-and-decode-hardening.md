@@ -26,7 +26,7 @@ Date: 2026-09-19
     discarded (terminal); the peer is closed before release per
     `.llm/skills/godot-transport.md`, and nothing observable is lost.
   - "Model STATE_CLOSING in the fake": the fake's synchronous `inject_*` API
-    is the documented determinism contract (PLAN §4.5); lifecycle
+    is the documented determinism contract (PLAN section 4.5); lifecycle
     *semantics* (terminal guards, failed-open classification) are aligned.
 
 ## Issue #11 (fixed): bounded `missed_events` decode
@@ -55,14 +55,14 @@ Date: 2026-09-19
 ## Follow-up round: Bugbot "failing CLIs marked ready" (new bot review)
 
 - Bugbot correctly flagged that the new verifier treated any non-empty
-  merged `--version` output as a version — a CLI dying on startup printed an
+  merged `--version` output as a version - a CLI dying on startup printed an
   error line and was marked ready (the exact failure mode the diagnostics
   were added for).
 - Sweep for the class across `.devcontainer/*.sh` + `scripts/*.sh`: all other
   merged-stream uses are exit-code-gated (`if ! cmd`) or display-only; this
   was the one instance.
 - Fix: verdict on exit status with stdout/stderr redirected to separate
-  files — nonzero exit = broken (first error line reported as diagnostic),
+  files - nonzero exit = broken (first error line reported as diagnostic),
   exit 0 with no output = missing, exit 0 with output = ready (stderr
   consulted when stdout is empty, since some CLIs print versions there).
   Verified all four paths with stub binaries; harness self-tests extended to
