@@ -155,6 +155,34 @@ deleted files out of the tar manifest, the analyzer reports missing paths
 legibly (exit 2), the sh shim and pwsh predicates match names only, and the
 cold-copy tar errors stay loud by design.
 
+Scope-drift rule (Bugbot rounds on PR #133): when a CI job and a local fast
+loop validate the same surface, the file scope must live in exactly one
+place. `changed` only classifies whether docs changed; what gets scanned is
+the checker's own scope, derived from git (`scripts/check-docs-style.py
+--changed`). Re-encoding that scope in shell patterns produced three real
+misses in one round: `llms.txt` skipped, untracked new docs skipped, and a
+trigger file (the markdownlint config) handed to the scanner, which failed
+on its own pre-existing characters. Related traps, same round: `git
+ls-files`/`git diff` paths are relative to the invocation directory, so
+anything deriving paths from git porcelain must pin `cwd` to the repo root
+and ask for root-relative names (`-z --full-name`); and `-z` vs newline
+termination is load-bearing - splitting newline output on NUL merges entries
+and every suffix test fails.
+
+Cache-stamp rule (same rounds): a cached skip-the-install decision must
+carry the identity of what it certifies. The Playwright system-deps stamps
+(docs-validation.yml, web-export-smoke.yml) store runner image + Playwright
+version, live inside the cached directory they vouch for, and are neither
+trusted nor written when the image version is unknown, so self-hosted
+runners cannot pin stale state across image refreshes.
+
+Docs policy checks (`scripts/check-docs-style.py`): tracked `*.md` plus
+`llms.txt` must be ASCII with no contrast/filler prose patterns. Pattern
+checks skip fenced code blocks; an inline `<!-- sf-allow:non-ascii -->`
+marker suppresses every check on its own line. CI runs it arg-less (whole
+tree) in the docs markdownlint job; the local `changed` loop runs it with
+`--changed` (dirty docs only).
+
 A GDScript runtime error aborts only the running function - a green suite
 whose test died mid-way is a vacuous pass (issue 104). Two nets close the
 class: every test function ends with the owner's `_done()` and is driven

@@ -82,6 +82,24 @@ The durable rule lives in `.llm/context.md` (working rules).
   files (the markdownlint config with its own comment dashes) to the
   checker; those now stay triggers, so such edits scan the tracked doc
   tree, matching CI scope.
+- PR feedback sweep (post-review pass over all four Bugbot findings):
+  all four were already fixed, so the session attacked the classes behind
+  them instead. Scope SSOT: the checker now owns its scan set
+  (`check-docs-style.py --changed` derives dirty docs from git plus its own
+  scope); the `changed` shell loop only decides when to invoke it, so the
+  shell patterns can no longer drift from CI (the class behind three of
+  the four findings). Red-green matrix re-verified: tracked-md violation,
+  untracked doc, deleted doc, trigger-only edit, llms.txt violation,
+  subdirectory invocation, clean tree. One fresh bug found and fixed while
+  testing: the dirty-doc enumeration split newline-terminated git output on
+  NUL, merging entries so every suffix test failed (`-z` is load-bearing).
+  Cache-stamp class: web-export-smoke.yml got the same image-versioned
+  stamp as docs-validation (closes #134). Other scripts swept for the
+  CWD-relative-git class: run-runtime-checks.sh normalizes with an early
+  `cd`, validate-github-config.py takes an explicit repo root, and the
+  browser-check scripts anchor on `__dirname` - no other exposure. The
+  scope-drift and cache-stamp rules are now durable guidance in
+  `.llm/skills/testing-automation.md`.
 
 ## Checks
 
@@ -92,5 +110,5 @@ The durable rule lives in `.llm/context.md` (working rules).
 - `validate-github-config.py` self-test + repo check green (also run by the
   pre-commit hook on each commit).
 - Red-green for the style checker itself is pinned by its `--self-test`
-  (21 assertions: banned chars, patterns, code-fence skipping, marker
-  scope, clean pass).
+  (22 assertions: banned chars, patterns, code-fence skipping, marker
+  scope, the dirty-doc filter, clean pass).

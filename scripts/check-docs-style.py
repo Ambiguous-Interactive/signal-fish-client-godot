@@ -11,9 +11,11 @@ in a protocol example) or a legit prose overlap.
 """
 
 import argparse
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import unicodedata
 
 ALLOW_MARKER = "<!-- sf-allow:non-ascii -->"
@@ -31,10 +33,35 @@ FENCE = re.compile(r"^\s*(?:```|~~~)")
 EXTRA_FILES = ("llms.txt",)
 
 
-def tracked_doc_files():
-    top = subprocess.run(
+def git_toplevel():
+    return subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, check=True
     ).stdout.decode("utf-8").strip()
+
+
+def is_scoped_doc(root_relative):
+    return root_relative.endswith(".md") or root_relative in EXTRA_FILES
+
+
+def scoped_existing_docs(entries, top):
+    """Filter raw root-relative paths to this checker's scope, existing only.
+
+    Single source of truth for "which files does the policy cover": callers
+    that re-encode the scope themselves drift from CI (the llms.txt and
+    markdownlint-config misses this file fixed both came from that drift).
+    """
+    out = []
+    for rel in sorted({e for e in entries if e}):
+        if not is_scoped_doc(rel):
+            continue
+        path = os.path.join(top, rel)
+        if os.path.isfile(path):
+            out.append(path)
+    return out
+
+
+def tracked_doc_files():
+    top = git_toplevel()
     # --full-name + cwd=top: paths come back root-relative no matter where
     # the checker was invoked from.
     result = subprocess.run(
@@ -46,6 +73,18 @@ def tracked_doc_files():
     return sorted(
         f"{top}/{p.decode('utf-8')}" for p in result.stdout.split(b"\0") if p
     )
+
+
+def dirty_doc_files():
+    top = git_toplevel()
+    entries = []
+    for args in (
+        ["diff", "--name-only", "-z", "HEAD"],
+        ["ls-files", "-z", "--others", "--exclude-standard"],
+    ):
+        result = subprocess.run(["git", *args], capture_output=True, check=True, cwd=top)
+        entries.extend(result.stdout.decode("utf-8").split("\0"))
+    return scoped_existing_docs(entries, top)
 
 
 def find_violations(text):
@@ -69,18 +108,18 @@ def find_violations(text):
                 yield index, match.start() + 1, name
 
 
-def run_check(paths):
+def run_check(paths, skip_missing=False):
     findings = []
     scanned = 0
-    explicit = bool(paths)
-    files = paths if explicit else tracked_doc_files()
+    files = paths if paths else tracked_doc_files()
     for path in files:
         try:
             text = open(path, encoding="utf-8").read()
         except FileNotFoundError:
-            # A deleted tracked doc is a legitimate edit; an explicitly
-            # named missing path is a typo and stays an error.
-            if explicit:
+            # A deleted doc is a legitimate edit (the caller filters those
+            # out up front); an explicitly named missing path is a typo and
+            # stays an error.
+            if not skip_missing and paths:
                 findings.append((path, 0, 0, "not found"))
             continue
         except (OSError, UnicodeDecodeError) as exc:
@@ -127,6 +166,28 @@ def self_test():
     allow("marker suppresses patterns", "not just " + ALLOW_MARKER + "\n", "filler")
     expect("marker only covers its line", "h\u00e9llo\nplain\n", 1)
 
+    with tempfile.TemporaryDirectory() as top:
+        for rel in ("docs/keep.md", "keep2.md", "out-of-scope.gd"):
+            full = os.path.join(top, rel)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8"):
+                pass
+        got = scoped_existing_docs(
+            [
+                "docs/keep.md",
+                "keep2.md",
+                "gone.md",
+                "out-of-scope.gd",
+                ".markdownlint.json",
+                "LICENSE",
+                "",
+            ],
+            top,
+        )
+        want = sorted([os.path.join(top, "docs/keep.md"), os.path.join(top, "keep2.md")])
+        if got != want:
+            failures.append(f"dirty-doc filter: expected {want}, got {got}")
+
     if failures:
         for failure in failures:
             print(f"self-test FAIL: {failure}", file=sys.stderr)
@@ -138,16 +199,24 @@ def self_test():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", help="files to check (default: all tracked docs)")
+    parser.add_argument(
+        "--changed",
+        action="store_true",
+        help="check the dirty docs (HEAD diff + untracked, this checker's scope) instead of the whole tree",
+    )
     parser.add_argument("--self-test", action="store_true", help="run internal checks and exit")
     args = parser.parse_args()
     if args.self_test:
         return self_test()
-    findings, scanned = run_check(args.paths)
+    if args.changed and args.paths:
+        parser.error("--changed cannot be combined with explicit paths")
+    if args.changed:
+        findings, scanned = run_check(dirty_doc_files(), skip_missing=True)
+    else:
+        findings, scanned = run_check(args.paths)
     top = ""
     if not args.paths:
-        top = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], capture_output=True, check=True
-        ).stdout.decode("utf-8").strip()
+        top = git_toplevel()
     for path, line, col, message in findings:
         shown = path[len(top) + 1:] if top and path.startswith(top + "/") else path
         print(f"::error file={shown},line={line},col={col}::{message}")
@@ -159,7 +228,6 @@ def main():
             file=sys.stderr,
         )
         return 1
-    files = args.paths if args.paths else tracked_doc_files()
     print(f"check-docs-style OK ({scanned} file(s) scanned)")
     return 0
 
