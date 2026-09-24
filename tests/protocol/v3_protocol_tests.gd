@@ -33,6 +33,7 @@ func run_all() -> void:
 		_test_v3_client_encoders_match_fixtures,
 		_test_v3_server_decoders_match_fixtures,
 		_test_v3_validation_and_sentinels,
+		_test_truncated_missed_events_keep_the_newest,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -668,3 +669,77 @@ func _player_with_null_connected_at() -> Dictionary:
 		"connected_at": null,
 		"connection_info": {"type": "direct", "host": "h", "port": 1},
 	}
+
+
+func _test_truncated_missed_events_keep_the_newest() -> void:
+	# Issue #129: `replay: truncated` means missed_events is the most-recent
+	# suffix, so a decode cap that overflows must drop the OLDEST entries and
+	# keep the ones closest to now.
+	var total := 260
+	var missed: Array = []
+	for index: int in total:
+		missed.append(
+			{
+				"type": "SessionPlan",
+				"data":
+				{
+					"generation": "gen-%d" % index,
+					"topology": "relay",
+					"transport": "relay",
+					"peers": [],
+					"fallback": "relay"
+				}
+			}
+		)
+	var reconnected: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{
+			"type": "Reconnected",
+			"data":
+			{
+				"room_id": "r",
+				"room_code": "RC",
+				"player_id": "p",
+				"game_name": "g",
+				"max_players": 4,
+				"supports_authority": true,
+				"current_players": [],
+				"is_authority": true,
+				"lobby_state": "waiting",
+				"ready_players": [],
+				"relay_type": "websocket",
+				"replay": "truncated",
+				"missed_events": missed,
+			}
+		}
+	)
+	if not _assert_decoded_signal("reconnected", reconnected, "truncated replay decodes"):
+		_done()
+		return
+	var kept: Array = reconnected.args[1]
+	var cap := SFEventsScript.MAX_MISSED_EVENTS
+	_assert_equal(cap + 1, kept.size(), "the cap keeps its entries plus the sentinel")
+	var first: SFTypesScript.DecodedEvent = kept[0]
+	if _assert_decoded_signal("session_plan", first, "the oldest kept entry decodes"):
+		var plan: SFSessionTypesScript.SessionPlanInfo = first.args[0]
+		_assert_equal(
+			"gen-%d" % (total - cap),
+			plan.generation,
+			"the kept window starts at the newest cap entries"
+		)
+	var last_real: SFTypesScript.DecodedEvent = kept[cap - 1]
+	if _assert_decoded_signal("session_plan", last_real, "the newest entry decodes"):
+		var newest: SFSessionTypesScript.SessionPlanInfo = last_real.args[0]
+		_assert_equal(
+			"gen-%d" % (total - 1), newest.generation, "the newest event survives the cap"
+		)
+	var sentinel: SFTypesScript.DecodedEvent = kept[cap]
+	if _assert_decoded_signal(
+		"protocol_error", sentinel, "the overflow sentinel trails the kept events"
+	):
+		var sentinel_text: String = sentinel.args[0]
+		_assert_string_contains(
+			sentinel_text,
+			"dropped %d" % (total - cap),
+			"the sentinel counts the dropped oldest entries"
+		)
+	_done()

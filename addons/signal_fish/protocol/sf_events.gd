@@ -502,10 +502,13 @@ static func _decode_reconnected(
 	if room_event.signal_name == &"protocol_error":
 		return room_event
 	var missed_events: Array = []
-	var missed_count: int = missed_source.size()
-	if missed_count > MAX_MISSED_EVENTS:
-		missed_count = MAX_MISSED_EVENTS
-	for index: int in missed_count:
+	# `replay: truncated` means missed_events is the most-recent suffix
+	# (sf_types ReplayStatus): when the wire array exceeds the decode cap,
+	# drop the OLDEST entries and keep the ones closest to now (issue #129).
+	var missed_start := 0
+	if missed_source.size() > MAX_MISSED_EVENTS:
+		missed_start = missed_source.size() - MAX_MISSED_EVENTS
+	for index: int in range(missed_start, missed_source.size()):
 		var missed: Variant = missed_source[index]
 		if typeof(missed) != TYPE_DICTIONARY:
 			missed_events.append(

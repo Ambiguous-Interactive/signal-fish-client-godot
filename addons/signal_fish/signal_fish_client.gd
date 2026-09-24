@@ -301,10 +301,12 @@ func close(code := 1000, reason := "") -> Error:
 			# Closing while connecting is a failed open: the transport surfaces
 			# `failed`, which transitions the client to FAILED.
 			_connection_state = ConnectionState.CLOSING
+			_reset_heartbeat()
 			transport.close(code, reason)
 			return OK
 		ConnectionState.CONNECTED:
 			_connection_state = ConnectionState.CLOSING
+			_reset_heartbeat()
 			transport.close(code, reason)
 			return OK
 		_:
@@ -556,9 +558,19 @@ func _process(delta: float) -> void:
 ## and opt-in auto-reconnect engages exactly like any other abnormal
 ## termination. Delta-accumulated (no timers, no threads); off by default.
 ## A link that stays silent for the pong window during AUTHENTICATING (where
-## protocol Ping is not allowed) is dead the same way; issue #121.
+## protocol Ping is not allowed) is dead the same way; issue #121. A CLOSING
+## window that never completes (silent link death mid-close-handshake) is
+## bounded by the same deadline; issue #126.
 func _tick_heartbeat(delta: float) -> void:
 	if _config == null or _config.heartbeat_interval_sec <= 0.0:
+		return
+	if _connection_state == ConnectionState.CLOSING:
+		# Polling surfaces nothing while the close handshake hangs, and every
+		# recovery entry refuses with ERR_BUSY while CLOSING: without this
+		# bound a silently dead link strands the client forever (issue #126).
+		_heartbeat_elapsed += delta
+		if _heartbeat_elapsed >= _config.pong_timeout_sec:
+			_on_transport_failed("heartbeat close timeout")
 		return
 	if _connection_state != ConnectionState.CONNECTED:
 		_reset_heartbeat()
