@@ -70,6 +70,7 @@ func get_room_id() -> String
 func get_room_code() -> String
 func get_lobby_state() -> int                   # SFTypes.LobbyState
 func get_players() -> Array                     # Array[SFTypes.PlayerInfo]
+func get_authority_player() -> String           # "" while nobody holds authority
 func get_spectators() -> Array                  # Array[SFTypes.SpectatorInfo]
 func get_buffered_amount() -> int
 ```

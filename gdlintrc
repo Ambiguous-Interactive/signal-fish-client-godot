@@ -5,8 +5,9 @@
 # (PLAN.md §4.2): 15 lifecycle/state accessors plus 11 protocol/lifecycle send
 # methods (reconnect + set_auto_reconnect landed with P2 reconnection;
 # send_game_data_binary ships with the P2 binary milestone) intentionally
-# exceed the default of 20.
-max-public-methods: 30
+# exceed the default of 20. get_authority_player joined with issue #147 so
+# games read the authority off the client instead of tracking a signal.
+max-public-methods: 31
 
 # max-file-lines: the headless test runners are single-file SceneTree scripts
 # with table-driven cases; the limit keeps each transport area in one runner

@@ -73,6 +73,7 @@ func _run() -> void:
 		_test_spectators_keep_lobby_updates_and_rosters_stay_stable,
 		_test_connected_handler_close_does_not_crash,
 		_test_presence_and_data_events,
+		_test_authority_flags_track_authority_changed,
 		_test_spectator_flow,
 		_test_reconnected_restores_room_state,
 		_test_backpressure_returns_busy_and_drops,
@@ -695,6 +696,51 @@ func _test_presence_and_data_events() -> void:
 	)
 	client.free()
 	_done()
+
+
+func _test_authority_flags_track_authority_changed() -> void:
+	# Issue #147: a handoff or release arrives only as `AuthorityChanged`, so
+	# the cached roster must re-flag without waiting for a fresh baseline.
+	# Data-driven over the wire shapes: transfer, release (null), and
+	# unknown-id (no player gets flagged).
+	var client := _make_in_room_client()
+	var fake: SFFakeTransportScript = client.transport
+	# Baseline: PLAYER_A holds authority (shared fixtures).
+	_assert_flags(client, {PLAYER_A: true}, "baseline flags")
+	_assert_equal(PLAYER_A, client.get_authority_player(), "baseline authority id")
+
+	fake.inject_server_message(
+		{"type": "PlayerJoined", "data": {"player": _player(PLAYER_B, "Bob")}}
+	)
+	_assert_flags(client, {PLAYER_A: true, PLAYER_B: false}, "joined player starts unflagged")
+
+	fake.inject_server_message(
+		{"type": "AuthorityChanged", "data": {"authority_player": PLAYER_B, "you_are_authority": true}}
+	)
+	_assert_flags(client, {PLAYER_A: false, PLAYER_B: true}, "transfer flags the new authority")
+	_assert_equal(PLAYER_B, client.get_authority_player(), "transfer updates authority id")
+
+	fake.inject_server_message(
+		{"type": "AuthorityChanged", "data": {"authority_player": null, "you_are_authority": false}}
+	)
+	_assert_flags(client, {PLAYER_A: false, PLAYER_B: false}, "release clears every flag")
+	_assert_equal("", client.get_authority_player(), "release clears the authority id")
+
+	fake.inject_server_message(
+		{"type": "PlayerLeft", "data": {"player_id": PLAYER_B}}
+	)
+	_assert_flags(client, {PLAYER_A: false}, "departure after release keeps flags")
+	client.free()
+	_done()
+
+
+## Roster assertion helper for the authority-flag suite: asserts the flag map
+## against the cached roster in one call.
+func _assert_flags(client: SignalFishClientScript, expected: Dictionary, label: String) -> void:
+	var flags := {}
+	for player: SFTypesScript.PlayerInfo in client.get_players():
+		flags[player.id] = player.is_authority
+	_assert_equal(expected, flags, label)
 
 
 func _test_spectator_flow() -> void:

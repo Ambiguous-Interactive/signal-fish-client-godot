@@ -360,6 +360,16 @@ func get_spectators() -> Array:
 	return _spectators.duplicate()
 
 
+## Current authority player id, or "" while no player holds authority.
+## Derived from the cached roster (issue #147), so it stays in step with
+## [signal authority_changed] exactly like [method get_players] does.
+func get_authority_player() -> String:
+	for player: SFTypesScript.PlayerInfo in _players:
+		if player.is_authority:
+			return player.id
+	return ""
+
+
 func get_buffered_amount() -> int:
 	if transport == null:
 		return 0
@@ -991,6 +1001,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"game_data_binary_received":
 			game_data_binary_received.emit(event.args[0], event.args[1], event.args[2])
 		&"authority_changed":
+			_apply_authority_flags(event.args[0])
 			authority_changed.emit(event.args[0], event.args[1])
 		&"authority_response":
 			authority_response.emit(event.args[0], event.args[1], event.args[2])
@@ -1179,6 +1190,23 @@ func _upsert_player(player) -> void:
 
 func _remove_player(player_id: String) -> void:
 	_remove_by_id(_players, player_id)
+
+
+## Authority is the one cached roster field that moves without a fresh
+## RoomJoined baseline (issue #147): a handoff or release only arrives as
+## `AuthorityChanged`, so without this `get_players()` kept naming the old
+## authority and a Start button stayed offered to the wrong player. Entries
+## are replaced rather than mutated so previously returned rosters keep their
+## snapshot values (issue #87 contract).
+func _apply_authority_flags(authority_player: String) -> void:
+	for index: int in _players.size():
+		var player: SFTypesScript.PlayerInfo = _players[index]
+		var flag: bool = player.id == authority_player
+		if player.is_authority == flag:
+			continue
+		var raw: Dictionary = player.raw.duplicate()
+		raw["is_authority"] = flag
+		_players[index] = SFTypesScript.PlayerInfo.new(raw)
 
 
 func _upsert_spectator(spectator) -> void:
