@@ -81,18 +81,18 @@ templates) so the repo's only export preset works locally.
 - Test-side (fixture, not production): the fake npm's spec parse picked
   the `install` subcommand as the spec; specs must contain `@`.
 
-## Adversarial review round 1 (sub-agent) — findings and fixes
+## Adversarial review round 1 (sub-agent) -- findings and fixes
 
 - **BLOCKER, fixed + regression-tested:** `seed_codex_config`'s
   byte-compare short-circuit fired on the append path (awk echoing an
   unchanged file compares equal), so an existing `~/.codex/config.toml`
-  without the managed block was silently "current; skipped" with exit 0 —
+  without the managed block was silently "current; skipped" with exit 0 --
   the append branch was reachable only via a missing trailing newline.
   Fixed by gating the compare on the awk "block found" result; added the
   missing behavioral cases (existing config without block, empty file)
   that would have caught it red.
 - **MAJOR, fixed by redesign:** `.mcp.json` used a remote context7 entry
-  with `Authorization: Bearer ${CONTEXT7_API_KEY:-}` — but the VS Code
+  with `Authorization: Bearer ${CONTEXT7_API_KEY:-}` -- but the VS Code
   agent host does not substitute variables in remote headers, so the
   "one file, three clients" claim was only structurally true, and the
   default empty bearer produced a Claude Code whitespace warning.
@@ -103,18 +103,18 @@ templates) so the repo's only export preset works locally.
   off the map's presence). context7 therefore became the local
   `context7-mcp` stdio server (pinned npm, key from env, anonymous
   startup verified) and `.mcp.json` now REQUIRES explicit env maps for
-  secret-driven entries — asserted in the static suite.
+  secret-driven entries -- asserted in the static suite.
 - **MINOR, fixed:** non-concrete npm spec overrides are rejected at
   startup (a dist-tag would have reinstalled on every post-start and
   failed verification after a successful install); the codex
   conflict/doctor detection is now anchored, subtable-aware
   (`[mcp_servers.godot.env]` counts), CR-tolerant, and ignores
   commented-out lines; the doctor gates the exit status in install mode
-  (MISSING is a failure, not a note) — the safety net that would have
+  (MISSING is a failure, not a note) -- the safety net that would have
   surfaced the BLOCKER immediately.
 - **NITs, fixed:** Dockerfile checksum verification used a download
   filename that could not match `sha256sum -c`'s listed name (found live:
-  every image build would have failed) — the archive now keeps its
+  every image build would have failed) -- the archive now keeps its
   canonical asset name, and the checksums curl gained the retry flags;
   readiness requires the bin to exist AND be executable; the bundled
   playwright path is passed to node via the environment; the templates
@@ -123,11 +123,11 @@ templates) so the repo's only export preset works locally.
   committed-secret guard also rejects the `ghp_` token shape.
 - **Found by the fixes themselves:** this awk's
   `sub(/a|b/, "", x)` alternation misbehaved in the new conflict-table
-  extraction (left a stray `]`, so conflicts went undetected) — replaced
+  extraction (left a stray `]`, so conflicts went undetected) -- replaced
   with two sequential subs and covered by the conflict case (which now
   fails red against the broken form).
 
-## Adversarial review round 2 (sub-agent) — findings and fixes
+## Adversarial review round 2 (sub-agent) -- findings and fixes
 
 - **MAJOR, fixed:** `.mcp.json` used `${VAR:-default}` env-map values, but
   VS Code's workspace MCP config only converts BARE `${VAR}` references
