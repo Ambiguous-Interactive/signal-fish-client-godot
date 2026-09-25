@@ -105,8 +105,8 @@ Open issues, gameplay-impact order (correctness > usability > performance):
 
 - `bash scripts/run-runtime-checks.sh static` - green (gdformat, gdlint,
   private-helper check). Round 1 caught a gdformat violation the first
-  verification pass missed (a `tail` pipe masked the shard failure); the
-  final check greps for every failure keyword, not just the tail.
+  verification pass missed: a `tail` pipe masked the shard failure, so
+  the final check greps the full output for failure keywords.
 - `bash scripts/run-runtime-checks.sh changed` - green (includes the
   docs-style ASCII gate the first draft of this note failed).
 - `godot` suites: `client`, `binary`, `protocol`, `reconnect`,
