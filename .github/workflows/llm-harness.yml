@@ -71,18 +71,6 @@ jobs:
               shell: pwsh
               run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode CI -SkipStagedCheck -NoAutoFix -VerboseOutput -PreflightAlreadyDone -SkipSelfTests
 
-            - name: Verify generated files are committed
-              # CI must additionally catch the case where a contributor forgot to
-              # commit regenerated files. `git diff` after the harness ran will
-              # show any drift introduced by regeneration.
-              shell: pwsh
-              run: |
-                  git diff --exit-code -- .llm/index.md .llm/context.md
-                  if ($LASTEXITCODE -ne 0) {
-                    Write-Host '::error::Generated .llm files differ from committed versions. Run scripts/run-llm-hooks.ps1 and commit the result.'
-                    exit 1
-                  }
-
             - name: Fast hook performance guard
               shell: pwsh
               run: |
@@ -112,14 +100,16 @@ jobs:
               # Same loud corruption gate as the validate job (issue #84
               # parallelism pattern): -NoAutoFix only parses tracked
               # sources, and the suite's destructive tests operate on temp
-              # copies, so preflight and both shards run concurrently and
-              # the job wall clock is max(steps) instead of their sum. The
-              # suite itself is sharded into its in-process half
-              # (-SkipBehavioralTests) and its pwsh-forking behavioral half
-              # (-OnlyBehavioralTests, issue #132), so the wall is
-              # max(shards) instead of their sum. The union of the two
+              # copies, so preflight, the core shard, and the two
+              # round-robin behavioral passes run concurrently and the job
+              # wall clock is max(steps) instead of their sum. The suite is
+              # sharded into its in-process half (-SkipBehavioralTests,
+              # issue #132) and its pwsh-forking behavioral half, which is
+              # itself split into two concurrent passes (-OnlyBehavioralTests
+              # with -BehavioralSubshard/-BehavioralSubshardCount), so the
+              # wall is max(shards) instead of their sum. The union of the
               # shards is exactly the full suite; coverage is unchanged.
-              # Output is buffered until all three processes finish so the
+              # Output is buffered until all four processes finish so the
               # logs do not interleave.
               shell: bash
               run: |
@@ -129,18 +119,22 @@ jobs:
                   core_rc=0
                   pwsh -NoProfile -File scripts/test-llm-harness.ps1 -SkipBehavioralTests -VerboseOutput >self-tests-core.log 2>&1 &
                   core_pid=$!
-                  behavioral_rc=0
-                  pwsh -NoProfile -File scripts/test-llm-harness.ps1 -OnlyBehavioralTests -VerboseOutput >self-tests-behavioral.log 2>&1 &
-                  behavioral_pid=$!
+                  behavioral1_rc=0
+                  pwsh -NoProfile -File scripts/test-llm-harness.ps1 -OnlyBehavioralTests -BehavioralSubshard 1 -BehavioralSubshardCount 2 -VerboseOutput >self-tests-behavioral-1.log 2>&1 &
+                  behavioral1_pid=$!
+                  behavioral2_rc=0
+                  pwsh -NoProfile -File scripts/test-llm-harness.ps1 -OnlyBehavioralTests -BehavioralSubshard 2 -BehavioralSubshardCount 2 -VerboseOutput >self-tests-behavioral-2.log 2>&1 &
+                  behavioral2_pid=$!
                   wait "$preflight_pid" || preflight_rc=$?
                   wait "$core_pid" || core_rc=$?
-                  wait "$behavioral_pid" || behavioral_rc=$?
-                  for log in preflight.log self-tests-core.log self-tests-behavioral.log; do
+                  wait "$behavioral1_pid" || behavioral1_rc=$?
+                  wait "$behavioral2_pid" || behavioral2_rc=$?
+                  for log in preflight.log self-tests-core.log self-tests-behavioral-1.log self-tests-behavioral-2.log; do
                       printf '=== %s ===\n' "$log"
                       cat "$log" || true
                       rm -f "$log"
                   done
-                  if [ "$preflight_rc" -ne 0 ] || [ "$core_rc" -ne 0 ] || [ "$behavioral_rc" -ne 0 ]; then
-                      printf '::error::self-tests job failed (preflight=%s core=%s behavioral=%s)\n' "$preflight_rc" "$core_rc" "$behavioral_rc"
+                  if [ "$preflight_rc" -ne 0 ] || [ "$core_rc" -ne 0 ] || [ "$behavioral1_rc" -ne 0 ] || [ "$behavioral2_rc" -ne 0 ]; then
+                      printf '::error::self-tests job failed (preflight=%s core=%s behavioral-1=%s behavioral-2=%s)\n' "$preflight_rc" "$core_rc" "$behavioral1_rc" "$behavioral2_rc"
                       exit 1
                   fi

@@ -36,6 +36,28 @@ function Get-LlmDefaultStrayPatterns {
     return @($script:LlmDefaultStrayPatterns)
 }
 
+# Canonical harness-controlled directories. Single source of truth shared
+# by `Test-LlmDeletableArtifact` (AutoFix delete scope) and the hook
+# runner's stray-artifact checks (issue #143). A self-test asserts the
+# call sites consume this accessor instead of redeclaring the list.
+$script:LlmControlledDirectories = @('scripts', '.llm', '.githooks', '.claude')
+
+function Get-LlmControlledDirectories {
+    <#
+    .SYNOPSIS
+    Returns the canonical harness-controlled directory list. Callers must
+    use this accessor instead of hardcoding their own copy so the AutoFix
+    delete scope and the stray-artifact scans never drift apart.
+
+    .OUTPUTS
+    A fresh `string[]` clone so callers cannot mutate the module-private
+    backing array by accident.
+    #>
+    [CmdletBinding()]
+    param()
+    return @($script:LlmControlledDirectories)
+}
+
 function ConvertTo-LlmStrayArtifactPathspecs {
     <#
     .SYNOPSIS
@@ -419,8 +441,7 @@ function Test-LlmDeletableArtifact {
     if ($normalized.Contains('..')) { return $false }
 
     $first = $normalized.Split('/', 2)[0]
-    $controlled = @('scripts', '.llm', '.githooks', '.claude')
-    if ($controlled -contains $first) {
+    if ((Get-LlmControlledDirectories) -contains $first) {
         return $true
     }
 
@@ -983,6 +1004,7 @@ Export-ModuleMember -Function `
     Get-LlmStagingArtifacts, `
     Get-LlmStrayWorkingTreeArtifacts, `
     Get-LlmDefaultStrayPatterns, `
+    Get-LlmControlledDirectories, `
     Test-LlmDeletableArtifact, `
     Get-LlmTrackedFileSet, `
     Get-LlmGeneratedContentState, `

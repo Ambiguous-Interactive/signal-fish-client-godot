@@ -29,14 +29,14 @@
     "ghcr.io/devcontainers/features/github-cli:1": {
       "version": "latest"
     },
-    "ghcr.io/devcontainers/features/powershell:": {
+    "ghcr.io/devcontainers/features/powershell:2": {
       "version": "latest"
     },
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.12",
       "installTools": false
     },
-    "ghcr.io/devcontainers/features/node:": {
+    "ghcr.io/devcontainers/features/node:2": {
       "version": "lts",
       "nodeGypDependencies": false
     }

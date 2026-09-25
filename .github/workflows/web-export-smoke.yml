@@ -14,9 +14,6 @@ on:
 permissions:
     contents: read
 
-env:
-    PLAYWRIGHT_VERSION: "1.61.1"
-
 # Scheduled and dispatched runs export the same tree; superseded runs are
 # redundant template downloads.
 concurrency:
@@ -63,93 +60,11 @@ jobs:
                       -subj "/CN=localhost" \
                       -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
-            - name: Record runner image version
-              run: echo "IMAGE_VERSION=${ImageVersion:-unknown}" >> "$GITHUB_ENV"
-
-            - name: Cache Playwright Chromium
-              id: playwright-cache
-              uses: actions/cache@v6
-              with:
-                  path: |
-                      ~/.cache/ms-playwright
-                      node_modules
-                  # v3: the entry now also carries the system-deps stamp, and
-                  # the key includes the runner image version so an image
-                  # refresh cannot pair a stale stamp with changed libraries
-                  # (same pattern as docs-validation.yml).
-                  key: playwright-chromium-v3-${{ runner.os }}-${{ runner.arch }}-${{ env.IMAGE_VERSION }}-${{ env.PLAYWRIGHT_VERSION }}
-
-            - name: Install pinned Playwright package
-              if: steps.playwright-cache.outputs.cache-hit != 'true'
-              run: npm install --no-save --no-package-lock "playwright@${PLAYWRIGHT_VERSION}"
-
-            - name: Install pinned Chromium
-              if: steps.playwright-cache.outputs.cache-hit != 'true'
-              run: npx playwright install chromium
-
-            # Same stamp pattern as docs-validation.yml: a completed install
-            # for this runner image + Playwright pair is recorded inside the
-            # cached browser directory, so warm runs skip the npx probe and
-            # the apt cycle entirely. The google-chrome apt source is dropped
-            # because it can be mid-publish. Without a real image version
-            # (self-hosted runners) the stamp is neither trusted nor written.
-            - name: Install Chromium system dependencies
-              run: |
-                  stamp="${HOME}/.cache/ms-playwright/.sf-system-deps"
-                  mkdir -p "$(dirname "$stamp")"
-                  # Without a real image version (self-hosted runners) the
-                  # stamp could pin stale state across image updates, so it
-                  # is neither trusted nor written there.
-                  if [ "${IMAGE_VERSION}" != "unknown" ] && [ -f "$stamp" ] \
-                      && [ "$(cat "$stamp")" = "${IMAGE_VERSION} ${PLAYWRIGHT_VERSION}" ]; then
-                      echo "chromium system dependencies already installed (stamp)"
-                      exit 0
-                  fi
-                  pkgs=$(npx playwright install-deps --dry-run chromium 2>/dev/null \
-                      | tr ' \\\t' '\n\n\n' \
-                      | grep -E '^[a-z0-9][a-z0-9+.~-]*$' \
-                      | grep -vE '^(sudo|apt|apt-get|install|update|cd)$' \
-                      | sort -u) || true
-                  missing=1
-                  if [ -n "$pkgs" ]; then
-                      missing=0
-                      for pkg in $pkgs; do
-                          # Exact status (not `dpkg -s`, which succeeds for
-                          # removed-but-rc packages whose files are gone).
-                          # The `|| status=` guard matters: GitHub runs this
-                          # as `bash -e`, and dpkg-query exits 1 for any
-                          # package absent from the dpkg database, the
-                          # normal case on a fresh runner — which must fall
-                          # through to the install path, not abort the step.
-                          status=$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null) || status=""
-                          if [ "$status" != "installed" ]; then
-                              missing=1
-                              break
-                          fi
-                      done
-                  fi
-                  if [ "$missing" -eq 0 ]; then
-                      echo "chromium system dependencies already present"
-                      if [ "${IMAGE_VERSION}" != "unknown" ]; then
-                          printf '%s %s\n' "${IMAGE_VERSION}" "${PLAYWRIGHT_VERSION}" > "$stamp"
-                      fi
-                      exit 0
-                  fi
-                  sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
-                  for attempt in 1 2 3; do
-                      if npx playwright install-deps chromium; then
-                          if [ "${IMAGE_VERSION}" != "unknown" ]; then
-                              printf '%s %s\n' "${IMAGE_VERSION}" "${PLAYWRIGHT_VERSION}" > "$stamp"
-                          fi
-                          break
-                      fi
-                      if [ "${attempt}" -eq 3 ]; then
-                          printf 'playwright install-deps failed after %d attempts\n' "${attempt}" >&2
-                          exit 1
-                      fi
-                      printf 'playwright install-deps attempt %d failed; retrying\n' "${attempt}" >&2
-                      sleep 20
-                  done
+            # Shared, cached Playwright + Chromium setup (issue #137). The
+            # composite action owns the version pin, so the two consumer
+            # workflows cannot drift.
+            - name: Set up Playwright Chromium
+              uses: ./.github/actions/playwright-chromium
 
             - name: Browser-export checklist
               run: |
@@ -158,8 +73,11 @@ jobs:
                       --key build/smoke-certs/key.pem \
                       --cert build/smoke-certs/cert.pem
 
+            # Same SHA-pinned v7.0.1 as docs-validation.yml (issue #140): the
+            # mutable @v4 tag had already drifted three majors behind the
+            # rest of the artifact pipeline.
             - name: Upload web build
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                   name: web-export
                   path: build/web

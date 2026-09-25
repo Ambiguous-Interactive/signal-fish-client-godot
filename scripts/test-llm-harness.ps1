@@ -14,7 +14,14 @@ param(
     # wall is max(halves) instead of the sum, with coverage unchanged.
     # Wins over the skip switch and the env var so the behavioral shard
     # can never degrade into a vacuous zero-test pass.
-    [switch]$OnlyBehavioralTests
+    [switch]$OnlyBehavioralTests,
+    # Further split the behavioral shard into concurrent passes:
+    # round-robin over declaration order, so N passes each run every Nth
+    # behavioral test and their union is exactly the behavioral subset
+    # (same tests, shorter wall). Requires -OnlyBehavioralTests; the
+    # default 1/1 is the no-op single pass.
+    [int]$BehavioralSubshard = 1,
+    [int]$BehavioralSubshardCount = 1
 )
 
 # Lightweight self-tests for the shared LLM harness library.
@@ -40,14 +47,31 @@ Import-Module $ModulePath -Force
 $failures = New-Object System.Collections.Generic.List[string]
 $passed = 0
 $skipped = 0
+$script:subshardSkipped = 0
 if ($SkipBehavioralTests -and $OnlyBehavioralTests) {
     throw 'Only one of -SkipBehavioralTests and -OnlyBehavioralTests may be set.'
+}
+if ($BehavioralSubshardCount -lt 1) {
+    throw '-BehavioralSubshardCount must be at least 1.'
+}
+# Any non-default filter value requests subsharding, so misuse must be
+# rejected even when the other parameter is left at its default.
+if ($BehavioralSubshardCount -gt 1 -or $BehavioralSubshard -gt 1) {
+    if (-not $OnlyBehavioralTests) {
+        throw '-BehavioralSubshard* subdivides the behavioral shard and requires -OnlyBehavioralTests.'
+    }
+}
+if ($BehavioralSubshard -lt 1 -or $BehavioralSubshard -gt $BehavioralSubshardCount) {
+    throw "-BehavioralSubshard must be in 1..$BehavioralSubshardCount."
 }
 # Honor the env var or the explicit switch. Either suffices. -OnlyBehavioralTests
 # wins over both so the behavioral shard always runs real tests.
 $script:OnlyBehavioral = [bool]$OnlyBehavioralTests
 $script:SkipBehavioral = -not $script:OnlyBehavioral -and
     ([bool]$SkipBehavioralTests -or ($env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS -eq '1'))
+$script:BehavioralSubshard = $BehavioralSubshard
+$script:BehavioralSubshardCount = $BehavioralSubshardCount
+$script:BehavioralSeen = 0
 
 # Recursion-prevention contract: a behavioral test spawns
 # `pwsh -File run-llm-hooks.ps1` to exercise the harness end-to-end.
@@ -76,6 +100,9 @@ function Assert-Test {
         # is set the body is skipped and the test counts as skipped.
         [switch]$Behavioral
     )
+    # Behavioral tests get a stable declaration-order sequence number so
+    # round-robin subsharding is deterministic across passes.
+    if ($Behavioral) { $script:BehavioralSeen++ }
     if ($Behavioral -and $script:SkipBehavioral) {
         $script:skipped++
         if ($VerboseOutput) {
@@ -87,6 +114,14 @@ function Assert-Test {
         $script:skipped++
         if ($VerboseOutput) {
             Write-Host "[llm-test] SKIP (non-behavioral): $Name" -ForegroundColor DarkGray
+        }
+        return
+    }
+    if ($Behavioral -and $script:BehavioralSubshardCount -gt 1 -and
+        ((($script:BehavioralSeen - 1) % $script:BehavioralSubshardCount) -ne ($script:BehavioralSubshard - 1))) {
+        $script:subshardSkipped++
+        if ($VerboseOutput) {
+            Write-Host "[llm-test] SKIP (behavioral subshard $($script:BehavioralSubshard)/$($script:BehavioralSubshardCount)): $Name" -ForegroundColor DarkGray
         }
         return
     }
@@ -559,6 +594,7 @@ Assert-Test 'LlmHarness exported surface is explicit and contains no dead markdo
     $expectedFunctions = @(
         'ConvertTo-LlmNormalizedNewlines',
         'ConvertTo-LlmStrayArtifactPathspecs',
+        'Get-LlmControlledDirectories',
         'Get-LlmDefaultStrayPatterns',
         'Get-LlmFrontmatterValue',
         'Get-LlmGeneratedContentState',
@@ -588,6 +624,44 @@ Assert-Test 'LlmHarness exported surface is explicit and contains no dead markdo
     if ($content -match '(?m)^\s*function\s+Get-LlmMarkdownTitle\b' -or
         $content -match 'Get-LlmMarkdownTitle,') {
         throw 'Get-LlmMarkdownTitle was a dead exported wrapper; use Get-LlmMarkdownTitleFromLines internally instead.'
+    }
+}
+
+# --- MIN-8: controlled-directory list single-sourced ------------------------
+
+Assert-Test 'MIN-8: controlled-directory list sourced from shared module' {
+    # The AutoFix delete scope (Test-LlmDeletableArtifact) and the hook
+    # runner's stray-artifact scans must share one canonical list
+    # (issue #143). Adding a harness directory is a one-line edit to the
+    # module's backing variable; a redeclared copy in any consumer would
+    # make the same path deletable per one check but invisible to another.
+    if (-not (Get-Command Get-LlmControlledDirectories -ErrorAction SilentlyContinue)) {
+        throw 'Get-LlmControlledDirectories must be exported from the shared module.'
+    }
+    $controlled = @(Get-LlmControlledDirectories)
+    foreach ($dir in @('scripts', '.llm', '.githooks', '.claude')) {
+        if ($controlled -notcontains $dir) {
+            throw "Get-LlmControlledDirectories is missing the controlled directory '$dir'."
+        }
+    }
+
+    $hookSrc = Get-Content -LiteralPath (Join-Path $ScriptsDir 'run-llm-hooks.ps1') -Raw
+    $libSrc = Get-Content -LiteralPath (Join-Path $ScriptsDir 'lib/LlmHarness.psm1') -Raw
+    # The unmistakable signature of a redeclared list: all four entries in
+    # order. The module may contain exactly one (the backing variable); the
+    # hook runner none.
+    $literalListPattern = "(?s)'scripts'\s*,\s*'\.llm'\s*,\s*'\.githooks'\s*,\s*'\.claude'"
+    $hookMatches = @([regex]::Matches($hookSrc, $literalListPattern))
+    if ($hookMatches.Count -gt 0) {
+        throw 'run-llm-hooks.ps1 contains a hardcoded copy of the controlled-directory list; consume Get-LlmControlledDirectories instead.'
+    }
+    $libMatches = @([regex]::Matches($libSrc, $literalListPattern))
+    if ($libMatches.Count -ne 1) {
+        throw ("LlmHarness.psm1 must declare the controlled-directory list exactly once (the backing variable); found {0} occurrences." -f $libMatches.Count)
+    }
+    if ($hookSrc -notmatch 'Get-LlmControlledDirectories' -or
+        $libSrc -notmatch 'Test-LlmDeletableArtifact[\s\S]*?Get-LlmControlledDirectories') {
+        throw 'Both stray-artifact consumers must call Get-LlmControlledDirectories.'
     }
 }
 
@@ -3540,6 +3614,13 @@ Assert-Test 'MIN-2: agent-check uses AgentFast and Full remains explicit' {
     if ($tests -notmatch '\[switch\]\$OnlyBehavioralTests') {
         throw 'test-llm-harness.ps1 must declare [switch]$OnlyBehavioralTests so the suite can shard into two concurrent passes (issue #132).'
     }
+    if ($tests -notmatch '\[int\]\$BehavioralSubshard\b' -or
+        $tests -notmatch '\[int\]\$BehavioralSubshardCount\b') {
+        throw 'test-llm-harness.ps1 must declare the behavioral subshard parameters so the behavioral shard itself splits into concurrent passes.'
+    }
+    if ($tests -notmatch 'requires -OnlyBehavioralTests') {
+        throw 'test-llm-harness.ps1 must reject -BehavioralSubshard* without -OnlyBehavioralTests (the filter is meaningless outside the behavioral shard).'
+    }
     if ($tests -notmatch 'Only one of -SkipBehavioralTests and -OnlyBehavioralTests may be set\.') {
         throw 'test-llm-harness.ps1 must reject contradictory shard filters.'
     }
@@ -3559,6 +3640,11 @@ Assert-Test 'MIN-2: agent-check uses AgentFast and Full remains explicit' {
             throw "run-llm-hooks.ps1 Full/CI self-tests stage must spawn the '$shardFlag' shard so wall is max(halves)."
         }
     }
+    foreach ($subshardFlag in @('-BehavioralSubshard', '-BehavioralSubshardCount')) {
+        if ($runner -notmatch [regex]::Escape($subshardFlag)) {
+            throw "run-llm-hooks.ps1 must pass '$subshardFlag' so the behavioral shard splits into concurrent passes."
+        }
+    }
     if ($runner -notmatch 'Nested self-test child detected') {
         throw 'run-llm-hooks.ps1 must run only the core shard for suite-spawned children (recursion contract; see test-llm-harness.ps1).'
     }
@@ -3567,6 +3653,10 @@ Assert-Test 'MIN-2: agent-check uses AgentFast and Full remains explicit' {
         if ($workflow -notmatch [regex]::Escape($shardFlag)) {
             throw "llm-harness.yml self-tests job must run the '$shardFlag' shard (issue #132)."
         }
+    }
+    $subshardFlags = @([regex]::Matches($workflow, '-BehavioralSubshard \d')).Count
+    if ($subshardFlags -lt 2) {
+        throw 'llm-harness.yml self-tests job must run both round-robin behavioral passes (-BehavioralSubshard 1 and 2).'
     }
 }
 
@@ -5063,11 +5153,20 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
 
 # --- Summary ---------------------------------------------------------------
 
+# Subshard skips are behavioral tests another concurrent pass owns, so they
+# get their own counter and label: under -OnlyBehavioralTests the shared
+# $skipped counter only holds non-behavioral skips.
+$skipParts = @()
+if ($skipped -gt 0) {
+    $kind = if ($script:OnlyBehavioral) { 'non-behavioral' } else { 'behavioral' }
+    $skipParts += "$skipped $kind test(s) skipped"
+}
+if ($script:subshardSkipped -gt 0) {
+    $skipParts += "$($script:subshardSkipped) behavioral test(s) left to other subshard(s)"
+}
+$skipNote = if ($skipParts.Count -gt 0) { " ($($skipParts -join ', '))" } else { '' }
+
 if ($failures.Count -gt 0) {
-    $skipNote = if ($skipped -gt 0) {
-        $kind = if ($script:OnlyBehavioral) { 'non-behavioral' } else { 'behavioral' }
-        " ($skipped $kind test(s) skipped)"
-    } else { '' }
     Write-Host "[llm-test] $($failures.Count) test(s) failed; $passed passed$skipNote." -ForegroundColor Red
     exit 1
 }
@@ -5076,9 +5175,5 @@ if ($script:OnlyBehavioral -and $passed -eq 0) {
     exit 1
 }
 
-$skipNote = if ($skipped -gt 0) {
-    $kind = if ($script:OnlyBehavioral) { 'non-behavioral' } else { 'behavioral' }
-    " ($skipped $kind test(s) skipped)"
-} else { '' }
 Write-Host "[llm-test] All $passed test(s) passed$skipNote." -ForegroundColor Green
 exit 0

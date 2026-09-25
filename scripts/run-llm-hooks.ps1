@@ -707,7 +707,7 @@ function Test-ControlledArtifactPath {
     }
     if ([string]::IsNullOrWhiteSpace($normalized)) { return $false }
     $first = $normalized.Split('/', 2)[0]
-    return @('scripts', '.llm', '.githooks', '.claude') -contains $first
+    return (Get-LlmControlledDirectories) -contains $first
 }
 
 function New-StrayArtifactLeafMatchers {
@@ -758,7 +758,7 @@ function Get-ControlledStrayArtifacts {
         [Parameter(Mandatory)][string[]]$Patterns
     )
 
-    $controlledDirs = @('scripts', '.llm', '.githooks', '.claude')
+    $controlledDirs = @(Get-LlmControlledDirectories)
     $leafMatchers = @(New-StrayArtifactLeafMatchers -Patterns $Patterns)
     $artifacts = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
     foreach ($dir in $controlledDirs) {
@@ -1238,12 +1238,12 @@ try {
 
     if ($Mode -in @('Full', 'CI') -and -not $SkipSelfTests) {
         Invoke-HookStage 'self-tests' {
-            # The suite runs as two concurrent shards (issue #132): the
-            # in-process half and the pwsh-forking behavioral half. Wall
-            # becomes max(halves) instead of the sum; every test still runs
-            # exactly once per gate, so coverage is unchanged. Output is
-            # buffered until both shards finish so the two logs do not
-            # interleave.
+            # The suite runs as concurrent shards (issue #132): the
+            # in-process core half plus the pwsh-forking behavioral half,
+            # itself split round-robin into two passes so the wall is
+            # max(shards) instead of the sum. Every test still runs exactly
+            # once per gate, so coverage is unchanged. Output is buffered
+            # until all shards finish so the logs do not interleave.
             # Recursion contract (see test-llm-harness.ps1): a suite-spawned
             # child inherits LLM_HARNESS_SKIP_BEHAVIORAL_TESTS=1. This stage
             # honors that signature by spawning only the core shard, so a
@@ -1253,20 +1253,25 @@ try {
                 Write-HookLine 'Nested self-test child detected; running only the core shard (behavioral tests are owned by the parent suite).'
                 $shardNames = @('core')
             } else {
-                $shardNames = @('core', 'behavioral')
+                $shardNames = @('core', 'behavioral-1', 'behavioral-2')
             }
+            # The behavioral half is itself split round-robin into two
+            # concurrent passes; their union is exactly the behavioral
+            # subset, so every test still runs exactly once per gate.
             $behavioralArgs = @('-NoProfile', '-File', "`"$SelfTests`"", '-OnlyBehavioralTests')
-            if ($VerboseOutput) {
-                $coreArgs += '-VerboseOutput'
-                $behavioralArgs += '-VerboseOutput'
-            }
             $allArgs = @{
-                core       = $coreArgs
-                behavioral = $behavioralArgs
+                'core'         = $coreArgs
+                'behavioral-1' = $behavioralArgs + @('-BehavioralSubshard', '1', '-BehavioralSubshardCount', '2')
+                'behavioral-2' = $behavioralArgs + @('-BehavioralSubshard', '2', '-BehavioralSubshardCount', '2')
             }
             # Quoted $SelfTests: Start-Process joins -ArgumentList with
             # spaces, so a repo path containing a space would otherwise be
             # split by the child pwsh.
+            if ($VerboseOutput) {
+                foreach ($name in @($allArgs.Keys)) {
+                    $allArgs[$name] = @($allArgs[$name]) + '-VerboseOutput'
+                }
+            }
             $logs = @{}
             foreach ($name in $shardNames) {
                 $logs[$name] = @{
