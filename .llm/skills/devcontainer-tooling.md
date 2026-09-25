@@ -101,17 +101,25 @@ The dev container seeds seven MCP servers into every agent CLI (claude,
 opencode, nanocoder, codex, and the VS Code agent host): `godot`
 (@coding-solo/godot-mcp driving the installed headless editor via
 `GODOT_PATH`), `github` (official github-mcp-server binary), `context7`
-(remote docs lookup), `deepwiki` (remote repo Q&A), `git`
-(mcp-server-git), `fetch` (mcp-server-fetch), and `playwright`
+(@upstash/context7-mcp, local stdio, key from env), `deepwiki` (remote repo
+Q&A), `git` (mcp-server-git), `fetch` (mcp-server-fetch), and `playwright`
 (@playwright/mcp for web-export browser work).
 
 - Secret invariant: values live only in the process environment.
   `runArgs: ["--env-file", ".env.local"]` loads the git-ignored `.env.local`
   (template: `.env.example`) into the container at create time, and every
-  committed config references secrets by NAME only - `${VAR}` expansion in
-  `.mcp.json`, `{env:VAR}` in `opencode.json`, and `bearer_token_env_var` /
-  inherited-env in the codex managed block. Nothing writes a secret value to
-  disk, and the doctor prints only variable names and set/unset state.
+  committed config references secrets by NAME only - `${VAR:-}` env maps in
+  `.mcp.json`, `{env:VAR}` in `opencode.json`, and `env_vars` passthrough in
+  the codex managed block. Nothing writes a secret value to disk, and the
+  doctor prints only variable names and set/unset state.
+- Empirical stdio contract (verified with the installed clients): Claude
+  Code and Nanocoder do not inherit arbitrary parent environment for stdio
+  servers, so `.mcp.json` secret-driven entries carry explicit `env` maps -
+  Claude expands `${VAR:-}`, and Nanocoder's map presence triggers full
+  `{...process.env}` inheritance. This is why `context7` is the local
+  `context7-mcp` stdio server (key from env) rather than the hosted HTTP
+  endpoint: VS Code does not substitute variables in remote headers, so no
+  single remote shape works across all three clients.
 - One committed file, three clients: repo-root `.mcp.json` is read natively
   by Claude Code (project scope), Nanocoder (project scope), and the VS Code
   agent host. Remote entries carry BOTH `type` (Claude/VS Code) and
@@ -120,10 +128,15 @@ opencode, nanocoder, codex, and the VS Code agent host): `godot`
   `environment`, `disabled`) - not the v1 `mcp.<name>` shape.
 - Codex has no env-expanding config format, so
   `.devcontainer/seed-mcp-config.sh` writes a marker-delimited managed block
-  into `~/.codex/config.toml` (user-level: no project-trust prompt). The
-  block is regenerated idempotently; content outside the markers is
-  preserved; unmanaged tables with managed names and corrupted blocks
-  (begin marker without end marker) are refused instead of rewritten.
+  into `~/.codex/config.toml` (user-level: no project-trust prompt). Codex
+  forwards a sanitized environment by default, so the block's
+  secret-consuming entries declare `env_vars` allow-lists. The block is
+  regenerated idempotently (a config that exists without the block is
+  appended - that path must never be mistaken for a no-op); content outside
+  the markers is preserved; unmanaged tables (including subtables) with
+  managed names and corrupted blocks (begin marker without end marker) are
+  refused instead of rewritten; CRLF-edited configs are handled. In install
+  mode the doctor gates the exit status - MISSING is a failure, not a note.
 - `.devcontainer/mcp-shims/sf-github-mcp.sh` renames the repo's
   `GITHUB_MCP_PAT` convention onto github-mcp-server's canonical
   `GITHUB_PERSONAL_ACCESS_TOKEN` at launch time and defaults
@@ -134,8 +147,11 @@ opencode, nanocoder, codex, and the VS Code agent host): `godot`
   upstream `checksums.txt`; pipx `mcp-server-git` / `mcp-server-fetch`), and
   `.devcontainer/install-mcp-servers.sh` (post-create strict, post-start
   warn-only via `--update`) installs the npm ones with pinned concrete specs
-  (`GODOT_MCP_NPM_SPEC`, `PLAYWRIGHT_MCP_NPM_SPEC`). Offline skip logic
-  compares npm's global state against the pinned spec - no registry probe.
+  (`GODOT_MCP_NPM_SPEC`, `PLAYWRIGHT_MCP_NPM_SPEC`,
+  `CONTEXT7_MCP_NPM_SPEC`); non-concrete overrides are rejected at startup
+  because they would make the offline skip check permanently false. Offline
+  skip logic compares npm's global state against the pinned spec - no
+  registry probe. Readiness requires the bin to exist AND be executable.
 - Playwright Chromium is installed (best-effort, install mode only,
   `SF_MCP_SKIP_PLAYWRIGHT_BROWSER=1` to skip) with @playwright/mcp's own
   bundled playwright CLI, because its Chromium revision is independent of

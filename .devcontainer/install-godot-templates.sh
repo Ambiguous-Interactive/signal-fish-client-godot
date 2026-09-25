@@ -66,14 +66,14 @@ fi
 
 TARGET_DIR="${TEMPLATES_ROOT}/${VERSION_DIR}"
 echo "==> Extracting web templates into ${TARGET_DIR}"
-TMPDIR="$(mktemp -d)"
-trap 'rm -rf "${TMPDIR}"' EXIT
+SF_TMP="$(mktemp -d)"
+trap 'rm -rf "${SF_TMP}"' EXIT
 # -j junk paths: the archive nests everything under templates/.
-unzip -q -j "${CACHED_TGZ}" 'templates/web_*' -d "${TMPDIR}"
+unzip -q -j "${CACHED_TGZ}" 'templates/web_*' -d "${SF_TMP}"
 
 mkdir -p "${TARGET_DIR}"
 found=0
-for template in "${TMPDIR}"/web_*; do
+for template in "${SF_TMP}"/web_*; do
     [ -f "${template}" ] || continue
     install -m 0644 "${template}" "${TARGET_DIR}/$(basename "${template}")"
     found=1

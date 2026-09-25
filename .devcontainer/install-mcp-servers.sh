@@ -26,6 +26,10 @@ case "$MODE" in
         exit 2
         ;;
 esac
+if [ "$#" -gt 1 ]; then
+    echo "mcp-servers: ERROR: unexpected extra arguments: $*" >&2
+    exit 2
+fi
 
 # Package installs must never see forwarded credentials (mirrors
 # install-agent-tools.sh).
@@ -33,17 +37,19 @@ unset GITHUB_TOKEN GH_TOKEN GITHUB_MCP_PAT GITHUB_PERSONAL_ACCESS_TOKEN \
     Z_AI_API_KEY Z_AI_MODE CONTEXT7_API_KEY
 
 # Pinned concrete versions (harness test asserts the shape). Overrides must
-# stay concrete so the offline "installed == spec" skip remains decidable.
+# stay concrete so the offline "installed == spec" skip remains decidable;
+# validated below.
 PACKAGES=(
     "${GODOT_MCP_NPM_SPEC:-@coding-solo/godot-mcp@0.1.1}"
     "${PLAYWRIGHT_MCP_NPM_SPEC:-@playwright/mcp@0.0.82}"
+    "${CONTEXT7_MCP_NPM_SPEC:-@upstash/context7-mcp@4.0.4}"
 )
-BINARIES=(godot-mcp playwright-mcp)
+BINARIES=(godot-mcp playwright-mcp context7-mcp)
 DANGLING_BINARIES=("${BINARIES[@]}")
 # None of these packages ship lifecycle scripts today (playwright removed its
 # postinstall years ago; browsers install on demand). The allow list keeps a
 # future postinstall from being silently skipped by npm >= 11's policy.
-ALLOW_SCRIPTS="@coding-solo/godot-mcp,@playwright/mcp,playwright,playwright-core"
+ALLOW_SCRIPTS="@coding-solo/godot-mcp,@playwright/mcp,@upstash/context7-mcp,playwright,playwright-core"
 
 warn_or_fail() {
     local message="$1"
@@ -90,16 +96,16 @@ fi
 npm_bin_dir="${npm_prefix}/bin"
 export PATH="${npm_bin_dir}:${PATH}"
 
-# installed_versions: one `npm list --json` snapshot parsed once (the same
-# shape as install-agent-tools.sh) so the version queries below do not fork
-# npm per package.
+# One `npm list --json` call per invocation of installed_versions(); each
+# call forks npm once and the result is consumed by a single node parse.
 installed_versions()
 {
     npm list --global --depth=0 --json 2>/dev/null || true
 }
 
-# Verdict on exit status: only an exit 0 from npm list with the exact
-# name@version present counts as ready.
+# Verdict from the parsed npm state: the node helper exits 0 only when the
+# exact name@version pair is present. (npm list itself may exit non-zero
+# for unrelated reasons, so its status is deliberately not consulted.)
 package_is_installed() {
     local package="$1"
     local expected_version="$2"
@@ -133,6 +139,23 @@ spec_version() {
         *) printf '%s' "$version" ;;
     esac
 }
+
+# Overrides must stay concrete: a dist-tag or range would make the offline
+# "installed == spec" check permanently false, so every post-start would
+# reinstall and strict verification would fail after a successful install.
+validate_specs_are_concrete() {
+    local spec version
+    for spec in "${PACKAGES[@]}"; do
+        version="$(spec_version "$spec")"
+        if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+            echo "mcp-servers: ERROR: npm spec '${spec}' must pin a concrete x.y.z version (set a concrete override or unset it)." >&2
+            return 1
+        fi
+    done
+}
+if ! validate_specs_are_concrete; then
+    exit 1
+fi
 
 spec_package() {
     # "@scope/name@1.2.3" -> "@scope/name"; a version-less scoped spec
@@ -180,7 +203,10 @@ missing=()
 for index in "${!BINARIES[@]}"; do
     binary="${BINARIES[$index]}"
     spec="${PACKAGES[$index]}"
-    if ! command -v "$binary" >/dev/null 2>&1; then
+    binary_path="$(command -v "$binary" 2>/dev/null || true)"
+    # Presence AND executability: command -v alone reports success for a
+    # non-executable file left behind by a partially failed install.
+    if [ -z "$binary_path" ] || [ ! -x "$binary_path" ]; then
         missing+=("$binary")
         continue
     fi
@@ -206,8 +232,10 @@ else
     # `playwright` package (single pin site: .github/actions/playwright-chromium),
     # so the browser must be installed with that bundled CLI, not npx.
     mcp_pkg_dir="${npm_prefix}/lib/node_modules/@playwright/mcp"
-    pw_cli="$(node -p \
-        "const path = require('path'); path.join(path.dirname(require.resolve('playwright/package.json', { paths: ['${mcp_pkg_dir}'] })), 'cli.js')" \
+    # The path is passed through the environment (not interpolated into the
+    # JS text) so prefixes containing quotes or backslashes survive.
+    pw_cli="$(MCP_PKG_DIR="$mcp_pkg_dir" node -p \
+        "const path = require('path'); path.join(path.dirname(require.resolve('playwright/package.json', { paths: [process.env.MCP_PKG_DIR] })), 'cli.js')" \
         2>/dev/null || true)"
     if [ -n "$pw_cli" ] && [ -f "$pw_cli" ]; then
         echo "==> Installing Chromium for playwright-mcp (best-effort; may take a few minutes)"

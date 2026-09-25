@@ -12,6 +12,14 @@
 set -euo pipefail
 
 export GITHUB_PERSONAL_ACCESS_TOKEN="${GITHUB_PERSONAL_ACCESS_TOKEN:-${GITHUB_MCP_PAT:-}}"
+case "${GITHUB_PERSONAL_ACCESS_TOKEN}" in
+    *'${'*)
+        # A client that did not expand ${GITHUB_MCP_PAT:-} hands us the
+        # literal text; that must fail loudly, not authenticate with garbage.
+        printf 'sf-github-mcp: token is an unexpanded variable reference; this client does not substitute ${VAR} in .mcp.json env maps\n' >&2
+        exit 1
+        ;;
+esac
 if [ -z "${GITHUB_PERSONAL_ACCESS_TOKEN}" ]; then
     printf 'sf-github-mcp: no token found; set GITHUB_MCP_PAT in .env.local (see .env.example) and rebuild the container\n' >&2
     exit 1

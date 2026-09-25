@@ -166,7 +166,7 @@ nanocoder, codex, and the VS Code agent host):
 | --------- | ------------ | ------ |
 | `godot`   | Launch/run the project headless, capture debug output, scene ops; drives the installed editor via `GODOT_PATH=/usr/local/bin/godot` | [`@coding-solo/godot-mcp`](https://github.com/Coding-Solo/godot-mcp) (pinned npm) |
 | `github`  | Official GitHub API tools; **read-only by default** | [`github-mcp-server`](https://github.com/github/github-mcp-server) binary (pinned, checksum-verified) |
-| `context7`| Up-to-date library documentation | remote `https://mcp.context7.com/mcp` |
+| `context7`| Up-to-date library documentation | [`@upstash/context7-mcp`](https://github.com/upstash/context7) (pinned npm, local stdio) |
 | `deepwiki`| Q&A over public GitHub repositories | remote `https://mcp.deepwiki.com/mcp` (no auth) |
 | `git`     | Read/search git repositories | `mcp-server-git` (pipx, pinned) |
 | `fetch`   | Fetch web pages as markdown | `mcp-server-fetch` (pipx, pinned) |
@@ -178,13 +178,23 @@ nanocoder, codex, and the VS Code agent host):
   Code (project scope), Nanocoder (project scope), and the VS Code agent
   host all read it natively. Remote entries carry both `type` (Claude /
   VS Code) and `transport` (Nanocoder) so the shared file works everywhere.
+  Every secret-driven server is a **local stdio server with an explicit
+  `env` map** whose values are name-only `${VAR:-}` references: Claude Code
+  and Nanocoder were verified not to inherit arbitrary parent environment
+  for stdio servers, and VS Code does not substitute variables in remote
+  headers - explicit env maps are the one shape that works everywhere
+  (Nanocoder keys full environment inheritance off the map's presence).
+  A server that receives an unexpanded `${VAR...}` literal fails loudly
+  rather than authenticating with garbage.
 - **`opencode.json`** (repo root, committed) - OpenCode v2 schema
   (`mcp.servers.<name>`; note this is not the v1 `mcp.<name>` shape).
 - **`~/.codex/config.toml`** - Codex has no env-expanding config format, so
   `seed-mcp-config.sh` writes a marker-delimited managed block there
-  (user-level, so no project-trust prompt). The block is regenerated
-  idempotently on every create/start; content outside the markers is
-  preserved; conflicting or corrupted blocks are refused, never rewritten.
+  (user-level, so no project-trust prompt); secret-consuming entries use
+  `env_vars` allow-lists since Codex forwards a sanitized environment. The
+  block is regenerated idempotently on every create/start; content outside
+  the markers is preserved; conflicting or corrupted blocks are refused,
+  never rewritten.
 
 ### Secrets: names in files, values in the environment
 
@@ -230,13 +240,20 @@ godot --headless --export-release "Web" build/web/index.html  # templates
 
 Use `/mcp` inside opencode and nanocoder. First use of `.mcp.json` servers
 prompts once for approval in Claude Code / VS Code; Context7 works without
-an API key at anonymous rate limits and uses `CONTEXT7_API_KEY` when set.
+an API key at anonymous rate limits and picks up `CONTEXT7_API_KEY` from
+its environment (prefer the hosted endpoint at `https://mcp.context7.com/mcp`
+if you want to skip the local server - configure it per client, since the
+local one is what the shared file ships).
 
 ## Troubleshooting
 
 - **Container fails to create with `env file ... not found`:** create the
   secrets file: `cp .env.example .env.local` (`.env.local` is git-ignored;
   see "MCP servers" above).
+- **Changed a value in `.env.local` but the container kept the old one:**
+  the env file is read by Docker at container *create* time - use
+  **Rebuild Container** (or Dev Containers: Rebuild Without Cache);
+  a plain reload/restart will not re-read it.
 - **`sf-github-mcp: no token found`:** set `GITHUB_MCP_PAT` in `.env.local`
   and rebuild; the server refuses to start without a token rather than
   running unauthenticated.

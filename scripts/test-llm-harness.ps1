@@ -2096,6 +2096,31 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
         }
     }
 
+    # Empirical contract (verified with the real clients): Claude Code and
+    # Nanocoder do NOT inherit arbitrary parent environment for stdio
+    # servers, so every secret-driven server must carry an explicit env map
+    # whose values are name-only ${VAR} references. Nanocoder keys full
+    # inheritance off the presence of the map.
+    $mcpJson = Get-Content -LiteralPath $mcpJsonPath -Raw | ConvertFrom-Json
+    foreach ($pair in @(
+            [pscustomobject]@{ Server = 'github'; Var = 'GITHUB_MCP_PAT'; Expected = '${GITHUB_MCP_PAT:-}' },
+            [pscustomobject]@{ Server = 'context7'; Var = 'CONTEXT7_API_KEY'; Expected = '${CONTEXT7_API_KEY:-}' }
+        )) {
+        $entry = $mcpJson.mcpServers.($pair.Server)
+        if (-not $entry) { throw ".mcp.json must declare the '$($pair.Server)' server." }
+        if ($null -eq $entry.command) {
+            throw ".mcp.json '$($pair.Server)' must be a local stdio server so env maps reach it on every client."
+        }
+        $envValue = $entry.env.($pair.Var)
+        if ($envValue -ne $pair.Expected) {
+            throw ".mcp.json '$($pair.Server)' must pass $($pair.Var) via an env map entry of the form '$($pair.Expected)' (got '$envValue')."
+        }
+    }
+    $context7HasUrl = $mcpJson.mcpServers.context7.PSObject.Properties['url']
+    if ($context7HasUrl) {
+        throw ".mcp.json context7 must be the local context7-mcp server; the remote HTTP form cannot deliver CONTEXT7_API_KEY on every client (VS Code does not substitute headers)."
+    }
+
     # Token-shaped secrets must never be committed (name references only).
     foreach ($pair in @(
             [pscustomobject]@{ Label = '.mcp.json'; Path = $mcpJsonPath },
@@ -2120,7 +2145,8 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     }
     foreach ($pin in @(
             [pscustomobject]@{ Spec = 'GODOT_MCP_NPM_SPEC:-@coding-solo/godot-mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'godot-mcp' },
-            [pscustomobject]@{ Spec = 'PLAYWRIGHT_MCP_NPM_SPEC:-@playwright/mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'playwright-mcp' }
+            [pscustomobject]@{ Spec = 'PLAYWRIGHT_MCP_NPM_SPEC:-@playwright/mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'playwright-mcp' },
+            [pscustomobject]@{ Spec = 'CONTEXT7_MCP_NPM_SPEC:-@upstash/context7-mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'context7-mcp' }
         )) {
         Assert-TextMatches `
             -Subject '.devcontainer/install-mcp-servers.sh' `
@@ -2164,6 +2190,11 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
                 Pattern     = 'SF_MCP_SKIP_PLAYWRIGHT_BROWSER'
                 Requirement = 'let users skip the best-effort Chromium download'
                 Diagnostic  = 'SKIP_PLAYWRIGHT_BROWSER|Chromium'
+            },
+            [pscustomobject]@{
+                Pattern     = 'must pin a concrete x\.y\.z version'
+                Requirement = 'reject non-concrete spec overrides at startup so the offline skip check stays decidable'
+                Diagnostic  = 'concrete|validate_specs_are_concrete'
             }
         )) {
         Assert-TextMatches `
@@ -2224,6 +2255,11 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
                 Pattern     = 'no token found'
                 Requirement = 'fail loudly with an actionable message when no token is wired'
                 Diagnostic  = 'no token|GITHUB_MCP_PAT'
+            },
+            [pscustomobject]@{
+                Pattern     = "unexpanded variable reference"
+                Requirement = 'reject an unexpanded variable-reference literal so a non-substituting client fails loudly instead of authenticating with garbage'
+                Diagnostic  = 'unexpanded|substitute'
             },
             [pscustomobject]@{
                 Pattern     = 'exec /usr/local/bin/github-mcp-server stdio'
@@ -2390,6 +2426,46 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
         }
         Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $before 'idempotent rerun must not modify the file'
 
+        # 2b. THE regression case: an existing user config WITHOUT the
+        # managed block must actually get the block (the append branch was
+        # once dead code: the unchanged-awk-output byte compare swallowed
+        # it, seeding nothing with exit 0).
+        $userContent = "# my custom config`n[mcp_servers.custom_thing]`ncommand = `"foo`"`n"
+        & bash -c 'printf "%s" "$1" > "$2"' -- $userContent $codexConfig
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'seeding an existing config without the block must succeed'
+        $after = Get-Content -LiteralPath $codexConfig -Raw
+        if ($after -notmatch [regex]::Escape($begin) -or $after -notmatch 'command = "godot-mcp"') {
+            throw 'existing config without the managed block must gain the block.'
+        }
+        if ($after -notmatch 'custom_thing') { throw 'pre-existing user content must survive seeding.' }
+        # ...and a second run over the now-seeded file must be a no-op.
+        $before = $after
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'rerun after seeding an existing config must succeed'
+        if ($result.Output -notmatch 'is current; skipped') {
+            throw 'rerun after seeding must skip ("is current; skipped").'
+        }
+        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $before 'rerun after seeding must not modify the file'
+
+        # 2c. An empty (0-byte) config.toml must also gain the block.
+        & bash -c ': > "$1"' -- $codexConfig
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'seeding an empty config must succeed'
+        $after = Get-Content -LiteralPath $codexConfig -Raw
+        if ($after -notmatch 'command = "godot-mcp"') {
+            throw 'empty config.toml must gain the managed block.'
+        }
+
+        # 2d. A CRLF-edited config with the block is still recognized (its
+        # markers match), so it is replaced in place - never double-seeded.
+        & bash -c 'printf "%s\r\nuser=1\r\n%s\r\n" "$1" "$2" > "$3"' -- $begin $end $codexConfig
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'CRLF config with the block must seed successfully'
+        $after = Get-Content -LiteralPath $codexConfig -Raw
+        Expect-Equal ([regex]::Matches($after, [regex]::Escape($begin)).Count) 1 'CRLF config must end with exactly one begin marker'
+        Expect-Equal ([regex]::Matches($after, [regex]::Escape($end)).Count) 1 'CRLF config must end with exactly one end marker'
+
         # 3. Drift inside the markers is replaced exactly once; user content
         # outside survives.
         $drifted = "# my custom config`n[mcp_servers.custom_thing]`ncommand = `"foo`"`n$begin`n[mcp_servers.godot]`ncommand = `"OLD`"`n$end`n"
@@ -2421,17 +2497,16 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
         Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $snapshot 'corrupted managed block must not modify the file'
 
         # 6. Canary sweep: the secret values must not appear in any captured
-        # output stream or in any written file. Values never travel through
-        # the seeder in the first place - the doctor prints names only.
+        # output stream, nor anywhere in the sandbox tree (any written file).
+        # Values never travel through the seeder in the first place - the
+        # doctor prints names only.
         foreach ($captured in $allOutputs) {
             if ($captured -match [regex]::Escape($canary1) -or $captured -match [regex]::Escape($canary2)) {
                 throw 'seed-mcp-config.sh leaked a secret value into its output.'
             }
         }
-        $written = Get-Content -LiteralPath $codexConfig -Raw -ErrorAction SilentlyContinue
-        if ($written -match [regex]::Escape($canary1) -or $written -match [regex]::Escape($canary2)) {
-            throw 'seed-mcp-config.sh wrote a secret value into the codex config.'
-        }
+        $leaks = & bash -c "grep -rl -F -e '$($canary1)' -e '$($canary2)' '$tempRoot' 2>/dev/null || true"
+        if ($leaks) { throw "seed-mcp-config.sh wrote a secret value to: $($leaks -join ', ')" }
     } finally {
         foreach ($snapshot in $snapshots) { Restore-EnvVar $snapshot }
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -2501,10 +2576,17 @@ case "${1:-}" in
             '@coding-solo/godot-mcp')
                 mkdir -p "$prefix/bin"
                 printf '#!/usr/bin/env bash\n' >"$prefix/bin/godot-mcp"
+                chmod +x "$prefix/bin/godot-mcp"
                 ;;
             '@playwright/mcp')
                 mkdir -p "$prefix/bin"
                 printf '#!/usr/bin/env bash\n' >"$prefix/bin/playwright-mcp"
+                chmod +x "$prefix/bin/playwright-mcp"
+                ;;
+            '@upstash/context7-mcp')
+                mkdir -p "$prefix/bin"
+                printf '#!/usr/bin/env bash\n' >"$prefix/bin/context7-mcp"
+                chmod +x "$prefix/bin/context7-mcp"
                 ;;
             *) exit 2 ;;
         esac
@@ -2528,20 +2610,23 @@ esac
 '@
     $godotSpec = 'GODOT_MCP_NPM_SPEC:-@coding-solo/godot-mcp@'
     $playwrightSpec = 'PLAYWRIGHT_MCP_NPM_SPEC:-@playwright/mcp@'
+    $context7Spec = 'CONTEXT7_MCP_NPM_SPEC:-@upstash/context7-mcp@'
     $installerContent = Get-Content -LiteralPath $installer -Raw
     $godotVersion = [regex]::Match($installerContent, [regex]::Escape($godotSpec) + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
     $playwrightVersion = [regex]::Match($installerContent, [regex]::Escape($playwrightSpec) + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
-    if (-not $godotVersion -or -not $playwrightVersion) {
-        throw 'install-mcp-servers.sh must pin both npm specs to concrete versions.'
+    $context7Version = [regex]::Match($installerContent, [regex]::Escape($context7Spec) + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+    if (-not $godotVersion -or -not $playwrightVersion -or -not $context7Version) {
+        throw 'install-mcp-servers.sh must pin all three npm specs to concrete versions.'
     }
     $godotPackage = '@coding-solo/godot-mcp'
     $playwrightPackage = '@playwright/mcp'
+    $context7Package = '@upstash/context7-mcp'
 
     $cases = @(
-        [pscustomobject]@{ Name = 'fresh install is strict and green'; Mode = ''; Installed = $false; FailSpec = ''; Exit = 0; Installs = 2; ReportsReady = $true },
+        [pscustomobject]@{ Name = 'fresh install is strict and green'; Mode = ''; Installed = $false; FailSpec = ''; Exit = 0; Installs = 3; ReportsReady = $true },
         [pscustomobject]@{ Name = 'current versions skip installs'; Mode = ''; Installed = $true; FailSpec = ''; Exit = 0; Installs = 0; ReportsReady = $true },
-        [pscustomobject]@{ Name = 'install failure is strict'; Mode = ''; Installed = $false; FailSpec = "$godotPackage@$godotVersion"; Exit = 1; Installs = 2; ReportsReady = $false },
-        [pscustomobject]@{ Name = 'install failure is warn-only on update'; Mode = '--update'; Installed = $false; FailSpec = "$godotPackage@$godotVersion"; Exit = 0; Installs = 2; ReportsReady = $false }
+        [pscustomobject]@{ Name = 'install failure is strict'; Mode = ''; Installed = $false; FailSpec = "$godotPackage@$godotVersion"; Exit = 1; Installs = 3; ReportsReady = $false },
+        [pscustomobject]@{ Name = 'install failure is warn-only on update'; Mode = '--update'; Installed = $false; FailSpec = "$godotPackage@$godotVersion"; Exit = 0; Installs = 3; ReportsReady = $false }
     )
 
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -2563,8 +2648,8 @@ esac
                 & bash -c 'rm -rf "$1" && mkdir -p "$1"' -- $state
                 & bash -c 'rm -rf "$1" && mkdir -p "$1"' -- $prefix
                 if ($case.Installed) {
-                    & bash -c 'printf "%s\n" "$1" "$2" > "$3" && mkdir -p "$4" && touch "$4/godot-mcp" "$4/playwright-mcp" && chmod +x "$4/godot-mcp" "$4/playwright-mcp"' `
-                        -- "$godotPackage $godotVersion" "$playwrightPackage $playwrightVersion" "$state/packages" "$prefix/bin"
+                    & bash -c 'printf "%s\n" "$1" "$2" "$3" > "$4" && mkdir -p "$5" && touch "$5/godot-mcp" "$5/playwright-mcp" "$5/context7-mcp" && chmod +x "$5/godot-mcp" "$5/playwright-mcp" "$5/context7-mcp"' `
+                        -- "$godotPackage $godotVersion" "$playwrightPackage $playwrightVersion" "$context7Package $context7Version" "$state/packages" "$prefix/bin"
                     Expect-Equal $LASTEXITCODE 0 "$($case.Name): seed installed state"
                 } else {
                     & bash -c 'touch "$1"' -- "$state/packages"
@@ -2591,8 +2676,8 @@ esac
                     $leaked = & bash -c 'grep -F "$1" "$2" || true' -- $canary "$state/events"
                     if ($leaked) { throw "$($case.Name): secret value reached the npm process environment." }
                 }
-                if ($case.ReportsReady -and $outputText -notmatch 'mcp-servers: ready: godot-mcp playwright-mcp') {
-                    throw "$($case.Name): green runs must report both binaries ready."
+                if ($case.ReportsReady -and $outputText -notmatch 'mcp-servers: ready: godot-mcp playwright-mcp context7-mcp') {
+                    throw "$($case.Name): green runs must report all binaries ready."
                 }
                 if (-not $case.ReportsReady -and $case.Exit -eq 0 -and $outputText -notmatch 'mcp-servers: WARNING: npm could not install') {
                     throw "$($case.Name): warn-only runs must warn about the failed spec."
@@ -2601,6 +2686,10 @@ esac
                     throw "$($case.Name): installed versions must be skipped offline."
                 }
             }
+            # Canary sweep across the whole sandbox: the canary secret must
+            # not have reached npm's recorded process environment anywhere.
+            $leaks = & bash -c "grep -rl -F '$canary' '$tempRoot' 2>/dev/null || true"
+            if ($leaks) { throw "installer leaked the canary secret to: $($leaks -join ', ')" }
         } finally {
             Pop-Location
         }

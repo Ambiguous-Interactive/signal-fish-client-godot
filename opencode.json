@@ -14,11 +14,8 @@
         "command": ["sf-github-mcp"]
       },
       "context7": {
-        "type": "remote",
-        "url": "https://mcp.context7.com/mcp",
-        "headers": {
-          "Authorization": "Bearer {env:CONTEXT7_API_KEY}"
-        }
+        "type": "local",
+        "command": ["context7-mcp"]
       },
       "deepwiki": {
         "type": "remote",

@@ -9,14 +9,16 @@
     },
     "github": {
       "command": "sf-github-mcp",
-      "args": []
+      "args": [],
+      "env": {
+        "GITHUB_MCP_PAT": "${GITHUB_MCP_PAT:-}"
+      }
     },
     "context7": {
-      "type": "http",
-      "transport": "http",
-      "url": "https://mcp.context7.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${CONTEXT7_API_KEY:-}"
+      "command": "context7-mcp",
+      "args": [],
+      "env": {
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY:-}"
       }
     },
     "deepwiki": {

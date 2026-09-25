@@ -83,24 +83,27 @@ ARG GITHUB_MCP_VERSION=1.12.2
 ARG MCP_SERVER_GIT_VERSION=2026.8.18
 ARG MCP_SERVER_FETCH_VERSION=2026.8.18
 COPY mcp-shims/sf-github-mcp.sh /usr/local/bin/sf-github-mcp
-RUN set -eux; \
+RUN set -euxo pipefail; \
     chmod +x /usr/local/bin/sf-github-mcp; \
     case "$(dpkg --print-architecture)" in \
         amd64) GH_MCP_ARCH=x86_64 ;; \
         arm64) GH_MCP_ARCH=arm64 ;; \
         *) echo "Unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
+    # The archive keeps its canonical asset name: the checksums file lists
+    # that name, and `sha256sum -c` resolves entries relative to the cwd.
     curl --fail --silent --show-error --location \
         --retry 5 --retry-delay 2 --retry-connrefused \
-        --output /tmp/gh-mcp.tar.gz \
+        --output "/tmp/github-mcp-server_Linux_${GH_MCP_ARCH}.tar.gz" \
         "https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_VERSION}/github-mcp-server_Linux_${GH_MCP_ARCH}.tar.gz"; \
     curl --fail --silent --show-error --location \
+        --retry 5 --retry-delay 2 --retry-connrefused \
         --output /tmp/gh-mcp-checksums.txt \
         "https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_VERSION}/github-mcp-server_${GITHUB_MCP_VERSION}_checksums.txt"; \
     grep "github-mcp-server_Linux_${GH_MCP_ARCH}.tar.gz" /tmp/gh-mcp-checksums.txt \
         | (cd /tmp && sha256sum -c -); \
-    tar -xzf /tmp/gh-mcp.tar.gz -C /usr/local/bin github-mcp-server; \
-    rm -f /tmp/gh-mcp.tar.gz /tmp/gh-mcp-checksums.txt; \
+    tar -xzf "/tmp/github-mcp-server_Linux_${GH_MCP_ARCH}.tar.gz" -C /usr/local/bin github-mcp-server; \
+    rm -f "/tmp/github-mcp-server_Linux_${GH_MCP_ARCH}.tar.gz" /tmp/gh-mcp-checksums.txt; \
     /usr/local/bin/github-mcp-server --version; \
     PIPX_HOME=/usr/local/pipx PIPX_BIN_DIR=/usr/local/bin \
         pipx install "mcp-server-git==${MCP_SERVER_GIT_VERSION}"; \
