@@ -253,11 +253,7 @@ func _test_server_decoders_match_fixtures() -> void:
 	)
 	_assert_equal("fixture protocol info", protocol_info.args[0].notes, "protocol_info notes")
 	_assert_equal(
-		[
-			SFTypesScript.GameDataEncoding.JSON,
-			SFTypesScript.GameDataEncoding.MESSAGE_PACK,
-			SFTypesScript.GameDataEncoding.RKYV
-		],
+		[SFTypesScript.GameDataEncoding.JSON, SFTypesScript.GameDataEncoding.MESSAGE_PACK],
 		protocol_info.args[0].game_data_formats,
 		"protocol_info game data formats"
 	)

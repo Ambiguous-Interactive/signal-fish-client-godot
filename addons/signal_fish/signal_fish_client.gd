@@ -417,7 +417,7 @@ func send_game_data(data) -> Error:
 ## (server `websocket/connection.rs`), so the client refuses that case
 ## locally. Pair with [member SignalFishConfig.game_data_format] =
 ## [code]"message_pack"[/code] (build payloads with [code]SFMsgpack.encode
-## [/code]) or [code]"rkyv"[/code] (bring your own reader). If the server
+## [/code], or pass raw bytes through the envelope untouched). If the server
 ## downgraded the requested format (see [signal protocol_info]), the
 ## effective negotiation rules.
 func send_game_data_binary(bytes: PackedByteArray) -> Error:
@@ -428,13 +428,10 @@ func send_game_data_binary(bytes: PackedByteArray) -> Error:
 		_emit_protocol_error("send_game_data_binary requires non-empty bytes")
 		return ERR_INVALID_PARAMETER
 	var negotiated := _negotiated_game_data_format()
-	if (
-		negotiated != SFTypesScript.GameDataEncoding.MESSAGE_PACK
-		and (negotiated != SFTypesScript.GameDataEncoding.RKYV)
-	):
+	if negotiated != SFTypesScript.GameDataEncoding.MESSAGE_PACK:
 		_emit_protocol_error(
 			(
-				"send_game_data_binary requires a message_pack or rkyv game_data_format;"
+				"send_game_data_binary requires a message_pack game_data_format;"
 				+ " this connection negotiates %s" % _game_data_format_label(negotiated)
 			)
 		)
@@ -800,10 +797,11 @@ func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
 
 ## Binary frames carry game data once a binary format is negotiated
 ## (PLAN P2): [code]message_pack[/code] frames are strict envelopes decoded
-## via [code]SFBinaryFrames[/code]; [code]rkyv[/code] frames are raw payload
-## pass-through (upstream sends no envelope for them, so the sender is
-## unknowable). Anything else is dropped with a protocol error — the link
-## stays up, matching the text-path hardening. Upstream parity note: a
+## via [code]SFBinaryFrames[/code] — an [code]rkyv[/code] envelope
+## [code]encoding[/code] token (the server-reserved internal format, issue
+## #146) decodes fine and its payload passes through raw with the sender
+## identity attached. Anything else is dropped with a protocol error — the
+## link stays up, matching the text-path hardening. Upstream parity note: a
 ## json-negotiated v2 recipient only ever receives game data as TEXT
 ## (`BinaryFallbackV2`); json senders cannot originate binary frames because
 ## the server drops them, so binary on a json connection is hostile or
@@ -868,7 +866,9 @@ func _downgrade_game_data_format(reason: String) -> void:
 	if _effective_game_data_format == SFTypesScript.GameDataEncoding.JSON:
 		return
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.JSON
-	SFLogScript.info("%s; falling back to json" % reason, _secrets)
+	# WARN, not info (issue #146): a game that asked for binary data cannot
+	# send any after the fallback, so it must clear the default log level.
+	SFLogScript.warn("%s; falling back to json" % reason, _secrets)
 
 
 func _game_data_format_label(encoding: int) -> String:

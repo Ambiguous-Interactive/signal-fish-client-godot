@@ -13,9 +13,10 @@ max-public-methods: 31
 # with table-driven cases; the limit keeps each transport area in one runner
 # (raised to 1250 when the largest runner crossed 1200, to 1320 when the
 # client gained the PLAN §4.7 heartbeat and its suites, to 1400 when every
-# test gained the issue-#104 completion sentinel) without inviting
+# test gained the issue-#104 completion sentinel, to 1450 when the client
+# gained the issue-#147 authority-flag cache and accessor) without inviting
 # unbounded growth.
-max-file-lines: 1400
+max-file-lines: 1450
 
 # max-returns: the headless smoke runner sequences async waits with
 # early-return guards so a timed-out step skips every dependent step; the

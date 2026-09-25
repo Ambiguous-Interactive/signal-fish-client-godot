@@ -32,7 +32,7 @@ Create a `SignalFishConfig` resource and set the fields you need:
   `wss://signal-fish.example/ws`. You can also pass a URL to
   `connect_to_server()` at dial time.
 - `game_data_format`: optional. Leave it unset (`""`) for JSON game data,
-  or request `message_pack` or `rkyv` for binary game data.
+  or request `message_pack` for binary game data.
 
 See [Client API Reference](client.md) for the full field list.
 

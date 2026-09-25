@@ -40,8 +40,23 @@ CI, tests, and internal tooling are not listed.
   positional calls are unaffected.
 - A game-data-format downgrade diagnostic now names the server's formats
   as wire tokens (`[json, unknown]`) instead of coerced enum integers.
+- `game_data_format = "rkyv"` is now refused at `configure()` with a
+  diagnostic naming `message_pack`: the server reserves rkyv and never
+  negotiates it, so a request silently downgraded to JSON and every
+  `send_game_data_binary` failed below the default log level (#146).
+  Raw-byte games should use `message_pack` with `decode_msgpack_payloads
+  = false`; v3 frames whose envelope token is `rkyv` still decode as bytes.
+- A game-data-format downgrade now logs at `warn` instead of `info`,
+  which the default log level filtered out (#146).
 
 ### Fixed
+
+- `get_players()` kept the previous authority's `is_authority` flag after
+  a handoff or release, so games read a stale host badge: a Start button
+  was offered to a player the server refuses (`GAME_START_FORBIDDEN`) and
+  hidden from the real one. `AuthorityChanged` now re-flags the cached
+  roster, and `get_authority_player()` reports the current authority
+  directly instead of forcing games to track the signal (#147).
 
 - A heartbeat beat refused under backpressure now arms the pong deadline:
   the beat keeps retrying each interval, a live-but-congested link recovers

@@ -110,8 +110,13 @@ func _test_configure_validation() -> void:
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "unknown format rejected")
 	config.game_data_format = "message_pack"
 	_assert_equal(OK, client.configure(config), "message_pack format accepted")
+	# rkyv is reserved server-side and never negotiated (issue #146): refusing
+	# it at configure keeps the silent json downgrade + dead binary sends off
+	# shipped games. The diagnostic must name the supported format.
 	config.game_data_format = "rkyv"
-	_assert_equal(OK, client.configure(config), "rkyv format accepted")
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "rkyv format refused")
+	var rkyv_refusal: String = errors[errors.size() - 1]
+	_assert_string_contains(rkyv_refusal, "use message_pack", "rkyv refusal names message_pack")
 	config.game_data_format = "json"
 	config.max_buffered_bytes = 0
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "zero cap rejected")
@@ -715,7 +720,10 @@ func _test_authority_flags_track_authority_changed() -> void:
 	_assert_flags(client, {PLAYER_A: true, PLAYER_B: false}, "joined player starts unflagged")
 
 	fake.inject_server_message(
-		{"type": "AuthorityChanged", "data": {"authority_player": PLAYER_B, "you_are_authority": true}}
+		{
+			"type": "AuthorityChanged",
+			"data": {"authority_player": PLAYER_B, "you_are_authority": true}
+		}
 	)
 	_assert_flags(client, {PLAYER_A: false, PLAYER_B: true}, "transfer flags the new authority")
 	_assert_equal(PLAYER_B, client.get_authority_player(), "transfer updates authority id")
@@ -726,9 +734,7 @@ func _test_authority_flags_track_authority_changed() -> void:
 	_assert_flags(client, {PLAYER_A: false, PLAYER_B: false}, "release clears every flag")
 	_assert_equal("", client.get_authority_player(), "release clears the authority id")
 
-	fake.inject_server_message(
-		{"type": "PlayerLeft", "data": {"player_id": PLAYER_B}}
-	)
+	fake.inject_server_message({"type": "PlayerLeft", "data": {"player_id": PLAYER_B}})
 	_assert_flags(client, {PLAYER_A: false}, "departure after release keeps flags")
 	client.free()
 	_done()

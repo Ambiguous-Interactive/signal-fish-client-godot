@@ -69,7 +69,7 @@ func _test_send_guards_and_wire_bytes() -> void:
 		"binary send refused under json negotiation"
 	)
 	var refusal_message: String = json_errors[json_errors.size() - 1]
-	_assert_string_contains(refusal_message, "message_pack or rkyv", "refusal message")
+	_assert_string_contains(refusal_message, "message_pack game_data_format", "refusal message")
 	json_client.free()
 
 	var config := _make_config()
@@ -163,24 +163,27 @@ func _test_envelope_receive_paths() -> void:
 
 
 func _test_rkyv_pass_through() -> void:
-	# rkyv surfaces raw pass-through frames with no sender identity: upstream
-	# sends no envelope for rkyv.
-	var rkyv_config := _make_config()
-	rkyv_config.game_data_format = "rkyv"
-	var rkyv_client := _make_in_room_client_with(rkyv_config)
-	var rkyv_transport: SFFakeTransportScript = rkyv_client.transport
-	var rkyv_events: Array = []
-	rkyv_client.game_data_binary_received.connect(
+	# rkyv is reserved server-side and never negotiated (issue #146), so
+	# `game_data_format = "rkyv"` is refused at configure. A v3 envelope whose
+	# `encoding` token is rkyv still decodes as raw bytes under message_pack
+	# negotiation: the token stays a valid envelope encoding, and the payload
+	# passes through untouched with the sender identity attached.
+	var config := _make_config()
+	config.game_data_format = "message_pack"
+	var client := _make_in_room_client_with(config)
+	var transport: SFFakeTransportScript = client.transport
+	var events: Array = []
+	client.game_data_binary_received.connect(
 		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
-			rkyv_events.append(["binary", from_player, encoding, payload])
+			events.append(["binary", from_player, encoding, payload])
 	)
-	rkyv_transport.inject_binary(PackedByteArray([0xDE, 0xAD]))
+	transport.inject_binary(_v3_binary_frame(PLAYER_B, "rkyv", PackedByteArray([0xDE, 0xAD])))
 	_assert_equal(
-		[["binary", "", SFTypesScript.GameDataEncoding.RKYV, PackedByteArray([0xDE, 0xAD])]],
-		rkyv_events,
-		"rkyv frame passes through raw"
+		[["binary", PLAYER_B, SFTypesScript.GameDataEncoding.RKYV, PackedByteArray([0xDE, 0xAD])]],
+		events,
+		"rkyv envelope token passes through raw"
 	)
-	rkyv_client.free()
+	client.free()
 	_done()
 
 
@@ -347,6 +350,26 @@ func _uuid_bytes(uuid: String) -> PackedByteArray:
 	for index: int in 16:
 		bytes[index] = ("0x" + hex.substr(index * 2, 2)).hex_to_int()
 	return bytes
+
+
+## Builds the v3 binary game-data envelope: adds the mandatory non-zero
+## seq/epoch stamps and unlocks the json/rkyv encoding tokens.
+func _v3_binary_frame(
+	from_player: String, encoding: String, payload: PackedByteArray
+) -> PackedByteArray:
+	var encoded := (
+		SFMsgpackScript
+		. encode(
+			{
+				"from_player": _uuid_bytes(from_player),
+				"encoding": encoding,
+				"payload": payload,
+				"seq": 1,
+				"epoch": 1,
+			}
+		)
+	)
+	return encoded["bytes"]
 
 
 func _assert(condition: bool, expected: bool, label: String) -> bool:
