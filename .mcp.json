@@ -1,0 +1,40 @@
+{
+  "mcpServers": {
+    "godot": {
+      "command": "godot-mcp",
+      "args": [],
+      "env": {
+        "GODOT_PATH": "/usr/local/bin/godot"
+      }
+    },
+    "github": {
+      "command": "sf-github-mcp",
+      "args": []
+    },
+    "context7": {
+      "type": "http",
+      "transport": "http",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${CONTEXT7_API_KEY:-}"
+      }
+    },
+    "deepwiki": {
+      "type": "http",
+      "transport": "http",
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "git": {
+      "command": "mcp-server-git",
+      "args": []
+    },
+    "fetch": {
+      "command": "mcp-server-fetch",
+      "args": []
+    },
+    "playwright": {
+      "command": "playwright-mcp",
+      "args": []
+    }
+  }
+}
