@@ -1,5 +1,5 @@
 ---
-description: "JSON and binary game data: send, receive, MessagePack decode, rkyv pass-through, and strict frame rules."
+description: "JSON and binary game data: send, receive, MessagePack decode, raw-byte pass-through, and strict frame rules."
 ---
 
 # Game Data
@@ -39,7 +39,7 @@ the inbound decode bound measured from the message envelope.
 ## Binary game data
 
 The `game_data_format` config field negotiates the format with the server.
-Accepted values are `""` (JSON), `json`, `message_pack`, and `rkyv`.
+Accepted values are `""` (JSON), `json`, and `message_pack`.
 
 `send_game_data_binary(bytes)` sends one raw binary frame:
 
@@ -52,6 +52,13 @@ client.send_game_data_binary(payload_bytes)
 - On a `json`-negotiated connection the client refuses the send locally
   with `ERR_UNAVAILABLE`. The server drops binary frames on JSON
   connections anyway.
+
+## Raw-byte pass-through
+
+For opaque bytes your game already encodes, keep the default decode off
+(`decode_msgpack_payloads = false`) and use `message_pack`: the payload
+crosses the envelope untouched and the frame still carries `from_player`,
+so the recipient gets the exact bytes plus a sender identity.
 
 ## Receiving
 
@@ -75,12 +82,14 @@ MessagePack payload decoding is opt-in through
 
 ## Rkyv
 
-Rkyv is pass-through bytes only. It is a zero-copy archive format, so pure
-GDScript cannot reconstruct its structures. Binary rkyv frames surface as
-bytes with the `rkyv` encoding, and `game_data_format = "rkyv"` tells the
-server your preference.
+The server reserves `rkyv` as an internal format and never negotiates it,
+so `game_data_format = "rkyv"` is refused at `configure()` (issue #146):
+requesting it would downgrade to JSON and every binary send would fail.
 
-v2-route rkyv frames carry no envelope, so `from_player` is `""` for them.
+For raw bytes, use `message_pack` with `decode_msgpack_payloads = false`
+(see [Raw-byte pass-through](#raw-byte-pass-through)). A v3 frame whose
+envelope `encoding` token is `rkyv` still decodes - the token remains a
+reserved wire encoding, and its payload surfaces as bytes.
 
 ## Strict binary-frame decode
 

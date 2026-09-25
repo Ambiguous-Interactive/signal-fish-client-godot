@@ -18,7 +18,7 @@ Published site: <https://ambiguous-interactive.github.io/signal-fish-client-godo
 - [Client API Reference](https://ambiguous-interactive.github.io/signal-fish-client-godot/client/): config fields, lifecycle methods, send methods, state machines.
 - [Events](https://ambiguous-interactive.github.io/signal-fish-client-godot/events/): the signal surface and typed payload objects.
 - [Errors](https://ambiguous-interactive.github.io/signal-fish-client-godot/errors/): the error-code enum and where errors surface.
-- [Game Data](https://ambiguous-interactive.github.io/signal-fish-client-godot/game-data/): JSON, MessagePack, binary frames, and rkyv pass-through.
+- [Game Data](https://ambiguous-interactive.github.io/signal-fish-client-godot/game-data/): JSON, MessagePack, and binary frames.
 - [Reconnection & Replay](https://ambiguous-interactive.github.io/signal-fish-client-godot/reconnection/): tokens, missed-event replay, auto-reconnect backoff.
 - [Web Export](https://ambiguous-interactive.github.io/signal-fish-client-godot/web-export/): browser rules for wss, Origin, storage, and polling.
 - [Deterministic Testing](https://ambiguous-interactive.github.io/signal-fish-client-godot/testing/): fixture suites and the runtime check entry point.

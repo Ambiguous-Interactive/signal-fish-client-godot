@@ -5,16 +5,18 @@
 # (PLAN.md §4.2): 15 lifecycle/state accessors plus 11 protocol/lifecycle send
 # methods (reconnect + set_auto_reconnect landed with P2 reconnection;
 # send_game_data_binary ships with the P2 binary milestone) intentionally
-# exceed the default of 20.
-max-public-methods: 30
+# exceed the default of 20. get_authority_player joined with issue #147 so
+# games read the authority off the client instead of tracking a signal.
+max-public-methods: 31
 
 # max-file-lines: the headless test runners are single-file SceneTree scripts
 # with table-driven cases; the limit keeps each transport area in one runner
 # (raised to 1250 when the largest runner crossed 1200, to 1320 when the
 # client gained the PLAN §4.7 heartbeat and its suites, to 1400 when every
-# test gained the issue-#104 completion sentinel) without inviting
+# test gained the issue-#104 completion sentinel, to 1450 when the client
+# gained the issue-#147 authority-flag cache and accessor) without inviting
 # unbounded growth.
-max-file-lines: 1400
+max-file-lines: 1450
 
 # max-returns: the headless smoke runner sequences async waits with
 # early-return guards so a timed-out step skips every dependent step; the

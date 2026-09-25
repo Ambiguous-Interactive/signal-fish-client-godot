@@ -92,7 +92,7 @@ project ships runnable relay and P2P scenes.
 
     ---
 
-    JSON, MessagePack, binary frames, and rkyv pass-through.
+    JSON, MessagePack, and binary frames.
 
     [:octicons-arrow-right-24: Game Data](game-data.md)
 

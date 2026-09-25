@@ -20,7 +20,7 @@ The runtime addon ships two public classes under `addons/signal_fish/`:
 | Identity | `platform` | Optional platform string. |
 | Transport | `endpoint_url` | Optional override; `connect_to_server(url)` also takes one. |
 | Transport | `auto_poll` | Default `true`; runs `poll()` from `_process`. |
-| Game data | `game_data_format` | `""` (JSON), `json`, `message_pack`, or `rkyv`. |
+| Game data | `game_data_format` | `""` (JSON), `json`, or `message_pack`. `rkyv` is refused: the server reserves it. |
 | Game data | `decode_msgpack_payloads` | Default `false`. Opt-in MessagePack decode. |
 | Limits | `max_inbound_frame_bytes` | Frames over this are dropped (~256 KiB default). |
 | Limits | `max_buffered_bytes` | Send backpressure threshold (~256 KiB default). |
@@ -70,6 +70,7 @@ func get_room_id() -> String
 func get_room_code() -> String
 func get_lobby_state() -> int                   # SFTypes.LobbyState
 func get_players() -> Array                     # Array[SFTypes.PlayerInfo]
+func get_authority_player() -> String           # "" while nobody holds authority
 func get_spectators() -> Array                  # Array[SFTypes.SpectatorInfo]
 func get_buffered_amount() -> int
 ```

@@ -360,6 +360,16 @@ func get_spectators() -> Array:
 	return _spectators.duplicate()
 
 
+## Current authority player id, or "" while no player holds authority.
+## Derived from the cached roster (issue #147), so it stays in step with
+## [signal authority_changed] exactly like [method get_players] does.
+func get_authority_player() -> String:
+	for player: SFTypesScript.PlayerInfo in _players:
+		if player.is_authority:
+			return player.id
+	return ""
+
+
 func get_buffered_amount() -> int:
 	if transport == null:
 		return 0
@@ -407,7 +417,7 @@ func send_game_data(data) -> Error:
 ## (server `websocket/connection.rs`), so the client refuses that case
 ## locally. Pair with [member SignalFishConfig.game_data_format] =
 ## [code]"message_pack"[/code] (build payloads with [code]SFMsgpack.encode
-## [/code]) or [code]"rkyv"[/code] (bring your own reader). If the server
+## [/code]; raw bytes ride the same frame). If the server
 ## downgraded the requested format (see [signal protocol_info]), the
 ## effective negotiation rules.
 func send_game_data_binary(bytes: PackedByteArray) -> Error:
@@ -418,13 +428,10 @@ func send_game_data_binary(bytes: PackedByteArray) -> Error:
 		_emit_protocol_error("send_game_data_binary requires non-empty bytes")
 		return ERR_INVALID_PARAMETER
 	var negotiated := _negotiated_game_data_format()
-	if (
-		negotiated != SFTypesScript.GameDataEncoding.MESSAGE_PACK
-		and (negotiated != SFTypesScript.GameDataEncoding.RKYV)
-	):
+	if negotiated != SFTypesScript.GameDataEncoding.MESSAGE_PACK:
 		_emit_protocol_error(
 			(
-				"send_game_data_binary requires a message_pack or rkyv game_data_format;"
+				"send_game_data_binary requires a message_pack game_data_format;"
 				+ " this connection negotiates %s" % _game_data_format_label(negotiated)
 			)
 		)
@@ -790,10 +797,11 @@ func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
 
 ## Binary frames carry game data once a binary format is negotiated
 ## (PLAN P2): [code]message_pack[/code] frames are strict envelopes decoded
-## via [code]SFBinaryFrames[/code]; [code]rkyv[/code] frames are raw payload
-## pass-through (upstream sends no envelope for them, so the sender is
-## unknowable). Anything else is dropped with a protocol error — the link
-## stays up, matching the text-path hardening. Upstream parity note: a
+## via [code]SFBinaryFrames[/code] — an [code]rkyv[/code] envelope
+## [code]encoding[/code] token (the server-reserved internal format, issue
+## #146) decodes fine and its payload passes through raw with the sender
+## identity attached. Anything else is dropped with a protocol error — the
+## link stays up, matching the text-path hardening. Upstream parity note: a
 ## json-negotiated v2 recipient only ever receives game data as TEXT
 ## (`BinaryFallbackV2`); json senders cannot originate binary frames because
 ## the server drops them, so binary on a json connection is hostile or
@@ -825,8 +833,6 @@ func _handle_binary_frame(payload: PackedByteArray) -> void:
 				"message_pack payload decode failed (%s); surfacing raw bytes" % decoded["error"]
 			)
 		game_data_binary_received.emit(from_player, frame_encoding, frame_payload)
-	elif negotiated == SFTypesScript.GameDataEncoding.RKYV:
-		game_data_binary_received.emit("", SFTypesScript.GameDataEncoding.RKYV, payload)
 	else:
 		_emit_protocol_error(
 			(
@@ -858,7 +864,9 @@ func _downgrade_game_data_format(reason: String) -> void:
 	if _effective_game_data_format == SFTypesScript.GameDataEncoding.JSON:
 		return
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.JSON
-	SFLogScript.info("%s; falling back to json" % reason, _secrets)
+	# WARN, not info (issue #146): a game that asked for binary data cannot
+	# send any after the fallback, so it must clear the default log level.
+	SFLogScript.warn("%s; falling back to json" % reason, _secrets)
 
 
 func _game_data_format_label(encoding: int) -> String:
@@ -991,6 +999,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"game_data_binary_received":
 			game_data_binary_received.emit(event.args[0], event.args[1], event.args[2])
 		&"authority_changed":
+			_apply_authority_flags(event.args[0])
 			authority_changed.emit(event.args[0], event.args[1])
 		&"authority_response":
 			authority_response.emit(event.args[0], event.args[1], event.args[2])
@@ -1179,6 +1188,23 @@ func _upsert_player(player) -> void:
 
 func _remove_player(player_id: String) -> void:
 	_remove_by_id(_players, player_id)
+
+
+## Authority is the one cached roster field that moves without a fresh
+## RoomJoined baseline (issue #147): a handoff or release only arrives as
+## `AuthorityChanged`, so without this `get_players()` kept naming the old
+## authority and a Start button stayed offered to the wrong player. Entries
+## are replaced rather than mutated so previously returned rosters keep their
+## snapshot values (issue #87 contract).
+func _apply_authority_flags(authority_player: String) -> void:
+	for index: int in _players.size():
+		var player: SFTypesScript.PlayerInfo = _players[index]
+		var flag: bool = player.id == authority_player
+		if player.is_authority == flag:
+			continue
+		var raw: Dictionary = player.raw.duplicate(true)
+		raw["is_authority"] = flag
+		_players[index] = SFTypesScript.PlayerInfo.new(raw)
 
 
 func _upsert_spectator(spectator) -> void:

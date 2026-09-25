@@ -41,10 +41,12 @@ Never invent protocol details; re-verify against the pinned commits before use.
   `Disconnected`. v3 adds the session-plan surface (`SessionPlan`, `NewPeer`,
   `Signal`, `PeerTransportStatus`).
 - Game data encodings: `json` (default/fallback), `message_pack` (opt-in
-  decode), `rkyv` (pass-through bytes only; zero-copy, not implementable in
-  pure GDScript; v2-route rkyv frames carry no envelope, so `from_player`
-  is `""`). An unsupported preference is downgraded to JSON by the server;
-  binary send/receive gates on the **effective** format.
+  decode; with decode off the payload passes through raw and the frame
+  still carries `from_player`). `rkyv` is server-reserved and never
+  negotiated: `configure()` refuses it (issue #146), while a v3 envelope
+  `encoding: rkyv` token still decodes as raw bytes. An unsupported
+  preference is downgraded to JSON by the server (logged at WARN); binary
+  send/receive gates on the **effective** format.
 - Room state machine: `Waiting -> Lobby -> Finalized`; `PlayerReady` toggles;
   single-player rooms skip Lobby; authority is requested, not auto-assigned;
   leaving drops `Lobby -> Waiting`.

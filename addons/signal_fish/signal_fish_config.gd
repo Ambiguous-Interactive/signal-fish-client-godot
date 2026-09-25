@@ -29,9 +29,12 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## game-data frames (PLAN P2): received frames surface as bytes through
 ## [signal SignalFishClient.game_data_binary_received], or decoded through
 ## [signal SignalFishClient.game_data_received] when
-## [member decode_msgpack_payloads] is on. [code]rkyv[/code] negotiates raw
-## pass-through bytes this client can never decode — only pick it when your
-## game brings its own rkyv reader (PLAN §4.6).
+## [member decode_msgpack_payloads] is on. Raw-byte games keep
+## [member decode_msgpack_payloads] off: the payload crosses the envelope
+## untouched and the frame still carries [code]from_player[/code].
+## [code]rkyv[/code] is refused here: the server reserves it and never
+## negotiates it (issue #146), so a request would silently downgrade to
+## JSON and every binary send would fail.
 @export var game_data_format: String = ""
 
 ## Opt-in MessagePack payload decode: with [code]message_pack[/code] game data
@@ -173,4 +176,12 @@ func _game_data_format_error() -> String:
 	var encoding := SFTypesScript.game_data_encoding_from_string(game_data_format)
 	if encoding == SFTypesScript.GameDataEncoding.UNKNOWN:
 		return "game_data_format is unknown: %s" % game_data_format
+	if encoding == SFTypesScript.GameDataEncoding.RKYV:
+		# The server never negotiates rkyv (issue #146): a request would
+		# downgrade to JSON and every binary send would fail. Point at the
+		# supported path instead.
+		return (
+			"game_data_format rkyv is reserved server-side and never negotiated;"
+			+ " use message_pack for binary game data"
+		)
 	return ""

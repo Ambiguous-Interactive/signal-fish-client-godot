@@ -37,7 +37,8 @@ client.authenticated.connect(func(_app, _org, _limits) -> void:
 
 - Identity: `app_id` (required), `sdk_version`, `platform`.
 - Transport: `endpoint_url` (optional override), `auto_poll` (default true).
-- Game data: `game_data_format` (`""`/`json`/`message_pack`/`rkyv`),
+- Game data: `game_data_format` (`""`/`json`/`message_pack`; `rkyv` is
+  refused: server-reserved, never negotiated),
   `decode_msgpack_payloads` (default false).
 - Limits: `max_inbound_frame_bytes`, `max_buffered_bytes` (backpressure),
   `max_inbound_packets_per_poll` (all default ~256 KiB / 64).
@@ -68,6 +69,7 @@ func get_room_id() -> String
 func get_room_code() -> String
 func get_lobby_state() -> int                   # SFTypes.LobbyState
 func get_players() -> Array                     # Array[SFTypes.PlayerInfo]
+func get_authority_player() -> String           # "" while nobody holds authority
 func get_spectators() -> Array                  # Array[SFTypes.SpectatorInfo]
 func get_buffered_amount() -> int
 ```
