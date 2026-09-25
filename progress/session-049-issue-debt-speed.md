@@ -42,10 +42,13 @@ Date: 2026-09-24
 | Scenario | Result |
 | --- | --- |
 | Subshard union check (local, concurrent) | 18 + 17 = 35 PASS, 0 overlap, both green |
-| Concurrent subshards wall | 26.1 s (behavioral was 44.3 s serial) |
-| Mode Full gate | 52.3 s -> 39.4 s; 116/116 (81 core + 18 + 17) |
-| `-BehavioralSubshard` without `-OnlyBehavioralTests` | Throws |
-| Out-of-range k (3/2) | Throws |
+| Concurrent subshards wall (local, 12 cores) | 26.1 s (behavioral was 44.3 s serial) |
+| Mode Full gate | 52.3 s -> 40.8 s; 116/116 (81 core + 18 + 17) |
+| CI self-tests job | 45 s -> 44 s (flat: per-test fork tax saturates a 4-vCPU runner) |
+| CI validate job | 28 s -> 25 s (duplicate git-diff step removed) |
+| CI static checks | 21 s -> 19 s |
+| `-BehavioralSubshard` without `-OnlyBehavioralTests` | Throws (also when count stays default) |
+| Out-of-range k (3/2, 0/1) | Throws |
 | `BehavioralSubshardCount` 0 | Throws |
 | `validate-github-config.py` (self-test + repo) | Green |
 | Docs style check | Green (93 files) |
@@ -68,7 +71,17 @@ Date: 2026-09-24
 
 - web-export-smoke is schedule/dispatch only; it must be dispatched once
   after merge to exercise the composite action in that path (docs-validation
-  exercises it on every PR).
+  exercises it on every PR, where it ran green with a warm cache).
+- CI honesty: the self-tests job stayed flat (44 s vs 45 s). The split's
+  wall win is local (12 cores); on a 4-vCPU runner the behavioral tests'
+  per-test fork tax saturates the machine, so in-job concurrency cannot
+  compress the total. Next-round ideas, in value order: slim the two
+  heaviest behavioral tests (OpenCode migration 7.0 s and the PreCommit
+  staged-index test 6.9 s on CI - each rebuilds a sandbox and re-runs the
+  python validator self-test), or give the behavioral passes dedicated
+  jobs so each gets a runner (needs branch-protection check-name updates,
+  so it is a deliberate decision, not a drive-by).
 - Left on the table (next rounds): preflight runs sequentially before the
-  local Mode Full self-tests stage (~3-5 s); CI runners are 4-vCPU, so a
-  3-way behavioral split would gain little over 2-way.
+  local Mode Full self-tests stage (~3-5 s); a 3-way behavioral split
+  would gain little on 4-vCPU runners and stays unbalanced by MIN-3's
+  inner core shard.
