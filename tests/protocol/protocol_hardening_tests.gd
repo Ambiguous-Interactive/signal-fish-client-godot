@@ -1019,21 +1019,35 @@ func _test_non_empty_wire_strings() -> void:
 			_with_overrides(_minimal_spectator_joined_data(), {"spectator_id": ""})
 		],
 		[
+			"spectator joined empty room id",
+			"SpectatorJoined",
+			_with_overrides(_minimal_spectator_joined_data(), {"room_id": ""})
+		],
+		[
+			"new spectator empty id",
+			"NewSpectatorJoined",
+			{"spectator": _with_overrides(_minimal_spectator_data(), {"id": ""})}
+		],
+		[
 			"game starting empty peer id",
 			"GameStarting",
 			{"peer_connections": [_peer_connection({"player_id": ""})]}
 		],
-		["session plan empty generation", "SessionPlan", _session_plan({"generation": ""})],
-		["session plan empty host", "SessionPlan", _session_plan({"host": ""})],
+		[
+			"session plan empty generation",
+			"SessionPlan",
+			_minimal_session_plan_data({"generation": ""})
+		],
+		["session plan empty host", "SessionPlan", _minimal_session_plan_data({"host": ""})],
 		[
 			"session plan empty direct endpoint host",
 			"SessionPlan",
-			_session_plan({"direct_endpoint": {"host": "", "port": 7777}})
+			_minimal_session_plan_data({"direct_endpoint": {"host": "", "port": 7777}})
 		],
 		[
 			"session plan empty peer id",
 			"SessionPlan",
-			_session_plan(
+			_minimal_session_plan_data(
 				{
 					"topology": "mesh",
 					"transport": "webrtc",
@@ -1059,8 +1073,8 @@ func _test_non_empty_wire_strings() -> void:
 		var label: String = test_case[0]
 		_assert_protocol_error_envelope({"type": test_case[1], "data": data}, label)
 
-	# No false positives: wire null authority keeps the "" no-authority
-	# sentinel, and free-text fields still pass empty strings through.
+	# No false positives: wire-null optionals keep their "" sentinels, and
+	# free-text fields still pass empty strings through.
 	var null_authority: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "AuthorityChanged", "data": {"authority_player": null, "you_are_authority": false}}
 	)
@@ -1068,14 +1082,24 @@ func _test_non_empty_wire_strings() -> void:
 		"authority_changed", String(null_authority.signal_name), "null authority decodes"
 	):
 		_assert_equal("", null_authority.args[0], "null authority keeps empty sentinel")
+	var absent_generation: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "Signal", "data": {"from": "p", "signal": {}}}
+	)
+	if _assert_equal(
+		"signal_received", String(absent_generation.signal_name), "absent generation decodes"
+	):
+		_assert_equal("", absent_generation.args[1], "absent generation keeps empty sentinel")
 	var empty_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "RoomJoinFailed", "data": {"reason": ""}}
 	)
-	_assert_equal("room_join_failed", String(empty_reason.signal_name), "empty reason is free text")
+	if _assert_equal(
+		"room_join_failed", String(empty_reason.signal_name), "empty reason is free text"
+	):
+		_assert_equal("", empty_reason.args[0], "empty reason passes through verbatim")
 	_done()
 
 
-func _session_plan(overrides: Dictionary) -> Dictionary:
+func _minimal_session_plan_data(overrides: Dictionary = {}) -> Dictionary:
 	var data := {
 		"generation": "gen",
 		"topology": "relay",

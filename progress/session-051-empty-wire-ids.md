@@ -17,18 +17,23 @@ Open issues, gameplay-impact order (correctness > usability > performance):
 
 Anchored to the pinned upstream types (`types.rs` @ server v0.9.1):
 
-- Identifiers are `Uuid`: `PlayerId`, `RoomId`, `SessionGeneration`,
-  `RoomOperationId`. Empty cannot deserialize upstream, and `""` collides
-  with the retired negotiated-rkyv "sender unknowable" sentinel. Rule: a
-  present empty id is malformed -> `protocol_error`, frame dropped, link
-  stays up (matches the binary path's 16-byte UUID rule).
+- Identifiers are `Uuid`: `PlayerId`, `RoomId`, `SessionGeneration` (and
+  `RoomOperationId`, whose envelopes this client does not decode - listed as
+  upstream anchoring only). Empty cannot deserialize upstream, and `""`
+  collides with the retired negotiated-rkyv "sender unknowable" sentinel.
+  Rule: a present empty id is malformed -> `protocol_error`, frame dropped,
+  link stays up (matches the binary path's 16-byte UUID rule).
 - Free-text `String` fields (`error`, `reason`, `message`, `app_name`,
   names, `room_code`, `relay_type`, ICE url entries) pass empty through:
-  upstream serde permits it and there is no sentinel ambiguity.
+  upstream serde permits it and there is no sentinel ambiguity. Non-id
+  optional strings (`connected_at` `Option<DateTime<Utc>>`,
+  `reconnection_token`) stay length-agnostic the same way: "" is meaningless
+  but collides with no sentinel.
 - Optional id fields keep their null sentinel: `AuthorityChanged.authority_player`
   wire null still decodes to `""` ("no authority"); `SpectatorLeft.room_id`
-  null -> `""`; `Signal.generation` absent -> `""` (legacy Server 0.4 plan).
-  A present empty string is refused so only null can produce the sentinel.
+  null -> `""`; `Signal.generation` absent or null -> `""` (legacy Server 0.4
+  plan). A present empty string is refused so only null/absence can produce
+  the sentinel.
 
 ## Decoder changes
 
@@ -57,11 +62,13 @@ Anchored to the pinned upstream types (`types.rs` @ server v0.9.1):
 ## Tests
 
 - `tests/protocol/protocol_hardening_tests.gd`
-  `_test_non_empty_wire_strings`: 22-case data-driven table (one per swept
-  surface, incl. replay watermarks and all four SessionPlan id shapes) plus
-  boundary positives - wire-null authority keeps the `""` sentinel and an
-  empty `RoomJoinFailed.reason` still decodes (pins the free-text boundary).
-- Red-green verified: with the decoder changes stashed, all 22 cases fail;
+  `_test_non_empty_wire_strings`: 25-case data-driven table covering every
+  swept decode surface (incl. replay watermarks, spectator ids through
+  rosters, and all four SessionPlan id shapes) plus boundary positives -
+  wire-null authority and absent signal generation keep their `""` sentinels,
+  and an empty `RoomJoinFailed.reason` still decodes verbatim (pins the
+  free-text boundary).
+- Red-green verified: with the decoder changes stashed, all 25 cases fail;
   with them applied, the suite is green.
 
 ## Docs
@@ -78,3 +85,9 @@ Anchored to the pinned upstream types (`types.rs` @ server v0.9.1):
 - `bash scripts/run-runtime-checks.sh changed` - green.
 - `pwsh -NoProfile -File scripts/agent-check.ps1` after `.llm` edits - green.
 - Red-green proof via stash + `godot protocol` suite (above).
+- Adversarial review round 1 applied: spectator-id + spectator-room-id cases
+  added (the `_has_id` validator had no test), absent-generation sentinel
+  pinned, empty-reason value asserted verbatim, direct_endpoint comment
+  re-anchored to `DirectEndpoint::from_connection_info` (src/protocol/
+  validation.rs), ready_players messages name the non-empty rule, a mirrored
+  `_has_id` in `sf_session_types.gd`, progress-note counts corrected.

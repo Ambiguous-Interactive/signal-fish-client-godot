@@ -291,7 +291,7 @@ static func validate_session_plan_info(data: Variant) -> String:
 	if dict.has("generation") and dict["generation"] != null:
 		if typeof(dict["generation"]) != TYPE_STRING:
 			return "SessionPlanInfo generation must be a string"
-		if (dict["generation"] as String).is_empty():
+		if not _has_id(dict, "generation"):
 			return "SessionPlanInfo generation must not be empty"
 	if not _has_known_enum_token(dict, "topology", TOPOLOGY_FROM_STRING):
 		return "SessionPlanInfo topology is unknown"
@@ -302,15 +302,15 @@ static func validate_session_plan_info(data: Variant) -> String:
 	if dict.has("host") and dict["host"] != null:
 		if typeof(dict["host"]) != TYPE_STRING:
 			return "SessionPlanInfo host must be a string"
-		if (dict["host"] as String).is_empty():
+		if not _has_id(dict, "host"):
 			return "SessionPlanInfo host must not be empty"
 	if dict.has("direct_endpoint") and dict["direct_endpoint"] != null:
 		if typeof(dict["direct_endpoint"]) != TYPE_DICTIONARY:
 			return "SessionPlanInfo direct_endpoint must be an object"
 		var endpoint: Dictionary = dict["direct_endpoint"]
-		# Upstream DirectEndpoint construction refuses an empty host
-		# (types.rs direct_endpoint_accepts_only_usable_direct_targets).
-		if not _has_string(endpoint, "host") or (endpoint["host"] as String).is_empty():
+		# Upstream refuses an empty host when constructing a DirectEndpoint
+		# (`DirectEndpoint::from_connection_info`, src/protocol/validation.rs).
+		if not _has_id(endpoint, "host"):
 			return "SessionPlanInfo direct_endpoint requires non-empty string host"
 		if not _is_integer_value_in_range(endpoint.get("port", 0), 1, U16_MAX):
 			return "SessionPlanInfo direct_endpoint requires port in 1..65535"
@@ -360,7 +360,7 @@ static func _validate_session_peer(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "SessionPeer must be an object"
 	var dict: Dictionary = data
-	if not _has_string(dict, "player_id") or (dict["player_id"] as String).is_empty():
+	if not _has_id(dict, "player_id"):
 		return "SessionPeer requires non-empty string player_id"
 	for key: String in ["player_name"]:
 		if not _has_string(dict, key):
@@ -373,6 +373,13 @@ static func _validate_session_peer(data: Variant) -> String:
 
 static func _has_string(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_STRING
+
+
+## A present upstream-UUID identifier (`PlayerId`/`SessionGeneration`) must be
+## non-empty: empty cannot deserialize upstream, and it would collide with the
+## retired negotiated-rkyv "" sender-unknowable sentinel (issue #149).
+static func _has_id(data: Dictionary, key: String) -> bool:
+	return _has_string(data, key) and not (data[key] as String).is_empty()
 
 
 static func _has_bool(data: Dictionary, key: String) -> bool:

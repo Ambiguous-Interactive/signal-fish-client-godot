@@ -477,8 +477,8 @@ static func _decode_signal(type_name: String, data: Dictionary, envelope: Dictio
 		if typeof(data["generation"]) != TYPE_STRING:
 			return _protocol_error("Signal generation must be a string", envelope)
 		# Upstream SessionGeneration is a Uuid: the "" sentinel means the
-		# legacy Server 0.4 plan omitted the field, never an empty token
-		# (issue #149).
+		# legacy Server 0.4 plan sent no usable generation (absent or null),
+		# never an empty token (issue #149).
 		if String(data["generation"]).is_empty():
 			return _protocol_error("Signal generation must not be empty", envelope)
 	# The relayed payload is consumer-facing passthrough: bound its nesting
@@ -515,7 +515,9 @@ static func _decode_lobby_state_changed(
 	# ready_players carries upstream PlayerId UUIDs: empty entries are
 	# off-contract (issue #149).
 	if not _array_contains_non_empty_strings(ready_players):
-		return _protocol_error("LobbyStateChanged ready_players must be strings", envelope)
+		return _protocol_error(
+			"LobbyStateChanged ready_players must be non-empty strings", envelope
+		)
 	return _event(
 		type_name,
 		&"lobby_state_changed",

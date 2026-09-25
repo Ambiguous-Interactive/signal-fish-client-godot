@@ -870,7 +870,7 @@ static func validate_room_joined_info(data: Variant) -> String:
 	# ready_players carries upstream PlayerId UUIDs: entries must be
 	# non-empty strings (issue #149).
 	if not _has_non_empty_string_array(dict, "ready_players"):
-		return "RoomJoinedInfo requires string array ready_players"
+		return "RoomJoinedInfo requires non-empty string array ready_players"
 	# Server-issued on RoomJoined/Reconnected baselines; the client echoes it
 	# back on Reconnect, so a present value must be a string (issue #72).
 	if not _is_optional_string(dict, "reconnection_token"):
