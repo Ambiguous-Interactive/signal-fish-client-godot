@@ -206,6 +206,9 @@ blank lines and lines beginning with `#`.
     JSON at Authenticate (`Error{UnsupportedGameDataFormat}` and/or the
     requested format missing from `ProtocolInfo.game_data_formats`); the
     client tracks the effective format and gates binary send/receive on it.
+    `rkyv` is reserved upstream and never negotiated (server docs/CHANGELOG),
+    so the Godot client refuses it at `configure()` (issue #146); the v3
+    `rkyv` envelope token above still decodes as raw bytes.
   - v3 (separate v3 WebSocket route only) adds mandatory non-zero `seq` (u64)
     and `epoch` (u32) stamps and allows `json`/`message_pack`/`rkyv` encoding
     tokens (`V3BinaryGameDataFrame`).

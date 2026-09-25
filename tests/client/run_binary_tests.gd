@@ -184,6 +184,28 @@ func _test_rkyv_pass_through() -> void:
 		"rkyv envelope token passes through raw"
 	)
 	client.free()
+
+	# Even with opt-in decode on, an rkyv token is not MessagePack: the
+	# decode branch is message_pack-only and the payload stays raw bytes.
+	var decode_config := _make_config()
+	decode_config.game_data_format = "message_pack"
+	decode_config.decode_msgpack_payloads = true
+	var decode_client := _make_in_room_client_with(decode_config)
+	var decode_transport: SFFakeTransportScript = decode_client.transport
+	var decode_events: Array = []
+	decode_client.game_data_binary_received.connect(
+		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
+			decode_events.append(["binary", from_player, encoding, payload])
+	)
+	decode_transport.inject_binary(
+		_v3_binary_frame(PLAYER_B, "rkyv", PackedByteArray([0xDE, 0xAD]))
+	)
+	_assert_equal(
+		[["binary", PLAYER_B, SFTypesScript.GameDataEncoding.RKYV, PackedByteArray([0xDE, 0xAD])]],
+		decode_events,
+		"rkyv envelope token stays raw with decode on"
+	)
+	decode_client.free()
 	_done()
 
 

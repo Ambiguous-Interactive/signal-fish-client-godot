@@ -417,7 +417,7 @@ func send_game_data(data) -> Error:
 ## (server `websocket/connection.rs`), so the client refuses that case
 ## locally. Pair with [member SignalFishConfig.game_data_format] =
 ## [code]"message_pack"[/code] (build payloads with [code]SFMsgpack.encode
-## [/code], or pass raw bytes through the envelope untouched). If the server
+## [/code]; raw bytes ride the same frame). If the server
 ## downgraded the requested format (see [signal protocol_info]), the
 ## effective negotiation rules.
 func send_game_data_binary(bytes: PackedByteArray) -> Error:
@@ -833,8 +833,6 @@ func _handle_binary_frame(payload: PackedByteArray) -> void:
 				"message_pack payload decode failed (%s); surfacing raw bytes" % decoded["error"]
 			)
 		game_data_binary_received.emit(from_player, frame_encoding, frame_payload)
-	elif negotiated == SFTypesScript.GameDataEncoding.RKYV:
-		game_data_binary_received.emit("", SFTypesScript.GameDataEncoding.RKYV, payload)
 	else:
 		_emit_protocol_error(
 			(
@@ -1204,7 +1202,7 @@ func _apply_authority_flags(authority_player: String) -> void:
 		var flag: bool = player.id == authority_player
 		if player.is_authority == flag:
 			continue
-		var raw: Dictionary = player.raw.duplicate()
+		var raw: Dictionary = player.raw.duplicate(true)
 		raw["is_authority"] = flag
 		_players[index] = SFTypesScript.PlayerInfo.new(raw)
 

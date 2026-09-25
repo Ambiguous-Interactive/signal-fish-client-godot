@@ -1,4 +1,4 @@
-# Session 050: Issue debt — authority flags, rkyv drift, Asset Library archive
+# Session 050: Issue debt - authority flags, rkyv drift, Asset Library archive
 
 Session branch: `session-050-issue-debt` (from `origin/main` @ `515ca68`).
 PR: one aggregate PR for the session's work.
@@ -8,20 +8,22 @@ PR: one aggregate PR for the session's work.
 Open issues, gameplay-impact order (correctness > usability > performance):
 
 - #147 (bug): `get_players()` kept stale `is_authority` flags after
-  `AuthorityChanged` — **fixed**.
+  `AuthorityChanged` - **fixed**.
 - #146 (bug,documentation): `game_data_format = "rkyv"` accepted but the
-  server never negotiates rkyv — **fixed** (refuse + warn + docs sweep).
+  server never negotiates rkyv - **fixed** (refuse + warn + docs sweep).
 - #139 (chore): Asset Library rejected the download because the
-  ref-generated archive carried the whole repo — **fixed** (`.gitattributes`).
-- #145 (performance): behavioral self-test CI wall fork-tax bound — **left
+  ref-generated archive carried the whole repo - **fixed** (`.gitattributes`).
+- #145 (performance): behavioral self-test CI wall fork-tax bound - **left
   open**, see "Deferred" below.
 
-## #147 — authority flags track `AuthorityChanged`
+## #147 - authority flags track `AuthorityChanged`
 
 - `addons/signal_fish/signal_fish_client.gd`: the `&"authority_changed"`
   branch now calls `_apply_authority_flags(authority_player)` before
   emitting. Entries are **replaced, not mutated**, so previously returned
-  rosters keep their snapshot values (issue #87 contract).
+  rosters keep their snapshot values (issue #87 contract). Wire shapes
+  pinned: transfer, release (null -> ""), unknown id (clears every flag),
+  and roster-snapshot isolation.
 - New `get_authority_player() -> String` accessor (derived from the cached
   roster) so games stop tracking the signal themselves (the reporter's
   workaround). Public method count 30 -> 31; `gdlintrc`
@@ -33,7 +35,7 @@ Open issues, gameplay-impact order (correctness > usability > performance):
   baseline, unknown-id no-op, transfer, release-to-null, departure after
   release; plus `get_authority_player` after each step).
 
-## #146 — rkyv is server-reserved, never negotiated
+## #146 - rkyv is server-reserved, never negotiated
 
 - `signal_fish_config.gd`: `_game_data_format_error()` refuses `rkyv` with
   a diagnostic naming `message_pack` (configure-time gate, the loud failure
@@ -41,16 +43,19 @@ Open issues, gameplay-impact order (correctness > usability > performance):
   `message_pack` + `decode_msgpack_payloads = false`.
 - `signal_fish_client.gd`:
   - `_downgrade_game_data_format` logs at `warn` (was `info`, which the
-    default `WARN` level filtered out) — verified visible in the binary
+    default `WARN` level filtered out) - verified visible in the binary
     suite output.
   - `send_game_data_binary` guard simplifies to
-    `negotiated != MESSAGE_PACK` (with configure refusing rkyv,
-    negotiated RKYV is unreachable: `_effective_game_data_format` is only
-    ever UNKNOWN or JSON, and downgrade only pins JSON).
+    `negotiated != MESSAGE_PACK`, and the `negotiated == RKYV` raw
+    pass-through receive branch is deleted: configure() can never produce
+    an rkyv preference (the refusal gate), so the branch was reachable
+    only by mutating a validated config's `game_data_format` after
+    `configure()` - that now gets the same loud refusal a json connection
+    gets.
   - `_handle_binary_frame` keeps the rkyv **envelope-token** decode path:
     a v3 envelope with `encoding: rkyv` surfaces raw bytes with
     `from_player` attached (the issue's "keep decoding reserved envelope
-    tokens" requirement).
+    tokens" requirement), with decode on or off.
 - `tests/fixtures/v2_server_messages.jsonl`: ProtocolInfo now advertises
   `["json","message_pack"]`, matching the pinned upstream sample
   (`tests/fixtures/upstream/v2_server_messages.jsonl`) and the live server.
@@ -63,12 +68,14 @@ Open issues, gameplay-impact order (correctness > usability > performance):
   `.llm/code-samples/gdscript-client-shape.md`.
 - Tests: configure refuses rkyv (error names `message_pack`);
   `_test_rkyv_pass_through` repurposed to pin the v3 rkyv-envelope
-  pass-through under message_pack negotiation (new `_v3_binary_frame`
-  helper builds seq/epoch-stamped envelopes).
+  pass-through under message_pack negotiation, both with decode off and
+  with decode on (the decode branch is message_pack-only, so rkyv stays
+  raw either way); new `_v3_binary_frame` helper builds seq/epoch-stamped
+  envelopes.
 - CHANGELOG: three entries (refusal + warn + archive hygiene under
   Changed; stale authority flags under Fixed).
 
-## #139 — Asset Library download hygiene
+## #139 - Asset Library download hygiene
 
 - `.gitattributes` `export-ignore` now also covers the agent instruction
   files (`AGENTS.md`, `CHATGPT.md`, `CLAUDE.md`, `CODEX.md`, `GEMINI.md`,
@@ -93,8 +100,14 @@ Open issues, gameplay-impact order (correctness > usability > performance):
 
 ## Verification
 
-- `bash scripts/run-runtime-checks.sh static` — green (gdformat, gdlint,
+- `bash scripts/run-runtime-checks.sh static` - green (gdformat, gdlint,
   private-helper check).
-- `godot` suites: `client`, `binary`, `protocol` — all green (the exit
+- `bash scripts/run-runtime-checks.sh changed` - green (includes the
+  docs-style ASCII gate the first draft of this note failed).
+- `godot` suites: `client`, `binary`, `protocol` - all green (the exit
   ObjectDB/2-resources warnings are pre-existing on main).
 - Commit-time LLM harness hooks green.
+- Adversarial review round applied: doc-comment decode inversion fixed,
+  unreachable rkyv raw branch deleted, unknown-id + snapshot coverage
+  added, `raw.duplicate(true)` hardening, protocol-fixtures.md pointer,
+  archive-content wording made exact.

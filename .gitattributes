@@ -49,9 +49,10 @@ Dockerfile  text eol=lf
 
 # Dev/test-only paths stay out of git archives (Asset Library downloads a
 # ref-generated archive; the addon must stay self-contained under addons/).
-# Users get the addon, the runnable demo, and LICENSE/README/CHANGELOG —
-# everything else (agent instruction files, tooling config, CI requirements)
-# is excluded so the download is the asset, not the whole repo (issue #139).
+# Users get the addon, the runnable demo (+ project.godot), and
+# LICENSE/README/CHANGELOG; everything else (agent instruction files,
+# tooling config, CI requirements) is excluded so the download is the
+# asset, not the whole repo (issue #139).
 /.claude       export-ignore
 /.cursor       export-ignore
 /.devcontainer export-ignore

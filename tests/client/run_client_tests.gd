@@ -706,8 +706,8 @@ func _test_presence_and_data_events() -> void:
 func _test_authority_flags_track_authority_changed() -> void:
 	# Issue #147: a handoff or release arrives only as `AuthorityChanged`, so
 	# the cached roster must re-flag without waiting for a fresh baseline.
-	# Data-driven over the wire shapes: transfer, release (null), and
-	# unknown-id (no player gets flagged).
+	# Wire shapes pinned: transfer, release (null -> ""), and an id absent
+	# from the roster (clears every flag: nobody we know holds authority).
 	var client := _make_in_room_client()
 	var fake: SFFakeTransportScript = client.transport
 	# Baseline: PLAYER_A holds authority (shared fixtures).
@@ -719,6 +719,10 @@ func _test_authority_flags_track_authority_changed() -> void:
 	)
 	_assert_flags(client, {PLAYER_A: true, PLAYER_B: false}, "joined player starts unflagged")
 
+	# Snapshot safety (issue #87 contract): a roster handed out before the
+	# handoff keeps its values when the cache is re-flagged.
+	var snapshot := client.get_players()
+
 	fake.inject_server_message(
 		{
 			"type": "AuthorityChanged",
@@ -727,6 +731,7 @@ func _test_authority_flags_track_authority_changed() -> void:
 	)
 	_assert_flags(client, {PLAYER_A: false, PLAYER_B: true}, "transfer flags the new authority")
 	_assert_equal(PLAYER_B, client.get_authority_player(), "transfer updates authority id")
+	_assert_flags_from(snapshot, {PLAYER_A: true, PLAYER_B: false}, "roster snapshot")
 
 	fake.inject_server_message(
 		{"type": "AuthorityChanged", "data": {"authority_player": null, "you_are_authority": false}}
@@ -734,17 +739,34 @@ func _test_authority_flags_track_authority_changed() -> void:
 	_assert_flags(client, {PLAYER_A: false, PLAYER_B: false}, "release clears every flag")
 	_assert_equal("", client.get_authority_player(), "release clears the authority id")
 
+	fake.inject_server_message(
+		{
+			"type": "AuthorityChanged",
+			"data":
+			{
+				"authority_player": "30000000-0000-0000-0000-000000000009",
+				"you_are_authority": false,
+			}
+		}
+	)
+	_assert_flags(client, {PLAYER_A: false, PLAYER_B: false}, "unknown id flags nobody")
+	_assert_equal("", client.get_authority_player(), "unknown id clears the authority id")
+
 	fake.inject_server_message({"type": "PlayerLeft", "data": {"player_id": PLAYER_B}})
 	_assert_flags(client, {PLAYER_A: false}, "departure after release keeps flags")
 	client.free()
 	_done()
 
 
-## Roster assertion helper for the authority-flag suite: asserts the flag map
-## against the cached roster in one call.
+## Roster assertion helpers for the authority-flag suite: map a roster to
+## its {player_id: is_authority} view, live or snapshotted.
 func _assert_flags(client: SignalFishClientScript, expected: Dictionary, label: String) -> void:
+	_assert_flags_from(client.get_players(), expected, label)
+
+
+func _assert_flags_from(roster: Array, expected: Dictionary, label: String) -> void:
 	var flags := {}
-	for player: SFTypesScript.PlayerInfo in client.get_players():
+	for player: SFTypesScript.PlayerInfo in roster:
 		flags[player.id] = player.is_authority
 	_assert_equal(expected, flags, label)
 

@@ -29,12 +29,12 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## game-data frames (PLAN P2): received frames surface as bytes through
 ## [signal SignalFishClient.game_data_binary_received], or decoded through
 ## [signal SignalFishClient.game_data_received] when
-## [member decode_msgpack_payloads] is off. For raw pass-through bytes, use
-## [code]message_pack[/code] with [member decode_msgpack_payloads] off — the
-## payload crosses the envelope untouched and the frame still carries
-## [code]from_player[/code]. [code]rkyv[/code] is refused here: the server
-## reserves it and never negotiates it (issue #146), so a request would
-## silently downgrade to JSON and every binary send would fail.
+## [member decode_msgpack_payloads] is on. Raw-byte games keep
+## [member decode_msgpack_payloads] off: the payload crosses the envelope
+## untouched and the frame still carries [code]from_player[/code].
+## [code]rkyv[/code] is refused here: the server reserves it and never
+## negotiates it (issue #146), so a request would silently downgrade to
+## JSON and every binary send would fail.
 @export var game_data_format: String = ""
 
 ## Opt-in MessagePack payload decode: with [code]message_pack[/code] game data

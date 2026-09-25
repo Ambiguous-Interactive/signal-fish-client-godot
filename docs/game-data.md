@@ -88,7 +88,7 @@ requesting it would downgrade to JSON and every binary send would fail.
 
 For raw bytes, use `message_pack` with `decode_msgpack_payloads = false`
 (see [Raw-byte pass-through](#raw-byte-pass-through)). A v3 frame whose
-envelope `encoding` token is `rkyv` still decodes — the token remains a
+envelope `encoding` token is `rkyv` still decodes - the token remains a
 reserved wire encoding, and its payload surfaces as bytes.
 
 ## Strict binary-frame decode
