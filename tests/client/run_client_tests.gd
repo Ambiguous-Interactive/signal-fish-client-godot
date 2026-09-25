@@ -733,24 +733,31 @@ func _test_authority_flags_track_authority_changed() -> void:
 	_assert_equal(PLAYER_B, client.get_authority_player(), "transfer updates authority id")
 	_assert_flags_from(snapshot, {PLAYER_A: true, PLAYER_B: false}, "roster snapshot")
 
+	# Unknown id: nothing in the roster matches, so every flag clears.
+	var unknown_id := "30000000-0000-0000-0000-000000000009"
+	fake.inject_server_message(
+		{
+			"type": "AuthorityChanged",
+			"data": {"authority_player": unknown_id, "you_are_authority": false}
+		}
+	)
+	_assert_flags(client, {PLAYER_A: false, PLAYER_B: false}, "unknown id clears every flag")
+	_assert_equal("", client.get_authority_player(), "unknown id clears the authority id")
+
+	fake.inject_server_message(
+		{
+			"type": "AuthorityChanged",
+			"data": {"authority_player": PLAYER_A, "you_are_authority": true}
+		}
+	)
+	_assert_flags(client, {PLAYER_A: true, PLAYER_B: false}, "re-transfer re-flags the roster")
+	_assert_equal(PLAYER_A, client.get_authority_player(), "re-transfer updates authority id")
+
 	fake.inject_server_message(
 		{"type": "AuthorityChanged", "data": {"authority_player": null, "you_are_authority": false}}
 	)
 	_assert_flags(client, {PLAYER_A: false, PLAYER_B: false}, "release clears every flag")
 	_assert_equal("", client.get_authority_player(), "release clears the authority id")
-
-	fake.inject_server_message(
-		{
-			"type": "AuthorityChanged",
-			"data":
-			{
-				"authority_player": "30000000-0000-0000-0000-000000000009",
-				"you_are_authority": false,
-			}
-		}
-	)
-	_assert_flags(client, {PLAYER_A: false, PLAYER_B: false}, "unknown id flags nobody")
-	_assert_equal("", client.get_authority_player(), "unknown id clears the authority id")
 
 	fake.inject_server_message({"type": "PlayerLeft", "data": {"player_id": PLAYER_B}})
 	_assert_flags(client, {PLAYER_A: false}, "departure after release keeps flags")

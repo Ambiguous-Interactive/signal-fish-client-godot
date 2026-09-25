@@ -17,10 +17,6 @@ extends RefCounted
 ## - Strictness matches the rust client: map keys are strings, fields must
 ##   appear at most once, unknown fields are rejected, integer stamps may use
 ##   any marker width that carries the value, and trailing bytes are malformed.
-##
-## On the v2 route, [code]json[/code]/[code]rkyv[/code] frames are the raw
-## payload bytes with no envelope; the client handles that pass-through
-## before consulting this decoder.
 
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 

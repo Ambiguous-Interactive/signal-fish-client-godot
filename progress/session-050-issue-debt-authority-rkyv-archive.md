@@ -31,9 +31,12 @@ Open issues, gameplay-impact order (correctness > usability > performance):
   crossed 1400 with the cache helper + accessor).
 - API maps updated: `docs/client.md`,
   `.llm/code-samples/gdscript-client-shape.md`.
-- Tests: `_test_authority_flags_track_authority_changed` (data-driven:
-  baseline, unknown-id no-op, transfer, release-to-null, departure after
-  release; plus `get_authority_player` after each step).
+- Tests: `_test_authority_flags_track_authority_changed` walks
+  baseline -> join -> roster snapshot -> transfer -> unknown id (clears
+  every flag) -> re-transfer -> release-to-null -> departure, asserting
+  both the flag map and `get_authority_player()` after every step, and
+  that a roster handed out before the handoff keeps its values (snapshot
+  isolation, issue #87 contract).
 
 ## #146 - rkyv is server-reserved, never negotiated
 
@@ -101,13 +104,18 @@ Open issues, gameplay-impact order (correctness > usability > performance):
 ## Verification
 
 - `bash scripts/run-runtime-checks.sh static` - green (gdformat, gdlint,
-  private-helper check).
+  private-helper check). Round 1 caught a gdformat violation the first
+  verification pass missed (a `tail` pipe masked the shard failure); the
+  final check greps for every failure keyword, not just the tail.
 - `bash scripts/run-runtime-checks.sh changed` - green (includes the
   docs-style ASCII gate the first draft of this note failed).
-- `godot` suites: `client`, `binary`, `protocol` - all green (the exit
-  ObjectDB/2-resources warnings are pre-existing on main).
+- `godot` suites: `client`, `binary`, `protocol`, `reconnect`,
+  `transport` - all green (the exit ObjectDB/2-resources warnings are
+  pre-existing on main).
 - Commit-time LLM harness hooks green.
-- Adversarial review round applied: doc-comment decode inversion fixed,
-  unreachable rkyv raw branch deleted, unknown-id + snapshot coverage
-  added, `raw.duplicate(true)` hardening, protocol-fixtures.md pointer,
-  archive-content wording made exact.
+- Adversarial review rounds 1-2 applied: decode doc inversion fixed,
+  unreachable rkyv raw branch deleted (with its stale `sf_binary_frames`
+  doc note), unknown-id + snapshot + decode-on coverage added,
+  `raw.duplicate(true)` hardening, protocol-fixtures.md pointer,
+  archive-content wording made exact, test order re-sequenced so every
+  injection discriminates.
