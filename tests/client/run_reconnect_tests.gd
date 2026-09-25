@@ -121,19 +121,40 @@ func _test_manual_reconnect_guards_and_wire_bytes() -> void:
 	_assert_equal(ERR_INVALID_PARAMETER, client.reconnect("", ROOM_ID, TOKEN_V1), "empty player_id")
 	_assert_equal(ERR_INVALID_PARAMETER, client.reconnect(PLAYER_A, "", TOKEN_V1), "empty room_id")
 	_assert_equal(ERR_INVALID_PARAMETER, client.reconnect(PLAYER_A, ROOM_ID, ""), "empty token")
+	# Issue #151: ids are canonical UUIDs, so a placeholder or off-shape
+	# identity is refused here, before any dial (and before the retained
+	# reconnect identity is overwritten).
+	_assert_equal(
+		ERR_INVALID_PARAMETER,
+		client.reconnect("1ABCDEF0-0000-0000-0000-000000000001", ROOM_ID, TOKEN_V1),
+		"uppercase player id refused"
+	)
+	_assert_equal(
+		ERR_INVALID_PARAMETER,
+		client.reconnect("p1", ROOM_ID, TOKEN_V1),
+		"placeholder player id refused"
+	)
+	_assert_equal(
+		ERR_INVALID_PARAMETER,
+		client.reconnect(PLAYER_A, "{20000000-0000-0000-0000-000000000001}", TOKEN_V1),
+		"braced room id refused"
+	)
+	# The refusal names the offending field (issue #151 diagnostics).
+	_assert_string_contains(errors[4], "player_id", "player refusal names the field")
+	_assert_string_contains(errors[6], "room_id", "room refusal names the field")
 	var no_endpoint := SignalFishConfigScript.new()
 	no_endpoint.app_id = "test-app"
 	_assert_equal(OK, client.configure(no_endpoint), "configure without endpoint")
 	_assert_equal(
 		ERR_INVALID_PARAMETER, client.reconnect(PLAYER_A, ROOM_ID, TOKEN_V1), "no endpoint"
 	)
-	_assert_equal(5, errors.size(), "each refused reconnect emits protocol_error")
+	_assert_equal(8, errors.size(), "each refused reconnect emits protocol_error")
 
 	_assert_equal(OK, client.configure(_make_config()), "reconfigure with endpoint")
 	client.transport = SFFakeTransportScript.new()
 	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
 	_assert_equal(ERR_BUSY, client.reconnect(PLAYER_A, ROOM_ID, TOKEN_V1), "while connected")
-	_assert_equal(6, errors.size(), "busy reconnect emits protocol_error")
+	_assert_equal(9, errors.size(), "busy reconnect emits protocol_error")
 	client.free()
 
 	# Upstream parity: every dial re-authenticates; dials stay silent so join-on-auth cannot race.

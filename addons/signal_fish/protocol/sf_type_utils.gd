@@ -5,6 +5,33 @@ extends RefCounted
 ## MessagePack codec, and send-side JSON-shape checks.
 const MAX_MESSAGE_DEPTH := 16
 
+const _UUID_HEX_DIGITS := "0123456789abcdef"
+
+
+## Canonical text-path identifier gate (issue #151): every upstream identifier
+## (`PlayerId`, `RoomId`, `SessionGeneration`) is a `uuid::Uuid`, and serde
+## serializes that as lowercase hyphenated text - the only spelling a
+## conforming server can put on the wire. Upstream's own text-path precedent
+## for client-supplied UUID text (`canonical_room_operation_id`, server
+## `messages.rs`) rejects everything else, and the binary path formats its
+## 16-byte UUIDs to exactly this string, so both paths decode one id to one
+## value. Parse-acceptance of braced/urn/uppercase spellings never reaches the
+## wire and stays refused.
+static func is_canonical_uuid_text(value: Variant) -> bool:
+	if typeof(value) != TYPE_STRING:
+		return false
+	var text := value as String
+	if text.length() != 36:
+		return false
+	for index in range(36):
+		var character := text[index]
+		if index == 8 or index == 13 or index == 18 or index == 23:
+			if character != "-":
+				return false
+		elif _UUID_HEX_DIGITS.find(character) == -1:
+			return false
+	return true
+
 
 static func enum_value(mapping: Dictionary, value: Variant, unknown_value: int) -> int:
 	if typeof(value) != TYPE_STRING:

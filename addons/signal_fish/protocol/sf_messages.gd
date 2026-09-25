@@ -138,8 +138,17 @@ static func ping() -> Dictionary:
 	return SFEnvelopeScript.message("Ping")
 
 
+## Reconnect to a room after a drop (upstream `ClientMessage::Reconnect`).
+## [param player_id] and [param room_id] are server-issued UUIDs; like every
+## identifier surface they must be canonical lowercase hyphenated UUID text,
+## so a corrupt or placeholder value fails here instead of on the server
+## (issue #151). [param auth_token] is opaque free text.
 static func reconnect(player_id: String, room_id: String, auth_token: String) -> Dictionary:
 	var data: Dictionary = {}
+	if not SFTypeUtils.is_canonical_uuid_text(player_id):
+		return _invalid_message("Reconnect", "player_id must be a lowercase hyphenated UUID", data)
+	if not SFTypeUtils.is_canonical_uuid_text(room_id):
+		return _invalid_message("Reconnect", "room_id must be a lowercase hyphenated UUID", data)
 	data["player_id"] = player_id
 	data["room_id"] = room_id
 	data["auth_token"] = auth_token
@@ -180,19 +189,30 @@ static func start_game() -> Dictionary:
 ## [code]{"IceCandidate": candidate}[/code]. [param generation] is the
 ## generation of the sender's latest authoritative session plan; the pinned
 ## server requires it, legacy Server 0.4 plans have none, so an empty string
-## omits the field (rust-client parity). JSON-shape check: nulls inside
-## nested arrays/objects are refused locally (send an empty-string sentinel
-## or omit the entry) even though upstream forwards them.
+## omits the field (rust-client parity). [param to] and a present
+## [param generation] must be canonical lowercase hyphenated UUID text,
+## symmetric with the decode gate (issue #151). JSON-shape check: nulls
+## inside nested arrays/objects are refused locally (send an empty-string
+## sentinel or omit the entry) even though upstream forwards them.
 static func peer_signal(
 	to: String, generation: Variant = null, signal_payload: Variant = null
 ) -> Dictionary:
 	var data: Dictionary = {}
-	if to.is_empty():
-		return _invalid_message("Signal", "to must not be empty", data)
+	if not SFTypeUtils.is_canonical_uuid_text(to):
+		return _invalid_message("Signal", "to must be a lowercase hyphenated UUID", data)
 	data["to"] = to
-	var error := _add_optional_string(data, "generation", generation)
-	if not error.is_empty():
-		return _invalid_message("Signal", error, data)
+	if generation != null:
+		if typeof(generation) != TYPE_STRING and typeof(generation) != TYPE_STRING_NAME:
+			return _invalid_message(
+				"Signal", "generation must be a lowercase hyphenated UUID string", data
+			)
+		var generation_value := String(generation)
+		if not generation_value.is_empty():
+			if not SFTypeUtils.is_canonical_uuid_text(generation_value):
+				return _invalid_message(
+					"Signal", "generation must be a lowercase hyphenated UUID string", data
+				)
+			data["generation"] = generation_value
 	if not _is_json_value(signal_payload):
 		return _invalid_message("Signal", "signal payload is required and must be JSON data", data)
 	data["signal"] = signal_payload

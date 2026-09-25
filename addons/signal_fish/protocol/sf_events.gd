@@ -93,14 +93,18 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 		"PlayerLeft":
 			if not _has_string(data, "player_id"):
 				return _protocol_error("PlayerLeft requires player_id", envelope)
-			if String(data["player_id"]).is_empty():
-				return _protocol_error("PlayerLeft player_id must not be empty", envelope)
+			if not SFTypeUtils.is_canonical_uuid_text(data["player_id"]):
+				return _protocol_error(
+					"PlayerLeft player_id must be a lowercase hyphenated UUID", envelope
+				)
 			return _event(type_name, &"player_left", [String(data["player_id"])], envelope)
 		"GameData":
 			if not _has_string(data, "from_player") or not data.has("data"):
 				return _protocol_error("GameData requires from_player and data", envelope)
-			if String(data["from_player"]).is_empty():
-				return _protocol_error("GameData from_player must not be empty", envelope)
+			if not SFTypeUtils.is_canonical_uuid_text(data["from_player"]):
+				return _protocol_error(
+					"GameData from_player must be a lowercase hyphenated UUID", envelope
+				)
 			# The payload tree is consumer-facing passthrough: bound its
 			# nesting and refuse non-finite numbers (issue #88).
 			var game_data_payload_error := SFTypeUtils.passthrough_payload_error(data["data"])
@@ -124,11 +128,13 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 				return _protocol_error(
 					"AuthorityChanged authority_player must be a string", envelope
 				)
-			# Wire null maps to the "" no-authority sentinel; a present empty
-			# string is off-contract (upstream Option<PlayerId>, issue #149).
-			if authority_value != null and String(authority_value).is_empty():
+			# Wire null maps to the "" no-authority sentinel; a present value
+			# must be canonical UUID text (upstream Option<PlayerId>,
+			# issues #149/#151).
+			if authority_value != null and not SFTypeUtils.is_canonical_uuid_text(authority_value):
 				return _protocol_error(
-					"AuthorityChanged authority_player must not be empty", envelope
+					"AuthorityChanged authority_player must be a lowercase hyphenated UUID",
+					envelope
 				)
 			var authority_player := "" if authority_value == null else String(authority_value)
 			return _event(
@@ -186,8 +192,10 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 		"NewPeer":
 			if not _has_string(data, "peer_id") or not _has_bool(data, "you_initiate"):
 				return _protocol_error("NewPeer requires peer_id and you_initiate", envelope)
-			if String(data["peer_id"]).is_empty():
-				return _protocol_error("NewPeer peer_id must not be empty", envelope)
+			if not SFTypeUtils.is_canonical_uuid_text(data["peer_id"]):
+				return _protocol_error(
+					"NewPeer peer_id must be a lowercase hyphenated UUID", envelope
+				)
 			return _event(
 				type_name,
 				&"new_peer",
@@ -209,8 +217,10 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 				return _protocol_error(
 					"PeerTransportStatus requires peer_id and connected", envelope
 				)
-			if String(data["peer_id"]).is_empty():
-				return _protocol_error("PeerTransportStatus peer_id must not be empty", envelope)
+			if not SFTypeUtils.is_canonical_uuid_text(data["peer_id"]):
+				return _protocol_error(
+					"PeerTransportStatus peer_id must be a lowercase hyphenated UUID", envelope
+				)
 			if (
 				SFSessionTypesScript.transport_kind_from_string(data.get("transport", ""))
 				== SFSessionTypesScript.TransportKind.UNKNOWN
@@ -245,8 +255,10 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 		"PlayerReconnected":
 			if not _has_string(data, "player_id"):
 				return _protocol_error("PlayerReconnected requires player_id", envelope)
-			if String(data["player_id"]).is_empty():
-				return _protocol_error("PlayerReconnected player_id must not be empty", envelope)
+			if not SFTypeUtils.is_canonical_uuid_text(data["player_id"]):
+				return _protocol_error(
+					"PlayerReconnected player_id must be a lowercase hyphenated UUID", envelope
+				)
 			return _event(type_name, &"player_reconnected", [String(data["player_id"])], envelope)
 		"SpectatorJoined":
 			return _decode_spectator_joined(type_name, data, envelope)
@@ -266,13 +278,15 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			)
 		"SpectatorLeft":
 			# room_id is an upstream Option<RoomId> UUID: present values must be
-			# non-empty; null means "not in a room" and decodes to "" (issue
-			# #149). room_code is free text.
+			# canonical UUID text; null means "not in a room" and decodes to ""
+			# (issues #149/#151). room_code is free text.
 			if data.has("room_id") and data["room_id"] != null:
 				if typeof(data["room_id"]) != TYPE_STRING:
 					return _protocol_error("SpectatorLeft room_id must be a string", envelope)
-				if String(data["room_id"]).is_empty():
-					return _protocol_error("SpectatorLeft room_id must not be empty", envelope)
+				if not SFTypeUtils.is_canonical_uuid_text(data["room_id"]):
+					return _protocol_error(
+						"SpectatorLeft room_id must be a lowercase hyphenated UUID", envelope
+					)
 			if (
 				data.has("room_code")
 				and data["room_code"] != null
@@ -334,9 +348,10 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 		"SpectatorDisconnected":
 			if not _has_string(data, "spectator_id"):
 				return _protocol_error("SpectatorDisconnected requires spectator_id", envelope)
-			if String(data["spectator_id"]).is_empty():
+			if not SFTypeUtils.is_canonical_uuid_text(data["spectator_id"]):
 				return _protocol_error(
-					"SpectatorDisconnected spectator_id must not be empty", envelope
+					"SpectatorDisconnected spectator_id must be a lowercase hyphenated UUID",
+					envelope
 				)
 			var disconnected_reason_error := SFTypesScript.validate_optional_spectator_reason(
 				data, "reason", "SpectatorDisconnected"
@@ -443,11 +458,14 @@ static func _decode_game_data_binary(
 		)
 	if String(data["encoding"]).is_empty():
 		return _protocol_error("GameDataBinary encoding must not be empty", envelope)
-	# The binary-frame path enforces a 16-byte UUID, so a text-form frame with
-	# an empty sender is off-contract and would collide with the retired
-	# negotiated-rkyv "" sender-unknowable sentinel (issue #149).
-	if String(data["from_player"]).is_empty():
-		return _protocol_error("GameDataBinary from_player must not be empty", envelope)
+	# The binary-frame path enforces a 16-byte UUID and formats it as
+	# canonical lowercase hyphenated text, so the text-form frame must be the
+	# same shape (empty collided with the retired negotiated-rkyv ""
+	# sender-unknowable sentinel, issue #149; shape, issue #151).
+	if not SFTypeUtils.is_canonical_uuid_text(data["from_player"]):
+		return _protocol_error(
+			"GameDataBinary from_player must be a lowercase hyphenated UUID", envelope
+		)
 	var payload_result := SFBinaryCodecScript.decode_payload(data["payload"])
 	if not payload_result["ok"]:
 		return _protocol_error(payload_result["error"], envelope)
@@ -471,16 +489,18 @@ static func _decode_game_data_binary(
 static func _decode_signal(type_name: String, data: Dictionary, envelope: Dictionary) -> RefCounted:
 	if not _has_string(data, "from") or not data.has("signal"):
 		return _protocol_error("Signal requires from and signal", envelope)
-	if String(data["from"]).is_empty():
-		return _protocol_error("Signal from must not be empty", envelope)
+	if not SFTypeUtils.is_canonical_uuid_text(data["from"]):
+		return _protocol_error("Signal from must be a lowercase hyphenated UUID", envelope)
 	if data.has("generation") and data["generation"] != null:
 		if typeof(data["generation"]) != TYPE_STRING:
 			return _protocol_error("Signal generation must be a string", envelope)
 		# Upstream SessionGeneration is a Uuid: the "" sentinel means the
 		# legacy Server 0.4 plan sent no usable generation (absent or null),
-		# never an empty token (issue #149).
-		if String(data["generation"]).is_empty():
-			return _protocol_error("Signal generation must not be empty", envelope)
+		# never an off-shape token (issues #149/#151).
+		if not SFTypeUtils.is_canonical_uuid_text(data["generation"]):
+			return _protocol_error(
+				"Signal generation must be a lowercase hyphenated UUID", envelope
+			)
 	# The relayed payload is consumer-facing passthrough: bound its nesting
 	# and refuse non-finite numbers (issue #88).
 	var signal_payload_error := SFTypeUtils.passthrough_payload_error(data["signal"])
@@ -512,11 +532,11 @@ static func _decode_lobby_state_changed(
 		)
 	):
 		return _protocol_error("LobbyStateChanged lobby_state is unknown", envelope)
-	# ready_players carries upstream PlayerId UUIDs: empty entries are
-	# off-contract (issue #149).
-	if not _array_contains_non_empty_strings(ready_players):
+	# ready_players carries upstream PlayerId UUIDs: entries must be
+	# canonical UUID text (issues #149/#151).
+	if not _array_contains_canonical_uuids(ready_players):
 		return _protocol_error(
-			"LobbyStateChanged ready_players must be non-empty strings", envelope
+			"LobbyStateChanged ready_players must be lowercase hyphenated UUIDs", envelope
 		)
 	return _event(
 		type_name,
@@ -678,8 +698,8 @@ static func _string_or_empty(value: Variant) -> String:
 	return String(value)
 
 
-static func _array_contains_non_empty_strings(values: Array) -> bool:
+static func _array_contains_canonical_uuids(values: Array) -> bool:
 	for value: Variant in values:
-		if typeof(value) != TYPE_STRING or (value as String).is_empty():
+		if not SFTypeUtils.is_canonical_uuid_text(value):
 			return false
 	return true

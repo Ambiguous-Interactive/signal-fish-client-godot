@@ -178,9 +178,9 @@ func _test_wrong_typed_array_entries_round_trip() -> void:
 	_assert_equal(7, round_tripped_spectators[1], "spectator junk passes through")
 
 	var spectator_roster_data := {
-		"room_id": "r1",
+		"room_id": "20000000-0000-0000-0000-000000000001",
 		"room_code": "ABC123",
-		"spectator_id": "s1",
+		"spectator_id": "30000000-0000-0000-0000-000000000001",
 		"game_name": "reef-rally",
 		"current_players": ["junk", {"id": "a", "name": "Alice"}],
 		"current_spectators": [],
@@ -202,7 +202,7 @@ func _bool_sites() -> Array:
 			"PlayerInfo.is_authority",
 			SFTypesScript.PlayerInfo,
 			"is_authority",
-			{"id": "p1", "name": "Alice", "connected_at": "now"},
+			{"id": "10000000-0000-0000-0000-000000000001", "name": "Alice", "connected_at": "now"},
 			"connected_at",
 			"now",
 		],
@@ -210,7 +210,7 @@ func _bool_sites() -> Array:
 			"PlayerInfo.is_ready",
 			SFTypesScript.PlayerInfo,
 			"is_ready",
-			{"id": "p1", "name": "Alice", "connected_at": "now"},
+			{"id": "10000000-0000-0000-0000-000000000001", "name": "Alice", "connected_at": "now"},
 			"connected_at",
 			"now",
 		],
@@ -242,7 +242,11 @@ func _bool_sites() -> Array:
 			"PeerConnectionInfo.is_authority",
 			SFTypesScript.PeerConnectionInfo,
 			"is_authority",
-			{"player_id": "p1", "player_name": "Alice", "relay_type": "websocket"},
+			{
+				"player_id": "10000000-0000-0000-0000-000000000001",
+				"player_name": "Alice",
+				"relay_type": "websocket"
+			},
 			"relay_type",
 			"websocket",
 		],
@@ -266,7 +270,11 @@ func _bool_sites() -> Array:
 			"SessionPeerInfo.is_authority",
 			SFSessionTypesScript.SessionPeerInfo,
 			"is_authority",
-			{"player_id": "p1", "player_name": "Alice", "initiate": true},
+			{
+				"player_id": "10000000-0000-0000-0000-000000000001",
+				"player_name": "Alice",
+				"initiate": true
+			},
 			"initiate",
 			true,
 		],
@@ -274,7 +282,7 @@ func _bool_sites() -> Array:
 			"SessionPeerInfo.initiate",
 			SFSessionTypesScript.SessionPeerInfo,
 			"initiate",
-			{"player_id": "p1", "player_name": "Alice"},
+			{"player_id": "10000000-0000-0000-0000-000000000001", "player_name": "Alice"},
 			null,
 			null,
 		],
@@ -282,7 +290,7 @@ func _bool_sites() -> Array:
 			"NewPeerInfo.you_initiate",
 			SFSessionTypesScript.NewPeerInfo,
 			"you_initiate",
-			{"peer_id": "p1"},
+			{"peer_id": "10000000-0000-0000-0000-000000000001"},
 			null,
 			null,
 		],
@@ -290,7 +298,7 @@ func _bool_sites() -> Array:
 			"PeerTransportStatusInfo.connected",
 			SFSessionTypesScript.PeerTransportStatusInfo,
 			"connected",
-			{"peer_id": "p1"},
+			{"peer_id": "10000000-0000-0000-0000-000000000001"},
 			null,
 			null,
 		],
@@ -395,7 +403,7 @@ func _int_sites() -> Array:
 
 func _minimal_room_joined() -> Dictionary:
 	return {
-		"room_id": "r1",
+		"room_id": "20000000-0000-0000-0000-000000000001",
 		"room_code": "ABC123",
 		"player_id": "p1",
 		"game_name": "reef-rally",

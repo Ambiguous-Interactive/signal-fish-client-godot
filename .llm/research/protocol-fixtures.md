@@ -225,8 +225,14 @@ blank lines and lines beginning with `#`.
   omission or JSON `null` to mean "no value"; an empty `error_code`, spectator
   reason, binary encoding, connection info type/transport, or protocol game
   data format is malformed. Identifier fields (`PlayerId`, `RoomId`,
-  `SessionGeneration`) are UUIDs upstream, so a present empty id is malformed
-  too (issue #149), while free-text `String` fields accept empty verbatim.
+  `SessionGeneration`) are UUIDs upstream and stricter still: a present id
+  must be canonical lowercase hyphenated UUID text (issue #151) - empty is
+  malformed too (issue #149), and simple/braced/urn/uppercase spellings are
+  serde parse-acceptance only, never wire forms (the server re-serializes
+  each id it relays through the typed `Uuid`; its `canonical_room_operation_id`
+  module likewise refuses non-canonical client text). Decoders refuse with
+  `protocol_error`; the outbound `Reconnect`/`Signal` builders gate the same
+  shape. Free-text `String` fields accept empty verbatim.
 - `ConnectionInfo.to_dict()` returns a canonical dictionary for known
   connection types, normalizing accepted inbound integral JSON numbers to Godot
   `int` values and omitting optional JSON `null` fields so decoded connection
