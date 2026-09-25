@@ -169,6 +169,39 @@ Q&A), `git` (mcp-server-git), `fetch` (mcp-server-fetch), and `playwright`
   from the installed editor's own version string (`4.3.stable`), never from
   string-munging the release tag alone.
 
+## Cross-tool contracts (verify empirically, pin with tests)
+
+These failure classes were each found by an adversarial reviewer or a live
+failure, fixed once, and pinned by a test. When touching this tooling,
+assume the contract, then re-verify with the real tool:
+
+- **Checksum identity.** `sha256sum -c` resolves the names listed in a
+  checksums manifest against the downloaded file's own name. Download the
+  asset under its canonical manifest name - never a shorthand like
+  `tool.tar.gz` - or verification is impossible to pass (or silently
+  vacuous). Pinned by a static suite assertion that the `--output` name
+  equals the grepped manifest entry.
+- **awk exit statuses are decided in END.** A main-rule `exit N` still runs
+  the END block, and an `exit` there overrides the code. Compute a flag in
+  the main rules and exit in END only. Also: mawk's alternation
+  `sub(/a|b/, "", s)` can misfire where two sequential subs are exact -
+  prefer two subs.
+- **`node -e` argv slots.** `node -e 'script' a b` places script arguments
+  at `process.argv[1]`/`[2]` as plain strings - not an object, and argv[0]
+  is node itself.
+- **MCP client environment contracts** (see "MCP Servers" above): Claude
+  Code expands env maps but does not inherit arbitrary parent environment;
+  Nanocoder keys full inheritance off the map's presence; VS Code converts
+  only bare `${VAR}` in env values and nothing in remote headers; Codex
+  forwards a sanitized environment unless `env_vars` allows names. Re-check
+  these whenever a client ships a major release, and headless/container
+  flags (`--headless`, `--no-sandbox`) whenever a GUI-adjacent server is
+  added.
+- **Root-created HOME paths.** A root RUN step that creates any path under
+  the container user's HOME must chown the whole created subtree back
+  (parent directories included) or later user-level writes fail with
+  EACCES.
+
 ## Validation
 
 After editing `.devcontainer/**`, run:

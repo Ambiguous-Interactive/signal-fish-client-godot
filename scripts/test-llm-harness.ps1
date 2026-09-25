@@ -2357,6 +2357,19 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
             -DiagnosticPattern $requirement.Diagnostic
     }
 
+    # Checksum identity: sha256sum -c resolves the names listed in the
+    # checksums file against the downloaded file's own name, so the curl
+    # --output target must be exactly the asset name the grep extracts.
+    # (A shorthand output name made verification impossible to pass.)
+    $downloadedAsset = [regex]::Match($dockerfile, '--output "/tmp/([^"]+\.tar\.gz)"').Groups[1].Value
+    $greppedAsset = [regex]::Match($dockerfile, 'grep "([^"]+)" /tmp/gh-mcp-checksums\.txt').Groups[1].Value
+    if ($downloadedAsset -eq '' -or $greppedAsset -eq '') {
+        throw 'Dockerfile must download the GitHub MCP archive to /tmp and grep the checksums file for the asset name.'
+    }
+    if ($downloadedAsset -ne $greppedAsset) {
+        throw ("Checksum identity mismatch: --output downloads '{0}' but the checksum grep verifies '{1}'." -f $downloadedAsset, $greppedAsset)
+    }
+
     # Secret plumbing: the container env loads .env.local at create time and
     # both post hooks drive the new installers.
     Assert-TextMatches `
