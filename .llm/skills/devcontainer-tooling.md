@@ -1,6 +1,6 @@
 ---
-description: Use when changing the VS Code dev container, installed tools, shell profiles, or post-create/post-start setup.
-triggers: devcontainer, container, codex, opencode, nanocoder, claude, agent cli, cli, post-create, postcreate, post-start, poststart, powershell profile, pwsh profile, PSReadLine, toolchain
+description: Use when changing the VS Code dev container, installed tools, MCP servers, shell profiles, or post-create/post-start setup.
+triggers: devcontainer, container, codex, opencode, nanocoder, claude, agent cli, cli, post-create, postcreate, post-start, poststart, powershell profile, pwsh profile, PSReadLine, toolchain, mcp, mcp servers, godot-mcp, playwright-mcp, github-mcp-server, context7, deepwiki, env file, secrets
 category: Tooling
 ---
 
@@ -9,7 +9,8 @@ category: Tooling
 ## Trigger
 
 Use this skill when changing `.devcontainer/**`, installed command-line tools,
-PowerShell profile behavior, or post-create/post-start setup.
+MCP server wiring, PowerShell profile behavior, or post-create/post-start
+setup.
 
 ## Placement Rules
 
@@ -94,6 +95,59 @@ PowerShell profile behavior, or post-create/post-start setup.
   emit errors if PSReadLine is already loaded, preloaded as an assembly by the
   VS Code PowerShell extension, missing, or too old for optional settings.
 
+## MCP Servers
+
+The dev container seeds seven MCP servers into every agent CLI (claude,
+opencode, nanocoder, codex, and the VS Code agent host): `godot`
+(@coding-solo/godot-mcp driving the installed headless editor via
+`GODOT_PATH`), `github` (official github-mcp-server binary), `context7`
+(remote docs lookup), `deepwiki` (remote repo Q&A), `git`
+(mcp-server-git), `fetch` (mcp-server-fetch), and `playwright`
+(@playwright/mcp for web-export browser work).
+
+- Secret invariant: values live only in the process environment.
+  `runArgs: ["--env-file", ".env.local"]` loads the git-ignored `.env.local`
+  (template: `.env.example`) into the container at create time, and every
+  committed config references secrets by NAME only - `${VAR}` expansion in
+  `.mcp.json`, `{env:VAR}` in `opencode.json`, and `bearer_token_env_var` /
+  inherited-env in the codex managed block. Nothing writes a secret value to
+  disk, and the doctor prints only variable names and set/unset state.
+- One committed file, three clients: repo-root `.mcp.json` is read natively
+  by Claude Code (project scope), Nanocoder (project scope), and the VS Code
+  agent host. Remote entries carry BOTH `type` (Claude/VS Code) and
+  `transport` (Nanocoder); Claude Code ignores the extra key (verified).
+- OpenCode v2 reads `opencode.json` with the v2 schema (`mcp.servers.<name>`,
+  `environment`, `disabled`) - not the v1 `mcp.<name>` shape.
+- Codex has no env-expanding config format, so
+  `.devcontainer/seed-mcp-config.sh` writes a marker-delimited managed block
+  into `~/.codex/config.toml` (user-level: no project-trust prompt). The
+  block is regenerated idempotently; content outside the markers is
+  preserved; unmanaged tables with managed names and corrupted blocks
+  (begin marker without end marker) are refused instead of rewritten.
+- `.devcontainer/mcp-shims/sf-github-mcp.sh` renames the repo's
+  `GITHUB_MCP_PAT` convention onto github-mcp-server's canonical
+  `GITHUB_PERSONAL_ACCESS_TOKEN` at launch time and defaults
+  `GITHUB_READ_ONLY=1` (opt out with `GITHUB_READ_ONLY=0`); with no token it
+  fails loudly with an actionable message instead of starting unauthenticated.
+- Install split follows the placement rules above: the Dockerfile installs
+  the non-Node servers (github-mcp-server binary, checksum-verified against
+  upstream `checksums.txt`; pipx `mcp-server-git` / `mcp-server-fetch`), and
+  `.devcontainer/install-mcp-servers.sh` (post-create strict, post-start
+  warn-only via `--update`) installs the npm ones with pinned concrete specs
+  (`GODOT_MCP_NPM_SPEC`, `PLAYWRIGHT_MCP_NPM_SPEC`). Offline skip logic
+  compares npm's global state against the pinned spec - no registry probe.
+- Playwright Chromium is installed (best-effort, install mode only,
+  `SF_MCP_SKIP_PLAYWRIGHT_BROWSER=1` to skip) with @playwright/mcp's own
+  bundled playwright CLI, because its Chromium revision is independent of
+  the repo's pinned `playwright` package used by the web-export smoke test
+  (single pin site: `.github/actions/playwright-chromium`).
+- `.devcontainer/install-godot-templates.sh` installs the web export
+  templates so the repo's only export preset ("Web") works locally. The
+  ~900 MB upstream archive is downloaded through a BuildKit cache mount and
+  only `templates/web_*` is extracted; the target directory name is derived
+  from the installed editor's own version string (`4.3.stable`), never from
+  string-munging the release tag alone.
+
 ## Validation
 
 After editing `.devcontainer/**`, run:
@@ -112,3 +166,18 @@ The harness self-tests statically check the agent CLI installer (packages,
 binaries, Node >= 22 guard, `--allow-scripts`, verification), parse-check the
 shell scripts with `bash -n`, and simulate the PSReadLine assembly conflict
 that previously made the PowerShell extension terminal noisy.
+
+The harness also covers the MCP tooling: static completeness checks (managed
+server set matches across `.mcp.json`, `opencode.json`, and the seeder;
+pinned npm specs; shim rename/read-only defaults; Dockerfile pins and cache
+mount; `.env.local` plumbing), a behavioral seeder suite (fresh seed,
+idempotent skip, drift repair, unmanaged-conflict refusal, corrupted-block
+refusal, and a canary-secret sweep proving values never reach output or
+disk), and a behavioral installer suite against a hermetic fake npm (fresh
+install, offline skip, strict/warn-only failure modes, and a canary check
+that credentials never reach the npm process environment).
+
+To validate the wiring with real clients after a rebuild:
+`claude mcp list`, `codex mcp list`, `/mcp` in opencode and nanocoder, and
+`godot --headless --export-release "Web" build/web/index.html` for the
+templates.

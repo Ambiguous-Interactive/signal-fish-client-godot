@@ -109,11 +109,13 @@ package_is_installed() {
         let raw = "";
         process.stdin.on("data", (chunk) => { raw += chunk; });
         process.stdin.on("end", () => {
-            const want = process.argv[1];
+            // node -e places script arguments at argv[1] and argv[2].
+            const name = process.argv[1];
+            const expected = process.argv[2];
             try {
                 const deps = JSON.parse(raw).dependencies || {};
-                const entry = deps[want.name];
-                process.exit(entry && entry.version === want.version ? 0 : 1);
+                const entry = deps[name];
+                process.exit(entry && entry.version === expected ? 0 : 1);
             } catch {
                 process.exit(1);
             }
