@@ -155,24 +155,39 @@ for index in "${!PACKAGES[@]}"; do
     pids+=("$!")
 done
 
-installed_json="$(npm list --global --depth=0 --json 2>/dev/null || true)"
+declare -A installed_versions=()
+# Parse one `npm list --json` snapshot into a name->version map. The version
+# queries below all read the same snapshot, so node runs once per snapshot
+# instead of once per query (a per-query fork per package per pass).
+refresh_installed_versions() {
+    installed_versions=()
+    local json name version
+    json="$(npm list --global --depth=0 --json 2>/dev/null || true)"
+    while IFS=$'\t' read -r name version; do
+        [ -n "$name" ] || continue
+        installed_versions["$name"]="$version"
+    done < <(
+        node -e '
+            let raw = "";
+            process.stdin.on("data", (chunk) => { raw += chunk; });
+            process.stdin.on("end", () => {
+                try {
+                    const deps = JSON.parse(raw).dependencies || {};
+                    for (const [name, entry] of Object.entries(deps)) {
+                        if (entry && typeof entry.version === "string") {
+                            process.stdout.write(`${name}\t${entry.version}\n`);
+                        }
+                    }
+                } catch { }
+            });
+        ' <<<"$json"
+    )
+}
 
 global_package_version() {
     local package_name="$1"
 
-    npm_package_name="${package_name}" node -e '
-        let raw = "";
-        process.stdin.on("data", (chunk) => { raw += chunk; });
-        process.stdin.on("end", () => {
-            try {
-                const deps = JSON.parse(raw).dependencies || {};
-                const entry = deps[process.env.npm_package_name];
-                process.stdout.write(
-                    entry && typeof entry.version === "string" ? entry.version : ""
-                );
-            } catch { process.stdout.write(""); }
-        });
-    ' <<<"$installed_json"
+    printf '%s' "${installed_versions[${package_name}]:-}"
 }
 
 opencode_major_from_version() {
@@ -344,7 +359,7 @@ promote_opencode_v2() {
         fi
         return 2
     fi
-    installed_json="$(npm list --global --depth=0 --json 2>/dev/null || true)"
+    refresh_installed_versions
     if ! active_opencode_is_v2; then
         if restore_opencode_v1 "$v1_version"; then
             return 1
@@ -364,6 +379,8 @@ for index in "${!pids[@]}"; do
     fi
 done
 
+refresh_installed_versions
+
 opencode_v1_installed="$(global_package_version "${OPENCODE_V1_PACKAGE}")"
 opencode_migration_blocked=0
 if [ -n "$opencode_v1_installed" ]; then
@@ -371,7 +388,7 @@ if [ -n "$opencode_v1_installed" ]; then
         printf 'agent-tools: removing OpenCode v1 package %s after proving the active binary is v2\n' "$opencode_v1_installed"
         if remove_opencode_v1; then
             opencode_v1_installed=""
-            installed_json="$(npm list --global --depth=0 --json 2>/dev/null || true)"
+            refresh_installed_versions
         else
             warn_or_fail "could not remove OpenCode v1 after activating v2" || exit 1
             exit 0
@@ -460,7 +477,7 @@ if [ "${#install_specs[@]}" -gt 0 ]; then
             if npm install --global --no-audit --no-fund \
                 "${npm_allow_scripts_args[@]}" \
                 "$spec"; then
-                installed_json="$(npm list --global --depth=0 --json 2>/dev/null || true)"
+                refresh_installed_versions
                 spec_ok=1
                 break
             fi
