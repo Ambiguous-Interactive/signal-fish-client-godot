@@ -1752,43 +1752,59 @@ esac
     $envNames = @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_PROBE', 'FAKE_NPM_FAIL_CANDIDATE', 'FAKE_NPM_FAIL_ACTIVE', 'FAKE_NPM_FAIL_ACTIVATION', 'FAKE_NPM_FAIL_V1_RESTORE', 'FAKE_OPENCODE_VERSION', 'FAKE_NPM_FAIL_UNINSTALL', 'AGENT_TOOLS_RETRY_SLEEP_MS', 'PATH')
     $snapshots = @($envNames | ForEach-Object { Save-EnvVar $_ })
     try {
+        # The matrix cases share an immutable sandbox (fake npm, CLI stubs,
+        # package list, pre-seeded PATH dirs); each case copies it so only
+        # per-case state (events, install variants) is rebuilt.
+        $templateRoot = Join-Path $tempRoot 'template'
+        $templateState = "$templateRoot/state"
+        $templateBin = "$templateRoot/prefix/bin"
+        $templateForeignBin = "$templateRoot/foreign-bin"
+        New-Item -ItemType Directory -Path $templateState, $templateBin, $templateForeignBin -Force | Out-Null
+        Write-TestUtf8NoBomFile -Path "$templateForeignBin/opencode" -Content "#!/usr/bin/env bash`nprintf '%s\n' 'opencode 2.4.0'`n" -LfNewlines
+        Write-TestUtf8NoBomFile -Path "$templateBin/npm" -Content $fakeNpm -LfNewlines
+        Write-TestUtf8NoBomFile -Path "$templateState/events" -Content ''
+        $templatePackages = @(
+            '@openai/codex 1.0.0',
+            '@nanocollective/nanocoder 1.0.0',
+            '@anthropic-ai/claude-code 1.0.0',
+            'opencode-ai 1.2.3'
+        )
+        Write-TestUtf8NoBomFile -Path "$templateState/packages" -Content (($templatePackages -join "`n") + "`n") -LfNewlines
+        foreach ($entry in @(
+                [pscustomobject]@{ Name = 'codex'; Version = 'codex 1.0.0' },
+                [pscustomobject]@{ Name = 'nanocoder'; Version = 'nanocoder 1.0.0' },
+                [pscustomobject]@{ Name = 'claude'; Version = 'claude 1.0.0' },
+                [pscustomobject]@{ Name = 'opencode'; Version = 'opencode 1.2.3' }
+            )) {
+            Write-TestUtf8NoBomFile -Path "$templateBin/$($entry.Name)" -Content "#!/usr/bin/env bash`nprintf '%s\n' '$($entry.Version)'`n" -LfNewlines
+        }
+        $templateExecutables = @(
+            "$templateBin/npm",
+            "$templateBin/codex",
+            "$templateBin/nanocoder",
+            "$templateBin/claude",
+            "$templateBin/opencode",
+            "$templateForeignBin/opencode"
+        )
+        & bash -c 'chmod +x "$@"' -- $templateExecutables
         Push-Location $repoRoot
         try {
             foreach ($case in $cases) {
                 $caseRoot = Join-Path $tempRoot ([Guid]::NewGuid().ToString('N'))
+                & bash -c 'mkdir -p "$1" && cp -a "$2/." "$3/"' -- $caseRoot $templateRoot $caseRoot
+                Expect-Equal $LASTEXITCODE 0 "$($case.Name): sandbox template copy"
                 $state = "$caseRoot/state"
                 $prefix = "$caseRoot/prefix"
                 $bin = "$prefix/bin"
                 $foreignEarlierBin = "$caseRoot/foreign-bin"
-                New-Item -ItemType Directory -Path $state, $bin, $foreignEarlierBin -Force | Out-Null
-                Write-TestUtf8NoBomFile -Path "$foreignEarlierBin/opencode" -Content "#!/usr/bin/env bash`nprintf '%s\n' 'opencode 2.4.0'`n" -LfNewlines
-                Write-TestUtf8NoBomFile -Path "$bin/npm" -Content $fakeNpm -LfNewlines
-                Write-TestUtf8NoBomFile -Path "$state/events" -Content ''
-                $packageLines = @(
-                    '@openai/codex 1.0.0',
-                    '@nanocollective/nanocoder 1.0.0',
-                    '@anthropic-ai/claude-code 1.0.0',
-                    'opencode-ai 1.2.3'
-                )
-                Write-TestUtf8NoBomFile -Path "$state/packages" -Content (($packageLines -join "`n") + "`n") -LfNewlines
-                foreach ($entry in @(
-                        [pscustomobject]@{ Name = 'codex'; Version = 'codex 1.0.0' },
-                        [pscustomobject]@{ Name = 'nanocoder'; Version = 'nanocoder 1.0.0' },
-                        [pscustomobject]@{ Name = 'claude'; Version = 'claude 1.0.0' },
-                        [pscustomobject]@{ Name = 'opencode'; Version = 'opencode 1.2.3' }
-                    )) {
-                    $scriptPath = "$bin/$($entry.Name)"
-                    Write-TestUtf8NoBomFile -Path $scriptPath -Content "#!/usr/bin/env bash`nprintf '%s\n' '$($entry.Version)'`n" -LfNewlines
-                }
                 if ($case.ForeignV2) {
                     $foreignBinary = "$caseRoot/foreign-opencode"
                     Write-TestUtf8NoBomFile -Path $foreignBinary -Content "#!/usr/bin/env bash`nprintf '%s\n' 'opencode 2.4.0'`n" -LfNewlines
-                    & bash -c 'ln -sfn "$1" "$2"' -- '../../foreign-opencode' "$bin/opencode"
+                    & bash -c 'chmod +x "$1" && ln -sfn "$2" "$3"' -- $foreignBinary '../../foreign-opencode' "$bin/opencode"
                 }
                 if ($case.InitialV2) {
-
-                    $packageLines += '@opencode/cli 2.4.0'
-                    Write-TestUtf8NoBomFile -Path "$state/packages" -Content (($packageLines -join "`n") + "`n") -LfNewlines
+                    $packagesText = Get-Content -LiteralPath "$state/packages" -Raw
+                    Write-TestUtf8NoBomFile -Path "$state/packages" -Content ($packagesText + '@opencode/cli 2.4.0' + "`n") -LfNewlines
                     $initialPackageText = Get-Content -LiteralPath "$state/packages" -Raw
                     if ($initialPackageText -notmatch '(?m)^opencode-ai ' -or
                         $initialPackageText -notmatch '(?m)^@opencode/cli ') {
@@ -1798,21 +1814,11 @@ esac
                     New-Item -ItemType Directory -Path "$v2Package/bin" -Force | Out-Null
                     Write-TestUtf8NoBomFile -Path "$v2Package/package.json" -Content '{"name":"@opencode/cli","version":"2.4.0"}' -LfNewlines
                     Write-TestUtf8NoBomFile -Path "$v2Package/bin/opencode" -Content "#!/usr/bin/env bash`nprintf '%s\n' 'opencode 2.4.0'`n" -LfNewlines
-                    & bash -c 'ln -sfn "$1" "$2"; ln -sfn "$1" "$3"' -- '../lib/node_modules/@opencode/cli/bin/opencode' "$bin/opencode" "$bin/opencode2"
+                    & bash -c 'chmod +x "$1" && ln -sfn "$2" "$3" && ln -sfn "$2" "$4"' -- "$v2Package/bin/opencode" '../lib/node_modules/@opencode/cli/bin/opencode' "$bin/opencode" "$bin/opencode2"
                 }
                 if ($case.DanglingV2) {
                     & bash -c 'ln -sfn "$1" "$2"' -- '../lib/node_modules/@opencode/cli/bin/opencode2' "$bin/opencode2"
                 }
-                $executablePaths = @(
-                    "$bin/npm",
-                    "$bin/codex",
-                    "$bin/nanocoder",
-                    "$bin/claude",
-                    "$bin/opencode",
-                    "$foreignEarlierBin/opencode"
-                )
-                if ($case.InitialV2) { $executablePaths += "$prefix/lib/node_modules/@opencode/cli/bin/opencode" }
-                & bash -c 'chmod +x "$@"' -- $executablePaths
 
                 $env:FAKE_NPM_STATE = $state
                 $env:FAKE_NPM_PREFIX = $prefix
