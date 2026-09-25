@@ -63,7 +63,8 @@ CI, tests, and internal tooling are not listed.
   upstream, so empty cannot come from a conforming server, and it collided
   with the retired negotiated-rkyv "sender unknowable" sentinel (#149).
   Free-text fields (reasons, messages, names) still pass empty strings
-  through.
+  through. A session-plan direct endpoint with an empty host is refused
+  too, matching the upstream endpoint construction gate.
 - `get_players()` kept the previous authority's `is_authority` flag after
   a handoff or release, so games read a stale host badge: a Start button
   was offered to a player the server refuses (`GAME_START_FORBIDDEN`) and

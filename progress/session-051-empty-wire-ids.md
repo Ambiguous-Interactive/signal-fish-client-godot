@@ -91,3 +91,9 @@ Anchored to the pinned upstream types (`types.rs` @ server v0.9.1):
   re-anchored to `DirectEndpoint::from_connection_info` (src/protocol/
   validation.rs), ready_players messages name the non-empty rule, a mirrored
   `_has_id` in `sf_session_types.gd`, progress-note counts corrected.
+- Adversarial review round 2 (independently reproduced the 25-failure red
+  run) applied: skill doc now splits failure `reason` (free text) from
+  spectator `reason` (enum token, empty malformed), changelog names the
+  direct-endpoint gate separately from the UUID rule, generation comment
+  says "absent or null", and the `SpectatorLeft` null-room sentinel is
+  pinned.

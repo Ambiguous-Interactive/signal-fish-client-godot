@@ -1096,6 +1096,13 @@ func _test_non_empty_wire_strings() -> void:
 		"room_join_failed", String(empty_reason.signal_name), "empty reason is free text"
 	):
 		_assert_equal("", empty_reason.args[0], "empty reason passes through verbatim")
+	var null_spectator_room: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "SpectatorLeft", "data": {"room_id": null}}
+	)
+	if _assert_equal(
+		"spectator_left", String(null_spectator_room.signal_name), "null spectator room decodes"
+	):
+		_assert_equal("", null_spectator_room.args[0], "null spectator room keeps empty sentinel")
 	_done()
 
 

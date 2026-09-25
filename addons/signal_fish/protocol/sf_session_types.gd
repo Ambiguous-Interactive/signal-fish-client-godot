@@ -286,8 +286,9 @@ static func validate_session_plan_info(data: Variant) -> String:
 		return "SessionPlanInfo must be an object"
 	var dict: Dictionary = data
 	# generation/host are upstream Uuid-typed (`SessionGeneration`,
-	# `Option<PlayerId>`): present values must be non-empty (issue #149). An
-	# absent generation stays legal for the legacy Server 0.4 plan shape.
+	# `Option<PlayerId>`): present values must be non-empty (issue #149).
+	# Absent or null generation stays legal for the legacy Server 0.4 plan
+	# shape.
 	if dict.has("generation") and dict["generation"] != null:
 		if typeof(dict["generation"]) != TYPE_STRING:
 			return "SessionPlanInfo generation must be a string"
