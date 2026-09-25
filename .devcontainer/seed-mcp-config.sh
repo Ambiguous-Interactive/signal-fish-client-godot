@@ -77,7 +77,7 @@ args = []
 
 [mcp_servers.playwright]
 command = \"playwright-mcp\"
-args = []
+args = [\"--browser\", \"chromium\", \"--headless\", \"--no-sandbox\"]
 ${CODEX_MARKER_END}"
 
 warn_or_fail() {

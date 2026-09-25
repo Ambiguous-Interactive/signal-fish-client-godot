@@ -119,13 +119,16 @@ RUN set -euxo pipefail; \
 # install-godot.sh: the templates directory is named after the installed
 # editor's own version string.
 COPY install-godot-templates.sh /usr/local/bin/install-godot-templates.sh
+# The templates script runs as root and creates the ~/.local parent chain;
+# hand the whole subtree back to the container user or every later
+# user-level write under ~/.local fails with EACCES.
 RUN --mount=type=cache,target=/var/cache/godot-templates \
     chmod +x /usr/local/bin/install-godot-templates.sh \
     && /usr/local/bin/install-godot-templates.sh "${GODOT_VERSION}" \
         /var/cache/godot-templates \
         /home/vscode/.local/share/godot/export_templates \
     && rm /usr/local/bin/install-godot-templates.sh \
-    && chown -R vscode:vscode /home/vscode/.local/share/godot
+    && chown -R vscode:vscode /home/vscode/.local
 
 # Persist bash history via mounted volume (`/commandhistory`, declared in
 # devcontainer.json `mounts`). The PowerShell profile that persists pwsh

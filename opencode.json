@@ -31,7 +31,7 @@
       },
       "playwright": {
         "type": "local",
-        "command": ["playwright-mcp"]
+        "command": ["playwright-mcp", "--browser", "chromium", "--headless", "--no-sandbox"]
       }
     }
   }

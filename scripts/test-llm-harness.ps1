@@ -2121,6 +2121,13 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
         throw ".mcp.json context7 must be the local context7-mcp server; the remote HTTP form cannot deliver CONTEXT7_API_KEY on every client (VS Code does not substitute headers)."
     }
 
+    # The dev container has no display: the playwright entry must run
+    # headless Chromium without the sandbox (standard container hardening).
+    $playwrightEntry = $mcpJson.mcpServers.playwright
+    if ($playwrightEntry.args -notcontains '--headless' -or $playwrightEntry.args -notcontains '--no-sandbox' -or $playwrightEntry.args -notcontains 'chromium') {
+        throw ".mcp.json playwright must pass --browser chromium --headless --no-sandbox (headless container, docker sandbox)."
+    }
+
     # Token-shaped secrets must never be committed (name references only).
     foreach ($pair in @(
             [pscustomobject]@{ Label = '.mcp.json'; Path = $mcpJsonPath },
