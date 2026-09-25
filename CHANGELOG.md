@@ -48,6 +48,11 @@ CI, tests, and internal tooling are not listed.
   = false`; v3 frames whose envelope token is `rkyv` still decode as bytes.
 - A game-data-format downgrade now logs at `warn` instead of `info`,
   which the default log level filtered out (#146).
+- Godot Asset Library downloads now ship only the addon, the runnable
+  demo, and `README`/`LICENSE`/`CHANGELOG`: `export-ignore` covers every
+  dev-only path (agent instruction files, tooling config, CI
+  requirements) that previously rode along in the ref-generated archive
+  and got the first store submission rejected (#139).
 
 ### Fixed
 

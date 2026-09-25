@@ -49,7 +49,11 @@ Dockerfile  text eol=lf
 
 # Dev/test-only paths stay out of git archives (Asset Library downloads a
 # ref-generated archive; the addon must stay self-contained under addons/).
+# Users get the addon, the runnable demo, and LICENSE/README/CHANGELOG —
+# everything else (agent instruction files, tooling config, CI requirements)
+# is excluded so the download is the asset, not the whole repo (issue #139).
 /.claude       export-ignore
+/.cursor       export-ignore
 /.devcontainer export-ignore
 /.github       export-ignore
 /.githooks     export-ignore
@@ -61,9 +65,24 @@ Dockerfile  text eol=lf
 /scripts       export-ignore
 /tests         export-ignore
 /.asset-template.json.hb export-ignore
+/.cursorrules            export-ignore
+/.gitattributes          export-ignore
+/.gitignore              export-ignore
 /.lychee.toml            export-ignore
 /.markdownlint.json      export-ignore
 /.markdownlint-cli2.jsonc export-ignore
+/.pre-commit-config.yaml export-ignore
+/.windsurfrules          export-ignore
+/AGENTS.md               export-ignore
+/CHATGPT.md              export-ignore
+/CLAUDE.md               export-ignore
+/CODEX.md                export-ignore
+/GEMINI.md               export-ignore
+/PLAN.md                 export-ignore
+/export_presets.cfg      export-ignore
+/gdlintrc                export-ignore
 /llms.txt                export-ignore
 /mkdocs.yml              export-ignore
+/requirements-automation.txt export-ignore
+/requirements-ci.txt         export-ignore
 /requirements-docs.txt   export-ignore
