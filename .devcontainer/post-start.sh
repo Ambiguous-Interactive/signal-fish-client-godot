@@ -23,6 +23,20 @@ else
     echo "WARN: agent CLI refresh failed; using installed versions." >&2
 fi
 
+echo "==> Checking npm-based MCP servers (best-effort refresh)"
+if bash "${REPO_ROOT}/.devcontainer/install-mcp-servers.sh" --update; then
+    echo "==> MCP server refresh attempted"
+else
+    echo "WARN: MCP server refresh failed; using installed versions." >&2
+fi
+
+echo "==> Seeding agent MCP configurations (best-effort)"
+if bash "${REPO_ROOT}/.devcontainer/seed-mcp-config.sh" --update; then
+    echo "==> MCP configuration seeding attempted"
+else
+    echo "WARN: MCP configuration seeding failed; using existing configurations." >&2
+fi
+
 echo "==> Ensuring Python automation dependencies (warn-only)"
 # CI provides these two things; heal them locally so the local gate matches
 # CI. PyYAML must be importable by bare python3 because harness sandbox

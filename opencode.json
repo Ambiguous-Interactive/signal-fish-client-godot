@@ -1,0 +1,38 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "godot": {
+        "type": "local",
+        "command": ["godot-mcp"],
+        "environment": {
+          "GODOT_PATH": "/usr/local/bin/godot"
+        }
+      },
+      "github": {
+        "type": "local",
+        "command": ["sf-github-mcp"]
+      },
+      "context7": {
+        "type": "local",
+        "command": ["context7-mcp"]
+      },
+      "deepwiki": {
+        "type": "remote",
+        "url": "https://mcp.deepwiki.com/mcp"
+      },
+      "git": {
+        "type": "local",
+        "command": ["mcp-server-git"]
+      },
+      "fetch": {
+        "type": "local",
+        "command": ["mcp-server-fetch"]
+      },
+      "playwright": {
+        "type": "local",
+        "command": ["playwright-mcp", "--browser", "chromium", "--headless", "--no-sandbox"]
+      }
+    }
+  }
+}

@@ -2043,11 +2043,700 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
     Assert-ScriptParsesWithBash -Path $postStart -Name 'post-start.sh'
 }
 
+Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $installer = Join-Path $repoRoot '.devcontainer/install-mcp-servers.sh'
+    $seeder = Join-Path $repoRoot '.devcontainer/seed-mcp-config.sh'
+    $templates = Join-Path $repoRoot '.devcontainer/install-godot-templates.sh'
+    $shim = Join-Path $repoRoot '.devcontainer/mcp-shims/sf-github-mcp.sh'
+    $dockerfile = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/Dockerfile') -Raw
+    $devcontainer = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/devcontainer.json') -Raw
+    $postCreate = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-create.sh') -Raw
+    $postStart = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-start.sh') -Raw
+
+    foreach ($script in @($installer, $seeder, $templates, $shim)) {
+        if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
+            throw "Missing devcontainer MCP tooling script: $script"
+        }
+        Assert-ScriptParsesWithBash -Path $script -Name (Split-Path -Leaf $script)
+    }
+
+    # Single source of truth for the server set: the seeder's SERVERS array.
+    $seedContent = Get-Content -LiteralPath $seeder -Raw
+    $serversMatch = [regex]::Match($seedContent, 'SERVERS=\(([^)]+)\)')
+    if (-not $serversMatch.Success) {
+        throw 'seed-mcp-config.sh must declare the managed server set as SERVERS=(...).'
+    }
+    $servers = $serversMatch.Groups[1].Value -split ' '
+    if ($servers.Count -lt 5) {
+        throw "seed-mcp-config.sh SERVERS must list every managed server; found $($servers.Count)."
+    }
+
+    # Every committed config surface must declare exactly the managed set.
+    $mcpJsonPath = Join-Path $repoRoot '.mcp.json'
+    $opencodeJsonPath = Join-Path $repoRoot 'opencode.json'
+    foreach ($pair in @(
+            [pscustomobject]@{ Path = $mcpJsonPath; Label = '.mcp.json'; Key = 'mcpServers' },
+            [pscustomobject]@{ Path = $opencodeJsonPath; Label = 'opencode.json'; Key = 'mcp.servers' }
+        )) {
+        if (-not (Test-Path -LiteralPath $pair.Path -PathType Leaf)) {
+            throw "Missing committed MCP config: $($pair.Label)"
+        }
+        $config = Get-Content -LiteralPath $pair.Path -Raw | ConvertFrom-Json
+        $node = $config
+        foreach ($segment in $pair.Key.Split('.')) { $node = $node.$segment }
+        $declared = @($node.PSObject.Properties.Name)
+        if ($declared.Count -ne $servers.Count) {
+            throw "$($pair.Label) declares $($declared.Count) servers but the managed set has $($servers.Count)."
+        }
+        foreach ($server in $servers) {
+            if ($declared -notcontains $server) {
+                throw "$($pair.Label) must declare the '$server' MCP server."
+            }
+        }
+    }
+
+    # Empirical contract (verified with the real clients): Claude Code and
+    # Nanocoder do NOT inherit arbitrary parent environment for stdio
+    # servers, so every secret-driven server must carry an explicit env map
+    # whose values are name-only ${VAR} references. Nanocoder keys full
+    # inheritance off the presence of the map.
+    $mcpJson = Get-Content -LiteralPath $mcpJsonPath -Raw | ConvertFrom-Json
+    foreach ($pair in @(
+            [pscustomobject]@{ Server = 'github'; Var = 'GITHUB_MCP_PAT'; Expected = '${GITHUB_MCP_PAT}' },
+            [pscustomobject]@{ Server = 'context7'; Var = 'CONTEXT7_API_KEY'; Expected = '${CONTEXT7_API_KEY}' }
+        )) {
+        $entry = $mcpJson.mcpServers.($pair.Server)
+        if (-not $entry) { throw ".mcp.json must declare the '$($pair.Server)' server." }
+        if ($null -eq $entry.command) {
+            throw ".mcp.json '$($pair.Server)' must be a local stdio server so env maps reach it on every client."
+        }
+        $envValue = $entry.env.($pair.Var)
+        if ($envValue -ne $pair.Expected) {
+            throw ".mcp.json '$($pair.Server)' must pass $($pair.Var) via an env map entry of the form '$($pair.Expected)' (got '$envValue')."
+        }
+    }
+    $context7HasUrl = $mcpJson.mcpServers.context7.PSObject.Properties['url']
+    if ($context7HasUrl) {
+        throw ".mcp.json context7 must be the local context7-mcp server; the remote HTTP form cannot deliver CONTEXT7_API_KEY on every client (VS Code does not substitute headers)."
+    }
+
+    # The dev container has no display: the playwright entry must run
+    # headless Chromium without the sandbox (standard container hardening).
+    $playwrightEntry = $mcpJson.mcpServers.playwright
+    if ($playwrightEntry.args -notcontains '--headless' -or $playwrightEntry.args -notcontains '--no-sandbox' -or $playwrightEntry.args -notcontains 'chromium') {
+        throw ".mcp.json playwright must pass --browser chromium --headless --no-sandbox (headless container, docker sandbox)."
+    }
+
+    # Token-shaped secrets must never be committed (name references only).
+    foreach ($pair in @(
+            [pscustomobject]@{ Label = '.mcp.json'; Path = $mcpJsonPath },
+            [pscustomobject]@{ Label = 'opencode.json'; Path = $opencodeJsonPath },
+            [pscustomobject]@{ Label = '.env.example'; Path = Join-Path $repoRoot '.env.example' }
+        )) {
+        $content = Get-Content -LiteralPath $pair.Path -Raw
+        Assert-TextDoesNotMatch `
+            -Subject $pair.Label `
+            -Content $content `
+            -Pattern 'github_pat_[A-Za-z0-9_]{10,}|ctx7sk-[A-Za-z0-9_-]{10,}' `
+            -Requirement 'reference secrets by name only; never commit a literal token' `
+            -DiagnosticPattern 'github_pat_|ctx7sk-'
+    }
+
+    # The npm installer mirrors install-agent-tools.sh conventions: strict
+    # install, warn-only update, pinned concrete specs, npm >= 11 lifecycle
+    # allow list, credential unsetting, and npm-state-based verification.
+    $installerContent = Get-Content -LiteralPath $installer -Raw
+    if ($installerContent -notmatch '\(no args\)\s+post-create install: strict' -or $installerContent -notmatch '--update\s+post-start refresh') {
+        throw 'install-mcp-servers.sh must support the strict install and warn-only --update modes.'
+    }
+    foreach ($pin in @(
+            [pscustomobject]@{ Spec = 'GODOT_MCP_NPM_SPEC:-@coding-solo/godot-mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'godot-mcp' },
+            [pscustomobject]@{ Spec = 'PLAYWRIGHT_MCP_NPM_SPEC:-@playwright/mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'playwright-mcp' },
+            [pscustomobject]@{ Spec = 'CONTEXT7_MCP_NPM_SPEC:-@upstash/context7-mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'context7-mcp' }
+        )) {
+        Assert-TextMatches `
+            -Subject '.devcontainer/install-mcp-servers.sh' `
+            -Content $installerContent `
+            -Pattern $pin.Spec `
+            -Requirement "pin the $($pin.Name) npm spec to a concrete version (an env override may replace it)" `
+            -DiagnosticPattern 'NPM_SPEC|godot-mcp|playwright'
+    }
+    foreach ($requirement in @(
+            [pscustomobject]@{
+                Pattern     = 'unset GITHUB_TOKEN GH_TOKEN GITHUB_MCP_PAT GITHUB_PERSONAL_ACCESS_TOKEN'
+                Requirement = 'unset forwarded credentials before package installs'
+                Diagnostic  = 'unset|GITHUB_MCP_PAT'
+            },
+            [pscustomobject]@{
+                Pattern     = '--allow-scripts="\$ALLOW_SCRIPTS"'
+                Requirement = 'pass the reviewed lifecycle-script allow list to npm install'
+                Diagnostic  = 'allow-scripts|ALLOW_SCRIPTS'
+            },
+            [pscustomobject]@{
+                Pattern     = '-ge 11'
+                Requirement = 'pass --allow-scripts only on npm 11 or newer, which introduced the lifecycle-script policy'
+                Diagnostic  = 'npm_major|npm 11'
+            },
+            [pscustomobject]@{
+                Pattern     = '-lt 22'
+                Requirement = 'refuse to install on Node.js older than 22'
+                Diagnostic  = 'node_major|Node.js 22'
+            },
+            [pscustomobject]@{
+                Pattern     = 'npm install --global'
+                Requirement = 'install the MCP servers with a global npm install'
+                Diagnostic  = 'npm install|install_specs|failed_specs'
+            },
+            [pscustomobject]@{
+                Pattern     = 'package_is_installed'
+                Requirement = 'verify readiness from npm global state, not from captured output'
+                Diagnostic  = 'package_is_installed|npm list'
+            },
+            [pscustomobject]@{
+                Pattern     = 'SF_MCP_SKIP_PLAYWRIGHT_BROWSER'
+                Requirement = 'let users skip the best-effort Chromium download'
+                Diagnostic  = 'SKIP_PLAYWRIGHT_BROWSER|Chromium'
+            },
+            [pscustomobject]@{
+                Pattern     = 'must pin a concrete x\.y\.z version'
+                Requirement = 'reject non-concrete spec overrides at startup so the offline skip check stays decidable'
+                Diagnostic  = 'concrete|validate_specs_are_concrete'
+            }
+        )) {
+        Assert-TextMatches `
+            -Subject '.devcontainer/install-mcp-servers.sh' `
+            -Content $installerContent `
+            -Pattern $requirement.Pattern `
+            -Requirement $requirement.Requirement `
+            -DiagnosticPattern $requirement.Diagnostic
+    }
+
+    # The seeder guards its managed block and reports only variable names.
+    foreach ($requirement in @(
+            [pscustomobject]@{
+                Pattern     = 'CODEX_MARKER_BEGIN="[^"]+"'
+                Requirement = 'delimit the codex managed block with named markers'
+                Diagnostic  = 'CODEX_MARKER_BEGIN|signal-fish-mcp'
+            },
+            [pscustomobject]@{
+                Pattern     = 'codex_has_unmanaged_conflict'
+                Requirement = 'refuse to create duplicate codex server tables outside the managed block'
+                Diagnostic  = 'unmanaged|conflict'
+            },
+            [pscustomobject]@{
+                Pattern     = 'never\s+values|never\s+print'
+                Requirement = 'document that the doctor prints variable names and state, never values'
+                Diagnostic  = 'never|values|doctor'
+            },
+            [pscustomobject]@{
+                Pattern     = 'GITHUB_MCP_PAT CONTEXT7_API_KEY GITHUB_READ_ONLY'
+                Requirement = 'report the MCP environment variables by name in the doctor'
+                Diagnostic  = 'GITHUB_MCP_PAT|CONTEXT7_API_KEY|GITHUB_READ_ONLY'
+            }
+        )) {
+        Assert-TextMatches `
+            -Subject '.devcontainer/seed-mcp-config.sh' `
+            -Content $seedContent `
+            -Pattern $requirement.Pattern `
+            -Requirement $requirement.Requirement `
+            -DiagnosticPattern $requirement.Diagnostic
+    }
+
+    # The shim renames the repo token convention onto the binary's canonical
+    # name at launch time, defaults to read-only, and fails loudly without a
+    # token instead of starting an unauthenticated server.
+    $shimContent = Get-Content -LiteralPath $shim -Raw
+    foreach ($requirement in @(
+            [pscustomobject]@{
+                Pattern     = 'GITHUB_PERSONAL_ACCESS_TOKEN="\$\{GITHUB_PERSONAL_ACCESS_TOKEN:-\$\{GITHUB_MCP_PAT:-\}\}"'
+                Requirement = 'map GITHUB_MCP_PAT onto GITHUB_PERSONAL_ACCESS_TOKEN without persisting it'
+                Diagnostic  = 'GITHUB_PERSONAL_ACCESS_TOKEN|GITHUB_MCP_PAT'
+            },
+            [pscustomobject]@{
+                Pattern     = 'GITHUB_READ_ONLY="\$\{GITHUB_READ_ONLY:-1\}"'
+                Requirement = 'default the GitHub MCP server to read-only'
+                Diagnostic  = 'GITHUB_READ_ONLY|read-only'
+            },
+            [pscustomobject]@{
+                Pattern     = 'no token found'
+                Requirement = 'fail loudly with an actionable message when no token is wired'
+                Diagnostic  = 'no token|GITHUB_MCP_PAT'
+            },
+            [pscustomobject]@{
+                Pattern     = "unexpanded variable reference"
+                Requirement = 'reject an unexpanded variable-reference literal so a non-substituting client fails loudly instead of authenticating with garbage'
+                Diagnostic  = 'unexpanded|substitute'
+            },
+            [pscustomobject]@{
+                Pattern     = 'exec /usr/local/bin/github-mcp-server stdio'
+                Requirement = 'exec the official server in stdio mode'
+                Diagnostic  = 'github-mcp-server|stdio'
+            }
+        )) {
+        Assert-TextMatches `
+            -Subject '.devcontainer/mcp-shims/sf-github-mcp.sh' `
+            -Content $shimContent `
+            -Pattern $requirement.Pattern `
+            -Requirement $requirement.Requirement `
+            -DiagnosticPattern $requirement.Diagnostic
+    }
+
+    # The templates installer only caches verified archives and names the
+    # templates directory after the installed editor.
+    $templatesContent = Get-Content -LiteralPath $templates -Raw
+    foreach ($requirement in @(
+            [pscustomobject]@{
+                Pattern     = 'unzip -tq "\$\{CACHED_TGZ\}"'
+                Requirement = 'only reuse a cached template archive that still passes an integrity test'
+                Diagnostic  = 'unzip -tq|CACHED_TGZ'
+            },
+            [pscustomobject]@{
+                Pattern     = '-lt 100000000'
+                Requirement = 'reject suspiciously small template downloads before caching them'
+                Diagnostic  = 'file_size|suspiciously small'
+            },
+            [pscustomobject]@{
+                Pattern     = 'godot --version'
+                Requirement = 'derive the templates directory from the installed editor version'
+                Diagnostic  = 'godot --version|VERSION_DIR'
+            },
+            [pscustomobject]@{
+                Pattern     = "'templates/web_\*'"
+                Requirement = 'extract only the web templates'
+                Diagnostic  = 'templates/web_|web_release|web_debug'
+            },
+            [pscustomobject]@{
+                Pattern     = 'found=1'
+                Requirement = 'verify at least one web template was extracted'
+                Diagnostic  = 'found|No web templates'
+            }
+        )) {
+        Assert-TextMatches `
+            -Subject '.devcontainer/install-godot-templates.sh' `
+            -Content $templatesContent `
+            -Pattern $requirement.Pattern `
+            -Requirement $requirement.Requirement `
+            -DiagnosticPattern $requirement.Diagnostic
+    }
+
+    # Image wiring: pinned versions, checksum verification, cache mount, and
+    # the shim installed onto PATH.
+    foreach ($requirement in @(
+            [pscustomobject]@{
+                Pattern     = 'ARG GITHUB_MCP_VERSION=[0-9]+\.[0-9]+\.[0-9]+'
+                Requirement = 'pin the GitHub MCP server binary version in the Dockerfile'
+                Diagnostic  = 'GITHUB_MCP_VERSION'
+            },
+            [pscustomobject]@{
+                Pattern     = 'ARG MCP_SERVER_GIT_VERSION=[0-9]+\.[0-9]+\.[0-9]+'
+                Requirement = 'pin the mcp-server-git pipx version in the Dockerfile'
+                Diagnostic  = 'MCP_SERVER_GIT_VERSION'
+            },
+            [pscustomobject]@{
+                Pattern     = 'sha256sum -c'
+                Requirement = 'verify the GitHub MCP server download against upstream checksums'
+                Diagnostic  = 'sha256sum|checksums'
+            },
+            [pscustomobject]@{
+                Pattern     = 'RUN --mount=type=cache,target=/var/cache/godot-templates'
+                Requirement = 'cache the template archive download across builds'
+                Diagnostic  = 'mount=type=cache|godot-templates'
+            },
+            [pscustomobject]@{
+                Pattern     = 'COPY mcp-shims/sf-github-mcp\.sh /usr/local/bin/sf-github-mcp'
+                Requirement = 'install the GitHub MCP shim onto PATH'
+                Diagnostic  = 'sf-github-mcp|mcp-shims'
+            }
+        )) {
+        Assert-TextMatches `
+            -Subject '.devcontainer/Dockerfile' `
+            -Content $dockerfile `
+            -Pattern $requirement.Pattern `
+            -Requirement $requirement.Requirement `
+            -DiagnosticPattern $requirement.Diagnostic
+    }
+
+    # Checksum identity: sha256sum -c resolves the names listed in the
+    # checksums file against the downloaded file's own name, so the curl
+    # --output target must be exactly the asset name the grep extracts.
+    # (A shorthand output name made verification impossible to pass.)
+    $downloadedAsset = [regex]::Match($dockerfile, '--output "/tmp/([^"]+\.tar\.gz)"').Groups[1].Value
+    $greppedAsset = [regex]::Match($dockerfile, 'grep "([^"]+)" /tmp/gh-mcp-checksums\.txt').Groups[1].Value
+    if ($downloadedAsset -eq '' -or $greppedAsset -eq '') {
+        throw 'Dockerfile must download the GitHub MCP archive to /tmp and grep the checksums file for the asset name.'
+    }
+    if ($downloadedAsset -ne $greppedAsset) {
+        throw ("Checksum identity mismatch: --output downloads '{0}' but the checksum grep verifies '{1}'." -f $downloadedAsset, $greppedAsset)
+    }
+
+    # Secret plumbing: the container env loads .env.local at create time and
+    # both post hooks drive the new installers.
+    Assert-TextMatches `
+        -Subject '.devcontainer/devcontainer.json' `
+        -Content $devcontainer `
+        -Pattern '"--env-file",\s*\n\s*"\$\{localWorkspaceFolder\}/\.env\.local"' `
+        -Requirement 'load .env.local into the container environment at create time' `
+        -DiagnosticPattern 'env-file|\.env\.local'
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot '.env.example') -PathType Leaf)) {
+        throw 'Missing .env.example; it is the committed template for .env.local.'
+    }
+    foreach ($pair in @(
+            [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'install-mcp-servers\.sh'; Requirement = 'install npm MCP servers strictly at post-create' },
+            [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'seed-mcp-config\.sh'; Requirement = 'seed agent MCP configurations at post-create' },
+            [pscustomobject]@{ Subject = '.devcontainer/post-start.sh'; Content = $postStart; Pattern = 'install-mcp-servers\.sh" --update'; Requirement = 'refresh npm MCP servers warn-only at post-start' },
+            [pscustomobject]@{ Subject = '.devcontainer/post-start.sh'; Content = $postStart; Pattern = 'seed-mcp-config\.sh" --update'; Requirement = 're-seed agent MCP configurations warn-only at post-start' }
+        )) {
+        Assert-TextMatches `
+            -Subject $pair.Subject `
+            -Content $pair.Content `
+            -Pattern $pair.Pattern `
+            -Requirement $pair.Requirement `
+            -DiagnosticPattern 'mcp|seed|install'
+    }
+}
+
+Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user config, and never leaks secrets' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $seeder = Join-Path $repoRoot '.devcontainer/seed-mcp-config.sh'
+    $seedContent = Get-Content -LiteralPath $seeder -Raw
+    $begin = [regex]::Match($seedContent, 'CODEX_MARKER_BEGIN="([^"]+)"').Groups[1].Value
+    $end = [regex]::Match($seedContent, 'CODEX_MARKER_END="([^"]+)"').Groups[1].Value
+    if (-not $begin -or -not $end) {
+        throw 'Could not extract the codex managed-block markers from seed-mcp-config.sh.'
+    }
+
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-mcp-seed-$([Guid]::NewGuid())")
+    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+    $canary1 = "sf-canary-pat-$([Guid]::NewGuid())"
+    $canary2 = "sf-canary-ctx7-$([Guid]::NewGuid())"
+    $envNames = @('HOME', 'GITHUB_MCP_PAT', 'CONTEXT7_API_KEY', 'GITHUB_READ_ONLY')
+    $snapshots = @($envNames | ForEach-Object { Save-EnvVar $_ })
+    $allOutputs = [System.Collections.Generic.List[string]]::new()
+    try {
+        $env:HOME = Join-Path $tempRoot 'home'
+        $env:GITHUB_MCP_PAT = $canary1
+        $env:CONTEXT7_API_KEY = $canary2
+        Remove-Item -Path 'Env:GITHUB_READ_ONLY' -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Path $env:HOME, "$env:HOME/.codex" -Force | Out-Null
+        $codexConfig = "$env:HOME/.codex/config.toml"
+
+        $runSeeder = {
+            param([string]$Mode)
+            if ($Mode) {
+                $out = & bash $seeder $Mode 2>&1
+            } else {
+                $out = & bash $seeder 2>&1
+            }
+            $allOutputs.Add(($out | Out-String))
+            return [pscustomobject]@{ Exit = $LASTEXITCODE; Output = ($out | Out-String) }
+        }
+
+        # 1. Fresh HOME: strict run writes the managed block.
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'fresh install must succeed'
+        if (-not (Test-Path $codexConfig)) { throw 'fresh install must create ~/.codex/config.toml' }
+
+        # 2. Idempotent rerun: skipped, byte-identical.
+        $before = Get-Content -LiteralPath $codexConfig -Raw
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'idempotent rerun must succeed'
+        if ($result.Output -notmatch 'is current; skipped') {
+            throw 'idempotent rerun must skip the write ("is current; skipped").'
+        }
+        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $before 'idempotent rerun must not modify the file'
+
+        # 2b. THE regression case: an existing user config WITHOUT the
+        # managed block must actually get the block (the append branch was
+        # once dead code: the unchanged-awk-output byte compare swallowed
+        # it, seeding nothing with exit 0).
+        $userContent = "# my custom config`n[mcp_servers.custom_thing]`ncommand = `"foo`"`n"
+        & bash -c 'printf "%s" "$1" > "$2"' -- $userContent $codexConfig
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'seeding an existing config without the block must succeed'
+        $after = Get-Content -LiteralPath $codexConfig -Raw
+        if ($after -notmatch [regex]::Escape($begin) -or $after -notmatch 'command = "godot-mcp"') {
+            throw 'existing config without the managed block must gain the block.'
+        }
+        if ($after -notmatch 'custom_thing') { throw 'pre-existing user content must survive seeding.' }
+        # ...and a second run over the now-seeded file must be a no-op.
+        $before = $after
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'rerun after seeding an existing config must succeed'
+        if ($result.Output -notmatch 'is current; skipped') {
+            throw 'rerun after seeding must skip ("is current; skipped").'
+        }
+        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $before 'rerun after seeding must not modify the file'
+
+        # 2c. An empty (0-byte) config.toml must also gain the block.
+        & bash -c ': > "$1"' -- $codexConfig
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'seeding an empty config must succeed'
+        $after = Get-Content -LiteralPath $codexConfig -Raw
+        if ($after -notmatch 'command = "godot-mcp"') {
+            throw 'empty config.toml must gain the managed block.'
+        }
+
+        # 2d. A CRLF-edited config with the block is still recognized (its
+        # markers match), so it is replaced in place - never double-seeded.
+        & bash -c 'printf "%s\r\nuser=1\r\n%s\r\n" "$1" "$2" > "$3"' -- $begin $end $codexConfig
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'CRLF config with the block must seed successfully'
+        $after = Get-Content -LiteralPath $codexConfig -Raw
+        Expect-Equal ([regex]::Matches($after, [regex]::Escape($begin)).Count) 1 'CRLF config must end with exactly one begin marker'
+        Expect-Equal ([regex]::Matches($after, [regex]::Escape($end)).Count) 1 'CRLF config must end with exactly one end marker'
+
+        # 3. Drift inside the markers is replaced exactly once; user content
+        # outside survives.
+        $drifted = "# my custom config`n[mcp_servers.custom_thing]`ncommand = `"foo`"`n$begin`n[mcp_servers.godot]`ncommand = `"OLD`"`n$end`n"
+        & bash -c 'printf "%s" "$1" > "$2"' -- $drifted $codexConfig
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 0 'drift repair must succeed'
+        $after = Get-Content -LiteralPath $codexConfig -Raw
+        if ($after -match 'OLD') { throw 'drifted managed block must be replaced.' }
+        Expect-Equal ([regex]::Matches($after, [regex]::Escape($begin)).Count) 1 'exactly one begin marker must remain'
+        Expect-Equal ([regex]::Matches($after, [regex]::Escape($end)).Count) 1 'exactly one end marker must remain'
+        if ($after -notmatch 'custom_thing') { throw 'user content outside the markers must be preserved.' }
+
+        # 4. A user table with a managed name outside the block is refused
+        # (a second TOML table definition would corrupt the config).
+        & bash -c 'printf "[mcp_servers.godot]\ncommand = \"evil\"\n" > "$1"' -- $codexConfig
+        $snapshot = Get-Content -LiteralPath $codexConfig -Raw
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 1 'unmanaged conflict must fail strictly in install mode'
+        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $snapshot 'unmanaged conflict must not modify the file'
+        $result = & $runSeeder '--update'
+        Expect-Equal $result.Exit 0 'unmanaged conflict must be warn-only in --update mode'
+
+        # 5. Corrupted managed block (begin without end) is refused, never
+        # truncated.
+        & bash -c 'printf "x=1\n%s\nno end marker\n" "$1" > "$2"' -- $begin $codexConfig
+        $snapshot = Get-Content -LiteralPath $codexConfig -Raw
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 1 'corrupted managed block must fail strictly in install mode'
+        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $snapshot 'corrupted managed block must not modify the file'
+
+        # 5b. Two complete managed blocks (the exact damage the old
+        # replace-then-append bug produced) are refused, not "repaired"
+        # into duplicate TOML tables.
+        & bash -c 'printf "user=1\n%s\nold=1\n%s\n%s\nold2=1\n%s\ntail=1\n" "$1" "$2" "$1" "$2" > "$3"' -- $begin $end $codexConfig
+        $snapshot = Get-Content -LiteralPath $codexConfig -Raw
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 1 'double managed block must fail strictly in install mode'
+        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $snapshot 'double managed block must not modify the file'
+
+        # 6. Canary sweep: the secret values must not appear in any captured
+        # output stream, nor anywhere in the sandbox tree (any written file).
+        # Values never travel through the seeder in the first place - the
+        # doctor prints names only.
+        foreach ($captured in $allOutputs) {
+            if ($captured -match [regex]::Escape($canary1) -or $captured -match [regex]::Escape($canary2)) {
+                throw 'seed-mcp-config.sh leaked a secret value into its output.'
+            }
+        }
+        $leaks = & bash -c "grep -rl -F -e '$($canary1)' -e '$($canary2)' '$tempRoot' 2>/dev/null || true"
+        if ($leaks) { throw "seed-mcp-config.sh wrote a secret value to: $($leaks -join ', ')" }
+    } finally {
+        foreach ($snapshot in $snapshots) { Restore-EnvVar $snapshot }
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'devcontainer install-mcp-servers.sh installs pinned packages hermetically without leaking secrets' {
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $installer = Join-Path $repoRoot '.devcontainer/install-mcp-servers.sh'
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-mcp-install-$([Guid]::NewGuid())")
+    $fakeNpm = @'
+#!/usr/bin/env bash
+set -u
+state="${FAKE_NPM_STATE:?}"
+prefix="${FAKE_NPM_PREFIX:?}"
+log="${state}/events"
+packages="${state}/packages"
+case "${1:-}" in
+    --version)
+        printf '11.0.0\n'
+        ;;
+    config)
+        resolved_prefix="$(cd "$prefix" && pwd -P)" || exit 1
+        printf '%s\n' "$resolved_prefix"
+        ;;
+    list)
+        printf '{"dependencies":{'
+        separator=''
+        while IFS=' ' read -r package version; do
+            [ -n "$package" ] || continue
+            printf '%s"%s":{"version":"%s"}' "$separator" "$package" "$version"
+            separator=','
+        done <"$packages"
+        printf '}}\n'
+        ;;
+    install)
+        # Record the environment exactly as npm would have seen it so the
+        # secret-unset contract is observable.
+        {
+            printf 'install:'
+            for argument in "$@"; do
+                case "$argument" in
+                    -*) continue ;;
+                    *) printf ' %s' "$argument" ;;
+                esac
+            done
+            printf '\n'
+            env | grep -E '^(GITHUB_MCP_PAT|GITHUB_PERSONAL_ACCESS_TOKEN|CONTEXT7_API_KEY|Z_AI_API_KEY)=' || true
+        } >>"$log"
+        spec=''
+        for argument in "$@"; do
+            case "$argument" in
+                -*) continue ;;
+                # Specs always contain '@'; this skips the 'install'
+                # subcommand itself.
+                *@*) spec="$argument"; break ;;
+            esac
+        done
+        [ -n "$spec" ] || exit 2
+        if [ -n "${FAKE_NPM_FAIL_SPEC:-}" ] && [ "$FAKE_NPM_FAIL_SPEC" = "$spec" ]; then
+            exit 43
+        fi
+        package="${spec%@*}"
+        [ -n "$package" ] || package="$spec"
+        version="${spec##*@}"
+        case "$package" in
+            '@coding-solo/godot-mcp')
+                mkdir -p "$prefix/bin"
+                printf '#!/usr/bin/env bash\n' >"$prefix/bin/godot-mcp"
+                chmod +x "$prefix/bin/godot-mcp"
+                ;;
+            '@playwright/mcp')
+                mkdir -p "$prefix/bin"
+                printf '#!/usr/bin/env bash\n' >"$prefix/bin/playwright-mcp"
+                chmod +x "$prefix/bin/playwright-mcp"
+                ;;
+            '@upstash/context7-mcp')
+                mkdir -p "$prefix/bin"
+                printf '#!/usr/bin/env bash\n' >"$prefix/bin/context7-mcp"
+                chmod +x "$prefix/bin/context7-mcp"
+                ;;
+            *) exit 2 ;;
+        esac
+        temp_packages="${state}/packages.next"
+        : >"$temp_packages"
+        found=0
+        while IFS=' ' read -r recorded_package recorded_version; do
+            [ -n "$recorded_package" ] || continue
+            if [ "$recorded_package" = "$package" ]; then
+                found=1
+                printf '%s %s\n' "$package" "$version"
+            else
+                printf '%s %s\n' "$recorded_package" "$recorded_version"
+            fi
+        done <"$packages" >"$temp_packages"
+        [ "$found" = 0 ] && printf '%s %s\n' "$package" "$version" >>"$temp_packages"
+        mv "$temp_packages" "$packages"
+        ;;
+    *) exit 2 ;;
+esac
+'@
+    $godotSpec = 'GODOT_MCP_NPM_SPEC:-@coding-solo/godot-mcp@'
+    $playwrightSpec = 'PLAYWRIGHT_MCP_NPM_SPEC:-@playwright/mcp@'
+    $context7Spec = 'CONTEXT7_MCP_NPM_SPEC:-@upstash/context7-mcp@'
+    $installerContent = Get-Content -LiteralPath $installer -Raw
+    $godotVersion = [regex]::Match($installerContent, [regex]::Escape($godotSpec) + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+    $playwrightVersion = [regex]::Match($installerContent, [regex]::Escape($playwrightSpec) + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+    $context7Version = [regex]::Match($installerContent, [regex]::Escape($context7Spec) + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+    if (-not $godotVersion -or -not $playwrightVersion -or -not $context7Version) {
+        throw 'install-mcp-servers.sh must pin all three npm specs to concrete versions.'
+    }
+    $godotPackage = '@coding-solo/godot-mcp'
+    $playwrightPackage = '@playwright/mcp'
+    $context7Package = '@upstash/context7-mcp'
+
+    $cases = @(
+        [pscustomobject]@{ Name = 'fresh install is strict and green'; Mode = ''; Installed = $false; FailSpec = ''; Exit = 0; Installs = 3; ReportsReady = $true },
+        [pscustomobject]@{ Name = 'current versions skip installs'; Mode = ''; Installed = $true; FailSpec = ''; Exit = 0; Installs = 0; ReportsReady = $true },
+        [pscustomobject]@{ Name = 'install failure is strict'; Mode = ''; Installed = $false; FailSpec = "$godotPackage@$godotVersion"; Exit = 1; Installs = 3; ReportsReady = $false },
+        [pscustomobject]@{ Name = 'install failure is warn-only on update'; Mode = '--update'; Installed = $false; FailSpec = "$godotPackage@$godotVersion"; Exit = 0; Installs = 3; ReportsReady = $false }
+    )
+
+    New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+    $canary = "sf-canary-npm-$([Guid]::NewGuid())"
+    $envNames = @('PATH', 'FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_SPEC', 'GITHUB_MCP_PAT', 'CONTEXT7_API_KEY', 'SF_MCP_SKIP_PLAYWRIGHT_BROWSER')
+    $snapshots = @($envNames | ForEach-Object { Save-EnvVar $_ })
+    try {
+        $bin = Join-Path $tempRoot 'bin'
+        $state = Join-Path $tempRoot 'state'
+        $prefix = Join-Path $tempRoot 'prefix'
+        New-Item -ItemType Directory -Path $bin, $state, $prefix -Force | Out-Null
+        Write-TestUtf8NoBomFile -Path (Join-Path $bin 'npm') -Content $fakeNpm -LfNewlines
+        & bash -c 'chmod +x "$1"' -- (Join-Path $bin 'npm')
+        Expect-Equal $LASTEXITCODE 0 'chmod fake npm'
+
+        Push-Location $repoRoot
+        try {
+            foreach ($case in $cases) {
+                & bash -c 'rm -rf "$1" && mkdir -p "$1"' -- $state
+                & bash -c 'rm -rf "$1" && mkdir -p "$1"' -- $prefix
+                if ($case.Installed) {
+                    & bash -c 'printf "%s\n" "$1" "$2" "$3" > "$4" && mkdir -p "$5" && touch "$5/godot-mcp" "$5/playwright-mcp" "$5/context7-mcp" && chmod +x "$5/godot-mcp" "$5/playwright-mcp" "$5/context7-mcp"' `
+                        -- "$godotPackage $godotVersion" "$playwrightPackage $playwrightVersion" "$context7Package $context7Version" "$state/packages" "$prefix/bin"
+                    Expect-Equal $LASTEXITCODE 0 "$($case.Name): seed installed state"
+                } else {
+                    & bash -c 'touch "$1"' -- "$state/packages"
+                }
+
+                $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$env:PATH"
+                $env:FAKE_NPM_STATE = $state
+                $env:FAKE_NPM_PREFIX = $prefix
+                $env:FAKE_NPM_FAIL_SPEC = $case.FailSpec
+                $env:GITHUB_MCP_PAT = $canary
+                $env:CONTEXT7_API_KEY = $canary
+                $env:SF_MCP_SKIP_PLAYWRIGHT_BROWSER = '1'
+                $output = if ($case.Mode) { & bash $installer $case.Mode 2>&1 } else { & bash $installer 2>&1 }
+                $exit = $LASTEXITCODE
+                $outputText = $output | Out-String
+                Expect-Equal $exit $case.Exit "$($case.Name): exit code (output: $outputText)"
+                $installCount = 0
+                if (Test-Path "$state/events") {
+                    $installCount = @(& bash -c 'grep -c "^install:" "$1"' -- "$state/events" | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ } | Select-Object -First 1)
+                    if ($null -eq $installCount) { $installCount = 0 }
+                }
+                Expect-Equal $installCount $case.Installs "$($case.Name): npm install invocations"
+                if (Test-Path "$state/events") {
+                    $leaked = & bash -c 'grep -F "$1" "$2" || true' -- $canary "$state/events"
+                    if ($leaked) { throw "$($case.Name): secret value reached the npm process environment." }
+                }
+                if ($case.ReportsReady -and $outputText -notmatch 'mcp-servers: ready: godot-mcp playwright-mcp context7-mcp') {
+                    throw "$($case.Name): green runs must report all binaries ready."
+                }
+                if (-not $case.ReportsReady -and $case.Exit -eq 0 -and $outputText -notmatch 'mcp-servers: WARNING: npm could not install') {
+                    throw "$($case.Name): warn-only runs must warn about the failed spec."
+                }
+                if ($case.Installed -and $case.Exit -eq 0 -and $outputText -notmatch 'is current; skipped') {
+                    throw "$($case.Name): installed versions must be skipped offline."
+                }
+            }
+            # Canary sweep across the whole sandbox: the canary secret must
+            # not have reached npm's recorded process environment anywhere.
+            $leaks = & bash -c "grep -rl -F '$canary' '$tempRoot' 2>/dev/null || true"
+            if ($leaks) { throw "installer leaked the canary secret to: $($leaks -join ', ')" }
+        } finally {
+            Pop-Location
+        }
+    } finally {
+        foreach ($snapshot in $snapshots) { Restore-EnvVar $snapshot }
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
 Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $paths = @(
         '.devcontainer/install-agent-tools.sh',
         '.devcontainer/install-godot.sh',
+        '.devcontainer/install-godot-templates.sh',
+        '.devcontainer/install-mcp-servers.sh',
+        '.devcontainer/seed-mcp-config.sh',
+        '.devcontainer/mcp-shims/sf-github-mcp.sh',
         '.devcontainer/post-create.sh',
         '.devcontainer/post-start.sh'
     )

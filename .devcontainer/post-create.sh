@@ -55,6 +55,12 @@ for cli in codex opencode nanocoder claude; do
     fi
 done
 
+echo "==> Installing npm-based MCP servers (godot-mcp, playwright-mcp)"
+bash "${DEVCONTAINER_DIR}/install-mcp-servers.sh"
+
+echo "==> Seeding agent MCP configurations (doctor prints names and set/unset state, never values)"
+bash "${DEVCONTAINER_DIR}/seed-mcp-config.sh"
+
 echo "==> Installing PowerShell user profile (persists pwsh history)"
 # PowerShell on Linux reads CurrentUserAllHosts from
 # $HOME/.config/powershell/profile.ps1. Installing here (instead of in the
@@ -89,6 +95,7 @@ TOOLCHAIN_SUMMARY="$(mktemp "${TMPDIR:-/tmp}/sf-toolchain.XXXXXX")"
     printf '  opencode: %s\n' "$(opencode --version 2>/dev/null | head -n 1 || echo 'NOT FOUND')"
     printf '  nanocoder: %s\n' "$(nanocoder --version 2>/dev/null | head -n 1 || echo 'NOT FOUND')"
     printf '  claude  : %s\n' "$(claude --version 2>/dev/null | head -n 1 || echo 'NOT FOUND')"
+    printf '  github-mcp-server: %s\n' "$(github-mcp-server --version 2>/dev/null | head -n 1 || echo 'NOT FOUND')"
     printf '  pre-commit (optional): %s\n' "$(pre-commit --version 2>/dev/null || echo 'NOT FOUND')"
 } | tee "${TOOLCHAIN_SUMMARY}"
 echo "==> Toolchain summary saved to ${TOOLCHAIN_SUMMARY}"

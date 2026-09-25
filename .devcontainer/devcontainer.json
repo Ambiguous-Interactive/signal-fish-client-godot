@@ -49,6 +49,15 @@
     "ghcr.io/devcontainers/features/python",
     "ghcr.io/devcontainers/features/node"
   ],
+  // Load the user's local secrets (.env.local, git-ignored; copy from
+  // .env.example) into the container environment at create time. MCP
+  // configuration files reference these variables by NAME only, so values
+  // exist solely in the process environment - never in committed files.
+  // Requires .env.local to exist on the host before (re)building.
+  "runArgs": [
+    "--env-file",
+    "${localWorkspaceFolder}/.env.local"
+  ],
   "remoteUser": "vscode",
   "containerUser": "vscode",
   "updateRemoteUserUID": true,

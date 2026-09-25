@@ -12,8 +12,8 @@ Generated Markdown inventory by `scripts/generate-llm-index.ps1`; do not edit by
   Triggers: planning, architecture, design doc, state machine, data flow, feature plan, technical plan
 - [Asset Library Release](skills/asset-library-release.md) (`Release`) - Use when releasing to the Godot Asset Library, configuring its secrets, or changing the store submission automation or template.
   Triggers: asset library, asset store, publish, release, store submission, moderation, godot-asset-lib-action, asset-template, plugin.cfg, icon
-- [Dev Container Tooling](skills/devcontainer-tooling.md) (`Tooling`) - Use when changing the VS Code dev container, installed tools, shell profiles, or post-create/post-start setup.
-  Triggers: devcontainer, container, codex, opencode, nanocoder, claude, agent cli, cli, post-create, postcreate, post-start, poststart, powershell profile, pwsh profile, PSReadLine, toolchain
+- [Dev Container Tooling](skills/devcontainer-tooling.md) (`Tooling`) - Use when changing the VS Code dev container, installed tools, MCP servers, shell profiles, or post-create/post-start setup.
+  Triggers: devcontainer, container, codex, opencode, nanocoder, claude, agent cli, cli, post-create, postcreate, post-start, poststart, powershell profile, pwsh profile, PSReadLine, toolchain, mcp, mcp servers, godot-mcp, playwright-mcp, github-mcp-server, context7, deepwiki, env file, secrets
 - [Godot GDScript Bindings](skills/godot-gdscript.md) (`Godot`) - Use when writing or reviewing Godot addon code, GDScript APIs, scenes, resources, or exports.
   Triggers: godot, gdscript, addon, plugin, scene, resource, export, api
 - [Godot Transport Adapters](skills/godot-transport.md) (`Godot`) - Use when implementing or reviewing Godot transport adapters for WebSocket, WebRTC, polling, reconnect, or multiplayer APIs.
