@@ -795,7 +795,9 @@ static func validate_player_info(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "PlayerInfo must be an object"
 	var dict: Dictionary = data
-	for key: String in ["id", "name"]:
+	if not _has_id(dict, "id"):
+		return "PlayerInfo requires non-empty string id"
+	for key: String in ["name"]:
 		if not _has_string(dict, key):
 			return "PlayerInfo requires string %s" % key
 	# connected_at is optional: protocol-v3 room snapshots trim it for
@@ -817,7 +819,9 @@ static func validate_spectator_info(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "SpectatorInfo must be an object"
 	var dict: Dictionary = data
-	for key: String in ["id", "name"]:
+	if not _has_id(dict, "id"):
+		return "SpectatorInfo requires non-empty string id"
+	for key: String in ["name"]:
 		if not _has_string(dict, key):
 			return "SpectatorInfo requires string %s" % key
 	if not _is_optional_string(dict, "connected_at"):
@@ -829,7 +833,9 @@ static func validate_peer_connection_info(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "PeerConnectionInfo must be an object"
 	var dict: Dictionary = data
-	for key: String in ["player_id", "player_name", "relay_type"]:
+	if not _has_id(dict, "player_id"):
+		return "PeerConnectionInfo requires non-empty string player_id"
+	for key: String in ["player_name", "relay_type"]:
 		if not _has_string(dict, key):
 			return "PeerConnectionInfo requires string %s" % key
 	if not _has_bool(dict, "is_authority"):
@@ -845,7 +851,10 @@ static func validate_room_joined_info(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "RoomJoinedInfo must be an object"
 	var dict: Dictionary = data
-	for key: String in ["room_id", "room_code", "player_id", "game_name", "relay_type"]:
+	for key: String in ["room_id", "player_id"]:
+		if not _has_id(dict, key):
+			return "RoomJoinedInfo requires non-empty string %s" % key
+	for key: String in ["room_code", "game_name", "relay_type"]:
 		if not _has_string(dict, key):
 			return "RoomJoinedInfo requires string %s" % key
 	if not _has_integer_in_range(dict, "max_players", 0, U8_MAX):
@@ -858,8 +867,10 @@ static func validate_room_joined_info(data: Variant) -> String:
 	var players_error := validate_players_array(dict.get("current_players"))
 	if not players_error.is_empty():
 		return "RoomJoinedInfo current_players: %s" % players_error
-	if not _has_string_array(dict, "ready_players"):
-		return "RoomJoinedInfo requires string array ready_players"
+	# ready_players carries upstream PlayerId UUIDs: entries must be
+	# non-empty strings (issue #149).
+	if not _has_non_empty_string_array(dict, "ready_players"):
+		return "RoomJoinedInfo requires non-empty string array ready_players"
 	# Server-issued on RoomJoined/Reconnected baselines; the client echoes it
 	# back on Reconnect, so a present value must be a string (issue #72).
 	if not _is_optional_string(dict, "reconnection_token"):
@@ -886,7 +897,10 @@ static func validate_spectator_joined_info(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "SpectatorJoinedInfo must be an object"
 	var dict: Dictionary = data
-	for key: String in ["room_id", "room_code", "spectator_id", "game_name"]:
+	for key: String in ["room_id", "spectator_id"]:
+		if not _has_id(dict, key):
+			return "SpectatorJoinedInfo requires non-empty string %s" % key
+	for key: String in ["room_code", "game_name"]:
 		if not _has_string(dict, key):
 			return "SpectatorJoinedInfo requires string %s" % key
 	var players_error := validate_players_array(dict.get("current_players"))
@@ -1118,6 +1132,13 @@ static func _has_string(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_STRING
 
 
+## A present upstream-UUID identifier (`PlayerId`/`RoomId`) must be non-empty:
+## empty cannot deserialize upstream, and it would collide with the retired
+## negotiated-rkyv "" sender-unknowable sentinel (issue #149).
+static func _has_id(data: Dictionary, key: String) -> bool:
+	return _has_string(data, key) and not (data[key] as String).is_empty()
+
+
 static func _has_bool(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_BOOL
 
@@ -1132,8 +1153,15 @@ static func _has_integer_in_range(
 	return data.has(key) and _is_integer_value_in_range(data[key], min_value, max_value)
 
 
-static func _has_string_array(data: Dictionary, key: String) -> bool:
-	return data.has(key) and _is_string_array_value(data[key])
+## String array whose entries are all non-empty (upstream id arrays such as
+## `ready_players: Vec<PlayerId>`; issue #149).
+static func _has_non_empty_string_array(data: Dictionary, key: String) -> bool:
+	if not data.has(key) or not _is_string_array_value(data[key]):
+		return false
+	for value: Variant in data[key]:
+		if (value as String).is_empty():
+			return false
+	return true
 
 
 ## Absent or JSON-null optional string (upstream `Option`, serde default);
@@ -1157,7 +1185,8 @@ static func _is_optional_replay_status(data: Dictionary) -> bool:
 
 ## Absent or JSON-null `Reconnected.sender_watermarks` (v3-only
 ## `Vec<SenderWatermark>`); a present value must be an array of watermark
-## objects with a string `player_id`, u32 `epoch`, and i64-representable `seq`.
+## objects with a non-empty `player_id`, u32 `epoch`, and
+## i64-representable `seq` (issue #149).
 static func _is_optional_watermarks_array(data: Dictionary) -> bool:
 	if not data.has("sender_watermarks") or data["sender_watermarks"] == null:
 		return true
@@ -1166,7 +1195,7 @@ static func _is_optional_watermarks_array(data: Dictionary) -> bool:
 	for watermark: Variant in data["sender_watermarks"]:
 		if typeof(watermark) != TYPE_DICTIONARY:
 			return false
-		if not _has_string(watermark, "player_id"):
+		if not _has_id(watermark, "player_id"):
 			return false
 		if not _has_integer_in_range(watermark, "epoch", 0, U32_MAX):
 			return false

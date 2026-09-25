@@ -224,7 +224,9 @@ blank lines and lines beginning with `#`.
 - Present enum-like wire strings must be non-empty. Optional fields use
   omission or JSON `null` to mean "no value"; an empty `error_code`, spectator
   reason, binary encoding, connection info type/transport, or protocol game
-  data format is malformed.
+  data format is malformed. Identifier fields (`PlayerId`, `RoomId`,
+  `SessionGeneration`) are UUIDs upstream, so a present empty id is malformed
+  too (issue #149), while free-text `String` fields accept empty verbatim.
 - `ConnectionInfo.to_dict()` returns a canonical dictionary for known
   connection types, normalizing accepted inbound integral JSON numbers to Godot
   `int` values and omitting optional JSON `null` fields so decoded connection
