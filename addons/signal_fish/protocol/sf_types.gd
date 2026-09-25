@@ -796,7 +796,7 @@ static func validate_player_info(data: Variant) -> String:
 		return "PlayerInfo must be an object"
 	var dict: Dictionary = data
 	if not _has_id(dict, "id"):
-		return "PlayerInfo requires non-empty string id"
+		return "PlayerInfo requires lowercase hyphenated UUID id"
 	for key: String in ["name"]:
 		if not _has_string(dict, key):
 			return "PlayerInfo requires string %s" % key
@@ -820,7 +820,7 @@ static func validate_spectator_info(data: Variant) -> String:
 		return "SpectatorInfo must be an object"
 	var dict: Dictionary = data
 	if not _has_id(dict, "id"):
-		return "SpectatorInfo requires non-empty string id"
+		return "SpectatorInfo requires lowercase hyphenated UUID id"
 	for key: String in ["name"]:
 		if not _has_string(dict, key):
 			return "SpectatorInfo requires string %s" % key
@@ -834,7 +834,7 @@ static func validate_peer_connection_info(data: Variant) -> String:
 		return "PeerConnectionInfo must be an object"
 	var dict: Dictionary = data
 	if not _has_id(dict, "player_id"):
-		return "PeerConnectionInfo requires non-empty string player_id"
+		return "PeerConnectionInfo requires lowercase hyphenated UUID player_id"
 	for key: String in ["player_name", "relay_type"]:
 		if not _has_string(dict, key):
 			return "PeerConnectionInfo requires string %s" % key
@@ -853,7 +853,7 @@ static func validate_room_joined_info(data: Variant) -> String:
 	var dict: Dictionary = data
 	for key: String in ["room_id", "player_id"]:
 		if not _has_id(dict, key):
-			return "RoomJoinedInfo requires non-empty string %s" % key
+			return "RoomJoinedInfo requires lowercase hyphenated UUID %s" % key
 	for key: String in ["room_code", "game_name", "relay_type"]:
 		if not _has_string(dict, key):
 			return "RoomJoinedInfo requires string %s" % key
@@ -868,9 +868,9 @@ static func validate_room_joined_info(data: Variant) -> String:
 	if not players_error.is_empty():
 		return "RoomJoinedInfo current_players: %s" % players_error
 	# ready_players carries upstream PlayerId UUIDs: entries must be
-	# non-empty strings (issue #149).
-	if not _has_non_empty_string_array(dict, "ready_players"):
-		return "RoomJoinedInfo requires non-empty string array ready_players"
+	# canonical UUID text (issues #149/#151).
+	if not _has_uuid_string_array(dict, "ready_players"):
+		return "RoomJoinedInfo requires lowercase hyphenated UUID array ready_players"
 	# Server-issued on RoomJoined/Reconnected baselines; the client echoes it
 	# back on Reconnect, so a present value must be a string (issue #72).
 	if not _is_optional_string(dict, "reconnection_token"):
@@ -881,7 +881,7 @@ static func validate_room_joined_info(data: Variant) -> String:
 	if not _is_optional_replay_status(dict):
 		return "RoomJoinedInfo replay is unknown"
 	if not _is_optional_watermarks_array(dict):
-		return "RoomJoinedInfo sender_watermarks must be valid watermark objects"
+		return "RoomJoinedInfo sender_watermarks must be lowercase hyphenated UUID watermarks"
 	if dict.has("current_spectators"):
 		var spectators_error := validate_spectators_array(dict["current_spectators"])
 		if not spectators_error.is_empty():
@@ -899,7 +899,7 @@ static func validate_spectator_joined_info(data: Variant) -> String:
 	var dict: Dictionary = data
 	for key: String in ["room_id", "spectator_id"]:
 		if not _has_id(dict, key):
-			return "SpectatorJoinedInfo requires non-empty string %s" % key
+			return "SpectatorJoinedInfo requires lowercase hyphenated UUID %s" % key
 	for key: String in ["room_code", "game_name"]:
 		if not _has_string(dict, key):
 			return "SpectatorJoinedInfo requires string %s" % key
@@ -1132,11 +1132,12 @@ static func _has_string(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_STRING
 
 
-## A present upstream-UUID identifier (`PlayerId`/`RoomId`) must be non-empty:
-## empty cannot deserialize upstream, and it would collide with the retired
-## negotiated-rkyv "" sender-unknowable sentinel (issue #149).
+## A present upstream-UUID identifier (`PlayerId`/`RoomId`) must be canonical
+## lowercase hyphenated UUID text: empty cannot deserialize upstream and
+## collides with the retired negotiated-rkyv "" sender-unknowable sentinel
+## (issue #149), and no other spelling is wire-reachable (issue #151).
 static func _has_id(data: Dictionary, key: String) -> bool:
-	return _has_string(data, key) and not (data[key] as String).is_empty()
+	return TypeUtils.is_canonical_uuid_text(data.get(key))
 
 
 static func _has_bool(data: Dictionary, key: String) -> bool:
@@ -1153,13 +1154,13 @@ static func _has_integer_in_range(
 	return data.has(key) and _is_integer_value_in_range(data[key], min_value, max_value)
 
 
-## String array whose entries are all non-empty (upstream id arrays such as
-## `ready_players: Vec<PlayerId>`; issue #149).
-static func _has_non_empty_string_array(data: Dictionary, key: String) -> bool:
+## Id array (upstream `ready_players: Vec<PlayerId>`, issue #149): every
+## entry must be canonical lowercase hyphenated UUID text (issue #151).
+static func _has_uuid_string_array(data: Dictionary, key: String) -> bool:
 	if not data.has(key) or not _is_string_array_value(data[key]):
 		return false
 	for value: Variant in data[key]:
-		if (value as String).is_empty():
+		if not TypeUtils.is_canonical_uuid_text(value):
 			return false
 	return true
 
@@ -1185,7 +1186,7 @@ static func _is_optional_replay_status(data: Dictionary) -> bool:
 
 ## Absent or JSON-null `Reconnected.sender_watermarks` (v3-only
 ## `Vec<SenderWatermark>`); a present value must be an array of watermark
-## objects with a non-empty `player_id`, u32 `epoch`, and
+## objects with a UUID `player_id`, u32 `epoch`, and
 ## i64-representable `seq` (issue #149).
 static func _is_optional_watermarks_array(data: Dictionary) -> bool:
 	if not data.has("sender_watermarks") or data["sender_watermarks"] == null:

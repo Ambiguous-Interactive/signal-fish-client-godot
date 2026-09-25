@@ -150,7 +150,7 @@ func _test_v3_events_surface() -> void:
 				"type": "SessionPlan",
 				"data":
 				{
-					"generation": "gen-1",
+					"generation": "40000000-0000-0000-0000-000000000001",
 					"topology": "mesh",
 					"transport": "webrtc",
 					"peers":
@@ -170,7 +170,9 @@ func _test_v3_events_surface() -> void:
 	)
 	_assert_equal(1, plans.size(), "session_plan surfaced")
 	var first_plan: SFSessionTypesScript.SessionPlanInfo = plans[0]
-	_assert_equal("gen-1", first_plan.generation, "plan generation surfaced")
+	_assert_equal(
+		"40000000-0000-0000-0000-000000000001", first_plan.generation, "plan generation surfaced"
+	)
 	_assert_equal(SFSessionTypesScript.Topology.MESH, first_plan.topology, "plan topology surfaced")
 	_assert_equal(1, first_plan.peers.size(), "plan peers surfaced")
 	_assert_equal(PLAYER_B, first_plan.peers[0].player_id, "plan peer id surfaced")
@@ -191,7 +193,7 @@ func _test_v3_events_surface() -> void:
 				"data":
 				{
 					"from": PLAYER_B,
-					"generation": "gen-1",
+					"generation": "40000000-0000-0000-0000-000000000001",
 					"signal":
 					{"IceCandidate": "candidate:1 1 UDP 2130706431 10.0.0.5 54321 typ host"},
 				}
@@ -200,7 +202,9 @@ func _test_v3_events_surface() -> void:
 	)
 	_assert_equal(1, signals_in.size(), "signal_received surfaced")
 	_assert_equal(PLAYER_B, signals_in[0][0], "signal from surfaced")
-	_assert_equal("gen-1", signals_in[0][1], "signal generation surfaced")
+	_assert_equal(
+		"40000000-0000-0000-0000-000000000001", signals_in[0][1], "signal generation surfaced"
+	)
 	_assert_equal(
 		"candidate:1 1 UDP 2130706431 10.0.0.5 54321 typ host",
 		signals_in[0][2]["IceCandidate"],
@@ -239,7 +243,7 @@ func _test_v3_events_surface() -> void:
 				"type": "SessionPlan",
 				"data":
 				{
-					"generation": "gen-2",
+					"generation": "40000000-0000-0000-0000-000000000002",
 					"topology": "relay",
 					"transport": "relay",
 					"peers": [],
@@ -259,9 +263,15 @@ func _test_v3_send_methods() -> void:
 	var client := _make_authenticated_client()
 	var fake: SFFakeTransportScript = client.transport
 	var before: int = fake.sent_text.size()
-	_assert_equal(OK, client.send_signal(PLAYER_B, "gen-1", {"Offer": "v=0"}), "send_signal")
+	_assert_equal(
+		OK,
+		client.send_signal(PLAYER_B, "40000000-0000-0000-0000-000000000001", {"Offer": "v=0"}),
+		"send_signal"
+	)
 	var expected_signal := SFMessagesScript.encode(
-		SFMessagesScript.peer_signal(PLAYER_B, "gen-1", {"Offer": "v=0"})
+		SFMessagesScript.peer_signal(
+			PLAYER_B, "40000000-0000-0000-0000-000000000001", {"Offer": "v=0"}
+		)
 	)
 	_assert_equal(expected_signal, fake.sent_text[before], "send_signal wire bytes")
 
@@ -277,12 +287,12 @@ func _test_v3_send_methods() -> void:
 
 	_assert_equal(
 		ERR_INVALID_DATA,
-		client.send_signal(PLAYER_B, "gen-1", null),
+		client.send_signal(PLAYER_B, "40000000-0000-0000-0000-000000000001", null),
 		"null signal payload refused locally"
 	)
 	_assert_equal(
 		ERR_INVALID_DATA,
-		client.send_signal("", "gen-1", {"Offer": "s"}),
+		client.send_signal("", "40000000-0000-0000-0000-000000000001", {"Offer": "s"}),
 		"empty peer refused locally"
 	)
 

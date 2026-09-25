@@ -218,22 +218,43 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 
 
 func _test_v3_validation_and_sentinels() -> void:
+	# Issue #151: the to field is a PlayerId UUID, so placeholder text fails
+	# the canonical-UUID gate ("peer-b" only fails under the shape gate; ""
+	# additionally passed the old emptiness check).
 	_assert(
 		not SFMessagesScript.is_valid_message(
-			SFMessagesScript.peer_signal("", "gen", {"Offer": "s"})
+			SFMessagesScript.peer_signal(
+				"peer-b", "40000000-0000-0000-0000-000000000001", {"Offer": "s"}
+			)
 		),
-		"signal to is required"
+		"signal to must be canonical UUID text"
 	)
 	_assert(
-		not SFMessagesScript.is_valid_message(SFMessagesScript.peer_signal("peer", "gen", null)),
+		not SFMessagesScript.is_valid_message(
+			SFMessagesScript.peer_signal("", "40000000-0000-0000-0000-000000000001", {"Offer": "s"})
+		),
+		"signal empty to is still refused"
+	)
+	_assert(
+		not SFMessagesScript.is_valid_message(
+			SFMessagesScript.peer_signal(
+				"10000000-0000-0000-0000-000000000001", "40000000-0000-0000-0000-000000000001", null
+			)
+		),
 		"signal payload is required"
 	)
 	_assert(
-		SFMessagesScript.is_valid_message(SFMessagesScript.peer_signal("peer", "gen", [])),
+		SFMessagesScript.is_valid_message(
+			SFMessagesScript.peer_signal(
+				"10000000-0000-0000-0000-000000000001", "40000000-0000-0000-0000-000000000001", []
+			)
+		),
 		"empty array signal payload is still JSON data"
 	)
 	_assert(
-		SFMessagesScript.is_valid_message(SFMessagesScript.peer_signal("peer", "", {"Offer": "s"})),
+		SFMessagesScript.is_valid_message(
+			SFMessagesScript.peer_signal("10000000-0000-0000-0000-000000000001", "", {"Offer": "s"})
+		),
 		"empty generation is omitted (legacy shape)"
 	)
 	_assert(
@@ -288,7 +309,14 @@ func _test_v3_validation_and_sentinels() -> void:
 			{
 				"topology": "mesh",
 				"transport": "webrtc",
-				"peers": [{"player_id": "p", "player_name": "P", "is_authority": false}],
+				"peers":
+				[
+					{
+						"player_id": "10000000-0000-0000-0000-000000000001",
+						"player_name": "P",
+						"is_authority": false
+					}
+				],
 				"fallback": "relay"
 			}
 		],
@@ -320,19 +348,27 @@ func _test_v3_validation_and_sentinels() -> void:
 		_assert_protocol_error(decoded, "bad session plan: %s" % bad[0])
 
 	_assert_protocol_error_contains(
-		SFEventsScript.decode_envelope({"type": "Signal", "data": {"from": "p"}}),
+		SFEventsScript.decode_envelope(
+			{"type": "Signal", "data": {"from": "10000000-0000-0000-0000-000000000001"}}
+		),
 		"Signal requires from and signal",
 		"signal without payload"
 	)
 	_assert_protocol_error_contains(
 		SFEventsScript.decode_envelope(
-			{"type": "Signal", "data": {"from": "p", "generation": 7, "signal": {}}}
+			{
+				"type": "Signal",
+				"data":
+				{"from": "10000000-0000-0000-0000-000000000001", "generation": 7, "signal": {}}
+			}
 		),
 		"Signal generation must be a string",
 		"signal with non-string generation"
 	)
 	_assert_protocol_error_contains(
-		SFEventsScript.decode_envelope({"type": "NewPeer", "data": {"peer_id": "p"}}),
+		SFEventsScript.decode_envelope(
+			{"type": "NewPeer", "data": {"peer_id": "10000000-0000-0000-0000-000000000001"}}
+		),
 		"NewPeer requires peer_id and you_initiate",
 		"new peer without you_initiate"
 	)
@@ -340,7 +376,12 @@ func _test_v3_validation_and_sentinels() -> void:
 		SFEventsScript.decode_envelope(
 			{
 				"type": "PeerTransportStatus",
-				"data": {"peer_id": "p", "transport": "smoke", "connected": true}
+				"data":
+				{
+					"peer_id": "10000000-0000-0000-0000-000000000001",
+					"transport": "smoke",
+					"connected": true
+				}
 			}
 		),
 		"PeerTransportStatus transport is unknown",
@@ -455,16 +496,16 @@ func _test_v3_validation_and_sentinels() -> void:
 				"type": "RoomJoined",
 				"data":
 				{
-					"room_id": "r",
+					"room_id": "20000000-0000-0000-0000-000000000001",
 					"room_code": "RC",
-					"player_id": "p",
+					"player_id": "10000000-0000-0000-0000-000000000001",
 					"game_name": "g",
 					"max_players": 4,
 					"supports_authority": true,
 					"current_players":
 					[
 						{
-							"id": "p",
+							"id": "10000000-0000-0000-0000-000000000001",
 							"name": "P",
 							"is_authority": false,
 							"is_ready": false,
@@ -493,7 +534,15 @@ func _test_v3_validation_and_sentinels() -> void:
 
 	# JSON null signal payloads round-trip verbatim (upstream Value::Null).
 	var null_signal: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "Signal", "data": {"from": "p", "generation": "gen", "signal": null}}
+		{
+			"type": "Signal",
+			"data":
+			{
+				"from": "10000000-0000-0000-0000-000000000001",
+				"generation": "40000000-0000-0000-0000-000000000001",
+				"signal": null
+			}
+		}
 	)
 	if _assert_decoded_signal("signal_received", null_signal, "null signal payload decodes"):
 		_assert_equal(null_signal.args[2], null, "null signal payload kept verbatim")
@@ -501,7 +550,11 @@ func _test_v3_validation_and_sentinels() -> void:
 	# Engine-only Variants are refused locally instead of being stringified onto the wire.
 	_assert(
 		not SFMessagesScript.is_valid_message(
-			SFMessagesScript.peer_signal("peer", "gen", {"Offer": Vector2(1, 2)})
+			SFMessagesScript.peer_signal(
+				"10000000-0000-0000-0000-000000000001",
+				"40000000-0000-0000-0000-000000000001",
+				{"Offer": Vector2(1, 2)}
+			)
 		),
 		"engine-only nested payload refused"
 	)
@@ -513,9 +566,9 @@ func _test_v3_validation_and_sentinels() -> void:
 				"type": "Reconnected",
 				"data":
 				{
-					"room_id": "r",
+					"room_id": "20000000-0000-0000-0000-000000000001",
 					"room_code": "RC",
-					"player_id": "p",
+					"player_id": "10000000-0000-0000-0000-000000000001",
 					"game_name": "g",
 					"max_players": 4,
 					"supports_authority": true,
@@ -530,7 +583,7 @@ func _test_v3_validation_and_sentinels() -> void:
 							"type": "SessionPlan",
 							"data":
 							{
-								"generation": "gen",
+								"generation": "40000000-0000-0000-0000-000000000001",
 								"topology": "relay",
 								"transport": "relay",
 								"peers": [],
@@ -550,9 +603,9 @@ func _test_v3_validation_and_sentinels() -> void:
 
 func _room_joined_with_bad_ice() -> Dictionary:
 	return {
-		"room_id": "r",
+		"room_id": "20000000-0000-0000-0000-000000000001",
 		"room_code": "RC",
-		"player_id": "p",
+		"player_id": "10000000-0000-0000-0000-000000000001",
 		"game_name": "g",
 		"max_players": 4,
 		"supports_authority": true,
@@ -662,7 +715,7 @@ func _decoded_summary(decoded: RefCounted) -> String:
 
 func _player_with_null_connected_at() -> Dictionary:
 	return {
-		"id": "p",
+		"id": "10000000-0000-0000-0000-000000000001",
 		"name": "P",
 		"is_authority": false,
 		"is_ready": false,
@@ -683,7 +736,7 @@ func _test_truncated_missed_events_keep_the_newest() -> void:
 				"type": "SessionPlan",
 				"data":
 				{
-					"generation": "gen-%d" % index,
+					"generation": "50000000-0000-0000-0000-%012d" % index,
 					"topology": "relay",
 					"transport": "relay",
 					"peers": [],
@@ -698,9 +751,9 @@ func _test_truncated_missed_events_keep_the_newest() -> void:
 				"type": "Reconnected",
 				"data":
 				{
-					"room_id": "r",
+					"room_id": "20000000-0000-0000-0000-000000000001",
 					"room_code": "RC",
-					"player_id": "p",
+					"player_id": "10000000-0000-0000-0000-000000000001",
 					"game_name": "g",
 					"max_players": 4,
 					"supports_authority": true,
@@ -725,7 +778,7 @@ func _test_truncated_missed_events_keep_the_newest() -> void:
 	if _assert_decoded_signal("session_plan", first, "the oldest kept entry decodes"):
 		var plan: SFSessionTypesScript.SessionPlanInfo = first.args[0]
 		_assert_equal(
-			"gen-%d" % (total - cap),
+			"50000000-0000-0000-0000-%012d" % (total - cap),
 			plan.generation,
 			"the kept window starts at the newest cap entries"
 		)
@@ -733,7 +786,9 @@ func _test_truncated_missed_events_keep_the_newest() -> void:
 	if _assert_decoded_signal("session_plan", last_real, "the newest entry decodes"):
 		var newest: SFSessionTypesScript.SessionPlanInfo = last_real.args[0]
 		_assert_equal(
-			"gen-%d" % (total - 1), newest.generation, "the newest event survives the cap"
+			"50000000-0000-0000-0000-%012d" % (total - 1),
+			newest.generation,
+			"the newest event survives the cap"
 		)
 	var sentinel: SFTypesScript.DecodedEvent = kept[cap]
 	if _assert_decoded_signal(

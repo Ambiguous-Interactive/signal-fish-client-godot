@@ -81,6 +81,7 @@ const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd
 const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
 const SFGameDataFormatScript = preload("res://addons/signal_fish/protocol/sf_game_data_format.gd")
 const SFTransportScript = preload("res://addons/signal_fish/transport/sf_transport.gd")
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFWebSocketTransportScript = preload(
 	"res://addons/signal_fish/transport/sf_websocket_transport.gd"
@@ -250,6 +251,15 @@ func reconnect(player_id: String, room_id: String, auth_token: String) -> Error:
 		return ERR_BUSY
 	if player_id.is_empty() or room_id.is_empty() or auth_token.is_empty():
 		_emit_protocol_error("reconnect requires player_id, room_id, and auth_token")
+		return ERR_INVALID_PARAMETER
+	# Same gate the builders apply (issue #151): a non-UUID identity would be
+	# refused by the server's serde parse, so fail fast with the parameter
+	# error instead of mid-dial.
+	if not SFTypeUtils.is_canonical_uuid_text(player_id):
+		_emit_protocol_error("reconnect player_id must be a lowercase hyphenated UUID")
+		return ERR_INVALID_PARAMETER
+	if not SFTypeUtils.is_canonical_uuid_text(room_id):
+		_emit_protocol_error("reconnect room_id must be a lowercase hyphenated UUID")
 		return ERR_INVALID_PARAMETER
 	var target := _last_dial_url
 	if target.is_empty():

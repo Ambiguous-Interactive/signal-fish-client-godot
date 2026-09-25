@@ -1148,7 +1148,12 @@ func _test_duplicate_key_frame_fails_closed() -> void:
 	var client := _make_in_room_client()
 	var fake: SFFakeTransportScript = client.transport
 	var errors := _track_protocol_errors(client)
-	fake.inject_text('{"type":"GameData","data":{"from_player":"p1","data":{}},"type":"RoomLeft"}')
+	fake.inject_text(
+		(
+			'{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000001"'
+			+ ',"data":{}},"type":"RoomLeft"}'
+		)
+	)
 	_assert_equal(1, errors.size(), "duplicate key frame flagged")
 	var duplicate_error: String = errors[0]
 	_assert_string_contains(duplicate_error, "duplicate", "duplicate key message")
@@ -1332,7 +1337,7 @@ func _join_as_spectator(client: SignalFishClientScript) -> Error:
 
 
 func _send_signal_fixture(client: SignalFishClientScript) -> Error:
-	return client.send_signal(PLAYER_B, "gen", {"Offer": "s"})
+	return client.send_signal(PLAYER_B, "40000000-0000-0000-0000-000000000001", {"Offer": "s"})
 
 
 func _send_webrtc_status(client: SignalFishClientScript) -> Error:

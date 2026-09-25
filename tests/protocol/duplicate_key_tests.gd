@@ -43,7 +43,11 @@ func _test_duplicate_key_frames_fail_closed() -> void:
 	var hostile := [
 		{
 			"label": "envelope type substitution",
-			"text": '{"type":"GameData","data":{"from_player":"p1","data":{}},"type":"RoomLeft"}',
+			"text":
+			(
+				'{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000001"'
+				+ ',"data":{}},"type":"RoomLeft"}'
+			),
 		},
 		{
 			"label": "reconnection token wipe",
@@ -56,20 +60,27 @@ func _test_duplicate_key_frames_fail_closed() -> void:
 			"label": "ready gate forced open",
 			"text":
 			(
-				'{"type":"LobbyStateChanged","data":{"lobby_state":"lobby","ready_players":["p1"],'
+				'{"type":"LobbyStateChanged","data":{"lobby_state":"lobby",'
+				+ '"ready_players":["10000000-0000-0000-0000-000000000001"],'
 				+ '"all_ready":false,"all_ready":true}}'
 			),
 		},
 		{
 			"label": "nested payload field",
 			"text":
-			'{"type":"GameData","data":{"from_player":"p1","data":{"stats":{"hp":1,"hp":9}}}}',
+			(
+				'{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000001"'
+				+ ',"data":{"stats":{"hp":1,"hp":9}}}}'
+			),
 		},
 		{
 			"label": "duplicate after a 64 KiB string",
 			"text":
 			(
-				'{"type":"GameData","data":{"from_player":"p1","data":{"blob":"%s","k":1,"k":2}}}'
+				(
+					'{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000001"'
+					+ ',"data":{"blob":"%s","k":1,"k":2}}}'
+				)
 				% "a".repeat(65536)
 			),
 		},
@@ -80,7 +91,10 @@ func _test_duplicate_key_frames_fail_closed() -> void:
 		{
 			"label": "surrogate-pair key vs literal emoji",
 			"text":
-			'{"type":"GameData","data":{"from_player":"p1","data":{"\\uD83D\\uDE00":1,"😀":2}}}',
+			(
+				'{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000001"'
+				+ ',"data":{"\\uD83D\\uDE00":1,"😀":2}}}'
+			),
 		},
 	]
 	for case: Dictionary in hostile:
@@ -94,11 +108,17 @@ func _test_duplicate_key_frames_fail_closed() -> void:
 	# the scan sees distinct keys. Such keys are refused with their own
 	# diagnostic, merged-duplicate class.
 	var nul_type_smuggle: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(
-		'{"type":"GameData","data":{"from_player":"p1","data":{}},"typ\\u0000e":"RoomLeft"}'
+		(
+			'{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000001"'
+			+ ',"data":{}},"typ\\u0000e":"RoomLeft"}'
+		)
 	)
 	_assert_protocol_error_contains(nul_type_smuggle, "NUL", "NUL-escape type smuggle rejected")
 	var nul_merged: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(
-		'{"type":"GameData","data":{"from_player":"p1","data":{"h\\u0000p":1,"hp":2}}}'
+		(
+			'{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000001"'
+			+ ',"data":{"h\\u0000p":1,"hp":2}}}'
+		)
 	)
 	_assert_protocol_error_contains(nul_merged, "NUL", "NUL-escape merged keys rejected")
 	var nul_guard := SFJsonGuard.duplicate_key_error('{"a\\u0000b":1,"ab":2}')
@@ -113,7 +133,7 @@ func _test_clean_frames_still_decode() -> void:
 			"label": "escapes in values",
 			"text":
 			(
-				'{"type":"GameData","data":{"from_player":"p1","data":{"msg":'
+				'{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000001","data":{"msg":'
 				+ '"quote\\\" backslash\\\\ \\u0041"}}}'
 			),
 			"signal": "game_data_received",
@@ -121,7 +141,11 @@ func _test_clean_frames_still_decode() -> void:
 		},
 		{
 			"label": "escaped distinct keys",
-			"text": '{"type":"GameData","data":{"from_player":"p1","data":{"\\u0062":1,"b2":2}}}',
+			"text":
+			(
+				'{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000001"'
+				+ ',"data":{"\\u0062":1,"b2":2}}}'
+			),
 			"signal": "game_data_received",
 		},
 	]
@@ -188,9 +212,9 @@ func _room_joined_text_with_suffix(suffix: String) -> String:
 
 func _minimal_room_joined_data() -> Dictionary:
 	return {
-		"room_id": "r1",
+		"room_id": "20000000-0000-0000-0000-000000000001",
 		"room_code": "ABC123",
-		"player_id": "p1",
+		"player_id": "10000000-0000-0000-0000-000000000001",
 		"game_name": "reef-rally",
 		"max_players": 4,
 		"supports_authority": false,

@@ -286,14 +286,14 @@ static func validate_session_plan_info(data: Variant) -> String:
 		return "SessionPlanInfo must be an object"
 	var dict: Dictionary = data
 	# generation/host are upstream Uuid-typed (`SessionGeneration`,
-	# `Option<PlayerId>`): present values must be non-empty (issue #149).
-	# Absent or null generation stays legal for the legacy Server 0.4 plan
-	# shape.
+	# `Option<PlayerId>`): present values must be canonical lowercase
+	# hyphenated UUID text (issues #149/#151). Absent or null generation
+	# stays legal for the legacy Server 0.4 plan shape.
 	if dict.has("generation") and dict["generation"] != null:
 		if typeof(dict["generation"]) != TYPE_STRING:
 			return "SessionPlanInfo generation must be a string"
 		if not _has_id(dict, "generation"):
-			return "SessionPlanInfo generation must not be empty"
+			return "SessionPlanInfo generation must be a lowercase hyphenated UUID"
 	if not _has_known_enum_token(dict, "topology", TOPOLOGY_FROM_STRING):
 		return "SessionPlanInfo topology is unknown"
 	if not _has_known_enum_token(dict, "transport", TRANSPORT_KIND_FROM_STRING):
@@ -304,14 +304,16 @@ static func validate_session_plan_info(data: Variant) -> String:
 		if typeof(dict["host"]) != TYPE_STRING:
 			return "SessionPlanInfo host must be a string"
 		if not _has_id(dict, "host"):
-			return "SessionPlanInfo host must not be empty"
+			return "SessionPlanInfo host must be a lowercase hyphenated UUID"
 	if dict.has("direct_endpoint") and dict["direct_endpoint"] != null:
 		if typeof(dict["direct_endpoint"]) != TYPE_DICTIONARY:
 			return "SessionPlanInfo direct_endpoint must be an object"
 		var endpoint: Dictionary = dict["direct_endpoint"]
 		# Upstream refuses an empty host when constructing a DirectEndpoint
 		# (`DirectEndpoint::from_connection_info`, src/protocol/validation.rs).
-		if not _has_id(endpoint, "host"):
+		# The host is a free-text address, not a UUID identifier (issue #151
+		# keeps it on the #149 non-empty rule).
+		if not _has_string(endpoint, "host") or (endpoint["host"] as String).is_empty():
 			return "SessionPlanInfo direct_endpoint requires non-empty string host"
 		if not _is_integer_value_in_range(endpoint.get("port", 0), 1, U16_MAX):
 			return "SessionPlanInfo direct_endpoint requires port in 1..65535"
@@ -362,7 +364,7 @@ static func _validate_session_peer(data: Variant) -> String:
 		return "SessionPeer must be an object"
 	var dict: Dictionary = data
 	if not _has_id(dict, "player_id"):
-		return "SessionPeer requires non-empty string player_id"
+		return "SessionPeer requires lowercase hyphenated UUID player_id"
 	for key: String in ["player_name"]:
 		if not _has_string(dict, key):
 			return "SessionPeer requires string %s" % key
@@ -377,10 +379,12 @@ static func _has_string(data: Dictionary, key: String) -> bool:
 
 
 ## A present upstream-UUID identifier (`PlayerId`/`SessionGeneration`) must be
-## non-empty: empty cannot deserialize upstream, and it would collide with the
-## retired negotiated-rkyv "" sender-unknowable sentinel (issue #149).
+## canonical lowercase hyphenated UUID text: empty cannot deserialize upstream
+## and it would collide with the retired negotiated-rkyv "" sender-unknowable
+## sentinel (issues #149/#151). Delegates to the one shared gate in
+## sf_type_utils.gd.
 static func _has_id(data: Dictionary, key: String) -> bool:
-	return _has_string(data, key) and not (data[key] as String).is_empty()
+	return SFTypeUtils.is_canonical_uuid_text(data.get(key))
 
 
 static func _has_bool(data: Dictionary, key: String) -> bool:

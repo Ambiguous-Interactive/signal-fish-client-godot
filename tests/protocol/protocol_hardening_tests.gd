@@ -97,7 +97,7 @@ func _test_wire_payload_fidelity() -> void:
 	)
 	# The matchbox Signal payload keeps its documented nested-null refusal.
 	_assert_invalid_message(
-		SFMessagesScript.peer_signal("peer-b", null, {"Offer": null}),
+		SFMessagesScript.peer_signal("10000000-0000-0000-0000-000000000002", null, {"Offer": null}),
 		"must be JSON data",
 		"peer_signal nested null refused"
 	)
@@ -110,7 +110,7 @@ func _test_wire_payload_fidelity() -> void:
 			"game_data %s refused" % case["label"]
 		)
 		_assert_invalid_message(
-			SFMessagesScript.peer_signal("peer-b", null, payload),
+			SFMessagesScript.peer_signal("10000000-0000-0000-0000-000000000002", null, payload),
 			"must be JSON data",
 			"peer_signal %s refused" % case["label"]
 		)
@@ -704,7 +704,12 @@ func _test_binary_codec_hardening() -> void:
 	var unpadded: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{
 			"type": "GameDataBinary",
-			"data": {"from_player": "p1", "encoding": "message_pack", "payload": "yv4"}
+			"data":
+			{
+				"from_player": "10000000-0000-0000-0000-000000000001",
+				"encoding": "message_pack",
+				"payload": "yv4"
+			}
 		}
 	)
 	_assert_equal(
@@ -715,7 +720,12 @@ func _test_binary_codec_hardening() -> void:
 	var future_encoding: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{
 			"type": "GameDataBinary",
-			"data": {"from_player": "p1", "encoding": "future_pack", "payload": "yv4"}
+			"data":
+			{
+				"from_player": "10000000-0000-0000-0000-000000000001",
+				"encoding": "future_pack",
+				"payload": "yv4"
+			}
 		}
 	)
 	_assert_equal(
@@ -733,7 +743,12 @@ func _test_binary_codec_hardening() -> void:
 	var invalid_padding := _assert_protocol_error_envelope(
 		{
 			"type": "GameDataBinary",
-			"data": {"from_player": "p1", "encoding": "message_pack", "payload": "yv=4"}
+			"data":
+			{
+				"from_player": "10000000-0000-0000-0000-000000000001",
+				"encoding": "message_pack",
+				"payload": "yv=4"
+			}
 		},
 		"invalid base64 padding"
 	)
@@ -840,7 +855,11 @@ func _test_forward_compatible_inbound_strings() -> void:
 	)
 
 	var disconnected_unknown_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "SpectatorDisconnected", "data": {"spectator_id": "s1", "reason": "future_reason"}}
+		{
+			"type": "SpectatorDisconnected",
+			"data":
+			{"spectator_id": "30000000-0000-0000-0000-000000000001", "reason": "future_reason"}
+		}
 	)
 	_assert_equal(
 		"spectator_disconnected",
@@ -854,7 +873,10 @@ func _test_forward_compatible_inbound_strings() -> void:
 	)
 
 	var null_game_data: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "GameData", "data": {"from_player": "p1", "data": null}}
+		{
+			"type": "GameData",
+			"data": {"from_player": "10000000-0000-0000-0000-000000000001", "data": null}
+		}
 	)
 	_assert_equal("game_data_received", String(null_game_data.signal_name), "null game data")
 	_assert_equal(null, null_game_data.args[1], "null game data value")
@@ -867,7 +889,15 @@ func _test_non_empty_wire_strings() -> void:
 		"empty protocol game data format"
 	)
 	_assert_protocol_error_envelope(
-		{"type": "GameDataBinary", "data": {"from_player": "p1", "encoding": "", "payload": "yv4"}},
+		{
+			"type": "GameDataBinary",
+			"data":
+			{
+				"from_player": "10000000-0000-0000-0000-000000000001",
+				"encoding": "",
+				"payload": "yv4"
+			}
+		},
 		"empty binary encoding"
 	)
 
@@ -925,6 +955,22 @@ func _test_non_empty_wire_strings() -> void:
 		var label: String = test_case["label"]
 		_assert_protocol_error_envelope(envelope, label)
 
+	_assert_protocol_error_envelope(
+		{
+			"type": "SessionPlan",
+			"data":
+			{
+				"generation": "40000000-0000-0000-0000-000000000001",
+				"topology": "relay",
+				"transport": "direct",
+				"peers": [],
+				"fallback": "relay",
+				"direct_endpoint": {"host": "", "port": 7777}
+			}
+		},
+		"empty direct endpoint host is free text, still refused"
+	)
+
 	var spectator_joined_data := _minimal_spectator_joined_data()
 	spectator_joined_data["reason"] = ""
 	var spectator_reason_cases := [
@@ -947,7 +993,10 @@ func _test_non_empty_wire_strings() -> void:
 		{
 			"label": "spectator disconnected empty reason",
 			"envelope":
-			{"type": "SpectatorDisconnected", "data": {"spectator_id": "s1", "reason": ""}}
+			{
+				"type": "SpectatorDisconnected",
+				"data": {"spectator_id": "30000000-0000-0000-0000-000000000001", "reason": ""}
+			}
 		},
 	]
 	for test_case: Dictionary in spectator_reason_cases:
@@ -955,166 +1004,7 @@ func _test_non_empty_wire_strings() -> void:
 		var label: String = test_case["label"]
 		_assert_protocol_error_envelope(envelope, label)
 
-	# Issue #149: identifier fields are upstream UUIDs (`PlayerId`, `RoomId`,
-	# `SessionGeneration`), so a present empty id cannot come from a conforming
-	# server and would collide with the retired negotiated-rkyv ""
-	# sender-unknowable sentinel. Free-text fields stay pass-through.
-	# Cases: [label, envelope type, data].
-	var empty_id_cases := [
-		["game data empty from_player", "GameData", {"from_player": "", "data": {}}],
-		[
-			"binary game data empty from_player",
-			"GameDataBinary",
-			{"from_player": "", "encoding": "message_pack", "payload": "yv4"}
-		],
-		["player left empty id", "PlayerLeft", {"player_id": ""}],
-		["player reconnected empty id", "PlayerReconnected", {"player_id": ""}],
-		["new peer empty id", "NewPeer", {"peer_id": "", "you_initiate": true}],
-		[
-			"peer transport status empty id",
-			"PeerTransportStatus",
-			{"peer_id": "", "transport": "relay", "connected": true}
-		],
-		["spectator disconnected empty id", "SpectatorDisconnected", {"spectator_id": ""}],
-		["signal empty from", "Signal", {"from": "", "signal": {}}],
-		["signal empty generation", "Signal", {"from": "p", "generation": "", "signal": {}}],
-		[
-			"authority changed empty authority",
-			"AuthorityChanged",
-			{"authority_player": "", "you_are_authority": false}
-		],
-		[
-			"spectator left empty room id",
-			"SpectatorLeft",
-			{"room_id": "", "room_code": "RC", "reason": "room_closed"}
-		],
-		[
-			"lobby ready players empty id",
-			"LobbyStateChanged",
-			{"lobby_state": "waiting", "ready_players": [""], "all_ready": false}
-		],
-		[
-			"room joined empty room id",
-			"RoomJoined",
-			_with_overrides(_minimal_room_joined_data(), {"room_id": ""})
-		],
-		[
-			"room joined empty player id",
-			"RoomJoined",
-			_with_overrides(_minimal_room_joined_data(), {"player_id": ""})
-		],
-		[
-			"ready players empty entry",
-			"RoomJoined",
-			_with_overrides(_minimal_room_joined_data(), {"ready_players": [""]})
-		],
-		[
-			"player joined empty id",
-			"PlayerJoined",
-			{"player": _with_overrides(_minimal_player_data(), {"id": ""})}
-		],
-		[
-			"spectator joined empty id",
-			"SpectatorJoined",
-			_with_overrides(_minimal_spectator_joined_data(), {"spectator_id": ""})
-		],
-		[
-			"spectator joined empty room id",
-			"SpectatorJoined",
-			_with_overrides(_minimal_spectator_joined_data(), {"room_id": ""})
-		],
-		[
-			"new spectator empty id",
-			"NewSpectatorJoined",
-			{"spectator": _with_overrides(_minimal_spectator_data(), {"id": ""})}
-		],
-		[
-			"game starting empty peer id",
-			"GameStarting",
-			{"peer_connections": [_peer_connection({"player_id": ""})]}
-		],
-		[
-			"session plan empty generation",
-			"SessionPlan",
-			_minimal_session_plan_data({"generation": ""})
-		],
-		["session plan empty host", "SessionPlan", _minimal_session_plan_data({"host": ""})],
-		[
-			"session plan empty direct endpoint host",
-			"SessionPlan",
-			_minimal_session_plan_data({"direct_endpoint": {"host": "", "port": 7777}})
-		],
-		[
-			"session plan empty peer id",
-			"SessionPlan",
-			_minimal_session_plan_data(
-				{
-					"topology": "mesh",
-					"transport": "webrtc",
-					"peers":
-					[{"player_id": "", "player_name": "P", "is_authority": false, "initiate": true}]
-				}
-			)
-		],
-		[
-			"reconnect watermark empty id",
-			"Reconnected",
-			_with_overrides(
-				_minimal_room_joined_data(),
-				{
-					"missed_events": [],
-					"sender_watermarks": [{"player_id": "", "epoch": 1, "seq": 1}]
-				}
-			)
-		],
-	]
-	for test_case: Array in empty_id_cases:
-		var data: Dictionary = test_case[2]
-		var label: String = test_case[0]
-		_assert_protocol_error_envelope({"type": test_case[1], "data": data}, label)
-
-	# No false positives: wire-null optionals keep their "" sentinels, and
-	# free-text fields still pass empty strings through.
-	var null_authority: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "AuthorityChanged", "data": {"authority_player": null, "you_are_authority": false}}
-	)
-	if _assert_equal(
-		"authority_changed", String(null_authority.signal_name), "null authority decodes"
-	):
-		_assert_equal("", null_authority.args[0], "null authority keeps empty sentinel")
-	var absent_generation: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "Signal", "data": {"from": "p", "signal": {}}}
-	)
-	if _assert_equal(
-		"signal_received", String(absent_generation.signal_name), "absent generation decodes"
-	):
-		_assert_equal("", absent_generation.args[1], "absent generation keeps empty sentinel")
-	var empty_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "RoomJoinFailed", "data": {"reason": ""}}
-	)
-	if _assert_equal(
-		"room_join_failed", String(empty_reason.signal_name), "empty reason is free text"
-	):
-		_assert_equal("", empty_reason.args[0], "empty reason passes through verbatim")
-	var null_spectator_room: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "SpectatorLeft", "data": {"room_id": null}}
-	)
-	if _assert_equal(
-		"spectator_left", String(null_spectator_room.signal_name), "null spectator room decodes"
-	):
-		_assert_equal("", null_spectator_room.args[0], "null spectator room keeps empty sentinel")
 	_done()
-
-
-func _minimal_session_plan_data(overrides: Dictionary = {}) -> Dictionary:
-	var data := {
-		"generation": "gen",
-		"topology": "relay",
-		"transport": "relay",
-		"peers": [],
-		"fallback": "relay"
-	}
-	return _with_overrides(data, overrides)
 
 
 func _test_reconnected_missed_events_nonfatal() -> void:
@@ -1203,7 +1093,9 @@ func _test_decode_raw_aliasing() -> void:
 	_assert(is_same(room.raw["missed_events"][0], missed.raw), "parent raw exposes missed subtree")
 	var snapshot: Dictionary = room.to_dict()
 	snapshot["room_id"] = "mutated"
-	_assert_equal("r1", room.raw["room_id"], "to_dict copy is independent")
+	_assert_equal(
+		"20000000-0000-0000-0000-000000000001", room.raw["room_id"], "to_dict copy is independent"
+	)
 	var info_source := {"type": "direct", "host": "127.0.0.1", "port": 7777}
 	var nested_player_data := _minimal_player_data()
 	nested_player_data["connection_info"] = info_source
@@ -1286,9 +1178,9 @@ func _minimal_rate_limits() -> Dictionary:
 
 func _minimal_room_joined_data() -> Dictionary:
 	return {
-		"room_id": "r1",
+		"room_id": "20000000-0000-0000-0000-000000000001",
 		"room_code": "ABC123",
-		"player_id": "p1",
+		"player_id": "10000000-0000-0000-0000-000000000001",
 		"game_name": "reef-rally",
 		"max_players": 4,
 		"supports_authority": false,
@@ -1302,15 +1194,19 @@ func _minimal_room_joined_data() -> Dictionary:
 
 func _minimal_player_data() -> Dictionary:
 	return {
-		"id": "p1", "name": "Alice", "is_authority": false, "is_ready": false, "connected_at": "now"
+		"id": "10000000-0000-0000-0000-000000000001",
+		"name": "Alice",
+		"is_authority": false,
+		"is_ready": false,
+		"connected_at": "now"
 	}
 
 
 func _minimal_spectator_joined_data() -> Dictionary:
 	return {
-		"room_id": "r1",
+		"room_id": "20000000-0000-0000-0000-000000000001",
 		"room_code": "ABC123",
-		"spectator_id": "s1",
+		"spectator_id": "30000000-0000-0000-0000-000000000001",
 		"game_name": "reef-rally",
 		"current_players": [],
 		"current_spectators": [],
@@ -1319,7 +1215,7 @@ func _minimal_spectator_joined_data() -> Dictionary:
 
 
 func _minimal_spectator_data() -> Dictionary:
-	return {"id": "s1", "name": "Watcher", "connected_at": "now"}
+	return {"id": "30000000-0000-0000-0000-000000000001", "name": "Watcher", "connected_at": "now"}
 
 
 func _game_starting_envelope(peer_connections: Array) -> Dictionary:
@@ -1329,7 +1225,7 @@ func _game_starting_envelope(peer_connections: Array) -> Dictionary:
 func _peer_connection(overrides: Dictionary) -> Dictionary:
 	return _with_overrides(
 		{
-			"player_id": "p1",
+			"player_id": "10000000-0000-0000-0000-000000000001",
 			"player_name": "Alice",
 			"is_authority": false,
 			"relay_type": "regional-relay"

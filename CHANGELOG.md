@@ -57,6 +57,14 @@ CI, tests, and internal tooling are not listed.
 
 ### Fixed
 
+- Wire identifiers are now validated as canonical UUIDs on both paths: a
+  JSON text frame whose `player_id`, `room_id`, `generation`, or sender id
+  is not a lowercase hyphenated UUID (uppercase, braced, short, or other
+  off-shape text) is refused with `protocol_error` and dropped instead of
+  surfacing the raw string (#151). `send_signal`/`reconnect` and the client
+  `reconnect()` API apply the same gate to outbound ids, so a corrupt
+  identity fails fast with a clear error instead of mid-handshake on the
+  server.
 - Event frames with a present empty identifier (`from_player`, `player_id`,
   `peer_id`, `spectator_id`, room ids, session-plan ids) now decode as
   `protocol_error` instead of surfacing the empty string: ids are UUIDs

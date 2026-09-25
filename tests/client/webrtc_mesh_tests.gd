@@ -145,7 +145,7 @@ func _track_protocol_errors(client: SignalFishClientScript) -> Array:
 func _inject_plan(
 	client: SignalFishClientScript,
 	peers: Array,
-	generation: String = "gen-1",
+	generation: String = "40000000-0000-0000-0000-000000000001",
 	transport: String = "webrtc",
 	ice_servers: Variant = null,
 	topology: String = "mesh"
@@ -229,7 +229,13 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 	_attach(mesh, client)
 	var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(mesh)
 
-	_inject_plan(client, [_peer(PLAYER_B, true)], "gen-1", "webrtc", [STUN, TURN])
+	_inject_plan(
+		client,
+		[_peer(PLAYER_B, true)],
+		"40000000-0000-0000-0000-000000000001",
+		"webrtc",
+		[STUN, TURN]
+	)
 	var peers := _mesh_peers(mesh)
 	_assert_equal(1, peers.size(), "plan opens one peer connection")
 	var pc: FakePeerConnection = peers[0]
@@ -249,7 +255,9 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 	_assert_equal(
 		[
 			SFMessagesScript.encode(
-				SFMessagesScript.peer_signal(PLAYER_B, "gen-1", {"Offer": "v=0"})
+				SFMessagesScript.peer_signal(
+					PLAYER_B, "40000000-0000-0000-0000-000000000001", {"Offer": "v=0"}
+				)
 			)
 		],
 		_sent_after(client, before),
@@ -261,7 +269,9 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 	_assert_equal(
 		[
 			SFMessagesScript.encode(
-				SFMessagesScript.peer_signal(PLAYER_B, "gen-1", {"IceCandidate": "cand:1"})
+				SFMessagesScript.peer_signal(
+					PLAYER_B, "40000000-0000-0000-0000-000000000001", {"IceCandidate": "cand:1"}
+				)
 			)
 		],
 		_sent_after(client, before + 1),
@@ -275,7 +285,7 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 				"data":
 				{
 					"from": PLAYER_B,
-					"generation": "gen-1",
+					"generation": "40000000-0000-0000-0000-000000000001",
 					"signal": {"IceCandidate": "cand:2"},
 				}
 			}
@@ -288,7 +298,12 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 		. inject_server_message(
 			{
 				"type": "Signal",
-				"data": {"from": PLAYER_B, "generation": "gen-1", "signal": {"Answer": "v=1"}},
+				"data":
+				{
+					"from": PLAYER_B,
+					"generation": "40000000-0000-0000-0000-000000000001",
+					"signal": {"Answer": "v=1"}
+				},
 			}
 		)
 	)
@@ -338,7 +353,7 @@ func _test_plan_before_room_baseline_is_ignored() -> void:
 	fake_transport.inject_server_message(
 		{"type": "RoomJoined", "data": _runner.call("_room_joined_data")}
 	)
-	_inject_plan(client, [_peer(PLAYER_B, true)], "gen-2")
+	_inject_plan(client, [_peer(PLAYER_B, true)], "40000000-0000-0000-0000-000000000002")
 	_assert_equal(1, _mesh_peers(mesh).size(), "the baseline re-arms the mesh for the next plan")
 	_assert_equal([], errors, "no spurious protocol_error")
 	mesh.detach()
@@ -370,7 +385,9 @@ func _test_plan_replaces_fully() -> void:
 	_assert(not b_pc.closed, "retained peer untouched")
 
 	_inject_plan(
-		client, [_peer(PLAYER_B, true), _peer(PLAYER_C, true), _peer(PLAYER_D, false)], "gen-2"
+		client,
+		[_peer(PLAYER_B, true), _peer(PLAYER_C, true), _peer(PLAYER_D, false)],
+		"40000000-0000-0000-0000-000000000002"
 	)
 	_assert_equal(5, _mesh_peers(mesh).size(), "both retained peers rebuilt, D added")
 	_assert(b_pc.closed, "B rebuilt on generation change")
@@ -382,7 +399,7 @@ func _test_plan_replaces_fully() -> void:
 	_assert_equal(5, multiplayer.added.size(), "3 opens + 2 rebuilds added")
 	_assert_equal(2, multiplayer.removed.size(), "both stale peers removed on rebuild")
 
-	_inject_plan(client, [_peer(PLAYER_B, true)], "gen-2")
+	_inject_plan(client, [_peer(PLAYER_B, true)], "40000000-0000-0000-0000-000000000002")
 	_assert_equal(1, mesh.get_peer_count(), "absent peers dropped")
 	var rebuilt_c: FakePeerConnection = rebuilt[1]
 	var rebuilt_d: FakePeerConnection = rebuilt[2]
@@ -390,7 +407,7 @@ func _test_plan_replaces_fully() -> void:
 	_assert(rebuilt_d.closed, "D closed when dropped")
 	_assert_equal(4, multiplayer.removed.size(), "C and D removed from the mesh roster")
 
-	_inject_plan(client, [], "gen-3", "relay")
+	_inject_plan(client, [], "40000000-0000-0000-0000-000000000003", "relay")
 	_assert_equal(0, mesh.get_peer_count(), "relay plan empties the mesh")
 	var rebuilt_b: FakePeerConnection = rebuilt[0]
 	_assert(rebuilt_b.closed, "B closed on relay reset")
@@ -398,7 +415,14 @@ func _test_plan_replaces_fully() -> void:
 
 	# A host+direct plan carries peers but no WebRTC data path: the mesh must
 	# not open connections whose signals would be gated away.
-	_inject_plan(client, [_peer(PLAYER_C, true)], "gen-4", "direct", null, "host")
+	_inject_plan(
+		client,
+		[_peer(PLAYER_C, true)],
+		"40000000-0000-0000-0000-000000000004",
+		"direct",
+		null,
+		"host"
+	)
 	_assert_equal(0, mesh.get_peer_count(), "non-webrtc plan with peers stays empty")
 	_assert_equal(5, multiplayer.added.size(), "no peer opened for the direct plan")
 	mesh.free()
@@ -415,11 +439,15 @@ func _test_ice_replace_and_clear() -> void:
 	fake_transport.inject_server_message(
 		{"type": "RoomJoined", "data": _runner.call("_room_joined_data", {"ice_servers": [TURN]})}
 	)
-	_inject_plan(client, [_peer(PLAYER_B, false)], "gen-1", "webrtc", [])
+	_inject_plan(
+		client, [_peer(PLAYER_B, false)], "40000000-0000-0000-0000-000000000001", "webrtc", []
+	)
 	_assert_equal([], _mesh_peers(mesh)[0].initialize_config["iceServers"], "empty plan clears ICE")
 	var clear_pc: FakePeerConnection = _mesh_peers(mesh)[0]
 
-	_inject_plan(client, [_peer(PLAYER_C, false)], "gen-2", "webrtc", [STUN])
+	_inject_plan(
+		client, [_peer(PLAYER_C, false)], "40000000-0000-0000-0000-000000000002", "webrtc", [STUN]
+	)
 	_assert_equal([STUN], _mesh_peers(mesh)[1].initialize_config["iceServers"], "plan ICE applied")
 	_assert(clear_pc.closed, "previous-generation peer rebuilt")
 	mesh.free()
@@ -435,17 +463,45 @@ func _test_signal_gates() -> void:
 
 	var fake_transport: SFFakeTransportScript = client.transport
 	fake_transport.inject_server_message(
-		{"type": "Signal", "data": {"from": PLAYER_B, "generation": "gen-1", "signal": {}}}
+		{
+			"type": "Signal",
+			"data":
+			{"from": PLAYER_B, "generation": "40000000-0000-0000-0000-000000000001", "signal": {}}
+		}
 	)
 	_assert_equal(0, mesh.get_peer_count(), "no peers without a plan")
 
 	_inject_plan(client, [_peer(PLAYER_B, false)])
 	var pc: FakePeerConnection = _mesh_peers(mesh)[0]
 	var discards := [
-		["wrong generation", {"from": PLAYER_B, "generation": "gen-9", "signal": {"Answer": "x"}}],
-		["unknown sender", {"from": PLAYER_C, "generation": "gen-1", "signal": {"Answer": "x"}}],
-		["non-dictionary payload", {"from": PLAYER_B, "generation": "gen-1", "signal": "x"}],
-		["opaque payload", {"from": PLAYER_B, "generation": "gen-1", "signal": {"Zorp": 1}}],
+		[
+			"wrong generation",
+			{
+				"from": PLAYER_B,
+				"generation": "40000000-0000-0000-0000-000000000009",
+				"signal": {"Answer": "x"}
+			}
+		],
+		[
+			"unknown sender",
+			{
+				"from": PLAYER_C,
+				"generation": "40000000-0000-0000-0000-000000000001",
+				"signal": {"Answer": "x"}
+			}
+		],
+		[
+			"non-dictionary payload",
+			{"from": PLAYER_B, "generation": "40000000-0000-0000-0000-000000000001", "signal": "x"}
+		],
+		[
+			"opaque payload",
+			{
+				"from": PLAYER_B,
+				"generation": "40000000-0000-0000-0000-000000000001",
+				"signal": {"Zorp": 1}
+			}
+		],
 	]
 	for discard: Array in discards:
 		fake_transport.inject_server_message({"type": "Signal", "data": discard[1]})
@@ -453,13 +509,18 @@ func _test_signal_gates() -> void:
 	_assert_equal(0, errors.size(), "discards stay silent")
 	_assert_equal(1, mesh.get_peer_count(), "signals never invent or remove peers")
 
-	_inject_plan(client, [], "gen-2", "relay")
+	_inject_plan(client, [], "40000000-0000-0000-0000-000000000002", "relay")
 	(
 		fake_transport
 		. inject_server_message(
 			{
 				"type": "Signal",
-				"data": {"from": PLAYER_B, "generation": "gen-2", "signal": {"Answer": "x"}},
+				"data":
+				{
+					"from": PLAYER_B,
+					"generation": "40000000-0000-0000-0000-000000000002",
+					"signal": {"Answer": "x"}
+				},
 			}
 		)
 	)
@@ -473,7 +534,7 @@ func _test_new_peer_event_obey_flag() -> void:
 	var client := _make_in_room_client()
 	var mesh := _make_mesh()
 	_attach(mesh, client)
-	_inject_plan(client, [], "gen-1")
+	_inject_plan(client, [], "40000000-0000-0000-0000-000000000001")
 
 	var fake_transport: SFFakeTransportScript = client.transport
 	fake_transport.inject_server_message(
@@ -488,7 +549,7 @@ func _test_new_peer_event_obey_flag() -> void:
 	_assert_equal(1, mesh.get_peer_count(), "duplicate new_peer ignored")
 	_assert_equal(1, _mesh_peers(mesh)[0].create_offer_calls, "role never flipped locally")
 
-	_inject_plan(client, [], "gen-2", "relay")
+	_inject_plan(client, [], "40000000-0000-0000-0000-000000000002", "relay")
 	fake_transport.inject_server_message(
 		{"type": "NewPeer", "data": {"peer_id": PLAYER_C, "you_initiate": true}}
 	)
@@ -662,19 +723,25 @@ func _inject_server_error(client: SignalFishClientScript, code: String) -> void:
 
 func _offer_signal() -> String:
 	return SFMessagesScript.encode(
-		SFMessagesScript.peer_signal(PLAYER_B, "gen-1", {"Offer": "v=0"})
+		SFMessagesScript.peer_signal(
+			PLAYER_B, "40000000-0000-0000-0000-000000000001", {"Offer": "v=0"}
+		)
 	)
 
 
 func _candidate_signal(candidate: String) -> String:
 	return SFMessagesScript.encode(
-		SFMessagesScript.peer_signal(PLAYER_B, "gen-1", {"IceCandidate": candidate})
+		SFMessagesScript.peer_signal(
+			PLAYER_B, "40000000-0000-0000-0000-000000000001", {"IceCandidate": candidate}
+		)
 	)
 
 
 func _answer_signal() -> String:
 	return SFMessagesScript.encode(
-		SFMessagesScript.peer_signal(PLAYER_C, "gen-1", {"Answer": "v=1"})
+		SFMessagesScript.peer_signal(
+			PLAYER_C, "40000000-0000-0000-0000-000000000001", {"Answer": "v=1"}
+		)
 	)
 
 
@@ -933,7 +1000,11 @@ func _test_teardown_paths() -> void:
 					{
 						"type": "Signal",
 						"data":
-						{"from": PLAYER_B, "generation": "gen-1", "signal": {"Answer": "late"}},
+						{
+							"from": PLAYER_B,
+							"generation": "40000000-0000-0000-0000-000000000001",
+							"signal": {"Answer": "late"}
+						},
 					}
 				)
 			)

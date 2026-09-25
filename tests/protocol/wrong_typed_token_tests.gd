@@ -43,22 +43,49 @@ func _test_passthrough_payload_guard() -> void:
 	for case: Array in [
 		[
 			"GameData inf",
-			{"type": "GameData", "data": {"from_player": "p1", "data": {"hp": 1e400}}}
+			{
+				"type": "GameData",
+				"data":
+				{"from_player": "10000000-0000-0000-0000-000000000001", "data": {"hp": 1e400}}
+			}
 		],
-		["GameData -inf", {"type": "GameData", "data": {"from_player": "p1", "data": [-INF]}}],
+		[
+			"GameData -inf",
+			{
+				"type": "GameData",
+				"data": {"from_player": "10000000-0000-0000-0000-000000000001", "data": [-INF]}
+			}
+		],
 		[
 			"Signal NaN",
-			{"type": "Signal", "data": {"from": "p2", "generation": "g", "signal": {"x": NAN}}},
+			{
+				"type": "Signal",
+				"data":
+				{
+					"from": "10000000-0000-0000-0000-000000000002",
+					"generation": "40000000-0000-0000-0000-000000000001",
+					"signal": {"x": NAN}
+				}
+			},
 		],
 		[
 			"GameData over-deep",
-			{"type": "GameData", "data": {"from_player": "p1", "data": _nested_arrays(64)}},
+			{
+				"type": "GameData",
+				"data":
+				{"from_player": "10000000-0000-0000-0000-000000000001", "data": _nested_arrays(64)}
+			},
 		],
 		[
 			"Signal over-deep",
 			{
 				"type": "Signal",
-				"data": {"from": "p2", "generation": "g", "signal": _nested_arrays(64)}
+				"data":
+				{
+					"from": "10000000-0000-0000-0000-000000000002",
+					"generation": "40000000-0000-0000-0000-000000000001",
+					"signal": _nested_arrays(64)
+				}
 			},
 		],
 	]:
@@ -68,7 +95,10 @@ func _test_passthrough_payload_guard() -> void:
 	# same shapes past the replay decoder either.
 	var replay_data := _minimal_reconnected_data()
 	replay_data["missed_events"] = [
-		{"type": "GameData", "data": {"from_player": "p1", "data": {"hp": 1e400}}}
+		{
+			"type": "GameData",
+			"data": {"from_player": "10000000-0000-0000-0000-000000000001", "data": {"hp": 1e400}}
+		}
 	]
 	var replayed: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{"type": "Reconnected", "data": replay_data}
@@ -87,12 +117,23 @@ func _test_passthrough_payload_guard() -> void:
 	)
 	# No false positives: finite trees, JSON null, and legal depth decode.
 	var finite: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "GameData", "data": {"from_player": "p1", "data": {"hp": 1.5, "note": null}}}
+		{
+			"type": "GameData",
+			"data":
+			{
+				"from_player": "10000000-0000-0000-0000-000000000001",
+				"data": {"hp": 1.5, "note": null}
+			}
+		}
 	)
 	_assert_equal("game_data_received", String(finite.signal_name), "finite passthrough decodes")
 	_assert_equal(1.5, finite.args[1]["hp"], "finite passthrough value intact")
 	var deep_legal: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "GameData", "data": {"from_player": "p1", "data": _nested_arrays(10)}}
+		{
+			"type": "GameData",
+			"data":
+			{"from_player": "10000000-0000-0000-0000-000000000001", "data": _nested_arrays(10)}
+		}
 	)
 	_assert_equal(
 		"game_data_received", String(deep_legal.signal_name), "deep-but-legal passthrough decodes"
@@ -125,9 +166,9 @@ func _nested_arrays(depth: int) -> Variant:
 
 func _minimal_reconnected_data() -> Dictionary:
 	return {
-		"room_id": "r1",
+		"room_id": "20000000-0000-0000-0000-000000000001",
 		"room_code": "ABC123",
-		"player_id": "p1",
+		"player_id": "10000000-0000-0000-0000-000000000001",
 		"game_name": "reef-rally",
 		"max_players": 4,
 		"supports_authority": false,
@@ -184,7 +225,12 @@ func _test_wrong_typed_enum_tokens_fail_closed() -> void:
 		_assert_protocol_error_envelope(
 			{
 				"type": "PeerTransportStatus",
-				"data": {"peer_id": "p2", "transport": value, "connected": true},
+				"data":
+				{
+					"peer_id": "10000000-0000-0000-0000-000000000002",
+					"transport": value,
+					"connected": true
+				},
 			},
 			"PeerTransportStatus transport %s refused" % v
 		)
@@ -198,7 +244,7 @@ func _test_wrong_typed_enum_tokens_fail_closed() -> void:
 	_assert(not SFTypeUtils.is_integral_number(NAN), "is_integral_number NaN refused")
 	_assert(SFTypeUtils.is_integral_number(4.0), "is_integral_number integral float")
 	var unity_relay_player := {
-		"id": "p1",
+		"id": "10000000-0000-0000-0000-000000000001",
 		"name": "Alice",
 		"is_authority": false,
 		"is_ready": false,

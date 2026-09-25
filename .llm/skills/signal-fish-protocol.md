@@ -67,11 +67,18 @@ Never invent protocol details; re-verify against the pinned commits before use.
   `ReconnectionFailed`; `Option` + skip-when-None (key absent, decodes to
   `Code.NONE`) on `RoomJoinFailed`, `AuthorityResponse`, `SpectatorJoinFailed`,
   and `Error`. Absent - never `null` - is the only wire shape for "no code".
-- Identifiers are UUIDs upstream (`PlayerId`, `RoomId`, `SessionGeneration`):
-  a present empty-string id cannot deserialize upstream and collides with the
-  retired negotiated-rkyv "" sender-unknowable sentinel, so text-path decodes
-  reject it with `protocol_error` (frame dropped, link stays up; issue #149).
-  The binary path already enforces the 16-byte UUID. Free-text `String`
+- Identifiers are UUIDs upstream (`PlayerId`, `RoomId`, `SessionGeneration`).
+  On the text path a present id must be canonical lowercase hyphenated UUID
+  text (`TypeUtils.is_canonical_uuid_text`, one shared gate): empty cannot
+  deserialize upstream and collides with the retired negotiated-rkyv ""
+  sender-unknowable sentinel (issue #149), and no other serde spelling is
+  wire-reachable (issue #151) - serde serializes `Uuid` as lowercase
+  hyphenated, the server re-serializes every id it relays through the typed
+  value, upstream's own `canonical_room_operation_id` module refuses
+  non-canonical client text, and the binary path formats its 16-byte UUID to
+  the same string. Decoders drop the frame with `protocol_error` and the
+  link stays up; the `reconnect` and `peer_signal` builders plus the client
+  `reconnect()` API gate the same shape symmetrically. Free-text `String`
   fields (`error`, failure `reason`, `message`, `app_name`, names,
   `room_code`) pass empty strings through verbatim. Spectator `reason`
   fields are enum tokens: empty is malformed there.

@@ -13,6 +13,7 @@ const V3ProtocolTestsScript = preload("res://tests/protocol/v3_protocol_tests.gd
 const UpstreamSamplesTestsScript = preload("res://tests/protocol/upstream_samples_tests.gd")
 const DuplicateKeyTestsScript = preload("res://tests/protocol/duplicate_key_tests.gd")
 const ConstructorCoercionTestsScript = preload("res://tests/protocol/constructor_coercion_tests.gd")
+const UuidShapeTestsScript = preload("res://tests/protocol/uuid_shape_tests.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const CLIENT_FIXTURE := "res://tests/fixtures/v2_client_messages.jsonl"
@@ -58,6 +59,7 @@ func _helper_suites_are_loadable() -> bool:
 		["upstream_samples_tests", UpstreamSamplesTestsScript],
 		["duplicate_key_tests", DuplicateKeyTestsScript],
 		["constructor_coercion_tests", ConstructorCoercionTestsScript],
+		["uuid_shape_tests", UuidShapeTestsScript],
 	]
 	var loadable := true
 	for suite: Array in suites:
@@ -93,6 +95,7 @@ func _run() -> void:
 	_failures.append_array(UpstreamSamplesTestsScript.run())
 	_failures.append_array(DuplicateKeyTestsScript.run())
 	_failures.append_array(ConstructorCoercionTestsScript.run())
+	_failures.append_array(UuidShapeTestsScript.run())
 	_run_completed = true
 
 
@@ -503,7 +506,11 @@ func _test_malformed_inputs_decode_to_protocol_error() -> void:
 		{"label": "GameStarting missing data", "envelope": {"type": "GameStarting"}},
 		{
 			"label": "PlayerJoined incomplete player",
-			"envelope": {"type": "PlayerJoined", "data": {"player": {"id": "p1", "name": "Alice"}}}
+			"envelope":
+			{
+				"type": "PlayerJoined",
+				"data": {"player": {"id": "10000000-0000-0000-0000-000000000001", "name": "Alice"}}
+			}
 		},
 		{
 			"label": "LobbyStateChanged unknown state",
@@ -529,7 +536,7 @@ func _test_malformed_inputs_decode_to_protocol_error() -> void:
 				{
 					"player":
 					{
-						"id": "p1",
+						"id": "10000000-0000-0000-0000-000000000001",
 						"name": "Alice",
 						"is_authority": false,
 						"is_ready": false,
@@ -551,7 +558,12 @@ func _test_binary_codec_accepts_base64_payload() -> void:
 	var padded: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		{
 			"type": "GameDataBinary",
-			"data": {"from_player": "p1", "encoding": "message_pack", "payload": "yv4="}
+			"data":
+			{
+				"from_player": "10000000-0000-0000-0000-000000000001",
+				"encoding": "message_pack",
+				"payload": "yv4="
+			}
 		}
 	)
 	_assert_equal("game_data_binary_received", String(padded.signal_name), "base64 binary event")
@@ -730,7 +742,10 @@ func _test_upstream_optional_fields_decode() -> void:
 	)
 
 	var disconnected: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "SpectatorDisconnected", "data": {"spectator_id": "s1"}}
+		{
+			"type": "SpectatorDisconnected",
+			"data": {"spectator_id": "30000000-0000-0000-0000-000000000001"}
+		}
 	)
 	_assert_equal(
 		"spectator_disconnected", String(disconnected.signal_name), "minimal spectator disconnected"
@@ -738,7 +753,10 @@ func _test_upstream_optional_fields_decode() -> void:
 	_assert_equal(SFTypesScript.SpectatorReason.UNKNOWN, disconnected.args[1], "disconnect reason")
 
 	var disconnected_null_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
-		{"type": "SpectatorDisconnected", "data": {"spectator_id": "s1", "reason": null}}
+		{
+			"type": "SpectatorDisconnected",
+			"data": {"spectator_id": "30000000-0000-0000-0000-000000000001", "reason": null}
+		}
 	)
 	_assert_equal(
 		"spectator_disconnected",
@@ -833,7 +851,10 @@ func _test_strict_protocol_validation() -> void:
 		{
 			"label": "spectator disconnected numeric reason",
 			"envelope":
-			{"type": "SpectatorDisconnected", "data": {"spectator_id": "s1", "reason": 3}}
+			{
+				"type": "SpectatorDisconnected",
+				"data": {"spectator_id": "30000000-0000-0000-0000-000000000001", "reason": 3}
+			}
 		},
 	]
 	for test_case: Dictionary in invalid_spectator_reason_cases:
@@ -884,7 +905,12 @@ func _test_protocol_error_diagnostics() -> void:
 	var bad_binary := _assert_protocol_error_envelope(
 		{
 			"type": "GameDataBinary",
-			"data": {"from_player": "p1", "encoding": "message_pack", "payload": [1, "bad"]}
+			"data":
+			{
+				"from_player": "10000000-0000-0000-0000-000000000001",
+				"encoding": "message_pack",
+				"payload": [1, "bad"]
+			}
 		},
 		"binary payload bad byte diagnostics"
 	)
@@ -1061,9 +1087,9 @@ func _test_error_code_table() -> void:
 
 func _minimal_spectator_joined_data() -> Dictionary:
 	return {
-		"room_id": "r1",
+		"room_id": "20000000-0000-0000-0000-000000000001",
 		"room_code": "ABC123",
-		"spectator_id": "s1",
+		"spectator_id": "30000000-0000-0000-0000-000000000001",
 		"game_name": "reef-rally",
 		"current_players": [],
 		"current_spectators": [],
@@ -1073,9 +1099,9 @@ func _minimal_spectator_joined_data() -> Dictionary:
 
 func _minimal_room_joined_data() -> Dictionary:
 	return {
-		"room_id": "r1",
+		"room_id": "20000000-0000-0000-0000-000000000001",
 		"room_code": "ABC123",
-		"player_id": "p1",
+		"player_id": "10000000-0000-0000-0000-000000000001",
 		"game_name": "reef-rally",
 		"max_players": 4,
 		"supports_authority": false,
@@ -1089,12 +1115,16 @@ func _minimal_room_joined_data() -> Dictionary:
 
 func _minimal_player_data() -> Dictionary:
 	return {
-		"id": "p1", "name": "Alice", "is_authority": false, "is_ready": false, "connected_at": "now"
+		"id": "10000000-0000-0000-0000-000000000001",
+		"name": "Alice",
+		"is_authority": false,
+		"is_ready": false,
+		"connected_at": "now"
 	}
 
 
 func _minimal_spectator_data() -> Dictionary:
-	return {"id": "s1", "name": "Watcher", "connected_at": "now"}
+	return {"id": "30000000-0000-0000-0000-000000000001", "name": "Watcher", "connected_at": "now"}
 
 
 func _game_starting_envelope(peer_connections: Array) -> Dictionary:
@@ -1104,7 +1134,7 @@ func _game_starting_envelope(peer_connections: Array) -> Dictionary:
 func _peer_connection(overrides: Dictionary) -> Dictionary:
 	return _with_overrides(
 		{
-			"player_id": "p1",
+			"player_id": "10000000-0000-0000-0000-000000000001",
 			"player_name": "Alice",
 			"is_authority": false,
 			"relay_type": "regional-relay"
