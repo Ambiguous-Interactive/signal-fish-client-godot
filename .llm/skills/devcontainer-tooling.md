@@ -108,18 +108,23 @@ Q&A), `git` (mcp-server-git), `fetch` (mcp-server-fetch), and `playwright`
 - Secret invariant: values live only in the process environment.
   `runArgs: ["--env-file", ".env.local"]` loads the git-ignored `.env.local`
   (template: `.env.example`) into the container at create time, and every
-  committed config references secrets by NAME only - `${VAR:-}` env maps in
-  `.mcp.json`, `{env:VAR}` in `opencode.json`, and `env_vars` passthrough in
-  the codex managed block. Nothing writes a secret value to disk, and the
-  doctor prints only variable names and set/unset state.
+  committed config references secrets by NAME only - bare `${VAR}` env maps
+  in `.mcp.json`, parent-environment inheritance in `opencode.json`, and
+  `env_vars` allow-lists in the codex managed block. Nothing writes a
+  secret value to disk, and the doctor prints only variable names and
+  set/unset state.
 - Empirical stdio contract (verified with the installed clients): Claude
   Code and Nanocoder do not inherit arbitrary parent environment for stdio
-  servers, so `.mcp.json` secret-driven entries carry explicit `env` maps -
-  Claude expands `${VAR:-}`, and Nanocoder's map presence triggers full
-  `{...process.env}` inheritance. This is why `context7` is the local
-  `context7-mcp` stdio server (key from env) rather than the hosted HTTP
-  endpoint: VS Code does not substitute variables in remote headers, so no
-  single remote shape works across all three clients.
+  servers, so `.mcp.json` secret-driven entries carry explicit `env` maps.
+  The map values must be BARE `${VAR}` references: VS Code converts only
+  bare `${VAR}` in env values (not `${VAR:-default}`, not remote headers),
+  Claude expands bare or defaulted forms, and Nanocoder's map presence
+  triggers full `{...process.env}` inheritance. This is why `context7` is
+  the local `context7-mcp` stdio server (key from env) rather than the
+  hosted HTTP endpoint - no single remote shape works across all three
+  clients. The shim rejects an unexpanded literal loudly, so a
+  non-substituting client fails visibly instead of authenticating with
+  garbage.
 - One committed file, three clients: repo-root `.mcp.json` is read natively
   by Claude Code (project scope), Nanocoder (project scope), and the VS Code
   agent host. Remote entries carry BOTH `type` (Claude/VS Code) and

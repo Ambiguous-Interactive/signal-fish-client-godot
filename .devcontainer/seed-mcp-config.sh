@@ -3,11 +3,13 @@
 #
 # Claude Code, Nanocoder, and the VS Code agent host read the committed
 # repo-root `.mcp.json`, and OpenCode v2 reads the committed `opencode.json`;
-# both reference secrets by NAME (`${VAR}` / `{env:VAR}`), so nothing here
-# writes secret values. Codex has no env-expanding config format, so its
-# entries live in a marker-delimited managed block in `~/.codex/config.toml`
-# (user-level: no project-trust prompt; regenerated on every run; content
-# outside the markers is preserved verbatim).
+# both reference secrets by NAME (`${VAR}` env maps / parent-environment
+# inheritance), so nothing here writes secret values. Codex has no
+# env-expanding config format, so its entries live in a marker-delimited
+# managed block in `~/.codex/config.toml` (user-level: no project-trust
+# prompt; regenerated on every run; content outside the markers is
+# preserved verbatim; secret-consuming entries use `env_vars` allow-lists
+# because Codex forwards a sanitized environment).
 #
 # Modes:
 #   (no args)  post-create: strict; failures exit non-zero.
@@ -55,7 +57,7 @@ command = \"sf-github-mcp\"
 args = []
 # Codex forwards a sanitized environment by default; without this
 # allow-list the shim would launch without a token and exit loudly.
-env_vars = [\"GITHUB_MCP_PAT\", \"GITHUB_PERSONAL_ACCESS_TOKEN\"]
+env_vars = [\"GITHUB_MCP_PAT\", \"GITHUB_PERSONAL_ACCESS_TOKEN\", \"GITHUB_READ_ONLY\", \"GITHUB_TOOLSETS\"]
 
 [mcp_servers.context7]
 command = \"context7-mcp\"
@@ -208,6 +210,15 @@ seed_codex_config() {
             if (!done && line == ENVIRON["BEGIN"]) {
                 print ENVIRON["BLOCK"]
                 done = 1; skip = 1
+                begin_count = 1
+                next
+            }
+            if (done && line == ENVIRON["BEGIN"]) {
+                # A second complete block is exactly the damage the old
+                # replace-then-append bug produced; refuse rather than
+                # "repair" it into duplicate TOML tables.
+                begin_count = begin_count + 1
+                if (begin_count > 1) fail = 1
                 next
             }
             if (skip) {
@@ -217,13 +228,17 @@ seed_codex_config() {
             print
         }
         END {
+            # An `exit` in the main rule would still run this END block and
+            # its own exit would override the code - so every status is
+            # decided HERE.
+            if (fail) exit 3
             if (skip) exit 2
             exit done ? 0 : 1
         }
     ' "${CODEX_CONFIG}" >"${tmp_out}" || rc=$?
-    if [ "$rc" -eq 2 ]; then
+    if [ "$rc" -eq 2 ] || [ "$rc" -eq 3 ]; then
         rm -f "${tmp_out}"
-        warn_or_fail "${CODEX_CONFIG} has a corrupted managed block (begin marker without end marker); fix or delete it and rerun" || status=1
+        warn_or_fail "${CODEX_CONFIG} has a corrupted managed block (begin marker without end marker, or more than one managed block); fix or delete it and rerun" || status=1
         return "$status"
     fi
 

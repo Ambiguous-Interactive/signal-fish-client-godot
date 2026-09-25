@@ -127,14 +127,45 @@ templates) so the repo's only export preset works locally.
   with two sequential subs and covered by the conflict case (which now
   fails red against the broken form).
 
+## Adversarial review round 2 (sub-agent) — findings and fixes
+
+- **MAJOR, fixed:** `.mcp.json` used `${VAR:-default}` env-map values, but
+  VS Code's workspace MCP config only converts BARE `${VAR}` references
+  (`${VAR:-default}` and remote headers pass through literally) - so
+  github/context7 would have failed on the VS Code agent host even when
+  fully configured. Switched to bare `${VAR}` (verified Claude expands it;
+  Nanocoder keys inheritance off map presence so the value text is
+  irrelevant there; unset-variable cases fail loudly via the shim guard).
+- **MINOR, fixed:** two complete managed blocks in `~/.codex/config.toml`
+  were "repaired" into duplicate TOML tables with exit 0 (the exact damage
+  the round-1 blocker caused). The replace awk now refuses on a second
+  begin marker; behavioral case added.
+- **MINOR, fixed:** `GITHUB_READ_ONLY=0` never reached the server on
+  Claude Code/Codex. The codex allow-list now includes
+  `GITHUB_READ_ONLY`/`GITHUB_TOOLSETS`; the Claude Code limitation (mapped
+  variables only) is documented in `.env.example` and the README instead
+  of pretending the opt-out works everywhere.
+- **MINOR, fixed:** stale docs claiming `{env:VAR}` in `opencode.json`
+  (it relies on parent-env inheritance; no maps needed) and
+  `bearer_token_env_var` in the codex block (superseded by `env_vars`);
+  progress log validation section updated to the final server shapes.
+- **NIT, fixed:** README override list now includes `CONTEXT7_MCP_NPM_SPEC`.
+- **Accepted residual:** quoted TOML table keys (`[mcp_servers."godot"`)
+  are not recognized by the conflict guard - rare authoring form, and the
+  doctor would still show the server as configured.
+
 ## Validation
 
 - `pwsh -NoProfile -File scripts/test-llm-harness.ps1` (core + both
   behavioral shards) all green.
 - `pwsh -NoProfile -File scripts/agent-check.ps1` green.
-- Real-client verification of the generated Codex TOML via `codex mcp
-  list` (5 stdio + 2 HTTP servers, bearer auth detected) and `claude mcp
-  list` (hybrid schema parsed, servers listed pending approval).
-- Shim rename/read-only/failure paths verified against a stub binary.
-- Canary secrets asserted absent from every output stream and written
-  file across all seeder cases.
+- Real-client verification: `claude mcp list` health-checks all seven
+  servers green (github through the shim with the real PAT against
+  GitHub's API, read-only default; context7 via local context7-mcp), and
+  `codex mcp list` parses the generated managed block (6 stdio + the
+  deepwiki remote, `env_vars` passthrough shown masked).
+- Shim rename / read-only-default / no-token / unexpanded-literal paths
+  verified against a stub binary and the real installed binary.
+- Canary secrets asserted absent from every output stream, the whole
+  sandbox tree, and the npm process environment across all seeder and
+  installer cases.

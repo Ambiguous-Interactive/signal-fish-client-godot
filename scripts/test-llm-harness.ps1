@@ -2103,8 +2103,8 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     # inheritance off the presence of the map.
     $mcpJson = Get-Content -LiteralPath $mcpJsonPath -Raw | ConvertFrom-Json
     foreach ($pair in @(
-            [pscustomobject]@{ Server = 'github'; Var = 'GITHUB_MCP_PAT'; Expected = '${GITHUB_MCP_PAT:-}' },
-            [pscustomobject]@{ Server = 'context7'; Var = 'CONTEXT7_API_KEY'; Expected = '${CONTEXT7_API_KEY:-}' }
+            [pscustomobject]@{ Server = 'github'; Var = 'GITHUB_MCP_PAT'; Expected = '${GITHUB_MCP_PAT}' },
+            [pscustomobject]@{ Server = 'context7'; Var = 'CONTEXT7_API_KEY'; Expected = '${CONTEXT7_API_KEY}' }
         )) {
         $entry = $mcpJson.mcpServers.($pair.Server)
         if (-not $entry) { throw ".mcp.json must declare the '$($pair.Server)' server." }
@@ -2495,6 +2495,15 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
         $result = & $runSeeder ''
         Expect-Equal $result.Exit 1 'corrupted managed block must fail strictly in install mode'
         Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $snapshot 'corrupted managed block must not modify the file'
+
+        # 5b. Two complete managed blocks (the exact damage the old
+        # replace-then-append bug produced) are refused, not "repaired"
+        # into duplicate TOML tables.
+        & bash -c 'printf "user=1\n%s\nold=1\n%s\n%s\nold2=1\n%s\ntail=1\n" "$1" "$2" "$1" "$2" > "$3"' -- $begin $end $codexConfig
+        $snapshot = Get-Content -LiteralPath $codexConfig -Raw
+        $result = & $runSeeder ''
+        Expect-Equal $result.Exit 1 'double managed block must fail strictly in install mode'
+        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $snapshot 'double managed block must not modify the file'
 
         # 6. Canary sweep: the secret values must not appear in any captured
         # output stream, nor anywhere in the sandbox tree (any written file).

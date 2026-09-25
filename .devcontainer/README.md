@@ -203,14 +203,22 @@ Secret values never appear in any configuration file or script output:
 1. `runArgs: ["--env-file", ".env.local"]` loads your git-ignored
    `.env.local` (create it from `.env.example`) into the container
    environment at container create time.
-2. Committed configs reference the variable **names** only: `${VAR}`
-   expansion in `.mcp.json`, `{env:VAR}` in `opencode.json`, and
-   `bearer_token_env_var` in the Codex block.
+2. Committed configs reference the variable **names** only. In
+   `.mcp.json`, secret-driven servers are local stdio entries with an
+   explicit `env` map using bare `${VAR}` references - the one shape all
+   three clients resolve (VS Code only converts bare `${VAR}` in env
+   values, not `${VAR:-default}` and not remote headers). `opencode.json`
+   needs no maps because OpenCode inherits the parent environment for
+   local servers. The codex managed block uses `env_vars` allow-lists
+   because Codex forwards a sanitized environment.
 3. The GitHub server goes through the `sf-github-mcp` shim, which maps
    `GITHUB_MCP_PAT` onto the binary's canonical
    `GITHUB_PERSONAL_ACCESS_TOKEN` at launch time and defaults
-   `GITHUB_READ_ONLY=1`. Set `GITHUB_READ_ONLY=0` in `.env.local` to allow
-   writes; grant the PAT only the scopes you need.
+   `GITHUB_READ_ONLY=1`. The `GITHUB_READ_ONLY=0` / `GITHUB_TOOLSETS`
+   opt-outs reach the server on opencode, nanocoder, the VS Code agent
+   host, and codex (allow-list); Claude Code substitutes only the mapped
+   variables, so it always uses the read-only default. Grant the PAT
+   only the scopes you need.
 4. `seed-mcp-config.sh`'s doctor prints variable names and set/unset state
    only - never values. The harness self-tests enforce this with canary
    secrets.
@@ -222,9 +230,9 @@ Secret values never appear in any configuration file or script output:
   (`seed-mcp-config.sh`); failures fail the build.
 - **post-start** refreshes both warn-only (`--update`), so an outage never
   blocks attaching. The npm installer's specs are pinned concrete versions
-  (overridable via `GODOT_MCP_NPM_SPEC` / `PLAYWRIGHT_MCP_NPM_SPEC`), and
-  "already current" is decided offline from npm's own state - no registry
-  probe needed.
+  (overridable via `GODOT_MCP_NPM_SPEC` / `PLAYWRIGHT_MCP_NPM_SPEC` /
+  `CONTEXT7_MCP_NPM_SPEC`), and "already current" is decided offline from
+  npm's own state - no registry probe needed.
 - Chromium for `playwright` is downloaded best-effort during post-create
   (skip with `SF_MCP_SKIP_PLAYWRIGHT_BROWSER=1`); it uses @playwright/mcp's
   bundled playwright CLI because its Chromium revision is independent of the
