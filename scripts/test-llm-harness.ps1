@@ -47,19 +47,22 @@ Import-Module $ModulePath -Force
 $failures = New-Object System.Collections.Generic.List[string]
 $passed = 0
 $skipped = 0
+$script:subshardSkipped = 0
 if ($SkipBehavioralTests -and $OnlyBehavioralTests) {
     throw 'Only one of -SkipBehavioralTests and -OnlyBehavioralTests may be set.'
 }
 if ($BehavioralSubshardCount -lt 1) {
     throw '-BehavioralSubshardCount must be at least 1.'
 }
-if ($BehavioralSubshardCount -gt 1) {
+# Any non-default filter value requests subsharding, so misuse must be
+# rejected even when the other parameter is left at its default.
+if ($BehavioralSubshardCount -gt 1 -or $BehavioralSubshard -gt 1) {
     if (-not $OnlyBehavioralTests) {
         throw '-BehavioralSubshard* subdivides the behavioral shard and requires -OnlyBehavioralTests.'
     }
-    if ($BehavioralSubshard -lt 1 -or $BehavioralSubshard -gt $BehavioralSubshardCount) {
-        throw "-BehavioralSubshard must be in 1..$BehavioralSubshardCount."
-    }
+}
+if ($BehavioralSubshard -lt 1 -or $BehavioralSubshard -gt $BehavioralSubshardCount) {
+    throw "-BehavioralSubshard must be in 1..$BehavioralSubshardCount."
 }
 # Honor the env var or the explicit switch. Either suffices. -OnlyBehavioralTests
 # wins over both so the behavioral shard always runs real tests.
@@ -116,7 +119,7 @@ function Assert-Test {
     }
     if ($Behavioral -and $script:BehavioralSubshardCount -gt 1 -and
         ((($script:BehavioralSeen - 1) % $script:BehavioralSubshardCount) -ne ($script:BehavioralSubshard - 1))) {
-        $script:skipped++
+        $script:subshardSkipped++
         if ($VerboseOutput) {
             Write-Host "[llm-test] SKIP (behavioral subshard $($script:BehavioralSubshard)/$($script:BehavioralSubshardCount)): $Name" -ForegroundColor DarkGray
         }
@@ -3611,8 +3614,8 @@ Assert-Test 'MIN-2: agent-check uses AgentFast and Full remains explicit' {
     if ($tests -notmatch '\[switch\]\$OnlyBehavioralTests') {
         throw 'test-llm-harness.ps1 must declare [switch]$OnlyBehavioralTests so the suite can shard into two concurrent passes (issue #132).'
     }
-    if ($tests -notmatch '\[int\]\$BehavioralSubshard' -or
-        $tests -notmatch '\[int\]\$BehavioralSubshardCount') {
+    if ($tests -notmatch '\[int\]\$BehavioralSubshard\b' -or
+        $tests -notmatch '\[int\]\$BehavioralSubshardCount\b') {
         throw 'test-llm-harness.ps1 must declare the behavioral subshard parameters so the behavioral shard itself splits into concurrent passes.'
     }
     if ($tests -notmatch 'requires -OnlyBehavioralTests') {
@@ -5150,11 +5153,20 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
 
 # --- Summary ---------------------------------------------------------------
 
+# Subshard skips are behavioral tests another concurrent pass owns, so they
+# get their own counter and label: under -OnlyBehavioralTests the shared
+# $skipped counter only holds non-behavioral skips.
+$skipParts = @()
+if ($skipped -gt 0) {
+    $kind = if ($script:OnlyBehavioral) { 'non-behavioral' } else { 'behavioral' }
+    $skipParts += "$skipped $kind test(s) skipped"
+}
+if ($script:subshardSkipped -gt 0) {
+    $skipParts += "$($script:subshardSkipped) behavioral test(s) left to other subshard(s)"
+}
+$skipNote = if ($skipParts.Count -gt 0) { " ($($skipParts -join ', '))" } else { '' }
+
 if ($failures.Count -gt 0) {
-    $skipNote = if ($skipped -gt 0) {
-        $kind = if ($script:OnlyBehavioral) { 'non-behavioral' } else { 'behavioral' }
-        " ($skipped $kind test(s) skipped)"
-    } else { '' }
     Write-Host "[llm-test] $($failures.Count) test(s) failed; $passed passed$skipNote." -ForegroundColor Red
     exit 1
 }
@@ -5163,9 +5175,5 @@ if ($script:OnlyBehavioral -and $passed -eq 0) {
     exit 1
 }
 
-$skipNote = if ($skipped -gt 0) {
-    $kind = if ($script:OnlyBehavioral) { 'non-behavioral' } else { 'behavioral' }
-    " ($skipped $kind test(s) skipped)"
-} else { '' }
 Write-Host "[llm-test] All $passed test(s) passed$skipNote." -ForegroundColor Green
 exit 0
