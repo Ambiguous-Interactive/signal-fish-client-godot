@@ -285,23 +285,33 @@ static func validate_session_plan_info(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "SessionPlanInfo must be an object"
 	var dict: Dictionary = data
+	# generation/host are upstream Uuid-typed (`SessionGeneration`,
+	# `Option<PlayerId>`): present values must be non-empty (issue #149). An
+	# absent generation stays legal for the legacy Server 0.4 plan shape.
 	if dict.has("generation") and dict["generation"] != null:
 		if typeof(dict["generation"]) != TYPE_STRING:
 			return "SessionPlanInfo generation must be a string"
+		if (dict["generation"] as String).is_empty():
+			return "SessionPlanInfo generation must not be empty"
 	if not _has_known_enum_token(dict, "topology", TOPOLOGY_FROM_STRING):
 		return "SessionPlanInfo topology is unknown"
 	if not _has_known_enum_token(dict, "transport", TRANSPORT_KIND_FROM_STRING):
 		return "SessionPlanInfo transport is unknown"
 	if not _has_known_enum_token(dict, "fallback", TRANSPORT_KIND_FROM_STRING):
 		return "SessionPlanInfo fallback is unknown"
-	if dict.has("host") and dict["host"] != null and typeof(dict["host"]) != TYPE_STRING:
-		return "SessionPlanInfo host must be a string"
+	if dict.has("host") and dict["host"] != null:
+		if typeof(dict["host"]) != TYPE_STRING:
+			return "SessionPlanInfo host must be a string"
+		if (dict["host"] as String).is_empty():
+			return "SessionPlanInfo host must not be empty"
 	if dict.has("direct_endpoint") and dict["direct_endpoint"] != null:
 		if typeof(dict["direct_endpoint"]) != TYPE_DICTIONARY:
 			return "SessionPlanInfo direct_endpoint must be an object"
 		var endpoint: Dictionary = dict["direct_endpoint"]
-		if not _has_string(endpoint, "host"):
-			return "SessionPlanInfo direct_endpoint requires string host"
+		# Upstream DirectEndpoint construction refuses an empty host
+		# (types.rs direct_endpoint_accepts_only_usable_direct_targets).
+		if not _has_string(endpoint, "host") or (endpoint["host"] as String).is_empty():
+			return "SessionPlanInfo direct_endpoint requires non-empty string host"
 		if not _is_integer_value_in_range(endpoint.get("port", 0), 1, U16_MAX):
 			return "SessionPlanInfo direct_endpoint requires port in 1..65535"
 	if not _has_dict_array(dict, "peers"):
@@ -350,7 +360,9 @@ static func _validate_session_peer(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "SessionPeer must be an object"
 	var dict: Dictionary = data
-	for key: String in ["player_id", "player_name"]:
+	if not _has_string(dict, "player_id") or (dict["player_id"] as String).is_empty():
+		return "SessionPeer requires non-empty string player_id"
+	for key: String in ["player_name"]:
 		if not _has_string(dict, key):
 			return "SessionPeer requires string %s" % key
 	for key: String in ["is_authority", "initiate"]:

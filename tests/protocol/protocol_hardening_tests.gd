@@ -954,7 +954,136 @@ func _test_non_empty_wire_strings() -> void:
 		var envelope: Dictionary = test_case["envelope"]
 		var label: String = test_case["label"]
 		_assert_protocol_error_envelope(envelope, label)
+
+	# Issue #149: identifier fields are upstream UUIDs (`PlayerId`, `RoomId`,
+	# `SessionGeneration`), so a present empty id cannot come from a conforming
+	# server and would collide with the retired negotiated-rkyv ""
+	# sender-unknowable sentinel. Free-text fields stay pass-through.
+	# Cases: [label, envelope type, data].
+	var empty_id_cases := [
+		["game data empty from_player", "GameData", {"from_player": "", "data": {}}],
+		[
+			"binary game data empty from_player",
+			"GameDataBinary",
+			{"from_player": "", "encoding": "message_pack", "payload": "yv4"}
+		],
+		["player left empty id", "PlayerLeft", {"player_id": ""}],
+		["player reconnected empty id", "PlayerReconnected", {"player_id": ""}],
+		["new peer empty id", "NewPeer", {"peer_id": "", "you_initiate": true}],
+		[
+			"peer transport status empty id",
+			"PeerTransportStatus",
+			{"peer_id": "", "transport": "relay", "connected": true}
+		],
+		["spectator disconnected empty id", "SpectatorDisconnected", {"spectator_id": ""}],
+		["signal empty from", "Signal", {"from": "", "signal": {}}],
+		["signal empty generation", "Signal", {"from": "p", "generation": "", "signal": {}}],
+		[
+			"authority changed empty authority",
+			"AuthorityChanged",
+			{"authority_player": "", "you_are_authority": false}
+		],
+		[
+			"spectator left empty room id",
+			"SpectatorLeft",
+			{"room_id": "", "room_code": "RC", "reason": "room_closed"}
+		],
+		[
+			"lobby ready players empty id",
+			"LobbyStateChanged",
+			{"lobby_state": "waiting", "ready_players": [""], "all_ready": false}
+		],
+		[
+			"room joined empty room id",
+			"RoomJoined",
+			_with_overrides(_minimal_room_joined_data(), {"room_id": ""})
+		],
+		[
+			"room joined empty player id",
+			"RoomJoined",
+			_with_overrides(_minimal_room_joined_data(), {"player_id": ""})
+		],
+		[
+			"ready players empty entry",
+			"RoomJoined",
+			_with_overrides(_minimal_room_joined_data(), {"ready_players": [""]})
+		],
+		[
+			"player joined empty id",
+			"PlayerJoined",
+			{"player": _with_overrides(_minimal_player_data(), {"id": ""})}
+		],
+		[
+			"spectator joined empty id",
+			"SpectatorJoined",
+			_with_overrides(_minimal_spectator_joined_data(), {"spectator_id": ""})
+		],
+		[
+			"game starting empty peer id",
+			"GameStarting",
+			{"peer_connections": [_peer_connection({"player_id": ""})]}
+		],
+		["session plan empty generation", "SessionPlan", _session_plan({"generation": ""})],
+		["session plan empty host", "SessionPlan", _session_plan({"host": ""})],
+		[
+			"session plan empty direct endpoint host",
+			"SessionPlan",
+			_session_plan({"direct_endpoint": {"host": "", "port": 7777}})
+		],
+		[
+			"session plan empty peer id",
+			"SessionPlan",
+			_session_plan(
+				{
+					"topology": "mesh",
+					"transport": "webrtc",
+					"peers":
+					[{"player_id": "", "player_name": "P", "is_authority": false, "initiate": true}]
+				}
+			)
+		],
+		[
+			"reconnect watermark empty id",
+			"Reconnected",
+			_with_overrides(
+				_minimal_room_joined_data(),
+				{
+					"missed_events": [],
+					"sender_watermarks": [{"player_id": "", "epoch": 1, "seq": 1}]
+				}
+			)
+		],
+	]
+	for test_case: Array in empty_id_cases:
+		var data: Dictionary = test_case[2]
+		var label: String = test_case[0]
+		_assert_protocol_error_envelope({"type": test_case[1], "data": data}, label)
+
+	# No false positives: wire null authority keeps the "" no-authority
+	# sentinel, and free-text fields still pass empty strings through.
+	var null_authority: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "AuthorityChanged", "data": {"authority_player": null, "you_are_authority": false}}
+	)
+	if _assert_equal(
+		"authority_changed", String(null_authority.signal_name), "null authority decodes"
+	):
+		_assert_equal("", null_authority.args[0], "null authority keeps empty sentinel")
+	var empty_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "RoomJoinFailed", "data": {"reason": ""}}
+	)
+	_assert_equal("room_join_failed", String(empty_reason.signal_name), "empty reason is free text")
 	_done()
+
+
+func _session_plan(overrides: Dictionary) -> Dictionary:
+	var data := {
+		"generation": "gen",
+		"topology": "relay",
+		"transport": "relay",
+		"peers": [],
+		"fallback": "relay"
+	}
+	return _with_overrides(data, overrides)
 
 
 func _test_reconnected_missed_events_nonfatal() -> void:

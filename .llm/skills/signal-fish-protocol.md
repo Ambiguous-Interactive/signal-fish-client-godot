@@ -67,6 +67,13 @@ Never invent protocol details; re-verify against the pinned commits before use.
   `ReconnectionFailed`; `Option` + skip-when-None (key absent, decodes to
   `Code.NONE`) on `RoomJoinFailed`, `AuthorityResponse`, `SpectatorJoinFailed`,
   and `Error`. Absent - never `null` - is the only wire shape for "no code".
+- Identifiers are UUIDs upstream (`PlayerId`, `RoomId`, `SessionGeneration`):
+  a present empty-string id cannot deserialize upstream and collides with the
+  retired negotiated-rkyv "" sender-unknowable sentinel, so text-path decodes
+  reject it with `protocol_error` (frame dropped, link stays up; issue #149).
+  The binary path already enforces the 16-byte UUID. Free-text `String`
+  fields (`error`, `reason`, `message`, `app_name`, names, `room_code`) pass
+  empty strings through verbatim.
 - `ConnectionInfo` (verified same commit): internally tagged `type` with
   explicit renames `direct|unity_relay|relay|webrtc|custom`; field sets match
   `SFTypes.ConnectionInfo` (`webrtc.sdp` serializes `null` rather than being

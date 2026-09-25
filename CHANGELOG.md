@@ -57,6 +57,13 @@ CI, tests, and internal tooling are not listed.
 
 ### Fixed
 
+- Event frames with a present empty identifier (`from_player`, `player_id`,
+  `peer_id`, `spectator_id`, room ids, session-plan ids) now decode as
+  `protocol_error` instead of surfacing the empty string: ids are UUIDs
+  upstream, so empty cannot come from a conforming server, and it collided
+  with the retired negotiated-rkyv "sender unknowable" sentinel (#149).
+  Free-text fields (reasons, messages, names) still pass empty strings
+  through.
 - `get_players()` kept the previous authority's `is_authority` flag after
   a handoff or release, so games read a stale host badge: a Start button
   was offered to a player the server refuses (`GAME_START_FORBIDDEN`) and
