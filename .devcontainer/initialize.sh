@@ -14,6 +14,10 @@ fi
     set -o noclobber
     exec 3> .env.local || { [ -f .env.local ] && exit 0; exit 1; }
     cat .env.example >&3
-    chown --reference=.env.example .env.local
+    # Ownership matching is cosmetic; some bind mounts (root-squash NFS,
+    # certain Docker Desktop drivers) reject chown, and a blocked create
+    # is worse than a file the user must chown by hand (PR #159 review).
+    chown --reference=.env.example .env.local \
+        || echo 'WARN: could not set .env.local ownership; chown it manually if editing fails.' >&2
     echo '==> Created .env.local; edit it and rebuild to apply secrets.'
 )

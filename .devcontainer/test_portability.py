@@ -39,6 +39,17 @@ class Portability(unittest.TestCase):
         self.assertLess(guard, script.index('install-agent-tools.sh" --update'))
         self.assertIn("exit 0", script[guard:script.index('install-agent-tools.sh" --update')])
 
+    def test_env_guard_chown_is_best_effort(self):
+        # Some bind mounts reject ownership changes; create must survive
+        # that (Bugbot on PR #159). Static pin for the source of the
+        # docker-level behavior test below; the `||` fallback may ride a
+        # line continuation, so scan a window past the chown line.
+        script = (ROOT / "initialize.sh").read_text(encoding="utf-8")
+        chown = script.index("chown --reference=")
+        window = script[chown:script.index("Created .env.local", chown)]
+        self.assertIn("||", window)
+        self.assertIn("WARN", window)
+
 
 @unittest.skipUnless(os.environ.get("SF_TEST_DOCKER") == "1", "set SF_TEST_DOCKER=1")
 class DockerBehavior(unittest.TestCase):
@@ -68,6 +79,29 @@ class DockerBehavior(unittest.TestCase):
             result = subprocess.run(command, check=True, capture_output=True, timeout=15)
             self.assertIn(b"Container ready", result.stdout)
             print(f"Offline restart including Docker launch: {time.monotonic() - started:.2f}s")
+
+    def test_create_survives_failing_chown(self):
+        # Some bind mounts reject ownership changes; the real guard must
+        # still materialize .env.local and exit 0 (Bugbot on PR #159).
+        with tempfile.TemporaryDirectory(prefix="sf chown fail ") as folder:
+            workspace = Path(folder)
+            scripts = workspace / ".devcontainer"
+            scripts.mkdir()
+            shutil.copyfile(ROOT / "initialize.sh", scripts / "initialize.sh")
+            example = b"SF_TEST=placeholder\n"
+            (workspace / ".env.example").write_bytes(example)
+            command = [arg.replace("${localWorkspaceFolder}", folder)
+                       for arg in config()["initializeCommand"]]
+            image = next(i for i, arg in enumerate(command)
+                         if arg.startswith("mcr.microsoft.com/devcontainers/"))
+            shim = ('mkdir -p /tmp/shim && printf "#!/bin/sh\\nexit 1\\n" > /tmp/shim/chown '
+                    '&& chmod +x /tmp/shim/chown '
+                    '&& PATH="/tmp/shim:$PATH" bash .devcontainer/initialize.sh')
+            shimmed = command[:image + 1] + ["bash", "-c", shim]
+            result = subprocess.run(shimmed, capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((workspace / ".env.local").read_bytes(), example)
+            self.assertIn("WARN", result.stderr)
 
 
 if __name__ == "__main__":
