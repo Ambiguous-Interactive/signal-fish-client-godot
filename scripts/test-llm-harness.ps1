@@ -251,6 +251,108 @@ function Assert-ScriptParsesWithBash {
     }
 }
 
+function Test-BashIsWsl {
+    # WSL's bash.exe (C:\Windows\System32\bash.exe) is a real Linux bash: it
+    # cannot open C:\ paths, while MSYS/Git Bash accepts them. Behavioral
+    # suites build sandboxes in the Windows temp dir, so they must translate
+    # paths when bash is WSL-flavored. Probe once per run; strict mode forbids
+    # reading the cache before it exists, so probe for the variable itself.
+    if (-not (Get-Variable -Name BashIsWsl -Scope Script -ErrorAction SilentlyContinue)) {
+        $script:BashIsWsl = $false
+        $bashCommand = Get-Command bash -ErrorAction SilentlyContinue
+        if ($bashCommand -and $IsWindows -and
+            $bashCommand.Source -ieq (Join-Path $env:SystemRoot 'System32\bash.exe')) {
+            $script:BashIsWsl = $true
+        }
+    }
+    return $script:BashIsWsl
+}
+
+function ConvertTo-BashPath {
+    # Translate a Windows path into the form the resolved `bash` accepts:
+    # identity everywhere except WSL, where C:\... must become /mnt/....
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Path)
+
+    if (-not (Test-BashIsWsl) -or [string]::IsNullOrEmpty($Path)) { return $Path }
+    if ($Path -match '^([A-Za-z]):[\\/](.*)$') {
+        $drive = $Matches[1].ToLowerInvariant()
+        $rest = $Matches[2].Replace('\', '/')
+        return "/mnt/$drive/$rest"
+    }
+    # wslpath fallback for non-drive paths (UNC, weird forms). Positional
+    # arguments after `bash -c` are dropped by WSL's bash.exe, so the input
+    # rides through an environment variable instead; it is registered for
+    # WSL passthrough so the fallback works under either WSL env model.
+    Add-EnvToWslPassthrough @('SF_WSLPATH_INPUT')
+    $env:SF_WSLPATH_INPUT = $Path
+    try {
+        $converted = @(& bash -c 'wslpath -a "$SF_WSLPATH_INPUT"' 2>$null)
+    } finally {
+        Remove-Item Env:SF_WSLPATH_INPUT -ErrorAction SilentlyContinue
+    }
+    if ($LASTEXITCODE -ne 0 -or -not $converted) {
+        throw "Could not translate '$Path' into a WSL path."
+    }
+    return [string]($converted | Select-Object -First 1)
+}
+
+function Invoke-SandboxBash {
+    # Run a `bash -c` script against sandbox paths. WSL's bash.exe drops
+    # positional arguments after -c, so under WSL the arguments are inlined
+    # into the script as single-quoted literals; everywhere else the standard
+    # `-- <args>` convention holds. Arguments must be single-quote-free
+    # (sandbox paths, package specs, and marker strings all are).
+    param(
+        [Parameter(Mandatory)][string]$Script,
+        [string[]]$Arguments = @()
+    )
+
+    if (-not (Test-BashIsWsl)) {
+        & bash -c $Script -- @Arguments
+        return
+    }
+    $inlined = $Script
+    for ($index = $Arguments.Count; $index -ge 1; $index--) {
+        $value = $Arguments[$index - 1]
+        if ($value -match "'") {
+            throw "Sandbox argument contains a single quote; inline quoting would break: $value"
+        }
+        $needle = [regex]::Escape('$' + $index)
+        $replacement = "'" + $value + "'"
+        # "$N" and "$N/suffix" collapse into one single-quoted word: the
+        # captured suffix rides inside the quotes so the value stays a single
+        # argv word even when the script wrote "$2/."-style paths.
+        $inlined = [regex]::Replace($inlined, '"' + $needle + '([^"]*)"', ("'" + $value.Replace('$', '$$') + '$1' + "'"))
+        $inlined = $inlined.Replace('$' + $index, $replacement)
+    }
+    if ($inlined -match '"\$@"') {
+        if ($Arguments.Count -eq 0) {
+            $inlined = $inlined.Replace('"$@"', '')
+        } else {
+            $expanded = ($Arguments | ForEach-Object { "'$_'" }) -join ' '
+            $inlined = $inlined.Replace('"$@"', $expanded)
+        }
+    }
+    & bash -c $inlined
+}
+
+function Add-EnvToWslPassthrough {
+    # Register variables for Windows→WSL passing ('u' flag, no path
+    # translation) so the behavioral sandboxes' fake-npm and canary
+    # variables reach WSL bash regardless of how the WSL boundary filters
+    # the inherited environment. No-op everywhere else. Callers must
+    # snapshot WSLENV (it is mutated) alongside the variables themselves.
+    param([Parameter(Mandatory)][string[]]$Names)
+
+    $entries = @($env:WSLENV -split ':') | Where-Object { $_ }
+    foreach ($name in $Names) {
+        if ($entries -notcontains "$name/u" -and $entries -notcontains $name) {
+            $entries += "$name/u"
+        }
+    }
+    $env:WSLENV = ($entries -join ':')
+}
+
 function ConvertTo-TestLfNewlines {
     param([AllowNull()][AllowEmptyString()][string]$Content)
     if ($null -eq $Content) { return '' }
@@ -1749,8 +1851,9 @@ esac
         [pscustomobject]@{ Name = 'malformed version rejected'; Mode = 'install'; FailProbe = ''; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = '2beta'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 1; V1 = $true; V1Reinstalled = $false; Major = '1'; ActivePresent = $true; FinalReady = $false }
     )
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-    $envNames = @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_PROBE', 'FAKE_NPM_FAIL_CANDIDATE', 'FAKE_NPM_FAIL_ACTIVE', 'FAKE_NPM_FAIL_ACTIVATION', 'FAKE_NPM_FAIL_V1_RESTORE', 'FAKE_OPENCODE_VERSION', 'FAKE_NPM_FAIL_UNINSTALL', 'AGENT_TOOLS_RETRY_SLEEP_MS', 'PATH')
+    $envNames = @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_PROBE', 'FAKE_NPM_FAIL_CANDIDATE', 'FAKE_NPM_FAIL_ACTIVE', 'FAKE_NPM_FAIL_ACTIVATION', 'FAKE_NPM_FAIL_V1_RESTORE', 'FAKE_OPENCODE_VERSION', 'FAKE_NPM_FAIL_UNINSTALL', 'AGENT_TOOLS_RETRY_SLEEP_MS', 'PATH', 'WSLENV')
     $snapshots = @($envNames | ForEach-Object { Save-EnvVar $_ })
+    Add-EnvToWslPassthrough @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_PROBE', 'FAKE_NPM_FAIL_CANDIDATE', 'FAKE_NPM_FAIL_ACTIVE', 'FAKE_NPM_FAIL_ACTIVATION', 'FAKE_NPM_FAIL_V1_RESTORE', 'FAKE_OPENCODE_VERSION', 'FAKE_NPM_FAIL_UNINSTALL', 'AGENT_TOOLS_RETRY_SLEEP_MS')
     try {
         # The matrix cases share an immutable sandbox (fake npm, CLI stubs,
         # package list, pre-seeded PATH dirs); each case copies it so only
@@ -1762,6 +1865,20 @@ esac
         New-Item -ItemType Directory -Path $templateState, $templateBin, $templateForeignBin -Force | Out-Null
         Write-TestUtf8NoBomFile -Path "$templateForeignBin/opencode" -Content "#!/usr/bin/env bash`nprintf '%s\n' 'opencode 2.4.0'`n" -LfNewlines
         Write-TestUtf8NoBomFile -Path "$templateBin/npm" -Content $fakeNpm -LfNewlines
+        # The installer parses `npm list --json` through `node -e`. WSL bash
+        # cannot resolve the Windows node.exe by bare name, so WSL runs ship
+        # this forwarding shim in the sandbox bin. Other platforms must not
+        # have it: the sandbox bin is first on PATH, so a bare-`node`
+        # fallback in the shim would re-exec itself forever. There the bare
+        # `node` resolves the real node (or fails loudly) exactly as before.
+        if (Test-BashIsWsl) {
+            Write-TestUtf8NoBomFile -Path "$templateBin/node" -Content @'
+#!/usr/bin/env bash
+if command -v node.exe >/dev/null 2>&1; then exec node.exe "$@"; fi
+echo "sandbox node shim: node.exe not found" >&2
+exit 127
+'@ -LfNewlines
+        }
         Write-TestUtf8NoBomFile -Path "$templateState/events" -Content ''
         $templatePackages = @(
             '@openai/codex 1.0.0',
@@ -1779,19 +1896,23 @@ esac
             Write-TestUtf8NoBomFile -Path "$templateBin/$($entry.Name)" -Content "#!/usr/bin/env bash`nprintf '%s\n' '$($entry.Version)'`n" -LfNewlines
         }
         $templateExecutables = @(
-            "$templateBin/npm",
-            "$templateBin/codex",
-            "$templateBin/nanocoder",
-            "$templateBin/claude",
-            "$templateBin/opencode",
+            "$templateBin/npm"
+            if (Test-BashIsWsl) { "$templateBin/node" }
+            "$templateBin/codex"
+            "$templateBin/nanocoder"
+            "$templateBin/claude"
+            "$templateBin/opencode"
             "$templateForeignBin/opencode"
         )
-        & bash -c 'chmod +x "$@"' -- $templateExecutables
+        # Sandbox paths cross into bash: translate for the WSL flavor.
+        Invoke-SandboxBash 'chmod +x "$@"' ($templateExecutables | ForEach-Object { ConvertTo-BashPath $_ })
+        Expect-Equal $LASTEXITCODE 0 'chmod sandbox executables'
+        $caseRootTemplateBash = ConvertTo-BashPath $templateRoot
         Push-Location $repoRoot
         try {
             foreach ($case in $cases) {
                 $caseRoot = Join-Path $tempRoot ([Guid]::NewGuid().ToString('N'))
-                & bash -c 'mkdir -p "$1" && cp -a "$2/." "$3/"' -- $caseRoot $templateRoot $caseRoot
+                Invoke-SandboxBash 'mkdir -p "$1" && cp -a "$2/." "$3/"' @((ConvertTo-BashPath $caseRoot), $caseRootTemplateBash, (ConvertTo-BashPath $caseRoot))
                 Expect-Equal $LASTEXITCODE 0 "$($case.Name): sandbox template copy"
                 $state = "$caseRoot/state"
                 $prefix = "$caseRoot/prefix"
@@ -1800,7 +1921,7 @@ esac
                 if ($case.ForeignV2) {
                     $foreignBinary = "$caseRoot/foreign-opencode"
                     Write-TestUtf8NoBomFile -Path $foreignBinary -Content "#!/usr/bin/env bash`nprintf '%s\n' 'opencode 2.4.0'`n" -LfNewlines
-                    & bash -c 'chmod +x "$1" && ln -sfn "$2" "$3"' -- $foreignBinary '../../foreign-opencode' "$bin/opencode"
+                    Invoke-SandboxBash 'chmod +x "$1" && ln -sfn "$2" "$3"' @((ConvertTo-BashPath $foreignBinary), '../../foreign-opencode', (ConvertTo-BashPath "$bin/opencode"))
                 }
                 if ($case.InitialV2) {
                     $packagesText = Get-Content -LiteralPath "$state/packages" -Raw
@@ -1814,14 +1935,14 @@ esac
                     New-Item -ItemType Directory -Path "$v2Package/bin" -Force | Out-Null
                     Write-TestUtf8NoBomFile -Path "$v2Package/package.json" -Content '{"name":"@opencode/cli","version":"2.4.0"}' -LfNewlines
                     Write-TestUtf8NoBomFile -Path "$v2Package/bin/opencode" -Content "#!/usr/bin/env bash`nprintf '%s\n' 'opencode 2.4.0'`n" -LfNewlines
-                    & bash -c 'chmod +x "$1" && ln -sfn "$2" "$3" && ln -sfn "$2" "$4"' -- "$v2Package/bin/opencode" '../lib/node_modules/@opencode/cli/bin/opencode' "$bin/opencode" "$bin/opencode2"
+                    Invoke-SandboxBash 'chmod +x "$1" && ln -sfn "$2" "$3" && ln -sfn "$2" "$4"' @((ConvertTo-BashPath "$v2Package/bin/opencode"), '../lib/node_modules/@opencode/cli/bin/opencode', (ConvertTo-BashPath "$bin/opencode"), (ConvertTo-BashPath "$bin/opencode2"))
                 }
                 if ($case.DanglingV2) {
-                    & bash -c 'ln -sfn "$1" "$2"' -- '../lib/node_modules/@opencode/cli/bin/opencode2' "$bin/opencode2"
+                    Invoke-SandboxBash 'ln -sfn "$1" "$2"' @('../lib/node_modules/@opencode/cli/bin/opencode2', (ConvertTo-BashPath "$bin/opencode2"))
                 }
 
-                $env:FAKE_NPM_STATE = $state
-                $env:FAKE_NPM_PREFIX = $prefix
+                $env:FAKE_NPM_STATE = ConvertTo-BashPath $state
+                $env:FAKE_NPM_PREFIX = ConvertTo-BashPath $prefix
                 $env:FAKE_NPM_FAIL_PROBE = $case.FailProbe
                 $env:FAKE_NPM_FAIL_CANDIDATE = if ($case.FailCandidate) { '1' } else { '0' }
                 $env:FAKE_NPM_FAIL_ACTIVE = if ($case.FailActive) { '1' } else { '0' }
@@ -1833,7 +1954,10 @@ esac
                 # The matrix forces install failures to exercise rollback;
                 # a real 2 s backoff per retry would burn ~25 s of pure sleep.
                 $env:AGENT_TOOLS_RETRY_SLEEP_MS = '0'
-                $env:PATH = "${foreignEarlierBin}:${bin}:$($env:PATH)"
+                # PathSeparator keeps the Windows-side PATH parseable; WSL
+                # converts it to /mnt/... entries, MSYS/Git Bash and Linux
+                # consume it directly (same convention as the auto-merge suite).
+                $env:PATH = "$foreignEarlierBin$([System.IO.Path]::PathSeparator)$bin$([System.IO.Path]::PathSeparator)$($env:PATH)"
                 $output = @(& bash '.devcontainer/install-agent-tools.sh' $case.Mode 2>&1)
                 $exitCode = $LASTEXITCODE
                 Expect-Equal $exitCode $case.Exit "$($case.Name): $($output -join '; ')"
@@ -1844,7 +1968,7 @@ esac
                     Expect-Equal $v1PackageVersion '1.2.3' "$($case.Name): recorded v1 package version"
                 }
                 if ($case.ActivePresent) {
-                    $version = @(& bash "$bin/opencode" --version 2>&1)
+                    $version = @(& bash (ConvertTo-BashPath "$bin/opencode") --version 2>&1)
                     Expect-Equal $LASTEXITCODE 0 "$($case.Name): active OpenCode"
                     $versionValue = $version[0] -replace '^opencode\s+', '' -replace '^v', ''
                     if ($case.Major) {
@@ -1864,16 +1988,18 @@ esac
                 }
                 if ($case.FailV1Restore) {
                     Expect-Equal ($outputText -match 'retaining OpenCode v1') $false "$($case.Name): rollback failure claimed v1 retention"
-                    & bash -c 'for alias in "$@"; do [ ! -e "$alias" ] && [ ! -L "$alias" ] || exit 1; done' -- "$bin/opencode" "$bin/opencode2"
+                    Invoke-SandboxBash 'for alias in "$@"; do [ ! -e "$alias" ] && [ ! -L "$alias" ] || exit 1; done' @((ConvertTo-BashPath "$bin/opencode"), (ConvertTo-BashPath "$bin/opencode2"))
                     Expect-Equal $LASTEXITCODE 0 "$($case.Name): broken OpenCode aliases survived failed v1 restoration"
                 }
 
                 $events = Get-Content -LiteralPath "$state/events" -Raw
                 if ($null -eq $events) { $events = '' }
-                $v1Install = "install:${prefix}:opencode-ai@1.2.3"
+                # The fake npm records the prefix exactly as the installer
+                # passed it (FAKE_NPM_PREFIX), so compare in the bash flavor.
+                $v1Install = "install:$(ConvertTo-BashPath $prefix):opencode-ai@1.2.3"
                 Expect-Equal $events.Contains($v1Install) $case.V1Reinstalled "$($case.Name): exact v1 reinstall"
                 if ($case.DanglingV2) {
-                    & bash -c '[ ! -e "$1" ] && [ ! -L "$1" ]' -- "$bin/opencode2"
+                    Invoke-SandboxBash '[ ! -e "$1" ] && [ ! -L "$1" ]' @((ConvertTo-BashPath "$bin/opencode2"))
                     Expect-Equal $LASTEXITCODE 0 "$($case.Name): dangling opencode2 was retained"
                 }
             }
@@ -2410,23 +2536,34 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $canary1 = "sf-canary-pat-$([Guid]::NewGuid())"
     $canary2 = "sf-canary-ctx7-$([Guid]::NewGuid())"
-    $envNames = @('HOME', 'GITHUB_MCP_PAT', 'CONTEXT7_API_KEY', 'GITHUB_READ_ONLY')
+    $envNames = @('HOME', 'GITHUB_MCP_PAT', 'CONTEXT7_API_KEY', 'GITHUB_READ_ONLY', 'WSLENV')
     $snapshots = @($envNames | ForEach-Object { Save-EnvVar $_ })
+    Add-EnvToWslPassthrough @('GITHUB_MCP_PAT', 'CONTEXT7_API_KEY')
     $allOutputs = [System.Collections.Generic.List[string]]::new()
     try {
-        $env:HOME = Join-Path $tempRoot 'home'
+        # pwsh-side IO uses Windows paths; the seeder runs under bash, where
+        # the sandbox paths must exist in the bash flavor. HOME carries the
+        # bash-facing translation; pwsh assertions read via $codexConfigWin.
+        # WSL's bash.exe FORCES HOME to the WSL user's home and ignores the
+        # inherited value, so under WSL the sandbox HOME is inlined per
+        # invocation instead of relied upon from the environment.
+        $winHome = Join-Path $tempRoot 'home'
         $env:GITHUB_MCP_PAT = $canary1
         $env:CONTEXT7_API_KEY = $canary2
         Remove-Item -Path 'Env:GITHUB_READ_ONLY' -ErrorAction SilentlyContinue
-        New-Item -ItemType Directory -Path $env:HOME, "$env:HOME/.codex" -Force | Out-Null
-        $codexConfig = "$env:HOME/.codex/config.toml"
+        New-Item -ItemType Directory -Path $winHome, "$winHome/.codex" -Force | Out-Null
+        $env:HOME = ConvertTo-BashPath $winHome
+        $codexConfigWin = Join-Path $winHome '.codex/config.toml'
 
         $runSeeder = {
             param([string]$Mode)
-            if ($Mode) {
-                $out = & bash $seeder $Mode 2>&1
+            if (Test-BashIsWsl) {
+                $modeSuffix = if ($Mode) { ' ' + $Mode } else { '' }
+                $out = & bash -c ("HOME='{0}' exec bash '{1}'{2}" -f $env:HOME, (ConvertTo-BashPath $seeder), $modeSuffix) 2>&1
+            } elseif ($Mode) {
+                $out = & bash (ConvertTo-BashPath $seeder) $Mode 2>&1
             } else {
-                $out = & bash $seeder 2>&1
+                $out = & bash (ConvertTo-BashPath $seeder) 2>&1
             }
             $allOutputs.Add(($out | Out-String))
             return [pscustomobject]@{ Exit = $LASTEXITCODE; Output = ($out | Out-String) }
@@ -2435,26 +2572,26 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
         # 1. Fresh HOME: strict run writes the managed block.
         $result = & $runSeeder ''
         Expect-Equal $result.Exit 0 'fresh install must succeed'
-        if (-not (Test-Path $codexConfig)) { throw 'fresh install must create ~/.codex/config.toml' }
+        if (-not (Test-Path -LiteralPath $codexConfigWin)) { throw 'fresh install must create ~/.codex/config.toml' }
 
         # 2. Idempotent rerun: skipped, byte-identical.
-        $before = Get-Content -LiteralPath $codexConfig -Raw
+        $before = Get-Content -LiteralPath $codexConfigWin -Raw
         $result = & $runSeeder ''
         Expect-Equal $result.Exit 0 'idempotent rerun must succeed'
         if ($result.Output -notmatch 'is current; skipped') {
             throw 'idempotent rerun must skip the write ("is current; skipped").'
         }
-        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $before 'idempotent rerun must not modify the file'
+        Expect-Equal (Get-Content -LiteralPath $codexConfigWin -Raw) $before 'idempotent rerun must not modify the file'
 
         # 2b. THE regression case: an existing user config WITHOUT the
         # managed block must actually get the block (the append branch was
         # once dead code: the unchanged-awk-output byte compare swallowed
         # it, seeding nothing with exit 0).
         $userContent = "# my custom config`n[mcp_servers.custom_thing]`ncommand = `"foo`"`n"
-        & bash -c 'printf "%s" "$1" > "$2"' -- $userContent $codexConfig
+        Write-TestUtf8NoBomFile -Path $codexConfigWin -Content $userContent
         $result = & $runSeeder ''
         Expect-Equal $result.Exit 0 'seeding an existing config without the block must succeed'
-        $after = Get-Content -LiteralPath $codexConfig -Raw
+        $after = Get-Content -LiteralPath $codexConfigWin -Raw
         if ($after -notmatch [regex]::Escape($begin) -or $after -notmatch 'command = "godot-mcp"') {
             throw 'existing config without the managed block must gain the block.'
         }
@@ -2466,33 +2603,33 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
         if ($result.Output -notmatch 'is current; skipped') {
             throw 'rerun after seeding must skip ("is current; skipped").'
         }
-        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $before 'rerun after seeding must not modify the file'
+        Expect-Equal (Get-Content -LiteralPath $codexConfigWin -Raw) $before 'rerun after seeding must not modify the file'
 
         # 2c. An empty (0-byte) config.toml must also gain the block.
-        & bash -c ': > "$1"' -- $codexConfig
+        Write-TestUtf8NoBomFile -Path $codexConfigWin -Content ''
         $result = & $runSeeder ''
         Expect-Equal $result.Exit 0 'seeding an empty config must succeed'
-        $after = Get-Content -LiteralPath $codexConfig -Raw
+        $after = Get-Content -LiteralPath $codexConfigWin -Raw
         if ($after -notmatch 'command = "godot-mcp"') {
             throw 'empty config.toml must gain the managed block.'
         }
 
         # 2d. A CRLF-edited config with the block is still recognized (its
         # markers match), so it is replaced in place - never double-seeded.
-        & bash -c 'printf "%s\r\nuser=1\r\n%s\r\n" "$1" "$2" > "$3"' -- $begin $end $codexConfig
+        Write-TestUtf8NoBomFile -Path $codexConfigWin -Content ("$begin`r`nuser=1`r`n$end`r`n")
         $result = & $runSeeder ''
         Expect-Equal $result.Exit 0 'CRLF config with the block must seed successfully'
-        $after = Get-Content -LiteralPath $codexConfig -Raw
+        $after = Get-Content -LiteralPath $codexConfigWin -Raw
         Expect-Equal ([regex]::Matches($after, [regex]::Escape($begin)).Count) 1 'CRLF config must end with exactly one begin marker'
         Expect-Equal ([regex]::Matches($after, [regex]::Escape($end)).Count) 1 'CRLF config must end with exactly one end marker'
 
         # 3. Drift inside the markers is replaced exactly once; user content
         # outside survives.
         $drifted = "# my custom config`n[mcp_servers.custom_thing]`ncommand = `"foo`"`n$begin`n[mcp_servers.godot]`ncommand = `"OLD`"`n$end`n"
-        & bash -c 'printf "%s" "$1" > "$2"' -- $drifted $codexConfig
+        Write-TestUtf8NoBomFile -Path $codexConfigWin -Content $drifted
         $result = & $runSeeder ''
         Expect-Equal $result.Exit 0 'drift repair must succeed'
-        $after = Get-Content -LiteralPath $codexConfig -Raw
+        $after = Get-Content -LiteralPath $codexConfigWin -Raw
         if ($after -match 'OLD') { throw 'drifted managed block must be replaced.' }
         Expect-Equal ([regex]::Matches($after, [regex]::Escape($begin)).Count) 1 'exactly one begin marker must remain'
         Expect-Equal ([regex]::Matches($after, [regex]::Escape($end)).Count) 1 'exactly one end marker must remain'
@@ -2500,30 +2637,30 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
 
         # 4. A user table with a managed name outside the block is refused
         # (a second TOML table definition would corrupt the config).
-        & bash -c 'printf "[mcp_servers.godot]\ncommand = \"evil\"\n" > "$1"' -- $codexConfig
-        $snapshot = Get-Content -LiteralPath $codexConfig -Raw
+        Write-TestUtf8NoBomFile -Path $codexConfigWin -Content ("[mcp_servers.godot]`ncommand = `"evil`"`n")
+        $snapshot = Get-Content -LiteralPath $codexConfigWin -Raw
         $result = & $runSeeder ''
         Expect-Equal $result.Exit 1 'unmanaged conflict must fail strictly in install mode'
-        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $snapshot 'unmanaged conflict must not modify the file'
+        Expect-Equal (Get-Content -LiteralPath $codexConfigWin -Raw) $snapshot 'unmanaged conflict must not modify the file'
         $result = & $runSeeder '--update'
         Expect-Equal $result.Exit 0 'unmanaged conflict must be warn-only in --update mode'
 
         # 5. Corrupted managed block (begin without end) is refused, never
         # truncated.
-        & bash -c 'printf "x=1\n%s\nno end marker\n" "$1" > "$2"' -- $begin $codexConfig
-        $snapshot = Get-Content -LiteralPath $codexConfig -Raw
+        Write-TestUtf8NoBomFile -Path $codexConfigWin -Content ("x=1`n$begin`nno end marker`n")
+        $snapshot = Get-Content -LiteralPath $codexConfigWin -Raw
         $result = & $runSeeder ''
         Expect-Equal $result.Exit 1 'corrupted managed block must fail strictly in install mode'
-        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $snapshot 'corrupted managed block must not modify the file'
+        Expect-Equal (Get-Content -LiteralPath $codexConfigWin -Raw) $snapshot 'corrupted managed block must not modify the file'
 
         # 5b. Two complete managed blocks (the exact damage the old
         # replace-then-append bug produced) are refused, not "repaired"
         # into duplicate TOML tables.
-        & bash -c 'printf "user=1\n%s\nold=1\n%s\n%s\nold2=1\n%s\ntail=1\n" "$1" "$2" "$1" "$2" > "$3"' -- $begin $end $codexConfig
-        $snapshot = Get-Content -LiteralPath $codexConfig -Raw
+        Write-TestUtf8NoBomFile -Path $codexConfigWin -Content ("user=1`n$begin`nold=1`n$end`n$begin`nold2=1`n$end`ntail=1`n")
+        $snapshot = Get-Content -LiteralPath $codexConfigWin -Raw
         $result = & $runSeeder ''
         Expect-Equal $result.Exit 1 'double managed block must fail strictly in install mode'
-        Expect-Equal (Get-Content -LiteralPath $codexConfig -Raw) $snapshot 'double managed block must not modify the file'
+        Expect-Equal (Get-Content -LiteralPath $codexConfigWin -Raw) $snapshot 'double managed block must not modify the file'
 
         # 6. Canary sweep: the secret values must not appear in any captured
         # output stream, nor anywhere in the sandbox tree (any written file).
@@ -2534,7 +2671,7 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
                 throw 'seed-mcp-config.sh leaked a secret value into its output.'
             }
         }
-        $leaks = & bash -c "grep -rl -F -e '$($canary1)' -e '$($canary2)' '$tempRoot' 2>/dev/null || true"
+        $leaks = & bash -c "grep -rl -F -e '$($canary1)' -e '$($canary2)' '$(ConvertTo-BashPath $tempRoot)' 2>/dev/null || true"
         if ($leaks) { throw "seed-mcp-config.sh wrote a secret value to: $($leaks -join ', ')" }
     } finally {
         foreach ($snapshot in $snapshots) { Restore-EnvVar $snapshot }
@@ -2660,49 +2797,78 @@ esac
 
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $canary = "sf-canary-npm-$([Guid]::NewGuid())"
-    $envNames = @('PATH', 'FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_SPEC', 'GITHUB_MCP_PAT', 'CONTEXT7_API_KEY', 'SF_MCP_SKIP_PLAYWRIGHT_BROWSER')
+    $envNames = @('PATH', 'FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_SPEC', 'GITHUB_MCP_PAT', 'CONTEXT7_API_KEY', 'SF_MCP_SKIP_PLAYWRIGHT_BROWSER', 'WSLENV')
     $snapshots = @($envNames | ForEach-Object { Save-EnvVar $_ })
+    Add-EnvToWslPassthrough @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_SPEC', 'GITHUB_MCP_PAT', 'CONTEXT7_API_KEY', 'SF_MCP_SKIP_PLAYWRIGHT_BROWSER')
     try {
         $bin = Join-Path $tempRoot 'bin'
         $state = Join-Path $tempRoot 'state'
         $prefix = Join-Path $tempRoot 'prefix'
         New-Item -ItemType Directory -Path $bin, $state, $prefix -Force | Out-Null
         Write-TestUtf8NoBomFile -Path (Join-Path $bin 'npm') -Content $fakeNpm -LfNewlines
-        & bash -c 'chmod +x "$1"' -- (Join-Path $bin 'npm')
-        Expect-Equal $LASTEXITCODE 0 'chmod fake npm'
+        # Same WSL shim as the agent-tools suite: the installer's node guard
+        # and JSON parsing cannot resolve Windows node.exe by bare name.
+        # WSL-only by construction: the sandbox bin is first on PATH, so a
+        # bare-`node` fallback here would re-exec itself forever elsewhere.
+        if (Test-BashIsWsl) {
+            Write-TestUtf8NoBomFile -Path (Join-Path $bin 'node') -Content @'
+#!/usr/bin/env bash
+if command -v node.exe >/dev/null 2>&1; then exec node.exe "$@"; fi
+echo "sandbox node shim: node.exe not found" >&2
+exit 127
+'@ -LfNewlines
+        }
+        # Exec bits are cosmetic here: the WSL flavor sees drvfs files as
+        # 0777, and chmod.exe only exists when Git's usr/bin is on PATH.
+        if (Get-Command chmod -ErrorAction SilentlyContinue) {
+            $sandboxExecutables = @(Join-Path $bin 'npm')
+            if (Test-BashIsWsl) { $sandboxExecutables += (Join-Path $bin 'node') }
+            & chmod +x -- $sandboxExecutables
+            Expect-Equal $LASTEXITCODE 0 'chmod sandbox executables'
+        }
 
         Push-Location $repoRoot
         try {
             foreach ($case in $cases) {
-                & bash -c 'rm -rf "$1" && mkdir -p "$1"' -- $state
-                & bash -c 'rm -rf "$1" && mkdir -p "$1"' -- $prefix
+                Remove-Item -LiteralPath $state -Recurse -Force -ErrorAction SilentlyContinue
+                New-Item -ItemType Directory -Path $state -Force | Out-Null
+                Remove-Item -LiteralPath $prefix -Recurse -Force -ErrorAction SilentlyContinue
+                New-Item -ItemType Directory -Path $prefix -Force | Out-Null
                 if ($case.Installed) {
-                    & bash -c 'printf "%s\n" "$1" "$2" "$3" > "$4" && mkdir -p "$5" && touch "$5/godot-mcp" "$5/playwright-mcp" "$5/context7-mcp" && chmod +x "$5/godot-mcp" "$5/playwright-mcp" "$5/context7-mcp"' `
-                        -- "$godotPackage $godotVersion" "$playwrightPackage $playwrightVersion" "$context7Package $context7Version" "$state/packages" "$prefix/bin"
-                    Expect-Equal $LASTEXITCODE 0 "$($case.Name): seed installed state"
+                    Write-TestUtf8NoBomFile -Path "$state/packages" -Content ((@(
+                            "$godotPackage $godotVersion",
+                            "$playwrightPackage $playwrightVersion",
+                            "$context7Package $context7Version"
+                        ) -join "`n") + "`n")
+                    New-Item -ItemType Directory -Path "$prefix/bin" -Force | Out-Null
+                    foreach ($mcpBin in 'godot-mcp', 'playwright-mcp', 'context7-mcp') {
+                        Write-TestUtf8NoBomFile -Path (Join-Path $prefix "bin/$mcpBin") -Content ('#!/usr/bin/env bash' + "`n")
+                    }
+                    if (Get-Command chmod -ErrorAction SilentlyContinue) {
+                        & chmod +x -- (Join-Path $prefix 'bin/godot-mcp') (Join-Path $prefix 'bin/playwright-mcp') (Join-Path $prefix 'bin/context7-mcp')
+                    }
                 } else {
-                    & bash -c 'touch "$1"' -- "$state/packages"
+                    Write-TestUtf8NoBomFile -Path "$state/packages" -Content ''
                 }
 
                 $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$env:PATH"
-                $env:FAKE_NPM_STATE = $state
-                $env:FAKE_NPM_PREFIX = $prefix
+                $env:FAKE_NPM_STATE = ConvertTo-BashPath $state
+                $env:FAKE_NPM_PREFIX = ConvertTo-BashPath $prefix
                 $env:FAKE_NPM_FAIL_SPEC = $case.FailSpec
                 $env:GITHUB_MCP_PAT = $canary
                 $env:CONTEXT7_API_KEY = $canary
                 $env:SF_MCP_SKIP_PLAYWRIGHT_BROWSER = '1'
-                $output = if ($case.Mode) { & bash $installer $case.Mode 2>&1 } else { & bash $installer 2>&1 }
+                $output = if ($case.Mode) { & bash (ConvertTo-BashPath $installer) $case.Mode 2>&1 } else { & bash (ConvertTo-BashPath $installer) 2>&1 }
                 $exit = $LASTEXITCODE
                 $outputText = $output | Out-String
                 Expect-Equal $exit $case.Exit "$($case.Name): exit code (output: $outputText)"
                 $installCount = 0
                 if (Test-Path "$state/events") {
-                    $installCount = @(& bash -c 'grep -c "^install:" "$1"' -- "$state/events" | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ } | Select-Object -First 1)
-                    if ($null -eq $installCount) { $installCount = 0 }
+                    $installCount = @(Select-String -LiteralPath "$state/events" -Pattern '^install:').Count
                 }
                 Expect-Equal $installCount $case.Installs "$($case.Name): npm install invocations"
                 if (Test-Path "$state/events") {
-                    $leaked = & bash -c 'grep -F "$1" "$2" || true' -- $canary "$state/events"
+                    $leaked = @(Select-String -LiteralPath "$state/events" -SimpleMatch $canary)
                     if ($leaked) { throw "$($case.Name): secret value reached the npm process environment." }
                 }
                 if ($case.ReportsReady -and $outputText -notmatch 'mcp-servers: ready: godot-mcp playwright-mcp context7-mcp') {
@@ -2717,8 +2883,8 @@ esac
             }
             # Canary sweep across the whole sandbox: the canary secret must
             # not have reached npm's recorded process environment anywhere.
-            $leaks = & bash -c "grep -rl -F '$canary' '$tempRoot' 2>/dev/null || true"
-            if ($leaks) { throw "installer leaked the canary secret to: $($leaks -join ', ')" }
+            $leaks = @(Get-ChildItem -LiteralPath $tempRoot -Recurse -File -ErrorAction SilentlyContinue | Select-String -SimpleMatch $canary -List)
+            if ($leaks) { throw "installer leaked the canary secret to: $(($leaks | ForEach-Object { $_.Path }) -join ', ')" }
         } finally {
             Pop-Location
         }
