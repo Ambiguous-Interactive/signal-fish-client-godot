@@ -10,17 +10,27 @@ themes.
 1. Install [Docker](https://www.docker.com/) and the
    [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
    extension for VS Code.
-2. Create your local secrets file (the container load step fails without
-   it): `cp .env.example .env.local`, then fill in the values you want.
-   `.env.local` is git-ignored.
+2. Optional: create your local secrets file - `cp .env.example .env.local`,
+   then fill in the values you want. `.env.local` is git-ignored; if it is
+   absent when the container opens, the create-time guard creates it
+   automatically (placeholder values are inert - servers that need secrets
+   fail loudly at launch; the create itself never needs secrets). The guard
+   runs `sh` on the host, so `sh` must be on the host PATH (built in on
+   macOS and Linux; on Windows add Git Bash to PATH). When the host also
+   has `pwsh`, the guard uses a richer script; otherwise it falls back to
+   plain `cp`.
 3. Open this repository in VS Code.
 4. When prompted, choose **Reopen in Container**. (Or run the
    `Dev Containers: Reopen in Container` command.)
 
 First build pulls the base image, installs system libs, downloads the pinned
 Godot release and web export templates, and provisions the agent CLIs and
-MCP servers; subsequent starts are fast (the ~900 MB template archive is
-cached across builds by a BuildKit cache mount).
+MCP servers; subsequent starts are fast. The heavyweight downloads are
+cached across builds by BuildKit cache mounts - the ~900 MB template
+archive, the Godot editor zip, apt package indexes/archives, and pipx/pip
+wheels. `Rebuild Container` reuses them, and so does `Rebuild Without
+Cache` (`--no-cache` skips layer reuse only; cache mounts still apply),
+so the downloads repeat only when the mount is evicted.
 
 The direct Git hook installed by post-create is canonical. Its path is resolved
 with `git rev-parse --git-path hooks`, so linked worktrees do not assume `.git`
@@ -34,7 +44,7 @@ tooling for manual `.pre-commit-config.yaml` runs.
 | OS          | Ubuntu 24.04 (`mcr.microsoft.com/devcontainers/base`) |
 | Godot       | `4.3-stable` editor binary (run headless via `--headless`) plus web export templates |
 | PowerShell  | 7.x via `ghcr.io/devcontainers/features/powershell` |
-| Python      | 3.12 via devcontainer feature                       |
+| Python      | 3.12 via Ubuntu (apt); docs CI pins 3.12, runtime CI tracks 3.x - PEP 668 pre-unlocked via `/etc/pip.conf` |
 | Node.js     | LTS via devcontainer feature (>= 22 required)       |
 | Agent CLIs  | `codex`, OpenCode v2, `nanocoder`, `claude` at `@latest`; installed at create and refreshed at start |
 | MCP servers | `godot`, `github`, `context7`, `deepwiki`, `git`, `fetch`, `playwright` - see "MCP servers" below |
@@ -100,7 +110,7 @@ Switch color themes with the `Preferences: Color Theme` command.
 
 - [`devcontainer.json`](./devcontainer.json) - features, extensions, settings
 - [`Dockerfile`](./Dockerfile) - base image, Godot install, MCP binaries
-- [`install-godot.sh`](./install-godot.sh) - deterministic Godot download
+- [`install-godot.sh`](./install-godot.sh) - deterministic Godot download (cache-mounted)
 - [`install-godot-templates.sh`](./install-godot-templates.sh) - web export templates (cache-mounted download, web-only extraction)
 - [`install-agent-tools.sh`](./install-agent-tools.sh) - agent CLI install/refresh
 - [`install-mcp-servers.sh`](./install-mcp-servers.sh) - npm MCP server install/refresh
@@ -201,8 +211,9 @@ nanocoder, codex, and the VS Code agent host):
 Secret values never appear in any configuration file or script output:
 
 1. `runArgs: ["--env-file", ".env.local"]` loads your git-ignored
-   `.env.local` (create it from `.env.example`) into the container
-   environment at container create time.
+   `.env.local` into the container environment at container create time.
+   The `initializeCommand` guard creates it from `.env.example` when
+   absent, so the create never fails on a missing file.
 2. Committed configs reference the variable **names** only. In
    `.mcp.json`, secret-driven servers are local stdio entries with an
    explicit `env` map using bare `${VAR}` references - the one shape all
@@ -255,9 +266,18 @@ local one is what the shared file ships).
 
 ## Troubleshooting
 
-- **Container fails to create with `env file ... not found`:** create the
-  secrets file: `cp .env.example .env.local` (`.env.local` is git-ignored;
-  see "MCP servers" above).
+- **Container fails to create with `env file ... not found`:** the
+  create-time guard should have created `.env.local` from `.env.example`
+  (pwsh guard script when the host has pwsh, plain `cp` otherwise); if the
+  guard itself failed (missing example file), create it manually with
+  `cp .env.example .env.local` (`.env.local` is git-ignored).
+- **Container create fails with `sh: not found` (or an equivalent spawn
+  error):** the create-time guard runs `sh` on the host, and the create
+  halts when it cannot - it runs even when `.env.local` already exists, so
+  pre-creating that file does not bypass it. `sh` is built in on macOS and
+  Linux; on Windows, add Git Bash to the PATH. (A missing `.env.example`
+  is the only guard failure after spawn - create it with
+  `cp .env.example .env.local`, which is git-ignored.)
 - **Changed a value in `.env.local` but the container kept the old one:**
   the env file is read by Docker at container *create* time - use
   **Rebuild Container** (or Dev Containers: Rebuild Without Cache);

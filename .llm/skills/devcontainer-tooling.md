@@ -15,9 +15,11 @@ setup.
 ## Placement Rules
 
 - The Dockerfile runs before devcontainer features. Tools that depend on Node,
-  PowerShell, Python feature state, or the final remote user should be installed
+  PowerShell, or the final remote user should be installed
   from `post-create.sh` or a helper it calls, unless the Dockerfile installs the
-  dependency itself.
+  dependency itself (it provides Python 3.12 via Ubuntu apt, so `RUN` steps may
+  use it directly; PEP 668 is pre-unlocked via `/etc/pip.conf` to match CI's
+  global-Python install path).
 - Keep command-line tool installs idempotent and pinned by default. Allow an
   environment override only when the default remains a concrete version.
   Documented exception: the agent CLIs below install at `@latest` (each spec
@@ -42,10 +44,26 @@ setup.
   (warn-only), and heals the Python automation deps so the local gate matches
   CI: PyYAML is installed into user site-packages when bare `python3` cannot
   import it (harness sandbox tests strip `.venv-ci`, and runner images ship
-  PyYAML globally), and `.venv-ci` is created when missing with the runtime
-  (gdtoolkit, per ci.yml) and automation (PyYAML, per llm-harness.yml)
-  requirements, so `scripts/run-runtime-checks.sh` and the harness share one
-  local venv. Both heals are warn-only and never block attaching.
+  PyYAML globally), and `.venv-ci` is rebuilt from scratch when missing or
+  broken (`venv` cannot upgrade a venv whose interpreter symlink died, so the
+  old tree is removed first) with the runtime (gdtoolkit, per ci.yml) and
+  automation (PyYAML, per llm-harness.yml) requirements, so
+  `scripts/run-runtime-checks.sh` and the harness share one local venv. Both
+  heals are warn-only and never block attaching.
+- Heavyweight downloads (apt archives/indexes, the Godot editor zip, the
+  ~900 MB web export templates, pipx/pip wheels) ride BuildKit cache mounts,
+  so warm rebuilds - including `--no-cache` ones - skip the re-downloads.
+  The base image's `docker-clean` deletes `/var/cache/apt/archives/*.deb`
+  after every apt operation, so the apt archives mount only works because
+  the Dockerfile removes that hook first; the other mounts have no such
+  in-image cleanup.
+- The create-time env guard (`initializeCommand` in `devcontainer.json` +
+  `.devcontainer/ensure-env-file.ps1`) materializes `.env.local` from
+  `.env.example` on a fresh clone (docker `--env-file` fails the create when
+  the file is absent); it never overwrites an existing file. It spawns `sh`
+  on the host (so `sh` must be on the host PATH; the workspace folder rides
+  in as `$0`, making quote-bearing paths safe), prefers the richer pwsh
+  guard script when the host has it, and falls back to plain `cp`.
 - The installer installs each package with its own `npm install --global`
   (npm treats one multi-package command as a single transaction, so one
   failing postinstall used to roll back every package while leaving their
@@ -201,6 +219,23 @@ assume the contract, then re-verify with the real tool:
   the container user's HOME must chown the whole created subtree back
   (parent directories included) or later user-level writes fail with
   EACCES.
+- **Docker strips full-line comments in a continued RUN.** The parser
+  removes lines whose first non-space character is `#` before the shell
+  runs, so shell-level simulations of the RUN text can disagree with what
+  the build executes (a "broken" comment-in-continuation is a phantom,
+  and a comment inside a quoted word list vanishes rather than leaking).
+  Extract-and-run checks must account for the parser step.
+- **WSL bash.exe appends the Windows PATH after the Linux PATH.** A
+  Windows-side `$env:PATH` prepend loses inside WSL bash, so host tools
+  beat harness sandbox fakes (hermetic suites would run real npm/gh or
+  vacuously pass). The harness pins sandbox bins via `BASH_ENV` (bash
+  sources it in every non-interactive shell); `Set-WslBashSandboxPath` in
+  `scripts/test-llm-harness.ps1` is the single mechanism - keep new
+  bash-spawning suites on it. Register EVERY custom variable a suite
+  expects to read inside bash via `Add-EnvToWslPassthrough` (not only
+  path-like ones): an unregistered var is silently empty under the
+  WSLENV-filtered boundary and the suite fails or passes vacuously with
+  no pointer at the cause.
 
 ## Validation
 
