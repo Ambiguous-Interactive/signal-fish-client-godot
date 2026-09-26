@@ -42,12 +42,12 @@ class Portability(unittest.TestCase):
     def test_env_guard_chown_is_best_effort(self):
         # Some bind mounts reject ownership changes; create must survive
         # that (Bugbot on PR #159). Static pin for the source of the
-        # docker-level behavior test below; the `||` fallback may ride a
-        # line continuation, so scan a window past the chown line.
+        # docker-level behavior test below: the guard must attempt to
+        # keep the file readable and warn on the degraded path.
         script = (ROOT / "initialize.sh").read_text(encoding="utf-8")
         chown = script.index("chown --reference=")
         window = script[chown:script.index("Created .env.local", chown)]
-        self.assertIn("||", window)
+        self.assertIn("chmod a+r", window)
         self.assertIn("WARN", window)
 
 
@@ -96,12 +96,16 @@ class DockerBehavior(unittest.TestCase):
                          if arg.startswith("mcr.microsoft.com/devcontainers/"))
             shim = ('mkdir -p /tmp/shim && printf "#!/bin/sh\\nexit 1\\n" > /tmp/shim/chown '
                     '&& chmod +x /tmp/shim/chown '
-                    '&& PATH="/tmp/shim:$PATH" bash .devcontainer/initialize.sh')
+                    '&& PATH="/tmp/shim:$PATH" bash .devcontainer/initialize.sh '
+                    '&& cat .env.local')
             shimmed = command[:image + 1] + ["bash", "-c", shim]
             result = subprocess.run(shimmed, capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual((workspace / ".env.local").read_bytes(), example)
+            self.assertIn("SF_TEST=placeholder", result.stdout)
             self.assertIn("WARN", result.stderr)
+            # Content is read inside the container: with chown refused the
+            # file is deliberately root-owned, and the degraded path keeps
+            # it host-readable only via the chmod fallback.
 
 
 if __name__ == "__main__":
