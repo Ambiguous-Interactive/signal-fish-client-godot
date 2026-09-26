@@ -35,12 +35,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # pays for the downloads, and /var/lib/apt/lists never lands in an image
 # layer. If a warm cache ever goes stale, the install retry refreshes the
 # indexes once and tries again.
+# The base image's docker-clean deletes /var/cache/apt/archives/*.deb after
+# every apt operation, which would defeat the archives mount; it is removed
+# below before the first install. Trade-off: later apt users (feature
+# installs, manual apt in the container) keep their .deb and pkgcache
+# payloads instead of auto-cleaning them - accepted so warm rebuilds stay
+# download-free.
 # Keep PKGS a plain word list: Docker strips full-line comments before the
 # shell runs, so a comment here cannot document the list at all - grouping
 # notes live in the block comment above.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     set -eux; \
+    rm -f /etc/apt/apt.conf.d/docker-clean; \
     PKGS="\
         ca-certificates \
         curl \

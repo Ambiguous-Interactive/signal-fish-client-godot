@@ -353,6 +353,33 @@ function Add-EnvToWslPassthrough {
     $env:WSLENV = ($entries -join ':')
 }
 
+function Set-WslBashSandboxPath {
+    # WSL's bash.exe appends the translated Windows PATH after the Linux
+    # PATH, so a Windows-side "$env:PATH = sandbox-first" loses inside bash
+    # and a host npm/node/gh would beat the sandbox fakes. bash sources
+    # BASH_ENV when it runs a non-interactive script (not under -n), so pin
+    # the sandbox bins in one place per suite instead of at each bash call
+    # site. No-op on other flavors (there the inherited PATH keeps its
+    # order). Callers must snapshot BASH_ENV and WSLENV (both are mutated)
+    # and may call again with new bins to retarget the file, e.g. per
+    # sandbox copy.
+    param(
+        [Parameter(Mandatory)][ValidateCount(1, [int]::MaxValue)][string[]]$Bins,
+        [Parameter(Mandatory)][string]$File
+    )
+
+    if (-not (Test-BashIsWsl)) { return }
+    # Single quotes would break the inlined PATH line (and bash then runs
+    # the script un-pinned), the same hazard Invoke-SandboxBash refuses.
+    foreach ($bin in $Bins) {
+        if ($bin -match "'") { throw "Sandbox bin path contains a single quote; BASH_ENV pinning would break: $bin" }
+    }
+    Add-EnvToWslPassthrough @('BASH_ENV')
+    $head = ($Bins | ForEach-Object { ConvertTo-BashPath $_ }) -join ':'
+    Write-TestUtf8NoBomFile -Path $File -Content "PATH='$head':`$PATH`nexport PATH`n" -LfNewlines
+    $env:BASH_ENV = ConvertTo-BashPath $File
+}
+
 function ConvertTo-TestLfNewlines {
     param([AllowNull()][AllowEmptyString()][string]$Content)
     if ($null -eq $Content) { return '' }
@@ -1172,6 +1199,8 @@ exit 99
 
         $snapshots = @(
             (Save-EnvVar -Name 'PATH')
+            (Save-EnvVar -Name 'WSLENV')
+            (Save-EnvVar -Name 'BASH_ENV')
             (Save-EnvVar -Name 'GH_TOKEN')
             (Save-EnvVar -Name 'GITHUB_REPOSITORY')
             (Save-EnvVar -Name 'HEAD_SHA')
@@ -1180,13 +1209,20 @@ exit 99
             (Save-EnvVar -Name 'FAKE_GH_LOG')
             (Save-EnvVar -Name 'FAKE_GH_SCENARIO')
         )
+        # Pin the fake gh ahead of any host gh inside WSL bash (see
+        # Set-WslBashSandboxPath); other flavors keep PATH-order resolution.
+        Set-WslBashSandboxPath -File (Join-Path $sandbox 'bash-path.sh') -Bins @($fakeBin)
         $env:PATH = "$fakeBin$([System.IO.Path]::PathSeparator)$env:PATH"
         $env:GH_TOKEN = 'fake-token'
         $env:GITHUB_REPOSITORY = 'owner/repo'
         $env:HEAD_SHA = 'abc123'
         $env:HEAD_BRANCH = 'dependabot/fake'
         $env:REQUIRED_WORKFLOWS = 'Runtime CI|LLM Harness'
-        $env:FAKE_GH_LOG = Join-Path $sandbox 'merge.log'
+        # pwsh assertions read the Windows flavor; the fake gh appends the
+        # bash flavor, and WSL only passes registered variables through.
+        $fakeGhLogWin = Join-Path $sandbox 'merge.log'
+        Add-EnvToWslPassthrough @('FAKE_GH_LOG')
+        $env:FAKE_GH_LOG = ConvertTo-BashPath $fakeGhLogWin
 
         $cases = @(
             [pscustomobject]@{ Scenario = 'success'; ExpectMerge = $true; Pattern = '--match-head-commit abc123' },
@@ -1195,7 +1231,7 @@ exit 99
             [pscustomobject]@{ Scenario = 'pending_checks'; ExpectMerge = $false; Pattern = 'pending checks' }
         )
         foreach ($case in $cases) {
-            Remove-Item -LiteralPath $env:FAKE_GH_LOG -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $fakeGhLogWin -Force -ErrorAction SilentlyContinue
             $env:FAKE_GH_SCENARIO = $case.Scenario
             # Invoke repoRoot-relative: WSL's bash.exe cannot open
             # Windows-style absolute script paths.
@@ -1211,16 +1247,16 @@ exit 99
                 throw "Auto-merge scenario '$($case.Scenario)' should exit 0; got $exitCode. fake gh path: $fakeGh. Output: $combined"
             }
             if ($combined -notmatch $case.Pattern -and
-                -not ((Test-Path -LiteralPath $env:FAKE_GH_LOG -PathType Leaf) -and
-                    ([System.IO.File]::ReadAllText($env:FAKE_GH_LOG) -match $case.Pattern))) {
+                -not ((Test-Path -LiteralPath $fakeGhLogWin -PathType Leaf) -and
+                    ([System.IO.File]::ReadAllText($fakeGhLogWin) -match $case.Pattern))) {
                 throw "Auto-merge scenario '$($case.Scenario)' did not match expected pattern '$($case.Pattern)'. Output: $combined"
             }
-            $mergeLogExists = Test-Path -LiteralPath $env:FAKE_GH_LOG -PathType Leaf
+            $mergeLogExists = Test-Path -LiteralPath $fakeGhLogWin -PathType Leaf
             if ($case.ExpectMerge -and -not $mergeLogExists) {
                 throw "Auto-merge scenario '$($case.Scenario)' should merge but no merge log was written. Output: $combined"
             }
             if (-not $case.ExpectMerge -and $mergeLogExists) {
-                throw "Auto-merge scenario '$($case.Scenario)' should not merge. Log: $([System.IO.File]::ReadAllText($env:FAKE_GH_LOG)) Output: $combined"
+                throw "Auto-merge scenario '$($case.Scenario)' should not merge. Log: $([System.IO.File]::ReadAllText($fakeGhLogWin)) Output: $combined"
             }
         }
     } finally {
@@ -1851,7 +1887,7 @@ esac
         [pscustomobject]@{ Name = 'malformed version rejected'; Mode = 'install'; FailProbe = ''; FailCandidate = $false; FailActive = $false; FailActivation = $false; FailV1Restore = $false; CandidateVersion = '2beta'; InitialV2 = $false; ForeignV2 = $false; DanglingV2 = $false; Exit = 1; V1 = $true; V1Reinstalled = $false; Major = '1'; ActivePresent = $true; FinalReady = $false }
     )
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-    $envNames = @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_PROBE', 'FAKE_NPM_FAIL_CANDIDATE', 'FAKE_NPM_FAIL_ACTIVE', 'FAKE_NPM_FAIL_ACTIVATION', 'FAKE_NPM_FAIL_V1_RESTORE', 'FAKE_OPENCODE_VERSION', 'FAKE_NPM_FAIL_UNINSTALL', 'AGENT_TOOLS_RETRY_SLEEP_MS', 'PATH', 'WSLENV')
+    $envNames = @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_PROBE', 'FAKE_NPM_FAIL_CANDIDATE', 'FAKE_NPM_FAIL_ACTIVE', 'FAKE_NPM_FAIL_ACTIVATION', 'FAKE_NPM_FAIL_V1_RESTORE', 'FAKE_OPENCODE_VERSION', 'FAKE_NPM_FAIL_UNINSTALL', 'AGENT_TOOLS_RETRY_SLEEP_MS', 'PATH', 'WSLENV', 'BASH_ENV')
     $snapshots = @($envNames | ForEach-Object { Save-EnvVar $_ })
     Add-EnvToWslPassthrough @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_PROBE', 'FAKE_NPM_FAIL_CANDIDATE', 'FAKE_NPM_FAIL_ACTIVE', 'FAKE_NPM_FAIL_ACTIVATION', 'FAKE_NPM_FAIL_V1_RESTORE', 'FAKE_OPENCODE_VERSION', 'FAKE_NPM_FAIL_UNINSTALL', 'AGENT_TOOLS_RETRY_SLEEP_MS')
     try {
@@ -1958,6 +1994,9 @@ exit 127
                 # converts it to /mnt/... entries, MSYS/Git Bash and Linux
                 # consume it directly (same convention as the auto-merge suite).
                 $env:PATH = "$foreignEarlierBin$([System.IO.Path]::PathSeparator)$bin$([System.IO.Path]::PathSeparator)$($env:PATH)"
+                # Bins move with each case copy; retarget the WSL pin so the
+                # installer resolves the case's fakes, not a host npm/node.
+                Set-WslBashSandboxPath -File (Join-Path $tempRoot 'bash-path.sh') -Bins @($foreignEarlierBin, $bin)
                 $output = @(& bash '.devcontainer/install-agent-tools.sh' $case.Mode 2>&1)
                 $exitCode = $LASTEXITCODE
                 Expect-Equal $exitCode $case.Exit "$($case.Name): $($output -join '; ')"
@@ -2797,7 +2836,7 @@ esac
 
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     $canary = "sf-canary-npm-$([Guid]::NewGuid())"
-    $envNames = @('PATH', 'FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_SPEC', 'GITHUB_MCP_PAT', 'CONTEXT7_API_KEY', 'SF_MCP_SKIP_PLAYWRIGHT_BROWSER', 'WSLENV')
+    $envNames = @('PATH', 'FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_SPEC', 'GITHUB_MCP_PAT', 'CONTEXT7_API_KEY', 'SF_MCP_SKIP_PLAYWRIGHT_BROWSER', 'WSLENV', 'BASH_ENV')
     $snapshots = @($envNames | ForEach-Object { Save-EnvVar $_ })
     Add-EnvToWslPassthrough @('FAKE_NPM_STATE', 'FAKE_NPM_PREFIX', 'FAKE_NPM_FAIL_SPEC', 'GITHUB_MCP_PAT', 'CONTEXT7_API_KEY', 'SF_MCP_SKIP_PLAYWRIGHT_BROWSER')
     try {
@@ -2851,6 +2890,9 @@ exit 127
                     Write-TestUtf8NoBomFile -Path "$state/packages" -Content ''
                 }
 
+                # Same WSL pin as the agent-tools suite: the installer must
+                # resolve the sandbox npm/node, not a host one.
+                Set-WslBashSandboxPath -File (Join-Path $tempRoot 'bash-path.sh') -Bins @($bin)
                 $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$env:PATH"
                 $env:FAKE_NPM_STATE = ConvertTo-BashPath $state
                 $env:FAKE_NPM_PREFIX = ConvertTo-BashPath $prefix

@@ -53,6 +53,10 @@ setup.
 - Heavyweight downloads (apt archives/indexes, the Godot editor zip, the
   ~900 MB web export templates, pipx/pip wheels) ride BuildKit cache mounts,
   so warm rebuilds - including `--no-cache` ones - skip the re-downloads.
+  The base image's `docker-clean` deletes `/var/cache/apt/archives/*.deb`
+  after every apt operation, so the apt archives mount only works because
+  the Dockerfile removes that hook first; the other mounts have no such
+  in-image cleanup.
 - The create-time env guard (`initializeCommand` in `devcontainer.json` +
   `.devcontainer/ensure-env-file.ps1`) materializes `.env.local` from
   `.env.example` on a fresh clone (docker `--env-file` fails the create when
@@ -215,6 +219,19 @@ assume the contract, then re-verify with the real tool:
   the container user's HOME must chown the whole created subtree back
   (parent directories included) or later user-level writes fail with
   EACCES.
+- **Docker strips full-line comments in a continued RUN.** The parser
+  removes lines whose first non-space character is `#` before the shell
+  runs, so shell-level simulations of the RUN text can disagree with what
+  the build executes (a "broken" comment-in-continuation is a phantom,
+  and a comment inside a quoted word list vanishes rather than leaking).
+  Extract-and-run checks must account for the parser step.
+- **WSL bash.exe appends the Windows PATH after the Linux PATH.** A
+  Windows-side `$env:PATH` prepend loses inside WSL bash, so host tools
+  beat harness sandbox fakes (hermetic suites would run real npm/gh or
+  vacuously pass). The harness pins sandbox bins via `BASH_ENV` (bash
+  sources it in every non-interactive shell); `Set-WslBashSandboxPath` in
+  `scripts/test-llm-harness.ps1` is the single mechanism - keep new
+  bash-spawning suites on it.
 
 ## Validation
 

@@ -153,12 +153,50 @@ MAJORs and the follow-ups are now fixed:
   entered when the venv is missing OR broken (only the broken case comes
   from `venv_ok`).
 
+## Bugbot review (round 3, on the pushed PR) - findings and fixes
+
+Cursor Bugbot left two Medium findings on commit `e5c1baa`; both confirmed
+real, both fixed, plus one adjacent gap found by sweeping the same classes:
+
+- **Apt archives mount was defeated by `docker-clean`** (confirmed live:
+  the hook file exists in this container and wipes
+  `/var/cache/apt/archives/*.deb` after every apt operation, so the
+  `/var/cache/apt` mount could never retain payloads - only the lists
+  mount worked). Fix: the apt RUN removes `docker-clean` first;
+  trade-off (later apt users keep their .deb/pkgcache payloads)
+  documented in the Dockerfile and the devcontainer skill. Sweep: the
+  other five cache mounts (curl/pip/pipx targets) have no in-image
+  cleanup - class closed.
+- **WSL PATH ordering broke sandbox hermeticity**: WSL bash appends the
+  translated Windows PATH after the Linux PATH, so the suites'
+  Windows-side `$env:PATH = sandbox-first` loses inside bash and a host
+  npm/node/gh would beat the fakes (real npm against a host prefix, or a
+  vacuous pass). Fix: new `Set-WslBashSandboxPath` helper pins the
+  sandbox bins via `BASH_ENV` (bash sources it in non-interactive
+  script runs), wired into all three suites that resolve tools by bare
+  name inside bash (fake-gh auto-merge, agent-tools migration with
+  per-case retargeting, mcp installer); suites resolving nothing by
+  bare name were verified clean by class sweep. Follow-up hardening
+  from the verification round: single-quote guard on bin paths (a
+  broken pin made bash run un-pinned and fail misleadingly),
+  `[ValidateCount(1,...)]` against an empty pin, WSLENV snapshot in the
+  auto-merge suite, and `FAKE_GH_LOG` now carries the bash flavor with
+  a separate Windows path for pwsh assertions (the fake gh could never
+  write the raw Windows path under WSL).
+- Empirical verification of the mechanism (sub-agent, Linux container):
+  `bash -c` / script args source BASH_ENV (and `bash -n` does not
+  execute it, so the parse checks stay immune), child bashes re-source
+  it idempotently, PATH head with a space survives quoting, snapshot
+  and restore audited at all three call sites, and every other `& bash`
+  site classified as not needing a pin.
+
 ## Validation
 
 - `pwsh -NoProfile -File scripts/test-llm-harness.ps1` (core + behavioral,
   119 tests) green after the node-shim fix; pre-fix runs hung in the
   migration suite exactly where round 1 predicted. Behavioral shard
-  re-confirmed green (37/37) after all round-2 fixes.
+  re-confirmed green (37/37) after all round-2 fixes. Re-run green again
+  after the Bugbot fixes (119/119).
 - `pwsh -NoProfile -File scripts/agent-check.ps1` green.
 - Dockerfile `RUN` word list verified clean by extraction + token check
   (with the caveat, per round 2, that Docker's parser strips full-line
