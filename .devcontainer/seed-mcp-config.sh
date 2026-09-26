@@ -95,11 +95,12 @@ warn_or_fail() {
 
 # One python fork reports every JSON problem for both config surfaces.
 # Per-server forks here were the seed-test fork tax (~45 execve calls per
-# run; issue #145 class). Lines, consumed by validate_json_configs and the
-# doctor:
+# run; issue #145 class). Lines, consumed by validate_json_configs, the
+# doctor, and json_report_valid:
 #   FILE_MISSING|<label>|<path>
 #   FILE_INVALID|<label>|<path>
 #   SERVER_MISSING|<label>|<server>
+#   REPORT_OK (sentinel; its absence means the report is unknown)
 json_report() {
     python3 - "$MCP_JSON" "$OPENCODE_JSON" "${SERVERS[@]}" <<'PY'
 import json
@@ -126,7 +127,21 @@ for label, path, key_path in surfaces:
     for server in servers:
         if not isinstance(node, dict) or server not in node:
             print(f"SERVER_MISSING|{label}|{server}")
+print("REPORT_OK")
 PY
+}
+
+# 0 only when json_report actually finished (an empty report - python3
+# missing - must read as "unknown", never as "all surfaces ok").
+json_report_valid() {
+    local kind rest
+    while IFS='|' read -r kind rest; do
+        [ -n "$kind" ] || continue
+        if [ "$kind" = "REPORT_OK" ]; then
+            return 0
+        fi
+    done <<<"$JSON_REPORT"
+    return 1
 }
 
 json_surface_loaded() {
@@ -143,6 +158,7 @@ json_surface_loaded() {
 
 json_server_ok() {
     # <label> <server> -> 0 when the surface loaded and declares the server.
+    json_report_valid || return 1
     json_surface_loaded "$1" || return 1
     local label="$1" server="$2" kind found rest
     while IFS='|' read -r kind found rest; do

@@ -55,13 +55,16 @@ def archive_top_level_entries(repo_root: Path) -> list[str]:
     with tarfile.open(fileobj=io.BytesIO(blob)) as archive:
         for member in archive.getmembers():
             name = member.name.split("/", 1)[0]
+            # Kept as insurance: Python's tarfile normally consumes the
+            # pax global header, but a future format change must never
+            # surface it as a phantom repo entry.
             if name and name not in TAR_BOOKKEEPING_ENTRIES:
                 entries.add(name)
     return sorted(entries)
 
 
-def duplicate_gitattributes_patterns(repo_root: Path) -> list[str]:
-    attributes = (repo_root / ".gitattributes").read_text(encoding="utf-8").splitlines()
+def duplicate_gitattributes_patterns(path: Path) -> list[str]:
+    attributes = path.read_text(encoding="utf-8").splitlines()
     seen: set[str] = set()
     duplicates: list[str] = []
     for line in attributes:
@@ -77,8 +80,12 @@ def duplicate_gitattributes_patterns(repo_root: Path) -> list[str]:
 def check_archive(repo_root: Path) -> list[str]:
     errors: list[str] = []
     entries = archive_top_level_entries(repo_root)
-    for pattern in duplicate_gitattributes_patterns(repo_root):
-        errors.append(f".gitattributes repeats the pattern {pattern!r}; keep one rule per path")
+    attributes = repo_root / ".gitattributes"
+    if not attributes.is_file():
+        errors.append(".gitattributes is missing; the export-ignore contract cannot be checked")
+    else:
+        for pattern in duplicate_gitattributes_patterns(attributes):
+            errors.append(f".gitattributes repeats the pattern {pattern!r}; keep one rule per path")
     leaks = [entry for entry in entries if entry not in ALLOWED_ARCHIVE_ENTRIES]
     for entry in leaks:
         errors.append(
@@ -113,6 +120,7 @@ def write_self_test_repo(root: Path, files: dict[str, str], attributes: str = ""
         "commit",
         "-q",
         "--no-gpg-sign",
+        "--no-verify",
         "-m",
         "fixture",
     )
@@ -163,6 +171,18 @@ def self_test() -> int:
         write_self_test_repo(dup, ASSET_FILES, GOOD_ATTRIBUTES + "/scripts export-ignore\n")
         errors = check_archive(dup)
         expect("duplicate", any("repeats the pattern" in error for error in errors), f"errors: {errors}")
+
+        # Missing contract: no .gitattributes at all must fail with a clean,
+        # actionable message instead of a traceback or a mangled warning.
+        bare = Path(tmp) / "bare"
+        bare.mkdir()
+        write_self_test_repo(bare, ASSET_FILES)
+        errors = check_archive(bare)
+        expect(
+            "missing attributes",
+            any(".gitattributes is missing" in error for error in errors),
+            f"errors: {errors}",
+        )
 
     if failures:
         for failure in failures:
