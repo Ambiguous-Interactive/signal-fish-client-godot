@@ -52,7 +52,8 @@ Dockerfile  text eol=lf
 # Users get the addon, the runnable demo (+ project.godot), and
 # LICENSE/README/CHANGELOG; everything else (agent instruction files,
 # tooling config, CI requirements) is excluded so the download is the
-# asset, not the whole repo (issue #139).
+# asset, not the whole repo (issue #139). The allow-listed archive surface
+# is enforced by scripts/check-asset-archive.py (issue #158).
 /.claude       export-ignore
 /.cursor       export-ignore
 /.devcontainer export-ignore
@@ -67,11 +68,13 @@ Dockerfile  text eol=lf
 /tests         export-ignore
 /.asset-template.json.hb export-ignore
 /.cursorrules            export-ignore
+/.env.example            export-ignore
 /.gitattributes          export-ignore
 /.gitignore              export-ignore
 /.lychee.toml            export-ignore
 /.markdownlint.json      export-ignore
 /.markdownlint-cli2.jsonc export-ignore
+/.mcp.json               export-ignore
 /.pre-commit-config.yaml export-ignore
 /.windsurfrules          export-ignore
 /AGENTS.md               export-ignore
@@ -84,6 +87,7 @@ Dockerfile  text eol=lf
 /gdlintrc                export-ignore
 /llms.txt                export-ignore
 /mkdocs.yml              export-ignore
+/opencode.json           export-ignore
 /requirements-automation.txt export-ignore
 /requirements-ci.txt         export-ignore
 /requirements-docs.txt   export-ignore
