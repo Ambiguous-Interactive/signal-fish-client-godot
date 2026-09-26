@@ -7,8 +7,8 @@ extends RefCounted
 ## never a hang, never a non-finite float), every truncation of a valid frame
 ## is refused, and legal values survive encode/decode bit-exactly. Explicit
 ## vectors pin the 8/16/32-bit length-header paths the curated hostile
-## matrices never reach. On failure each case reports the seed and input
-## bytes so the exact input replays locally.
+## matrices never reach. Failures report the input bytes; a re-run replays
+## exactly via the file's fixed seeds.
 
 const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
 const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
@@ -160,15 +160,15 @@ func _test_msgpack_mutations_stay_typed() -> void:
 func _test_msgpack_length_header_attacks_fail_closed() -> void:
 	var attacks := [
 		["str32 declares 4 GiB", _concat(PackedByteArray([0xDB, 0xFF, 0xFF, 0xFF, 0xFF]))],
-		["str16 declares 64 KiB", PackedByteArray([0xDA, 0xFF, 0xFF])],
+		["str16 declares 65535", PackedByteArray([0xDA, 0xFF, 0xFF])],
 		["str8 declares 255", PackedByteArray([0xD9, 0xFF])],
 		["bin32 declares 4 GiB", PackedByteArray([0xC6, 0xFF, 0xFF, 0xFF, 0xFF])],
-		["bin16 declares 64 KiB", PackedByteArray([0xC5, 0xFF, 0xFF])],
+		["bin16 declares 65535", PackedByteArray([0xC5, 0xFF, 0xFF])],
 		["bin8 declares 255", PackedByteArray([0xC4, 0xFF])],
 		["array32 declares 4 GiB", PackedByteArray([0xDD, 0xFF, 0xFF, 0xFF, 0xFF])],
 		["array16 declares 32 KiB", PackedByteArray([0xDC, 0x80, 0x00])],
 		["map32 declares 4 GiB", PackedByteArray([0xDF, 0xFF, 0xFF, 0xFF, 0xFF])],
-		["map16 declares 64 KiB", PackedByteArray([0xDE, 0xFF, 0xFF])],
+		["map16 declares 65535", PackedByteArray([0xDE, 0xFF, 0xFF])],
 		["float32 truncated", PackedByteArray([0xCA, 0x00, 0x00])],
 		["float64 truncated", PackedByteArray([0xCB, 0x00])],
 		["uint64 truncated", PackedByteArray([0xCF, 0x00])],
@@ -185,6 +185,12 @@ func _test_msgpack_length_header_attacks_fail_closed() -> void:
 	# Positive pins: the same header forms must decode when honest, so the
 	# guards reject the length, not the marker width.
 	var honest := [
+		["str16 honest", _concat(PackedByteArray([0xDA, 0x00, 0x02]), _ascii("ab")), "ab"],
+		[
+			"bin16 honest",
+			_concat(PackedByteArray([0xC5, 0x00, 0x02, 1, 2])),
+			PackedByteArray([1, 2]),
+		],
 		["str32 honest", _concat(PackedByteArray([0xDB, 0, 0, 0, 2]), _ascii("ab")), "ab"],
 		[
 			"bin32 honest",
@@ -300,7 +306,7 @@ func _test_envelope_length_header_attacks_fail_closed() -> void:
 			),
 		],
 		["not a map", uuid],
-		["map count truncated", PackedByteArray([0x83])],
+		["fixmap count with no fields", PackedByteArray([0x83])],
 	]
 	for attack: Array in attacks:
 		var input: PackedByteArray = attack[1]
@@ -350,6 +356,7 @@ func _test_text_envelope_truncation_and_noise_fail_closed() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = _TEXT_CORPUS_SEED
 	var decodes := 0
+	var protocol_errors := 0
 	for _iteration: int in _TEXT_NOISE_COUNT:
 		var noise := _random_bytes(rng, rng.randi_range(0, 96))
 		decodes += 1
@@ -365,6 +372,7 @@ func _test_text_envelope_truncation_and_noise_fail_closed() -> void:
 			continue
 		if str(decoded.signal_name) != "protocol_error":
 			continue
+		protocol_errors += 1
 		_assert(
 			(
 				decoded.args.size() > 0
@@ -373,7 +381,12 @@ func _test_text_envelope_truncation_and_noise_fail_closed() -> void:
 			),
 			"%s protocol_error message non-empty" % input_label
 		)
-	_assert(decodes == _TEXT_NOISE_COUNT, "text noise corpus ran %d decodes" % decodes)
+	# Outcome pin: every noise input must land on protocol_error. Anything
+	# else means hostile bytes decoded as a protocol event (fail-open).
+	_assert(
+		protocol_errors == _TEXT_NOISE_COUNT,
+		"text noise corpus fully refused (%d/%d)" % [protocol_errors, decodes]
+	)
 	_done()
 
 
@@ -386,11 +399,11 @@ func _fuzz_msgpack(input: PackedByteArray, label: String) -> bool:
 		return false
 	if result["ok"]:
 		return _assert_legal_msgpack_value(
-			result["value"], "%s (input=%s)" % [label, _hex_head(input)]
+			result["value"], "%s (input=%s)" % [label, input.hex_encode()]
 		)
 	_assert(
 		typeof(result["error"]) == TYPE_STRING and not str(result["error"]).is_empty(),
-		"%s refusal carries a diagnostic (input=%s)" % [label, _hex_head(input)]
+		"%s refusal carries a diagnostic (input=%s)" % [label, input.hex_encode()]
 	)
 	return false
 
@@ -403,6 +416,8 @@ func _fuzz_envelope(input: PackedByteArray, label: String) -> bool:
 			and typeof(result["error"]) == TYPE_STRING
 			and typeof(result["from_player"]) == TYPE_STRING
 			and typeof(result["payload"]) == TYPE_PACKED_BYTE_ARRAY
+			and typeof(result["encoding"]) == TYPE_INT
+			and typeof(result["version"]) == TYPE_INT
 		),
 		"%s result keeps its documented shape" % label
 	)
@@ -411,7 +426,7 @@ func _fuzz_envelope(input: PackedByteArray, label: String) -> bool:
 	if not result["ok"]:
 		return _assert(
 			not str(result["error"]).is_empty(),
-			"%s refusal carries a diagnostic (input=%s)" % [label, _hex_head(input)]
+			"%s refusal carries a diagnostic (input=%s)" % [label, input.hex_encode()]
 		)
 	# A mutation that survives decode must still produce contract-shaped
 	# fields: canonical UUID sender, a known encoding, a coherent version.
@@ -446,7 +461,7 @@ func _assert_decode_well_formed(result: Dictionary, input: PackedByteArray, labe
 			and typeof(result["error"]) == TYPE_STRING
 			and result.has("value")
 		),
-		"%s result keeps {ok, value, error} (input=%s)" % [label, _hex_head(input)]
+		"%s result keeps {ok, value, error} (input=%s)" % [label, input.hex_encode()]
 	)
 
 
@@ -625,7 +640,8 @@ func _uuid_bytes() -> PackedByteArray:
 
 ## Assembles a 3-field envelope (from_player, encoding=message_pack, payload)
 ## around the given binary field bytes so attacks and width pins can swap one
-## field without rewriting the rest.
+## field without rewriting the rest. An omitted or empty [param payload]
+## selects the default bin8 payload.
 func _envelope(
 	from_player: PackedByteArray, payload: PackedByteArray = PackedByteArray()
 ) -> PackedByteArray:
@@ -688,13 +704,6 @@ func _concat(
 	bytes.append_array(second)
 	bytes.append_array(third)
 	return bytes
-
-
-func _hex_head(input: PackedByteArray) -> String:
-	var head := input
-	if head.size() > 32:
-		head = head.slice(0, 32)
-	return head.hex_encode()
 
 
 func _assert(condition: bool, label: String) -> bool:
