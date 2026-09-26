@@ -15,10 +15,9 @@ themes.
    absent when the container opens, the create-time guard creates it
    automatically (placeholder values are inert - servers that need secrets
    fail loudly at launch; the create itself never needs secrets). The guard
-   runs `sh` on the host, so `sh` must be on the host PATH (built in on
-   macOS and Linux; on Windows add Git Bash to PATH). When the host also
-   has `pwsh`, the guard uses a richer script; otherwise it falls back to
-   plain `cp`.
+   runs through Docker. No host shell, Node, or PowerShell is required.
+   Windows, macOS, and Linux hosts need Docker in Linux container mode.
+   Both ARM64 and x86-64 use native images and tool binaries.
 3. Open this repository in VS Code.
 4. When prompted, choose **Reopen in Container**. (Or run the
    `Dev Containers: Reopen in Container` command.)
@@ -45,8 +44,8 @@ tooling for manual `.pre-commit-config.yaml` runs.
 | Godot       | `4.3-stable` editor binary (run headless via `--headless`) plus web export templates |
 | PowerShell  | 7.x via `ghcr.io/devcontainers/features/powershell` |
 | Python      | 3.12 via Ubuntu (apt); docs CI pins 3.12, runtime CI tracks 3.x - PEP 668 pre-unlocked via `/etc/pip.conf` |
-| Node.js     | LTS via devcontainer feature (>= 22 required)       |
-| Agent CLIs  | `codex`, OpenCode v2, `nanocoder`, `claude` at `@latest`; installed at create and refreshed at start |
+| Node.js     | LTS from the official multi-platform Node image (>= 22 required) |
+| Agent CLIs  | `codex`, OpenCode v2, `nanocoder`, `claude` at `@latest`; installed during image build |
 | MCP servers | `godot`, `github`, `context7`, `deepwiki`, `git`, `fetch`, `playwright` - see "MCP servers" below |
 | GitHub CLI  | Latest via devcontainer feature                     |
 | Git hooks   | Direct `git rev-parse --git-path hooks` shim via post-create |
@@ -70,10 +69,9 @@ Only reputable, well-maintained extensions are pre-installed:
 - **AI assistants (require a subscription or account; install will succeed
   but the assistant features are gated by sign-in):**
   `github.copilot-chat`, `openai.chatgpt`, `anthropic.claude-code`
-- **Theme library:** default `(Modern) Godot Theme VSCode Breeze Dark` from
-  `javier-garrido-galdon.godot-theme-vscode`, plus Godot-specific and
-  general-purpose alternatives listed below
-- **Icons:** `pkief.material-icon-theme`, `vscode-icons-team.vscode-icons`,
+- **Theme:** `(Modern) Godot Theme VSCode Breeze Dark` from
+  `javier-garrido-galdon.godot-theme-vscode`
+- **Icons:** `pkief.material-icon-theme`,
   `miguelsolorio.fluent-icons`
 - **Visual polish:** `oderwat.indent-rainbow`
 
@@ -85,8 +83,8 @@ The default theme is intentionally Godot-centric and a little underdog:
 licensed, recently maintained, and tuned for GDScript when paired with Godot
 Tools.
 
-The container also installs a broad theme library so contributors can switch
-without waiting on extension installs:
+Install other themes from the Marketplace as needed. These optional choices
+are omitted from automatic setup to reduce first-open downloads:
 
 | Group | Extensions |
 | ----- | ---------- |
@@ -116,11 +114,10 @@ Switch color themes with the `Preferences: Color Theme` command.
 - [`install-mcp-servers.sh`](./install-mcp-servers.sh) - npm MCP server install/refresh
 - [`seed-mcp-config.sh`](./seed-mcp-config.sh) - Codex managed block + MCP doctor
 - [`mcp-shims/sf-github-mcp.sh`](./mcp-shims/sf-github-mcp.sh) - GitHub MCP launcher shim
-- [`post-create.sh`](./post-create.sh) - git hooks + agent CLIs + MCP servers + toolchain summary
-- [`post-start.sh`](./post-start.sh) - git trust + best-effort agent CLI
-  refresh + MCP server refresh + Python automation deps (PyYAML user-site
-  plus a complete `.venv-ci`, matching CI so both local gates are green out
-  of the box)
+- [`initialize.sh`](./initialize.sh) - create the local env file through Docker
+- [`post-create.sh`](./post-create.sh) - git hooks, tool checks, MCP config, Python dependencies
+- [`post-start.sh`](./post-start.sh) - offline git trust; optional maintenance
+- [`test_portability.py`](./test_portability.py) - lifecycle regression checks
 
 ## Local font tip
 
@@ -156,13 +153,24 @@ The delay between failed install retries is
 `AGENT_TOOLS_RETRY_SLEEP_MS` (default 2000; the hermetic fake-npm test
 matrix sets 0).
 
-- **post-create** installs (or refreshes) all four and fails loudly on any
-  error; the toolchain summary then reports every version and OpenCode must
-  report major version 2.
-- **post-start** re-checks versions on every successful container start and
-  reinstalls only what is outdated or missing. This refresh is warn-only: a
-  registry outage leaves the installed toolchain in place and never blocks
-  attaching.
+- **Build** installs all four. Remote npm release metadata invalidates the
+  agent layer when a latest version changes. Unchanged releases reuse that
+  layer. Builds require registry access; installed containers open offline.
+- **post-create** verifies all four without registry requests. The toolchain
+  summary reports every version. OpenCode must report major version 2.
+- **post-start** performs local git setup. Run
+  `SF_DEVCONTAINER_MAINTENANCE=1 bash .devcontainer/post-start.sh` for an
+  explicit best-effort update and Python dependency repair.
+
+Use **Rebuild Container** for current agents. **Rebuild Without Cache** also
+refreshes the system packages and feature-installed tools. Godot and MCP
+servers keep their tested project versions. npm downloads use a BuildKit
+cache. Agent packages live under the user's home so Linux UID remapping
+preserves write access.
+
+Run `python .devcontainer/test_portability.py` for configuration checks.
+Set `SF_TEST_DOCKER=1` to also test missing env files, preservation of existing
+values, paths with spaces and quotes, and an offline restart through Docker.
 
 Authentication is intentionally not automated. Run each CLI interactively
 inside the container and sign in according to its vendor's docs.
@@ -236,15 +244,15 @@ Secret values never appear in any configuration file or script output:
 
 ### Lifecycle
 
-- **post-create** installs the npm servers strictly
-  (`install-mcp-servers.sh`) and seeds the configurations
-  (`seed-mcp-config.sh`); failures fail the build.
-- **post-start** refreshes both warn-only (`--update`), so an outage never
-  blocks attaching. The npm installer's specs are pinned concrete versions
+- **Build** installs the npm servers and Chromium.
+- **post-create** checks the npm servers and seeds the configurations
+  (`seed-mcp-config.sh`); failures fail setup.
+- **Manual maintenance** refreshes both warn-only (`--update`).
+  The npm installer's specs are pinned concrete versions
   (overridable via `GODOT_MCP_NPM_SPEC` / `PLAYWRIGHT_MCP_NPM_SPEC` /
   `CONTEXT7_MCP_NPM_SPEC`), and "already current" is decided offline from
   npm's own state - no registry probe needed.
-- Chromium for `playwright` is downloaded best-effort during post-create
+- Chromium for `playwright` is downloaded best-effort during image build
   (skip with `SF_MCP_SKIP_PLAYWRIGHT_BROWSER=1`); it uses @playwright/mcp's
   bundled playwright CLI because its Chromium revision is independent of the
   repo's pinned `playwright` package used by the web-export smoke test.
@@ -268,16 +276,11 @@ local one is what the shared file ships).
 
 - **Container fails to create with `env file ... not found`:** the
   create-time guard should have created `.env.local` from `.env.example`
-  (pwsh guard script when the host has pwsh, plain `cp` otherwise); if the
-  guard itself failed (missing example file), create it manually with
+  through Docker; if the guard itself failed (missing example file), create it manually with
   `cp .env.example .env.local` (`.env.local` is git-ignored).
 - **Container create fails with `sh: not found` (or an equivalent spawn
-  error):** the create-time guard runs `sh` on the host, and the create
-  halts when it cannot - it runs even when `.env.local` already exists, so
-  pre-creating that file does not bypass it. `sh` is built in on macOS and
-  Linux; on Windows, add Git Bash to the PATH. (A missing `.env.example`
-  is the only guard failure after spawn - create it with
-  `cp .env.example .env.local`, which is git-ignored.)
+  error):** update the checkout and rebuild. The guard now invokes Docker
+  directly and runs its shell inside the Linux bootstrap container.
 - **Changed a value in `.env.local` but the container kept the old one:**
   the env file is read by Docker at container *create* time - use
   **Rebuild Container** (or Dev Containers: Rebuild Without Cache);
@@ -303,8 +306,8 @@ local one is what the shared file ships).
   rebuild the container so the guarded profile from `pwsh-profile.ps1` is
   copied into `$HOME/.config/powershell/profile.ps1`.
 - **An agent CLI (`codex`/`opencode`/`nanocoder`/`claude`) is missing after
-  rebuild:** run `bash .devcontainer/post-create.sh` and check the
-  `==> Installing agent CLIs` section for npm or PATH errors. The installer
+  rebuild:** check the image build log or run
+  `bash .devcontainer/install-agent-tools.sh` to repair it. The installer
   requires Node.js >= 22 and a writable npm global prefix; if npm installs
   successfully but a CLI is still not found, compare `npm config get prefix`
   with `$PATH` - the installer prepends the expected npm global `bin`

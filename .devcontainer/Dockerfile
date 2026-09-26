@@ -5,6 +5,7 @@
 # Pinned by digest is preferred long-term; we pin by tag here for readability
 # and let Dependabot / manual review bump it. See:
 #   https://github.com/devcontainers/images/tree/main/src/base-ubuntu
+FROM node:lts-bookworm-slim AS node
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
 # Run every RUN step under bash with pipefail. The default shell is /bin/sh,
@@ -199,7 +200,26 @@ RUN set -eux; \
 RUN echo 'export PAGER=less' >> /etc/profile.d/sf-defaults.sh \
     && echo 'export LESS="-R -F -X"' >> /etc/profile.d/sf-defaults.sh
 
+COPY --from=node /usr/local/ /usr/local/
+ENV NPM_CONFIG_PREFIX=/home/vscode/.npm-global \
+    PATH=/home/vscode/.npm-global/bin:${PATH}
+COPY install-agent-tools.sh install-mcp-servers.sh /usr/local/share/devcontainer/
+RUN mkdir -p /home/vscode/.npm-global /home/vscode/.cache \
+    && chown -R vscode:vscode /home/vscode/.npm-global /home/vscode/.cache
+
 USER vscode
+RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000 \
+    bash /usr/local/share/devcontainer/install-mcp-servers.sh
+
+# Remote ADD revalidates release metadata even when RUN layers are cached.
+# Keep frequent agent releases after the large editor and browser layers.
+ADD https://registry.npmjs.org/@openai/codex/latest /tmp/agent-releases/codex.json
+ADD https://registry.npmjs.org/@opencode/cli/latest /tmp/agent-releases/opencode.json
+ADD https://registry.npmjs.org/@nanocollective/nanocoder/latest /tmp/agent-releases/nanocoder.json
+ADD https://registry.npmjs.org/@anthropic-ai/claude-code/latest /tmp/agent-releases/claude.json
+RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000 \
+    bash /usr/local/share/devcontainer/install-agent-tools.sh
+
 WORKDIR /workspaces
 
 LABEL org.opencontainers.image.title="Signal Fish Godot Client Dev Container" \

@@ -33,12 +33,13 @@ setup.
 
 - The four terminal agent CLIs - OpenAI Codex (`@openai/codex`), OpenCode v2
   (`@opencode/cli`), Nanocoder (`@nanocollective/nanocoder`), and Claude Code
-  (`@anthropic-ai/claude-code`) - are installed by
-  `.devcontainer/install-agent-tools.sh` into npm's global prefix.
-- `post-create.sh` invokes the installer strictly after the Node feature has
-  made `node` (>= 22) and `npm` available, then verifies each of the four
-  binaries is on PATH and includes all four versions in the toolchain summary.
-  Any install or verification failure fails post-create.
+  (`@anthropic-ai/claude-code`) - are installed at image build by
+  `.devcontainer/install-agent-tools.sh` (invoked from the Dockerfile) into
+  npm's global prefix, so ordinary starts and restarts never run package
+  installs.
+- `post-create.sh` re-runs the installer in `--verify` mode and fails
+  post-create when any of the four binaries is missing or broken; all four
+  versions appear in the toolchain summary.
 - `post-start.sh` runs after every successful container start: it re-applies
   the git `safe.directory` trust, re-runs the installer with `--update`
   (warn-only), and heals the Python automation deps so the local gate matches
@@ -58,12 +59,13 @@ setup.
   the Dockerfile removes that hook first; the other mounts have no such
   in-image cleanup.
 - The create-time env guard (`initializeCommand` in `devcontainer.json` +
-  `.devcontainer/ensure-env-file.ps1`) materializes `.env.local` from
+  `.devcontainer/initialize.sh`) materializes `.env.local` from
   `.env.example` on a fresh clone (docker `--env-file` fails the create when
-  the file is absent); it never overwrites an existing file. It spawns `sh`
-  on the host (so `sh` must be on the host PATH; the workspace folder rides
-  in as `$0`, making quote-bearing paths safe), prefers the richer pwsh
-  guard script when the host has it, and falls back to plain `cp`.
+  the file is absent); it never overwrites an existing file. The guard runs
+  through Docker's own shell, so the host needs only Docker - no host `sh`
+  or pwsh (the previous host-shell guard could block create on Windows).
+  Ownership matching on the created file is best-effort: some bind mounts
+  reject `chown`, and create must not fail for a cosmetic fix.
 - The installer installs each package with its own `npm install --global`
   (npm treats one multi-package command as a single transaction, so one
   failing postinstall used to roll back every package while leaving their

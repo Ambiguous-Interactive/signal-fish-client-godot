@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Post-create lifecycle: install repo git hooks, the agent CLIs, and verify
+# Post-create lifecycle: install repo git hooks and verify
 # that the toolchain matches the repo's expectations.
 set -euo pipefail
 
@@ -44,10 +44,10 @@ ensure_writable_dir "${HOME}/.cache" || true
 echo "==> Installing direct git hooks"
 pwsh -NoProfile -File scripts/install-git-hooks.ps1 -Force
 
-echo "==> Installing agent CLIs (codex, opencode, nanocoder, claude)"
+echo "==> Verifying image agent CLIs (codex, opencode, nanocoder, claude)"
 # Invoke via bash: repo scripts are committed non-executable (Windows-authored,
 # core.filemode=false), so direct execution fails on Linux-native checkouts.
-bash "${DEVCONTAINER_DIR}/install-agent-tools.sh"
+bash "${DEVCONTAINER_DIR}/install-agent-tools.sh" --verify
 for cli in codex opencode nanocoder claude; do
     if ! command -v "${cli}" >/dev/null 2>&1; then
         echo "ERROR: agent CLI '${cli}' is missing after post-create install." >&2
@@ -55,8 +55,8 @@ for cli in codex opencode nanocoder claude; do
     fi
 done
 
-echo "==> Installing npm-based MCP servers (godot-mcp, playwright-mcp)"
-bash "${DEVCONTAINER_DIR}/install-mcp-servers.sh"
+echo "==> Checking npm-based MCP servers"
+SF_MCP_SKIP_PLAYWRIGHT_BROWSER=1 bash "${DEVCONTAINER_DIR}/install-mcp-servers.sh"
 
 echo "==> Seeding agent MCP configurations (doctor prints names and set/unset state, never values)"
 bash "${DEVCONTAINER_DIR}/seed-mcp-config.sh"
@@ -99,5 +99,8 @@ TOOLCHAIN_SUMMARY="$(mktemp "${TMPDIR:-/tmp}/sf-toolchain.XXXXXX")"
     printf '  pre-commit (optional): %s\n' "$(pre-commit --version 2>/dev/null || echo 'NOT FOUND')"
 } | tee "${TOOLCHAIN_SUMMARY}"
 echo "==> Toolchain summary saved to ${TOOLCHAIN_SUMMARY}"
+
+SF_DEVCONTAINER_MAINTENANCE=1 SF_DEVCONTAINER_SKIP_TOOL_UPDATES=1 \
+    bash "${DEVCONTAINER_DIR}/post-start.sh"
 
 echo "==> Dev container ready."

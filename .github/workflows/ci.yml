@@ -51,6 +51,11 @@ jobs:
             - name: Check GDScript (helpers, format, lint)
               run: bash scripts/run-runtime-checks.sh static
 
+            - name: Asset Library archive allow-list
+              run: |
+                  python3 scripts/check-asset-archive.py --self-test
+                  python3 scripts/check-asset-archive.py --repo-root .
+
     test:
         name: Godot ${{ matrix.godot }} tests
         runs-on: ubuntu-24.04

@@ -93,48 +93,94 @@ warn_or_fail() {
 
 # --- JSON config validation ----------------------------------------------------
 
-json_has_server() {
-    # <file> <"mcpServers"|"mcp.servers"> <server> -> exit 0 when present.
-    # Verdict on exit status from python's own evaluation, never output.
-    local file="$1"
-    local key_path="$2"
-    local server="$3"
-
-    [ -f "$file" ] || return 2
-    python3 - "$file" "$key_path" "$server" <<'PY'
+# One python fork reports every JSON problem for both config surfaces.
+# Per-server forks here were the seed-test fork tax (~45 execve calls per
+# run; issue #145 class). Lines, consumed by validate_json_configs, the
+# doctor, and json_report_valid:
+#   FILE_MISSING|<label>|<path>
+#   FILE_INVALID|<label>|<path>
+#   SERVER_MISSING|<label>|<server>
+#   REPORT_OK (sentinel; its absence means the report is unknown)
+json_report() {
+    python3 - "$MCP_JSON" "$OPENCODE_JSON" "${SERVERS[@]}" <<'PY'
 import json
+import os
 import sys
 
-path, key_path, server = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path, encoding="utf-8") as handle:
-    node = json.load(handle)
-for key in key_path.split("."):
-    node = node[key]
-sys.exit(0 if isinstance(node, dict) and server in node else 1)
+mcp_path, opencode_path, *servers = sys.argv[1:]
+surfaces = (
+    (".mcp.json", mcp_path, "mcpServers"),
+    ("opencode.json", opencode_path, "mcp.servers"),
+)
+for label, path, key_path in surfaces:
+    if not os.path.isfile(path):
+        print(f"FILE_MISSING|{label}|{path}")
+        continue
+    try:
+        with open(path, encoding="utf-8") as handle:
+            node = json.load(handle)
+    except (OSError, ValueError):
+        print(f"FILE_INVALID|{label}|{path}")
+        continue
+    for key in key_path.split("."):
+        node = node[key] if isinstance(node, dict) and key in node else None
+    for server in servers:
+        if not isinstance(node, dict) or server not in node:
+            print(f"SERVER_MISSING|{label}|{server}")
+print("REPORT_OK")
 PY
+}
+
+# 0 only when json_report actually finished (an empty report - python3
+# missing - must read as "unknown", never as "all surfaces ok").
+json_report_valid() {
+    local kind rest
+    while IFS='|' read -r kind rest; do
+        [ -n "$kind" ] || continue
+        if [ "$kind" = "REPORT_OK" ]; then
+            return 0
+        fi
+    done <<<"$JSON_REPORT"
+    return 1
+}
+
+json_surface_loaded() {
+    # <label> -> 0 when the report has no missing/invalid entry for it.
+    local label="$1" kind found rest
+    while IFS='|' read -r kind found rest; do
+        [ -n "$kind" ] || continue
+        if { [ "$kind" = "FILE_MISSING" ] || [ "$kind" = "FILE_INVALID" ]; } && [ "$found" = "$label" ]; then
+            return 1
+        fi
+    done <<<"$JSON_REPORT"
+    return 0
+}
+
+json_server_ok() {
+    # <label> <server> -> 0 when the surface loaded and declares the server.
+    json_report_valid || return 1
+    json_surface_loaded "$1" || return 1
+    local label="$1" server="$2" kind found rest
+    while IFS='|' read -r kind found rest; do
+        [ -n "$kind" ] || continue
+        if [ "$kind" = "SERVER_MISSING" ] && [ "$found" = "$label" ] && [ "$rest" = "$server" ]; then
+            return 1
+        fi
+    done <<<"$JSON_REPORT"
+    return 0
 }
 
 validate_json_configs() {
     local status=0
-    local spec
-    while IFS='|' read -r file key_path label; do
-        if [ ! -f "$file" ]; then
-            warn_or_fail "missing ${label} (${file})" || status=1
-            continue
-        fi
-        if ! python3 -m json.tool "$file" >/dev/null 2>&1; then
-            warn_or_fail "${label} is not valid JSON: ${file}" || status=1
-            continue
-        fi
-        for server in "${SERVERS[@]}"; do
-            if ! json_has_server "$file" "$key_path" "$server"; then
-                warn_or_fail "${label} does not declare the '${server}' MCP server" || status=1
-            fi
-        done
-    done <<SPEC
-${MCP_JSON}|mcpServers|.mcp.json
-${OPENCODE_JSON}|mcp.servers|opencode.json
-SPEC
+    local kind label rest
+    while IFS='|' read -r kind label rest; do
+        [ -n "$kind" ] || continue
+        case "$kind" in
+            FILE_MISSING)   warn_or_fail "missing ${label} (${rest})" || status=1 ;;
+            FILE_INVALID)   warn_or_fail "${label} is not valid JSON: ${rest}" || status=1 ;;
+            SERVER_MISSING) warn_or_fail "${label} does not declare the '${rest}' MCP server" || status=1 ;;
+        esac
+    done <<<"$JSON_REPORT"
     return "$status"
 }
 
@@ -272,37 +318,53 @@ seed_codex_config() {
 
 # --- Doctor -----------------------------------------------------------------------
 
-# Anchored, CR-tolerant, comment-aware check that the codex config defines
+# Anchored, CR-tolerant check that the codex config defines
 # [mcp_servers.<server>] (a commented-out line is not a configured server).
-codex_has_server_table() {
-    local config="$1" server="$2"
-
-    [ -f "${config}" ] || return 1
-    SERVER="$server" awk '
+# All table names are extracted with one awk per run instead of one fork per
+# server (issue #145 fork tax); the managed block counts as configured.
+codex_config_tables() {
+    awk '
         {
             line = $0
             sub(/\r$/, "", line)
             sub(/^[[:space:]]+/, "", line)
-            target = "^\\[mcp_servers\\." ENVIRON["SERVER"] "(\\.[A-Za-z0-9_-]+)*\\]$"
-            if (line ~ target) found = 1
+            if (line ~ /^\[mcp_servers\.[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*\]$/) {
+                sub(/^\[mcp_servers\./, "", line)
+                sub(/\]$/, "", line)
+                print line
+            }
         }
-        END { exit found ? 0 : 1 }
-    ' "${config}"
+    ' "$1" 2>/dev/null
+}
+
+codex_table_present() {
+    # <tables output> <server> -> 0 when a table equals the server or is a
+    # subtable of it ([mcp_servers.<server>.<sub>]).
+    local tables="$1" server="$2" line
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        if [ "$line" = "$server" ] || [[ "$line" == "$server".* ]]; then
+            return 0
+        fi
+    done <<<"$tables"
+    return 1
 }
 
 doctor() {
     local server file_ok codex_ok
     local doctor_missing=0
+    local codex_tables
+    codex_tables="$(codex_config_tables "${CODEX_CONFIG}" || true)"
     echo "==> MCP doctor (values are never printed; only names and state)"
     for server in "${SERVERS[@]}"; do
         printf '  %-9s' "$server"
         file_ok=1
-        json_has_server "${MCP_JSON}" "mcpServers" "$server" || file_ok=0
+        json_server_ok ".mcp.json" "$server" || file_ok=0
         printf ' mcp.json:%s' "$([ "$file_ok" -eq 1 ] && echo ok || echo MISSING)"
-        json_has_server "${OPENCODE_JSON}" "mcp.servers" "$server" \
+        json_server_ok "opencode.json" "$server" \
             && printf ' opencode:%s' ok || printf ' opencode:%s' MISSING
         codex_ok=1
-        codex_has_server_table "${CODEX_CONFIG}" "$server" || codex_ok=0
+        codex_table_present "$codex_tables" "$server" || codex_ok=0
         printf ' codex:%s' "$([ "$codex_ok" -eq 1 ] && echo ok || echo MISSING)"
         [ "$file_ok" -eq 1 ] && [ "$codex_ok" -eq 1 ] || doctor_missing=1
         printf '\n'
@@ -329,6 +391,10 @@ doctor() {
 
 status=0
 DOCTOR_STATUS=0
+JSON_REPORT="$(json_report)" || {
+    warn_or_fail "could not evaluate MCP JSON configs (python3 failed)" || status=1
+    JSON_REPORT=""
+}
 validate_json_configs || status=1
 seed_codex_config || status=1
 doctor

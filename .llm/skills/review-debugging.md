@@ -82,6 +82,15 @@ Every confirmed bug fix should leave behind at least one guardrail:
 Do not mark a bug fixed when the original scenario cannot be reproduced,
 simulated, or explicitly called out as manually verified.
 
+## Replacement Sweeps
+
+When a mechanism is replaced or deleted, sweep for its name in the same
+change across code callers, `.llm/**` skills, README/docs, workflows, and
+tests. Stale guidance passes green CI silently: PR #159 removed
+`ensure-env-file.ps1` with the code sweep done, yet
+`devcontainer-tooling.md` kept documenting the host-shell guard it
+belonged to.
+
 ## See Also
 
 - `.llm/skills/signal-fish-protocol.md` for upstream compatibility checks.
