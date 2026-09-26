@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Post-start lifecycle: runs after every successful container start.
 #   1. Keep the workspace trusted for git (cheap, idempotent).
-#   2. Refresh the agent CLIs warn-only via `install-agent-tools.sh --update`;
-#      a registry outage must never block VS Code from attaching.
+# Set SF_DEVCONTAINER_MAINTENANCE=1 for explicit package maintenance.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,6 +15,12 @@ else
     git config --global --add safe.directory "${REPO_ROOT}" || true
 fi
 
+if [ "${SF_DEVCONTAINER_MAINTENANCE:-0}" != "1" ]; then
+    echo "==> Container ready. Rebuild to update tools."
+    exit 0
+fi
+
+if [ "${SF_DEVCONTAINER_SKIP_TOOL_UPDATES:-0}" != "1" ]; then
 echo "==> Checking agent CLI versions (best-effort refresh)"
 if bash "${REPO_ROOT}/.devcontainer/install-agent-tools.sh" --update; then
     echo "==> Agent CLI refresh attempted"
@@ -35,6 +40,8 @@ if bash "${REPO_ROOT}/.devcontainer/seed-mcp-config.sh" --update; then
     echo "==> MCP configuration seeding attempted"
 else
     echo "WARN: MCP configuration seeding failed; using existing configurations." >&2
+fi
+
 fi
 
 echo "==> Ensuring Python automation dependencies (warn-only)"

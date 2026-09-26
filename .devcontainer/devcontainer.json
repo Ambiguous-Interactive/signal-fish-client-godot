@@ -28,10 +28,6 @@
     },
     "ghcr.io/devcontainers/features/powershell:2": {
       "version": "latest"
-    },
-    "ghcr.io/devcontainers/features/node:2": {
-      "version": "lts",
-      "nodeGypDependencies": false
     }
     // Removed: ghcr.io/devcontainers/features/git (Launchpad PPA was the
     // flakiest external dependency in every rebuild; the base image's git
@@ -43,21 +39,15 @@
   "overrideFeatureInstallOrder": [
     "ghcr.io/devcontainers/features/common-utils",
     "ghcr.io/devcontainers/features/github-cli",
-    "ghcr.io/devcontainers/features/powershell",
-    "ghcr.io/devcontainers/features/node"
+    "ghcr.io/devcontainers/features/powershell"
   ],
-  // Host-side create-time guard: copies .env.example to .env.local when the
-  // git-ignored secrets file is absent, so a fresh clone can open the
-  // container without a manual pre-step (docker run --env-file fails the
-  // whole create otherwise). Never overwrites an existing file. Uses the
-  // pwsh guard script when the host has it; every POSIX host falls back to
-  // plain cp, so a missing host pwsh never blocks the create. The folder
-  // rides in as $0 so paths with quotes cannot break the script.
+  // Docker provides the shell on every host, including native Windows.
   "initializeCommand": [
-    "sh",
-    "-c",
-    "cd \"$0\" && if command -v pwsh >/dev/null 2>&1; then pwsh -NoProfile -File .devcontainer/ensure-env-file.ps1; else [ -f .env.local ] || cp .env.example .env.local; fi",
-    "${localWorkspaceFolder}"
+    "docker", "run", "--rm", "--network=none",
+    "--volume", "${localWorkspaceFolder}:/workspace",
+    "--workdir", "/workspace",
+    "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+    "bash", ".devcontainer/initialize.sh"
   ],
   // Load the user's local secrets (.env.local, git-ignored; copy from
   // .env.example) into the container environment at create time. MCP
@@ -131,30 +121,7 @@
         // are inert until the user authenticates.
         // Theme & icons
         "javier-garrido-galdon.godot-theme-vscode",
-        "MrPogofu.true-godot",
-        "ryanabx.godot-vscode-theme",
-        "github.github-vscode-theme",
-        "dracula-theme.theme-dracula",
-        "Catppuccin.catppuccin-vsc",
-        "enkia.tokyo-night",
-        "zhuangtongfa.Material-theme",
-        "akamud.vscode-theme-onedark",
-        "sdras.night-owl",
-        "BeardedBear.beardedtheme",
-        "johnpapa.winteriscoming",
-        "jdinhlife.gruvbox",
-        "teabyii.ayu",
-        "wesbos.theme-cobalt2",
-        "uloco.theme-bluloco-dark",
-        "uloco.theme-bluloco-light",
-        "fisheva.eva-theme",
-        "miguelsolorio.min-theme",
-        "DaltonMenezes.aura-theme",
-        "rocketseat.theme-omni",
-        "PawelBorkar.jellyfish",
-        "arcticicestudio.nord-visual-studio-code",
         "pkief.material-icon-theme",
-        "vscode-icons-team.vscode-icons",
         "miguelsolorio.fluent-icons",
         // AI
         "openai.chatgpt",

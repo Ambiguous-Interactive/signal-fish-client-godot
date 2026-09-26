@@ -1,0 +1,46 @@
+name: Dev Container
+
+on:
+    pull_request:
+        paths:
+            - ".devcontainer/**"
+            - ".github/workflows/devcontainer.yml"
+    push:
+        branches: [main]
+        paths:
+            - ".devcontainer/**"
+            - ".github/workflows/devcontainer.yml"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+    open:
+        name: Open (${{ matrix.runner }})
+        runs-on: ${{ matrix.runner }}
+        timeout-minutes: 30
+        strategy:
+            fail-fast: false
+            matrix:
+                runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  persist-credentials: false
+            - name: Test bootstrap and offline startup
+              env:
+                  SF_TEST_DOCKER: "1"
+              run: python3 .devcontainer/test_portability.py
+            - name: Build and open container
+              run: npx --yes @devcontainers/cli@0.89.0 up --workspace-folder .
+            - name: Verify installed tools and restart
+              run: |
+                  npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \
+                    bash .devcontainer/install-agent-tools.sh --verify
+                  npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \
+                    bash .devcontainer/post-start.sh

@@ -4,6 +4,7 @@
 #
 # Modes:
 #   (no args)  post-create install: strict; any failure exits non-zero.
+#   --verify   check installed binaries without registry requests or installs.
 #   --update   post-start refresh: best-effort; failures warn and exit 0 so a
 #              registry outage can never block VS Code from attaching.
 #
@@ -17,9 +18,10 @@ set -euo pipefail
 MODE="${1:-install}"
 case "$MODE" in
     install) ;;
+    --verify) ;;
     --update) ;;
     *)
-        echo "agent-tools: ERROR: unknown mode '${MODE}' (expected 'install' or '--update')" >&2
+        echo "agent-tools: ERROR: unknown mode '${MODE}' (expected 'install', '--verify', or '--update')" >&2
         exit 2
         ;;
 esac
@@ -149,6 +151,7 @@ trap 'rm -rf "$probe_dir"' EXIT
 
 pids=()
 for index in "${!PACKAGES[@]}"; do
+    [ "$MODE" != "--verify" ] || break
     npm view "${PACKAGES[$index]}" version \
         --fetch-timeout="$npm_fetch_timeout_ms" --fetch-retries=0 \
         >"${probe_dir}/${index}" 2>/dev/null &
@@ -369,6 +372,9 @@ promote_opencode_v2() {
     opencode_v1_installed=""
 }
 
+if [ "$MODE" = "--verify" ]; then
+    refresh_installed_versions
+else
 probe_ok=()
 for index in "${!pids[@]}"; do
     if wait "${pids[$index]}"; then
@@ -505,6 +511,8 @@ if [ "${#install_specs[@]}" -gt 0 ]; then
     fi
 else
     echo "agent-tools: all agent CLIs are current; skipped npm install"
+fi
+
 fi
 
 # --- Verification --------------------------------------------------------------
