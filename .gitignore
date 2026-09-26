@@ -45,5 +45,8 @@ logs_*.zip
 !.env.example
 GOAL.md
 
+# Session logs are local working notes, never shared (issue #155).
+progress/
+
 # Node packages for local browser-check runs.
 node_modules/
