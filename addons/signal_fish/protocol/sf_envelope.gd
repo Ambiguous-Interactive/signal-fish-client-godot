@@ -101,13 +101,24 @@ static func _stringify_value(value: Variant, depth: int) -> String:
 static func _stringify_float(value: float) -> String:
 	if not is_finite(value):
 		return ""
-	for text: String in [String.num(value, 17), JSON.stringify(value, "", false, true)]:
-		if text.find(".") == -1 and text.find("e") == -1 and text.find("E") == -1:
-			text += ".0"
-		var back: Variant = JSON.parse_string(text)
-		if typeof(back) == TYPE_FLOAT and back == value:
-			return text
+	var text := _normalized_float(String.num(value, 17))
+	if _round_trips(text, value):
+		return text
+	text = _normalized_float(JSON.stringify(value, "", false, true))
+	if _round_trips(text, value):
+		return text
 	return ""
+
+
+static func _round_trips(text: String, value: float) -> bool:
+	var back: Variant = JSON.parse_string(text)
+	return typeof(back) == TYPE_FLOAT and back == value
+
+
+static func _normalized_float(text: String) -> String:
+	if text.find(".") == -1 and text.find("e") == -1 and text.find("E") == -1:
+		return text + ".0"
+	return text
 
 
 static func decode_text(text: String) -> Dictionary:

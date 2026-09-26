@@ -69,11 +69,11 @@ static func decode_envelope(bytes: PackedByteArray) -> Dictionary:
 		if not _KNOWN_FIELDS.has(key):
 			result["error"] = "binary game-data envelope contains unknown field %s" % key
 			return result
-		var read := _read_field(peer, key)
-		if not read["ok"]:
+		var value := _read_field(peer, key)
+		if value == null:
 			result["error"] = "binary game-data field %s is malformed" % key
 			return result
-		fields[key] = read["value"]
+		fields[key] = value
 	if peer.get_available_bytes() != 0:
 		result["error"] = "binary game-data envelope contains trailing bytes"
 		return result
@@ -132,34 +132,32 @@ static func _encoding_token(value: Variant, allow_v3_tokens: bool) -> int:
 			return SFTypesScript.GameDataEncoding.UNKNOWN
 
 
-## Reads one envelope field value. Only the flat shapes the contract allows:
-## [code]from_player[/code]/[code]payload[/code] are binary (16 bytes for the
-## UUID), [code]encoding[/code] is a string, and [code]seq[/code]/[code]epoch
-## [/code] accept any unsigned integer marker width (rust parity).
-static func _read_field(peer: StreamPeerBuffer, key: String) -> Dictionary:
+## Reads one envelope field value, or [code]null[/code] when malformed. Only
+## the flat shapes the contract allows: [code]from_player[/code]/
+## [code]payload[/code] are binary (16 bytes for the UUID), [code]encoding[/code]
+## is a string, and [code]seq[/code]/[code]epoch[/code] accept any unsigned
+## integer marker width (rust parity).
+static func _read_field(peer: StreamPeerBuffer, key: String) -> Variant:
 	if peer.get_available_bytes() < 1:
-		return {"ok": false, "value": null}
+		return null
 	var marker := peer.get_u8()
 	match key:
 		"from_player", "payload":
 			var length := _binary_length(peer, marker)
 			if length < 0 or peer.get_available_bytes() < length:
-				return {"ok": false, "value": null}
+				return null
 			if key == "from_player":
 				if length != _UUID_BYTES:
-					return {"ok": false, "value": null}
-				return {"ok": true, "value": _uuid_string(peer.get_data(length)[1])}
-			return {"ok": true, "value": peer.get_data(length)[1]}
+					return null
+				return _uuid_string(peer.get_data(length)[1])
+			return peer.get_data(length)[1]
 		"encoding":
 			var token := _read_string_after_marker(peer, marker)
 			if token.is_empty():
-				return {"ok": false, "value": null}
-			return {"ok": true, "value": token}
+				return null
+			return token
 		_:
-			var value := _read_unsigned(peer, marker)
-			if value == null:
-				return {"ok": false, "value": null}
-			return {"ok": true, "value": value}
+			return _read_unsigned(peer, marker)
 
 
 ## Returns the unsigned integer value, or [code]null[/code] when the marker is

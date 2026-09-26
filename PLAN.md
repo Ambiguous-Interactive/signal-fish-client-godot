@@ -21,12 +21,13 @@ Per-session history: `progress/session-NNN-*.md`.
       `.llm/skills/asset-library-release.md`.
 
 ### Post-v1 hardening (issue #161)
-- [ ] Decode hot-path allocation/profiling campaign: hand-measured
-      candidates are per-field result dictionaries in
-      `SFBinaryFrames._read_field`, UUID hex/substr formatting behind its
-      bounded cache, `SFJsonGuard`'s full-frame `to_utf8_buffer()`, and
-      `SFEnvelope._stringify_float`'s JSON round-trips. The fail-closed
-      fuzz net landed (see `progress/session-059-*.md`).
+- [ ] Remaining decode hot-path work: the JSON guard's object-dense shape
+      (~100 ms at the 256 KiB frame cap, dominated by per-object key-set
+      dictionaries) and wider workload profiling. The first four candidates
+      are resolved - two optimized, two measured negligible (see
+      `progress/session-060-*.md`; re-measure with
+      `godot --headless --script tests/protocol/decode_bench.gd`). The
+      fail-closed fuzz net landed (see `progress/session-059-*.md`).
 
 ### Post-v1 (P7, each gated)
 - [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke
