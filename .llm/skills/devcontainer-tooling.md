@@ -231,7 +231,11 @@ assume the contract, then re-verify with the real tool:
   vacuously pass). The harness pins sandbox bins via `BASH_ENV` (bash
   sources it in every non-interactive shell); `Set-WslBashSandboxPath` in
   `scripts/test-llm-harness.ps1` is the single mechanism - keep new
-  bash-spawning suites on it.
+  bash-spawning suites on it. Register EVERY custom variable a suite
+  expects to read inside bash via `Add-EnvToWslPassthrough` (not only
+  path-like ones): an unregistered var is silently empty under the
+  WSLENV-filtered boundary and the suite fails or passes vacuously with
+  no pointer at the cause.
 
 ## Validation
 

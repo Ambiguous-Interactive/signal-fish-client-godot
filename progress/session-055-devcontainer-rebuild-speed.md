@@ -190,6 +190,21 @@ real, both fixed, plus one adjacent gap found by sweeping the same classes:
   and restore audited at all three call sites, and every other `& bash`
   site classified as not needing a pin.
 
+## Bugbot review (round 4, on the fix commit) - finding and fix
+
+- **Auto-merge suite registered only `FAKE_GH_LOG` for WSL passthrough**
+  while setting six more custom variables (`FAKE_GH_SCENARIO`, `GH_TOKEN`,
+  `GITHUB_REPOSITORY`, `HEAD_SHA`, `HEAD_BRANCH`, `REQUIRED_WORKFLOWS`)
+  that the fake gh and `dependabot-auto-merge.sh` read inside bash (the
+  script hard-requires two of them). Under the WSLENV-filtered boundary
+  the defensive registration exists for, they would arrive empty and the
+  suite would fail with metadata missing - or pass vacuously. Fix: all
+  seven registered; the registration-completeness sweep confirms this
+  was the last unregistered bash-consumed variable in the harness (the
+  migration, seed, and mcp suites already register everything they set).
+  Skill guidance now states the rule explicitly: register EVERY custom
+  variable a suite reads inside bash, not only path-like ones.
+
 ## Validation
 
 - `pwsh -NoProfile -File scripts/test-llm-harness.ps1` (core + behavioral,
@@ -202,4 +217,5 @@ real, both fixed, plus one adjacent gap found by sweeping the same classes:
   (with the caveat, per round 2, that Docker's parser strips full-line
   comments before the shell - the check validates the shell view).
 - `bash -n` green on all changed shell scripts; docs style and JSONC parse
-  green; `git diff --check` clean.
+  green; `git diff --check` clean. Round-4 fix re-validated: harness suite
+  green (119/119), agent-check + docs style green.

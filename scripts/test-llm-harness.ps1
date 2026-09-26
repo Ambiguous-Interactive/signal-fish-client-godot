@@ -1221,7 +1221,18 @@ exit 99
         # pwsh assertions read the Windows flavor; the fake gh appends the
         # bash flavor, and WSL only passes registered variables through.
         $fakeGhLogWin = Join-Path $sandbox 'merge.log'
-        Add-EnvToWslPassthrough @('FAKE_GH_LOG')
+        # Everything the fake gh and the auto-merge script read inside bash
+        # is registered for WSL passthrough - same completeness rule as the
+        # other WSL suites.
+        Add-EnvToWslPassthrough @(
+            'FAKE_GH_LOG'
+            'FAKE_GH_SCENARIO'
+            'GH_TOKEN'
+            'GITHUB_REPOSITORY'
+            'HEAD_SHA'
+            'HEAD_BRANCH'
+            'REQUIRED_WORKFLOWS'
+        )
         $env:FAKE_GH_LOG = ConvertTo-BashPath $fakeGhLogWin
 
         $cases = @(
