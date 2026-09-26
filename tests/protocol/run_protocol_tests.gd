@@ -13,6 +13,7 @@ const V3ProtocolTestsScript = preload("res://tests/protocol/v3_protocol_tests.gd
 const UpstreamSamplesTestsScript = preload("res://tests/protocol/upstream_samples_tests.gd")
 const DuplicateKeyTestsScript = preload("res://tests/protocol/duplicate_key_tests.gd")
 const ConstructorCoercionTestsScript = preload("res://tests/protocol/constructor_coercion_tests.gd")
+const FuzzDecodeTestsScript = preload("res://tests/protocol/fuzz_decode_tests.gd")
 const UuidShapeTestsScript = preload("res://tests/protocol/uuid_shape_tests.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
@@ -59,6 +60,7 @@ func _helper_suites_are_loadable() -> bool:
 		["upstream_samples_tests", UpstreamSamplesTestsScript],
 		["duplicate_key_tests", DuplicateKeyTestsScript],
 		["constructor_coercion_tests", ConstructorCoercionTestsScript],
+		["fuzz_decode_tests", FuzzDecodeTestsScript],
 		["uuid_shape_tests", UuidShapeTestsScript],
 	]
 	var loadable := true
@@ -95,6 +97,7 @@ func _run() -> void:
 	_failures.append_array(UpstreamSamplesTestsScript.run())
 	_failures.append_array(DuplicateKeyTestsScript.run())
 	_failures.append_array(ConstructorCoercionTestsScript.run())
+	_failures.append_array(FuzzDecodeTestsScript.run())
 	_failures.append_array(UuidShapeTestsScript.run())
 	_run_completed = true
 
