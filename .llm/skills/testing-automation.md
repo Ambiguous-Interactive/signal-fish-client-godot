@@ -58,8 +58,10 @@ These checks enforce:
   round-robin into two passes via `-BehavioralSubshard k
   -BehavioralSubshardCount 2` (requires `-OnlyBehavioralTests`; the union
   of the passes is exactly the behavioral subset). The llm-harness
-  `self-tests` job runs preflight, the core shard, and both behavioral
-  passes concurrently; Mode Full runs the same three shards. The union of
+  workflow runs preflight and the core shard in one job, plus each
+  behavioral pass in its own dedicated job (issue #145: fork-heavy tests
+  saturate one runner); Mode Full runs the same three shards as concurrent
+  child processes. The union of
   the shards is exactly the full suite; the behavioral flag wins over
   `LLM_HARNESS_SKIP_BEHAVIORAL_TESTS`
   so a shard can never pass vacuously. Recursion rule: the runner's

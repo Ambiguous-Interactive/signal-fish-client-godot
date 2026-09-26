@@ -61,8 +61,9 @@ scripts that maintain AI context.
   `-Mode AgentFast` for non-mutating local checks, `-Mode Full` for all
   structural and behavioral tests, and `-Mode CI` for loud generated diff
   verification. `-SkipSelfTests` is CI-only: the llm-harness workflow runs
-  the behavioral self-tests as a dedicated parallel job (issue #84), so the
-  two jobs' wall clock is max(jobs) instead of the sum; hooks never pass it.
+  the behavioral self-tests as dedicated parallel jobs (issues #84, #145),
+  so the jobs' wall clock is max(jobs) instead of the sum; hooks never pass
+  it.
   Where the self-tests run, they run as concurrent shards (issue #132):
   `-SkipBehavioralTests` (core, in-process) plus `-OnlyBehavioralTests`
   (pwsh-forking), itself split round-robin into two passes via

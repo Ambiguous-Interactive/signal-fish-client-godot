@@ -66,8 +66,8 @@ jobs:
               # `-SkipStagedCheck` because CI validates committed content with
               # `git diff` below instead of participating in a local staging
               # flow. `-SkipSelfTests` hands the behavioral self-tests to the
-              # parallel `self-tests` job so job wall clock is max(jobs)
-              # instead of the sum (issue #84); coverage is unchanged.
+              # dedicated self-test jobs (issues #84, #145) so the jobs' wall
+              # clock is max(jobs) instead of the sum; coverage is unchanged.
               shell: pwsh
               run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode CI -SkipStagedCheck -NoAutoFix -VerboseOutput -PreflightAlreadyDone -SkipSelfTests
 
@@ -88,29 +88,30 @@ jobs:
                     exit 1
                   }
 
-    self-tests:
-        name: LLM harness self-tests
+    # The behavioral passes each get a dedicated runner (issue #145): they
+    # fork child pwsh/git/python per test case, which saturates a 4-vCPU
+    # runner, so in-job concurrency could not compress the wall. One pass
+    # per runner makes the concurrency real and keeps behavioral growth off
+    # the critical path while a behavioral pass stays under the core-job
+    # wall. The union of the shards is exactly the full suite; coverage is
+    # unchanged.
+    self-tests-core:
+        name: LLM harness self-tests (core)
         runs-on: ubuntu-24.04
         timeout-minutes: 10
         steps:
             - name: Check out repository
               uses: actions/checkout@v7
 
-            - name: Preflight and sharded self-tests
+            - name: Preflight and core self-tests
               # Same loud corruption gate as the validate job (issue #84
               # parallelism pattern): -NoAutoFix only parses tracked
               # sources, and the suite's destructive tests operate on temp
-              # copies, so preflight, the core shard, and the two
-              # round-robin behavioral passes run concurrently and the job
-              # wall clock is max(steps) instead of their sum. The suite is
-              # sharded into its in-process half (-SkipBehavioralTests,
-              # issue #132) and its pwsh-forking behavioral half, which is
-              # itself split into two concurrent passes (-OnlyBehavioralTests
-              # with -BehavioralSubshard/-BehavioralSubshardCount), so the
-              # wall is max(shards) instead of their sum. The union of the
-              # shards is exactly the full suite; coverage is unchanged.
-              # Output is buffered until all four processes finish so the
-              # logs do not interleave.
+              # copies, so preflight and the core shard run concurrently
+              # and the job wall clock is max(steps) instead of their sum.
+              # The core shard is the in-process suite half
+              # (-SkipBehavioralTests, issue #132). Output is buffered
+              # until both processes finish so the logs do not interleave.
               shell: bash
               run: |
                   preflight_rc=0
@@ -119,22 +120,38 @@ jobs:
                   core_rc=0
                   pwsh -NoProfile -File scripts/test-llm-harness.ps1 -SkipBehavioralTests -VerboseOutput >self-tests-core.log 2>&1 &
                   core_pid=$!
-                  behavioral1_rc=0
-                  pwsh -NoProfile -File scripts/test-llm-harness.ps1 -OnlyBehavioralTests -BehavioralSubshard 1 -BehavioralSubshardCount 2 -VerboseOutput >self-tests-behavioral-1.log 2>&1 &
-                  behavioral1_pid=$!
-                  behavioral2_rc=0
-                  pwsh -NoProfile -File scripts/test-llm-harness.ps1 -OnlyBehavioralTests -BehavioralSubshard 2 -BehavioralSubshardCount 2 -VerboseOutput >self-tests-behavioral-2.log 2>&1 &
-                  behavioral2_pid=$!
                   wait "$preflight_pid" || preflight_rc=$?
                   wait "$core_pid" || core_rc=$?
-                  wait "$behavioral1_pid" || behavioral1_rc=$?
-                  wait "$behavioral2_pid" || behavioral2_rc=$?
-                  for log in preflight.log self-tests-core.log self-tests-behavioral-1.log self-tests-behavioral-2.log; do
+                  for log in preflight.log self-tests-core.log; do
                       printf '=== %s ===\n' "$log"
                       cat "$log" || true
                       rm -f "$log"
                   done
-                  if [ "$preflight_rc" -ne 0 ] || [ "$core_rc" -ne 0 ] || [ "$behavioral1_rc" -ne 0 ] || [ "$behavioral2_rc" -ne 0 ]; then
-                      printf '::error::self-tests job failed (preflight=%s core=%s behavioral-1=%s behavioral-2=%s)\n' "$preflight_rc" "$core_rc" "$behavioral1_rc" "$behavioral2_rc"
+                  if [ "$preflight_rc" -ne 0 ] || [ "$core_rc" -ne 0 ]; then
+                      printf '::error::core self-tests job failed (preflight=%s core=%s)\n' "$preflight_rc" "$core_rc"
                       exit 1
                   fi
+
+    self-tests-behavioral-1:
+        name: LLM harness self-tests (behavioral 1/2)
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Behavioral self-tests (pass 1 of 2)
+              shell: pwsh
+              run: pwsh -NoProfile -File scripts/test-llm-harness.ps1 -OnlyBehavioralTests -BehavioralSubshard 1 -BehavioralSubshardCount 2 -VerboseOutput
+
+    self-tests-behavioral-2:
+        name: LLM harness self-tests (behavioral 2/2)
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Behavioral self-tests (pass 2 of 2)
+              shell: pwsh
+              run: pwsh -NoProfile -File scripts/test-llm-harness.ps1 -OnlyBehavioralTests -BehavioralSubshard 2 -BehavioralSubshardCount 2 -VerboseOutput
