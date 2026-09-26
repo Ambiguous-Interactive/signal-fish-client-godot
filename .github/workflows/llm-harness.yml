@@ -66,8 +66,8 @@ jobs:
               # `-SkipStagedCheck` because CI validates committed content with
               # `git diff` below instead of participating in a local staging
               # flow. `-SkipSelfTests` hands the behavioral self-tests to the
-              # parallel `self-tests` job so job wall clock is max(jobs)
-              # instead of the sum (issue #84); coverage is unchanged.
+              # dedicated self-test jobs (issues #84, #145) so the jobs' wall
+              # clock is max(jobs) instead of the sum; coverage is unchanged.
               shell: pwsh
               run: pwsh -NoProfile -File scripts/run-llm-hooks.ps1 -Mode CI -SkipStagedCheck -NoAutoFix -VerboseOutput -PreflightAlreadyDone -SkipSelfTests
 
@@ -91,9 +91,10 @@ jobs:
     # The behavioral passes each get a dedicated runner (issue #145): they
     # fork child pwsh/git/python per test case, which saturates a 4-vCPU
     # runner, so in-job concurrency could not compress the wall. One pass
-    # per runner makes the concurrency real, and new behavioral tests no
-    # longer extend the wall. The union of the shards is exactly the full
-    # suite; coverage is unchanged.
+    # per runner makes the concurrency real and keeps behavioral growth off
+    # the critical path while a behavioral pass stays under the core-job
+    # wall. The union of the shards is exactly the full suite; coverage is
+    # unchanged.
     self-tests-core:
         name: LLM harness self-tests (core)
         runs-on: ubuntu-24.04
