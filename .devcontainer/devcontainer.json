@@ -15,16 +15,13 @@
       "installZsh": false,
       "configureZshAsDefaultShell": false,
       "installOhMyZsh": false,
-      "upgradePackages": true,
+      // A full `apt upgrade` on every feature install is slow and
+      // nondeterministic; the Dockerfile's own apt layer and the regular
+      // `--pull` base-image refresh keep packages current enough.
+      "upgradePackages": false,
       "username": "vscode",
       "userUid": "automatic",
       "userGid": "automatic"
-    },
-    // Upgrade git from the base image to a recent release via the official PPA;
-    // useful for GitHub Actions parity and modern `git` features.
-    "ghcr.io/devcontainers/features/git:1": {
-      "version": "latest",
-      "ppa": true
     },
     "ghcr.io/devcontainers/features/github-cli:1": {
       "version": "latest"
@@ -32,22 +29,35 @@
     "ghcr.io/devcontainers/features/powershell:2": {
       "version": "latest"
     },
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.12",
-      "installTools": false
-    },
     "ghcr.io/devcontainers/features/node:2": {
       "version": "lts",
       "nodeGypDependencies": false
     }
+    // Removed: ghcr.io/devcontainers/features/git (Launchpad PPA was the
+    // flakiest external dependency in every rebuild; the base image's git
+    // 2.43 covers the repo's needs) and features/python (its
+    // python-build-standalone download added ~144 s per rebuild; the
+    // Dockerfile now installs Ubuntu's Python 3.12, matching docs CI's pin;
+    // runtime CI tracks 3.x).
   },
   "overrideFeatureInstallOrder": [
     "ghcr.io/devcontainers/features/common-utils",
-    "ghcr.io/devcontainers/features/git",
     "ghcr.io/devcontainers/features/github-cli",
     "ghcr.io/devcontainers/features/powershell",
-    "ghcr.io/devcontainers/features/python",
     "ghcr.io/devcontainers/features/node"
+  ],
+  // Host-side create-time guard: copies .env.example to .env.local when the
+  // git-ignored secrets file is absent, so a fresh clone can open the
+  // container without a manual pre-step (docker run --env-file fails the
+  // whole create otherwise). Never overwrites an existing file. Uses the
+  // pwsh guard script when the host has it; every POSIX host falls back to
+  // plain cp, so a missing host pwsh never blocks the create. The folder
+  // rides in as $0 so paths with quotes cannot break the script.
+  "initializeCommand": [
+    "sh",
+    "-c",
+    "cd \"$0\" && if command -v pwsh >/dev/null 2>&1; then pwsh -NoProfile -File .devcontainer/ensure-env-file.ps1; else [ -f .env.local ] || cp .env.example .env.local; fi",
+    "${localWorkspaceFolder}"
   ],
   // Load the user's local secrets (.env.local, git-ignored; copy from
   // .env.example) into the container environment at create time. MCP

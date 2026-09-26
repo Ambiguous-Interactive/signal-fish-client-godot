@@ -36,7 +36,7 @@ else
     echo "==> Downloading ${URL}"
     rm -f "${CACHED_TGZ}"
     curl --fail --silent --show-error --location \
-        --retry 5 --retry-delay 2 --retry-connrefused \
+        --retry 5 --retry-delay 2 --retry-connrefused --retry-all-errors \
         --output "${CACHED_TGZ}" \
         "${URL}"
 fi

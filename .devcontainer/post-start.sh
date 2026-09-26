@@ -71,9 +71,12 @@ fi
 # re-provisioned on the next start instead of silently poisoning every
 # later run.
 if [ ! -f ".venv-ci/bin/activate" ] || ! venv_ok; then
-    # Re-provisioning an existing venv is safe: `venv` upgrades in place and
-    # pip install is idempotent, so a halfway-failed install heals here.
-    if python3 -m venv .venv-ci \
+    # Entered only when the venv is missing or venv_ok proved it broken, so
+    # rebuild it from scratch. `venv` only upgrades in place when the
+    # interpreter is the same: a dead interpreter symlink (e.g. after the
+    # image's Python moved) makes `venv` die with Errno 2 on the old
+    # bin/python3.
+    if rm -rf .venv-ci && python3 -m venv .venv-ci \
         && ( . .venv-ci/bin/activate \
             && python -m pip install -r "${REPO_ROOT}/requirements-ci.txt" -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1 ) \
         && venv_ok; then
