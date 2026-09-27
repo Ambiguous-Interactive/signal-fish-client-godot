@@ -10,4 +10,4 @@ Branch: `codex/session-097-typed-replay-fixtures` from `origin/main` at
 - The full cold runtime gate passes locally.
 
 #165 stays open for the remaining dynamic boundary audit.
-PR for this session: pending.
+PR #211 is the session deliverable.
