@@ -100,15 +100,9 @@ class RateLimitInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		# Null-safe integer reads: `int(null)` raises and would abort the
-		# constructor, defaulting every field assigned after it (issue #81).
-		per_minute = _int_or_zero(data.get("per_minute"))
-		per_hour = _int_or_zero(data.get("per_hour"))
-		per_day = _int_or_zero(data.get("per_day"))
-
-	func _int_or_zero(value: Variant) -> int:
-		@warning_ignore("unsafe_call_argument")
-		return int(value) if TypeUtils.is_i64_integer(value) else 0
+		per_minute = TypeUtils.int_or_zero(data.get("per_minute"))
+		per_hour = TypeUtils.int_or_zero(data.get("per_hour"))
+		per_day = TypeUtils.int_or_zero(data.get("per_day"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -127,23 +121,17 @@ class PlayerNameRules:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		max_length = _int_or_zero(data.get("max_length"))
-		min_length = _int_or_zero(data.get("min_length"))
+		max_length = TypeUtils.int_or_zero(data.get("max_length"))
+		min_length = TypeUtils.int_or_zero(data.get("min_length"))
 		allow_unicode_alphanumeric = TypeUtils.bool_or_false(data.get("allow_unicode_alphanumeric"))
 		allow_spaces = TypeUtils.bool_or_false(data.get("allow_spaces"))
 		allow_leading_trailing_whitespace = TypeUtils.bool_or_false(
 			data.get("allow_leading_trailing_whitespace")
 		)
 		allowed_symbols = TypeUtils.coerce_string_array(data.get("allowed_symbols", []))
-		var additional_characters: Variant = data.get("additional_allowed_characters", "")
-		@warning_ignore("unsafe_call_argument")
-		additional_allowed_characters = (
-			String(additional_characters) if typeof(additional_characters) == TYPE_STRING else ""
+		additional_allowed_characters = TypeUtils.string_or_empty(
+			data.get("additional_allowed_characters", "")
 		)
-
-	func _int_or_zero(value: Variant) -> int:
-		@warning_ignore("unsafe_call_argument")
-		return int(value) if TypeUtils.is_i64_integer(value) else 0
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -173,12 +161,12 @@ class ProtocolInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		platform = _string_or_empty(data.get("platform"))
-		sdk_version = _string_or_empty(data.get("sdk_version"))
-		minimum_version = _string_or_empty(data.get("minimum_version"))
-		recommended_version = _string_or_empty(data.get("recommended_version"))
+		platform = TypeUtils.string_or_empty(data.get("platform"))
+		sdk_version = TypeUtils.string_or_empty(data.get("sdk_version"))
+		minimum_version = TypeUtils.string_or_empty(data.get("minimum_version"))
+		recommended_version = TypeUtils.string_or_empty(data.get("recommended_version"))
 		capabilities = TypeUtils.coerce_string_array(data.get("capabilities", []))
-		notes = _string_or_empty(data.get("notes"))
+		notes = TypeUtils.string_or_empty(data.get("notes"))
 		game_data_formats = _coerce_game_data_encodings(data.get("game_data_formats", []))
 		if (
 			data.has("player_name_rules")
@@ -186,11 +174,11 @@ class ProtocolInfo:
 		):
 			@warning_ignore("unsafe_call_argument")
 			player_name_rules = PlayerNameRules.new(data["player_name_rules"])
-		protocol_version = _int_or_zero(data.get("protocol_version"))
-		min_protocol_version = _int_or_zero(data.get("min_protocol_version"))
-		max_protocol_version = _int_or_zero(data.get("max_protocol_version"))
+		protocol_version = TypeUtils.int_or_zero(data.get("protocol_version"))
+		min_protocol_version = TypeUtils.int_or_zero(data.get("min_protocol_version"))
+		max_protocol_version = TypeUtils.int_or_zero(data.get("max_protocol_version"))
 		transports = TypeUtils.coerce_string_array(data.get("transports", []))
-		max_outbound_message_size = _int_or_zero(data.get("max_outbound_message_size"))
+		max_outbound_message_size = TypeUtils.int_or_zero(data.get("max_outbound_message_size"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -206,19 +194,6 @@ class ProtocolInfo:
 					int(GAME_DATA_ENCODING_FROM_STRING.get(String(value), GameDataEncoding.UNKNOWN))
 				)
 		return result
-
-	func _int_or_zero(value: Variant) -> int:
-		@warning_ignore("unsafe_call_argument")
-		# Sign is preserved (issue #96): a hostile negative must stay visible
-		# instead of clamping onto the 0 "absent" sentinel. Decode-path
-		# values are validated non-negative upstream of this class.
-		return int(value) if TypeUtils.is_i64_integer(value) else 0
-
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
 
 
 class ConnectionInfo:
@@ -239,8 +214,8 @@ class ConnectionInfo:
 
 	func _init(input: Dictionary = {}) -> void:
 		raw = input.duplicate(true)
-		type = _string_or_empty(input.get("type"))
-		host = _string_or_empty(input.get("host"))
+		type = TypeUtils.string_or_empty(input.get("type"))
+		host = TypeUtils.string_or_empty(input.get("host"))
 		# A present-null port must read like an absent one: `int(null)` raises
 		# and would abort the constructor, silently defaulting every field
 		# assigned after it (issue #81). An out-of-i64-range magnitude must
@@ -254,10 +229,10 @@ class ConnectionInfo:
 			transport = TypeUtils.enum_value(
 				RELAY_TRANSPORT_FROM_STRING, input.get("transport", ""), RelayTransport.UNKNOWN
 			)
-		allocation_id = _string_or_empty(input.get("allocation_id"))
-		connection_data = _string_or_empty(input.get("connection_data"))
-		key = _string_or_empty(input.get("key"))
-		token = _string_or_empty(input.get("token"))
+		allocation_id = TypeUtils.string_or_empty(input.get("allocation_id"))
+		connection_data = TypeUtils.string_or_empty(input.get("connection_data"))
+		key = TypeUtils.string_or_empty(input.get("key"))
+		token = TypeUtils.string_or_empty(input.get("token"))
 		# A present-null client_id must read like an absent one, and a
 		# non-integral value must not launder through int() truncation into a
 		# different relay slot (issue #89) — same gate as `port` above
@@ -268,7 +243,7 @@ class ConnectionInfo:
 			client_id = int(client_id_value)
 		else:
 			client_id = -1
-		sdp = _string_or_empty(input.get("sdp"))
+		sdp = TypeUtils.string_or_empty(input.get("sdp"))
 		ice_candidates = TypeUtils.coerce_string_array(input.get("ice_candidates", []))
 		# `data` views this object's own snapshot (raw), never the caller's
 		# tree: one object must not hold two divergent views (issue #73).
@@ -352,12 +327,6 @@ class ConnectionInfo:
 				@warning_ignore("unsafe_call_argument")
 				result[field] = int(result[field])
 
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
-
 
 class PlayerInfo:
 	extends RefCounted
@@ -371,11 +340,11 @@ class PlayerInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		id = _string_or_empty(data.get("id"))
-		name = _string_or_empty(data.get("name"))
+		id = TypeUtils.string_or_empty(data.get("id"))
+		name = TypeUtils.string_or_empty(data.get("name"))
 		is_authority = TypeUtils.bool_or_false(data.get("is_authority"))
 		is_ready = TypeUtils.bool_or_false(data.get("is_ready"))
-		connected_at = _string_or_empty(data.get("connected_at"))
+		connected_at = TypeUtils.string_or_empty(data.get("connected_at"))
 		if data.has("connection_info") and typeof(data.get("connection_info")) == TYPE_DICTIONARY:
 			@warning_ignore("unsafe_call_argument")
 			connection_info = ConnectionInfo.new(data["connection_info"])
@@ -385,12 +354,6 @@ class PlayerInfo:
 		if connection_info != null:
 			result["connection_info"] = connection_info.to_dict()
 		return result
-
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
 
 
 class SpectatorInfo:
@@ -402,18 +365,12 @@ class SpectatorInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		id = _string_or_empty(data.get("id"))
-		name = _string_or_empty(data.get("name"))
-		connected_at = _string_or_empty(data.get("connected_at"))
+		id = TypeUtils.string_or_empty(data.get("id"))
+		name = TypeUtils.string_or_empty(data.get("name"))
+		connected_at = TypeUtils.string_or_empty(data.get("connected_at"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
-
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
 
 
 class PeerConnectionInfo:
@@ -427,10 +384,10 @@ class PeerConnectionInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		player_id = _string_or_empty(data.get("player_id"))
-		player_name = _string_or_empty(data.get("player_name"))
+		player_id = TypeUtils.string_or_empty(data.get("player_id"))
+		player_name = TypeUtils.string_or_empty(data.get("player_name"))
 		is_authority = TypeUtils.bool_or_false(data.get("is_authority"))
-		relay_type = _string_or_empty(data.get("relay_type"))
+		relay_type = TypeUtils.string_or_empty(data.get("relay_type"))
 		if data.has("connection_info") and typeof(data.get("connection_info")) == TYPE_DICTIONARY:
 			@warning_ignore("unsafe_call_argument")
 			connection_info = ConnectionInfo.new(data["connection_info"])
@@ -440,12 +397,6 @@ class PeerConnectionInfo:
 		if connection_info != null:
 			result["connection_info"] = connection_info.to_dict()
 		return result
-
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
 
 
 ## A v3 reconnect baseline for one current room member's relayed game-data
@@ -516,11 +467,11 @@ class RoomJoinedInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		room_id = _string_or_empty(data.get("room_id"))
-		room_code = _string_or_empty(data.get("room_code"))
-		player_id = _string_or_empty(data.get("player_id"))
-		game_name = _string_or_empty(data.get("game_name"))
-		max_players = _int_or_zero(data.get("max_players"))
+		room_id = TypeUtils.string_or_empty(data.get("room_id"))
+		room_code = TypeUtils.string_or_empty(data.get("room_code"))
+		player_id = TypeUtils.string_or_empty(data.get("player_id"))
+		game_name = TypeUtils.string_or_empty(data.get("game_name"))
+		max_players = TypeUtils.int_or_zero(data.get("max_players"))
 		supports_authority = TypeUtils.bool_or_false(data.get("supports_authority"))
 		current_players = _coerce_players(data.get("current_players", []))
 		is_authority = TypeUtils.bool_or_false(data.get("is_authority"))
@@ -528,18 +479,14 @@ class RoomJoinedInfo:
 			LOBBY_STATE_FROM_STRING, data.get("lobby_state", ""), LobbyState.UNKNOWN
 		)
 		ready_players = TypeUtils.coerce_string_array(data.get("ready_players", []))
-		relay_type = _string_or_empty(data.get("relay_type"))
+		relay_type = TypeUtils.string_or_empty(data.get("relay_type"))
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
 		ice_servers = _coerce_ice_servers(data.get("ice_servers", []))
-		reconnection_token = _string_or_empty(data.get("reconnection_token"))
+		reconnection_token = TypeUtils.string_or_empty(data.get("reconnection_token"))
 		replay_status = TypeUtils.enum_value(
 			REPLAY_STATUS_FROM_STRING, data.get("replay"), ReplayStatus.UNKNOWN
 		)
 		sender_watermarks = _coerce_watermarks(data.get("sender_watermarks", []))
-
-	func _int_or_zero(value: Variant) -> int:
-		@warning_ignore("unsafe_call_argument")
-		return int(value) if TypeUtils.is_i64_integer(value) else 0
 
 	func to_dict() -> Dictionary:
 		var result := raw.duplicate(true)
@@ -592,12 +539,6 @@ class RoomJoinedInfo:
 				result.append(SenderWatermark.new(value))
 		return result
 
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
-
 
 class SpectatorJoinedInfo:
 	extends RefCounted
@@ -613,10 +554,10 @@ class SpectatorJoinedInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		room_id = _string_or_empty(data.get("room_id"))
-		room_code = _string_or_empty(data.get("room_code"))
-		spectator_id = _string_or_empty(data.get("spectator_id"))
-		game_name = _string_or_empty(data.get("game_name"))
+		room_id = TypeUtils.string_or_empty(data.get("room_id"))
+		room_code = TypeUtils.string_or_empty(data.get("room_code"))
+		spectator_id = TypeUtils.string_or_empty(data.get("spectator_id"))
+		game_name = TypeUtils.string_or_empty(data.get("game_name"))
 		current_players = _coerce_players(data.get("current_players", []))
 		current_spectators = _coerce_spectators(data.get("current_spectators", []))
 		lobby_state = TypeUtils.enum_value(
@@ -660,12 +601,6 @@ class SpectatorJoinedInfo:
 		@warning_ignore("unsafe_call_argument")
 		return int(SPECTATOR_REASON_FROM_STRING.get(String(value), SpectatorReason.UNKNOWN))
 
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
-
 
 class DecodedEvent:
 	extends RefCounted
@@ -692,51 +627,39 @@ class DecodedEvent:
 
 
 static func game_data_encoding_from_string(value: Variant) -> int:
-	if typeof(value) != TYPE_STRING:
-		return GameDataEncoding.UNKNOWN
-	@warning_ignore("unsafe_call_argument")
-	return int(GAME_DATA_ENCODING_FROM_STRING.get(String(value), GameDataEncoding.UNKNOWN))
+	return TypeUtils.enum_value(GAME_DATA_ENCODING_FROM_STRING, value, GameDataEncoding.UNKNOWN)
 
 
 static func game_data_encoding_to_string(value: int) -> String:
-	@warning_ignore("unsafe_call_argument")
-	return String(GAME_DATA_ENCODING_TO_STRING.get(value, "unknown"))
+	var text: String = GAME_DATA_ENCODING_TO_STRING.get(value, "unknown")
+	return text
 
 
 static func lobby_state_from_string(value: Variant) -> int:
-	if typeof(value) != TYPE_STRING:
-		return LobbyState.UNKNOWN
-	@warning_ignore("unsafe_call_argument")
-	return int(LOBBY_STATE_FROM_STRING.get(String(value), LobbyState.UNKNOWN))
+	return TypeUtils.enum_value(LOBBY_STATE_FROM_STRING, value, LobbyState.UNKNOWN)
 
 
 static func lobby_state_to_string(value: int) -> String:
-	@warning_ignore("unsafe_call_argument")
-	return String(LOBBY_STATE_TO_STRING.get(value, "unknown"))
+	var text: String = LOBBY_STATE_TO_STRING.get(value, "unknown")
+	return text
 
 
 static func relay_transport_from_string(value: Variant) -> int:
-	if typeof(value) != TYPE_STRING:
-		return RelayTransport.UNKNOWN
-	@warning_ignore("unsafe_call_argument")
-	return int(RELAY_TRANSPORT_FROM_STRING.get(String(value), RelayTransport.UNKNOWN))
+	return TypeUtils.enum_value(RELAY_TRANSPORT_FROM_STRING, value, RelayTransport.UNKNOWN)
 
 
 static func relay_transport_to_string(value: int) -> String:
-	@warning_ignore("unsafe_call_argument")
-	return String(RELAY_TRANSPORT_TO_STRING.get(value, "unknown"))
+	var text: String = RELAY_TRANSPORT_TO_STRING.get(value, "unknown")
+	return text
 
 
 static func spectator_reason_from_string(value: Variant) -> int:
-	if typeof(value) != TYPE_STRING:
-		return SpectatorReason.UNKNOWN
-	@warning_ignore("unsafe_call_argument")
-	return int(SPECTATOR_REASON_FROM_STRING.get(String(value), SpectatorReason.UNKNOWN))
+	return TypeUtils.enum_value(SPECTATOR_REASON_FROM_STRING, value, SpectatorReason.UNKNOWN)
 
 
 static func spectator_reason_to_string(value: int) -> String:
-	@warning_ignore("unsafe_call_argument")
-	return String(SPECTATOR_REASON_TO_STRING.get(value, "unknown"))
+	var text: String = SPECTATOR_REASON_TO_STRING.get(value, "unknown")
+	return text
 
 
 static func error_code_from_variant(value: Variant) -> int:
