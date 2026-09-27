@@ -247,7 +247,6 @@ static func _read_uint(peer: StreamPeerBuffer, width: int, failure: Array[String
 	return value
 
 
-@warning_ignore("unsafe_call_argument", "unsafe_method_access")
 static func _encode_value(peer: StreamPeerBuffer, value: Variant, depth: int) -> String:
 	if depth > MAX_DEPTH:
 		return "MessagePack nesting exceeds depth %d" % MAX_DEPTH
@@ -257,31 +256,40 @@ static func _encode_value(peer: StreamPeerBuffer, value: Variant, depth: int) ->
 		TYPE_BOOL:
 			peer.put_u8(0xC3 if value else 0xC2)
 		TYPE_INT:
+			@warning_ignore("unsafe_call_argument")
 			_encode_integer(peer, value)
 		TYPE_FLOAT:
+			@warning_ignore("unsafe_call_argument")
 			# Upstream game data is JSON-compatible: the server-side JSON
 			# decode collapses non-finite doubles, so refuse them instead of
 			# putting altered values on the wire (issue #83, #76 precedent).
 			if not is_finite(value):
 				return "non-finite float is not JSON-representable"
 			peer.put_u8(0xCB)
+			@warning_ignore("unsafe_call_argument")
 			peer.put_double(value)
 		TYPE_STRING:
+			@warning_ignore("unsafe_call_argument")
 			_encode_string(peer, value)
 		TYPE_PACKED_BYTE_ARRAY:
+			@warning_ignore("unsafe_call_argument", "unsafe_method_access")
 			_put_length(peer, -1, 0xC4, 0xC5, value.size(), -1)
+			@warning_ignore("unsafe_call_argument")
 			peer.put_data(value)
 		TYPE_ARRAY:
+			@warning_ignore("unsafe_call_argument", "unsafe_method_access")
 			_put_count_length(peer, 0x90, 0xDC, value.size())
 			for entry: Variant in value:
 				var problem := _encode_value(peer, entry, depth + 1)
 				if not problem.is_empty():
 					return problem
 		TYPE_DICTIONARY:
+			@warning_ignore("unsafe_call_argument", "unsafe_method_access")
 			_put_count_length(peer, 0x80, 0xDE, value.size())
 			for key: Variant in value:
 				if typeof(key) != TYPE_STRING:
 					return "MessagePack map keys must be strings"
+				@warning_ignore("unsafe_call_argument")
 				_encode_string(peer, key)
 				var problem := _encode_value(peer, value[key], depth + 1)
 				if not problem.is_empty():

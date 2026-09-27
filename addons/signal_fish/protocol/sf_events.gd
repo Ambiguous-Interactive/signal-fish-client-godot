@@ -22,21 +22,24 @@ const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd"
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 
-@warning_ignore("unsafe_call_argument")
+
 static func decode_text(text: String) -> RefCounted:
 	var decoded := SFEnvelopeScript.decode_text(text)
 	if not decoded["ok"]:
+		@warning_ignore("unsafe_call_argument")
 		return _protocol_error(decoded["error"])
+	@warning_ignore("unsafe_call_argument")
 	return decode_envelope(decoded["envelope"])
 
 
-@warning_ignore("unsafe_call_argument")
 static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 	if depth > MAX_MESSAGE_DEPTH:
 		return _protocol_error("message nesting exceeds depth %d" % MAX_MESSAGE_DEPTH, envelope)
 	var decoded := SFEnvelopeScript.decode_envelope(envelope)
 	if not decoded["ok"]:
+		@warning_ignore("unsafe_call_argument")
 		return _protocol_error(decoded["error"], envelope)
+	@warning_ignore("unsafe_call_argument")
 	var type_name := String(envelope["type"])
 	var data := SFEnvelopeScript.data_or_empty(envelope)
 	match type_name:
@@ -57,6 +60,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			)
 			if not authentication_error_code_error.is_empty():
 				return _protocol_error(authentication_error_code_error, envelope)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"authentication_error",
@@ -71,6 +75,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			var room_join_error_code_error := _validate_optional_error_code(data, "RoomJoinFailed")
 			if not room_join_error_code_error.is_empty():
 				return _protocol_error(room_join_error_code_error, envelope)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"room_join_failed",
@@ -85,6 +90,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			var player_error := SFTypesScript.validate_player_info(data["player"])
 			if not player_error.is_empty():
 				return _protocol_error(player_error, envelope)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"player_joined",
@@ -98,6 +104,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 				return _protocol_error(
 					"PlayerLeft player_id must be a lowercase hyphenated UUID", envelope
 				)
+			@warning_ignore("unsafe_call_argument")
 			return _event(type_name, &"player_left", [String(data["player_id"])], envelope)
 		"GameData":
 			if not _has_string(data, "from_player") or not data.has("data"):
@@ -111,6 +118,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			var game_data_payload_error := SFTypeUtils.passthrough_payload_error(data["data"])
 			if not game_data_payload_error.is_empty():
 				return _protocol_error(game_data_payload_error, envelope)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"game_data_received",
@@ -137,7 +145,9 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 					"AuthorityChanged authority_player must be a lowercase hyphenated UUID",
 					envelope
 				)
+			@warning_ignore("unsafe_call_argument")
 			var authority_player := "" if authority_value == null else String(authority_value)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"authority_changed",
@@ -158,6 +168,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			)
 			if not authority_error_code_error.is_empty():
 				return _protocol_error(authority_error_code_error, envelope)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"authority_response",
@@ -197,6 +208,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 				return _protocol_error(
 					"NewPeer peer_id must be a lowercase hyphenated UUID", envelope
 				)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"new_peer",
@@ -227,6 +239,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 				== SFSessionTypesScript.TransportKind.UNKNOWN
 			):
 				return _protocol_error("PeerTransportStatus transport is unknown", envelope)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"peer_transport_status",
@@ -247,6 +260,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			)
 			if not reconnection_error_code_error.is_empty():
 				return _protocol_error(reconnection_error_code_error, envelope)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"reconnection_failed",
@@ -260,6 +274,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 				return _protocol_error(
 					"PlayerReconnected player_id must be a lowercase hyphenated UUID", envelope
 				)
+			@warning_ignore("unsafe_call_argument")
 			return _event(type_name, &"player_reconnected", [String(data["player_id"])], envelope)
 		"SpectatorJoined":
 			return _decode_spectator_joined(type_name, data, envelope)
@@ -271,6 +286,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			)
 			if not spectator_join_error_code_error.is_empty():
 				return _protocol_error(spectator_join_error_code_error, envelope)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"spectator_join_failed",
@@ -336,6 +352,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 					"NewSpectatorJoined current_spectators: %s" % new_current_spectators_error,
 					envelope
 				)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"new_spectator_joined",
@@ -367,6 +384,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 					"SpectatorDisconnected current_spectators: %s" % disconnected_spectators_error,
 					envelope
 				)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"spectator_disconnected",
@@ -383,6 +401,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			var server_error_code_error := _validate_optional_error_code(data, "Error")
 			if not server_error_code_error.is_empty():
 				return _protocol_error(server_error_code_error, envelope)
+			@warning_ignore("unsafe_call_argument")
 			return _event(
 				type_name,
 				&"server_error",
@@ -393,7 +412,6 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			return _protocol_error("unknown message type: %s" % type_name, envelope)
 
 
-@warning_ignore("unsafe_call_argument")
 static func _decode_authenticated(
 	type_name: String, data: Dictionary, envelope: Dictionary
 ) -> RefCounted:
@@ -408,6 +426,7 @@ static func _decode_authenticated(
 		and typeof(data["organization"]) != TYPE_STRING
 	):
 		return _protocol_error("Authenticated organization must be a string", envelope)
+	@warning_ignore("unsafe_call_argument")
 	return _event(
 		type_name,
 		&"authenticated",
@@ -447,7 +466,6 @@ static func _decode_room_joined(
 	return _event(type_name, &"room_joined", [SFTypesScript.make_room_joined_info(data)], envelope)
 
 
-@warning_ignore("unsafe_call_argument")
 static func _decode_game_data_binary(
 	type_name: String, data: Dictionary, envelope: Dictionary
 ) -> RefCounted:
@@ -459,6 +477,7 @@ static func _decode_game_data_binary(
 		return _protocol_error(
 			"GameDataBinary requires from_player, encoding, and payload", envelope
 		)
+	@warning_ignore("unsafe_call_argument")
 	if String(data["encoding"]).is_empty():
 		return _protocol_error("GameDataBinary encoding must not be empty", envelope)
 	# The binary-frame path enforces a 16-byte UUID and formats it as
@@ -471,8 +490,10 @@ static func _decode_game_data_binary(
 		)
 	var payload_result := SFBinaryCodecScript.decode_payload(data["payload"])
 	if not payload_result["ok"]:
+		@warning_ignore("unsafe_call_argument")
 		return _protocol_error(payload_result["error"], envelope)
 	var encoding: int = SFTypesScript.game_data_encoding_from_string(data["encoding"])
+	@warning_ignore("unsafe_call_argument")
 	return _event(
 		type_name,
 		&"game_data_binary_received",
@@ -489,7 +510,6 @@ static func _decode_game_data_binary(
 ## consumers must null-check [code]args[2][/code] before indexing.
 ## [code]generation[/code] is "" when the sender's
 ## legacy Server 0.4 plan had none.
-@warning_ignore("unsafe_call_argument")
 static func _decode_signal(type_name: String, data: Dictionary, envelope: Dictionary) -> RefCounted:
 	if not _has_string(data, "from") or not data.has("signal"):
 		return _protocol_error("Signal requires from and signal", envelope)
@@ -510,6 +530,7 @@ static func _decode_signal(type_name: String, data: Dictionary, envelope: Dictio
 	var signal_payload_error := SFTypeUtils.passthrough_payload_error(data["signal"])
 	if not signal_payload_error.is_empty():
 		return _protocol_error(signal_payload_error, envelope)
+	@warning_ignore("unsafe_call_argument")
 	return _event(
 		type_name,
 		&"signal_received",
@@ -518,7 +539,6 @@ static func _decode_signal(type_name: String, data: Dictionary, envelope: Dictio
 	)
 
 
-@warning_ignore("unsafe_call_argument")
 static func _decode_lobby_state_changed(
 	type_name: String, data: Dictionary, envelope: Dictionary
 ) -> RefCounted:
@@ -543,6 +563,7 @@ static func _decode_lobby_state_changed(
 		return _protocol_error(
 			"LobbyStateChanged ready_players must be lowercase hyphenated UUIDs", envelope
 		)
+	@warning_ignore("unsafe_call_argument")
 	return _event(
 		type_name,
 		&"lobby_state_changed",
@@ -555,7 +576,6 @@ static func _decode_lobby_state_changed(
 	)
 
 
-@warning_ignore("unsafe_call_argument", "unsafe_method_access", "unsafe_property_access")
 static func _decode_reconnected(
 	type_name: String, data: Dictionary, envelope: Dictionary, depth := 0
 ) -> RefCounted:
@@ -563,6 +583,7 @@ static func _decode_reconnected(
 		return _protocol_error("Reconnected requires missed_events", envelope)
 	var missed_source: Array = data["missed_events"]
 	var room_event := _decode_room_joined(type_name, data, envelope)
+	@warning_ignore("unsafe_property_access")
 	if room_event.signal_name == &"protocol_error":
 		return room_event
 	var missed_events: Array = []
@@ -579,6 +600,7 @@ static func _decode_reconnected(
 				_protocol_error("Reconnected missed_events[%d] must be an object" % index, missed)
 			)
 			continue
+		@warning_ignore("unsafe_call_argument")
 		if _is_reconnected_envelope(missed):
 			missed_events.append(
 				_protocol_error(
@@ -593,8 +615,11 @@ static func _decode_reconnected(
 				)
 			)
 			continue
+		@warning_ignore("unsafe_call_argument")
 		var decoded_missed := decode_envelope(missed, depth + 1)
+		@warning_ignore("unsafe_property_access")
 		if decoded_missed.signal_name == &"protocol_error":
+			@warning_ignore("unsafe_property_access")
 			missed_events.append(
 				_protocol_error(
 					"Reconnected missed_events[%d]: %s" % [index, decoded_missed.args[0]], missed
@@ -603,6 +628,7 @@ static func _decode_reconnected(
 			continue
 		missed_events.append(decoded_missed)
 	if missed_source.size() > MAX_MISSED_EVENTS:
+		@warning_ignore("unsafe_method_access")
 		missed_events.append(
 			_protocol_error(
 				(
@@ -620,9 +646,9 @@ static func _decode_reconnected(
 	)
 
 
-@warning_ignore("unsafe_call_argument")
 static func _is_reconnected_envelope(envelope: Dictionary) -> bool:
 	var type_value: Variant = envelope.get("type", null)
+	@warning_ignore("unsafe_call_argument")
 	return typeof(type_value) == TYPE_STRING and String(type_value) == "Reconnected"
 
 
@@ -674,38 +700,38 @@ static func _has_dict(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_DICTIONARY
 
 
-@warning_ignore("unsafe_call_argument")
 static func _validate_required_error_code(data: Dictionary, event_name: String) -> String:
 	if not data.has("error_code") or typeof(data["error_code"]) != TYPE_STRING:
 		return "%s requires string error_code" % event_name
+	@warning_ignore("unsafe_call_argument")
 	if String(data["error_code"]).is_empty():
 		return "%s error_code must not be empty" % event_name
 	return ""
 
 
-@warning_ignore("unsafe_call_argument")
 static func _validate_optional_error_code(data: Dictionary, event_name: String) -> String:
 	if not data.has("error_code") or data["error_code"] == null:
 		return ""
 	if typeof(data["error_code"]) != TYPE_STRING:
 		return "%s error_code must be a string" % event_name
+	@warning_ignore("unsafe_call_argument")
 	if String(data["error_code"]).is_empty():
 		return "%s error_code must not be empty" % event_name
 	return ""
 
 
-@warning_ignore("unsafe_call_argument")
 static func _strings_from_array(values: Array) -> PackedStringArray:
 	var result := PackedStringArray()
 	for value: Variant in values:
+		@warning_ignore("unsafe_call_argument")
 		result.append(String(value))
 	return result
 
 
-@warning_ignore("unsafe_call_argument")
 static func _string_or_empty(value: Variant) -> String:
 	if value == null:
 		return ""
+	@warning_ignore("unsafe_call_argument")
 	return String(value)
 
 

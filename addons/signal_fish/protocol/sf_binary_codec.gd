@@ -1,13 +1,15 @@
 class_name SFBinaryCodec
 extends RefCounted
 
-@warning_ignore("unsafe_call_argument")
+
 static func decode_payload(payload: Variant) -> Dictionary:
 	if typeof(payload) == TYPE_PACKED_BYTE_ARRAY:
 		return {"ok": true, "bytes": payload, "error": ""}
 	if typeof(payload) == TYPE_ARRAY:
+		@warning_ignore("unsafe_call_argument")
 		return _decode_byte_array(payload)
 	if typeof(payload) == TYPE_STRING:
+		@warning_ignore("unsafe_call_argument")
 		return _decode_base64(payload)
 	return {
 		"ok": false,
@@ -27,7 +29,6 @@ static func encode_payload_as_base64(bytes: PackedByteArray) -> String:
 	return Marshalls.raw_to_base64(bytes)
 
 
-@warning_ignore("unsafe_call_argument")
 static func _decode_byte_array(values: Array) -> Dictionary:
 	var bytes := PackedByteArray()
 	for index: int in values.size():
@@ -40,7 +41,9 @@ static func _decode_byte_array(values: Array) -> Dictionary:
 				"error":
 				"payload byte array[%d] contains a non-number: %s" % [index, var_to_str(value)]
 			}
+		@warning_ignore("unsafe_call_argument")
 		var int_value := int(value)
+		@warning_ignore("unsafe_call_argument")
 		if float(int_value) != float(value) or int_value < 0 or int_value > 255:
 			return {
 				"ok": false,
@@ -55,13 +58,13 @@ static func _decode_byte_array(values: Array) -> Dictionary:
 	return {"ok": true, "bytes": bytes, "error": ""}
 
 
-@warning_ignore("unsafe_call_argument")
 static func _decode_base64(value: String) -> Dictionary:
 	if value.is_empty():
 		return {"ok": true, "bytes": PackedByteArray(), "error": ""}
 	var normalized_result := _normalize_base64(value)
 	if not normalized_result["ok"]:
 		return {"ok": false, "bytes": PackedByteArray(), "error": normalized_result["error"]}
+	@warning_ignore("unsafe_call_argument")
 	var normalized := String(normalized_result["value"])
 	var bytes := Marshalls.base64_to_raw(normalized)
 	if Marshalls.raw_to_base64(bytes) != normalized:

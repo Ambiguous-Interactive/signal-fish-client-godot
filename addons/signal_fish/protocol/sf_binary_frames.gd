@@ -36,11 +36,11 @@ const _REQUIRED_FIELDS := ["from_player", "encoding", "payload"]
 const _UUID_CACHE_LIMIT := 256
 static var _uuid_cache: Dictionary = {}
 
+
 ## Decodes one binary game-data envelope. Returns
 ## [code]{ok: bool, from_player: String, encoding: int, payload: PackedByteArray,
 ## version: int, error: String}[/code]. [code]from_player[/code] is the
 ## canonical lowercase UUID string.
-@warning_ignore("inference_on_variant")
 static func decode_envelope(bytes: PackedByteArray) -> Dictionary:
 	var result := {
 		"ok": false,
@@ -69,6 +69,7 @@ static func decode_envelope(bytes: PackedByteArray) -> Dictionary:
 		if not _KNOWN_FIELDS.has(key):
 			result["error"] = "binary game-data envelope contains unknown field %s" % key
 			return result
+		@warning_ignore("inference_on_variant")
 		var value := _read_field(peer, key)
 		if value == null:
 			result["error"] = "binary game-data field %s is malformed" % key
@@ -110,10 +111,10 @@ static func _validate_fields(fields: Dictionary, result: Dictionary) -> Dictiona
 	return result
 
 
-@warning_ignore("unsafe_call_argument")
 static func _encoding_token(value: Variant, allow_v3_tokens: bool) -> int:
 	if typeof(value) != TYPE_STRING:
 		return SFTypesScript.GameDataEncoding.UNKNOWN
+	@warning_ignore("unsafe_call_argument")
 	match String(value):
 		"message_pack":
 			return SFTypesScript.GameDataEncoding.MESSAGE_PACK
@@ -138,7 +139,6 @@ static func _encoding_token(value: Variant, allow_v3_tokens: bool) -> int:
 ## [code]payload[/code] are binary (16 bytes for the UUID), [code]encoding[/code]
 ## is a string, and [code]seq[/code]/[code]epoch[/code] accept any unsigned
 ## integer marker width (rust parity).
-@warning_ignore("unsafe_call_argument")
 static func _read_field(peer: StreamPeerBuffer, key: String) -> Variant:
 	if peer.get_available_bytes() < 1:
 		return null
@@ -151,6 +151,7 @@ static func _read_field(peer: StreamPeerBuffer, key: String) -> Variant:
 			if key == "from_player":
 				if length != _UUID_BYTES:
 					return null
+				@warning_ignore("unsafe_call_argument")
 				return _uuid_string(peer.get_data(length)[1])
 			return peer.get_data(length)[1]
 		"encoding":

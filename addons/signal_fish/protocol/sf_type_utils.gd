@@ -7,6 +7,7 @@ const MAX_MESSAGE_DEPTH := 16
 
 const _UUID_HEX_DIGITS := "0123456789abcdef"
 
+
 ## Canonical text-path identifier gate (issue #151): every upstream identifier
 ## (`PlayerId`, `RoomId`, `SessionGeneration`) is a `uuid::Uuid`, and serde
 ## serializes that as lowercase hyphenated text - the only spelling a
@@ -16,10 +17,10 @@ const _UUID_HEX_DIGITS := "0123456789abcdef"
 ## 16-byte UUIDs to exactly this string, so both paths decode one id to one
 ## value. Parse-acceptance of braced/urn/uppercase spellings never reaches the
 ## wire and stays refused.
-@warning_ignore("unsafe_cast")
 static func is_canonical_uuid_text(value: Variant) -> bool:
 	if typeof(value) != TYPE_STRING:
 		return false
+	@warning_ignore("unsafe_cast")
 	var text := value as String
 	if text.length() != 36:
 		return false
@@ -33,17 +34,17 @@ static func is_canonical_uuid_text(value: Variant) -> bool:
 	return true
 
 
-@warning_ignore("unsafe_call_argument")
 static func enum_value(mapping: Dictionary, value: Variant, unknown_value: int) -> int:
 	if typeof(value) != TYPE_STRING:
 		return unknown_value
+	@warning_ignore("unsafe_call_argument")
 	return int(mapping.get(String(value), unknown_value))
 
 
-@warning_ignore("unsafe_call_argument")
 static func is_integral_number(value: Variant) -> bool:
 	if typeof(value) != TYPE_INT and typeof(value) != TYPE_FLOAT:
 		return false
+	@warning_ignore("unsafe_call_argument")
 	var number := float(value)
 	# Non-finite magnitudes are not integers, and `floor(INF) == INF` would
 	# otherwise pass them to int()-collapsing call sites (issue #81).
@@ -66,12 +67,12 @@ static func bool_or_false(value: Variant) -> bool:
 ## non-negative-only gate (SFTypes._is_i64_integer), sign is preserved so a
 ## hostile negative stays visible instead of reading as the 0 "absent"
 ## sentinel.
-@warning_ignore("unsafe_call_argument")
 static func is_i64_integer(value: Variant) -> bool:
 	if typeof(value) == TYPE_INT:
 		return true
 	if typeof(value) != TYPE_FLOAT or not is_integral_number(value):
 		return false
+	@warning_ignore("unsafe_call_argument")
 	return float(value) > -9223372036854775808.0 and float(value) < 9223372036854775808.0
 
 
@@ -81,11 +82,11 @@ static func is_i64_integer(value: Variant) -> bool:
 ## MessagePack float markers can carry NaN/±Inf — upstream serde rejects both
 ## classes outright). Fail closed via `protocol_error`; JSON null stays legal.
 ## Returns "" when the tree is acceptable (issue #88).
-@warning_ignore("unsafe_call_argument")
 static func passthrough_payload_error(value: Variant, depth := 0) -> String:
 	if depth > MAX_MESSAGE_DEPTH:
 		return "passthrough payload nesting exceeds depth %d" % MAX_MESSAGE_DEPTH
 	var kind := typeof(value)
+	@warning_ignore("unsafe_call_argument")
 	if kind == TYPE_FLOAT and not is_finite(value):
 		return "passthrough payload contains a non-finite number"
 	if kind == TYPE_ARRAY:
@@ -108,22 +109,23 @@ static func passthrough_payload_error(value: Variant, depth := 0) -> String:
 ## arrays from typed state must therefore preserve raw entries (or let the
 ## outbound validation refuse the frame loudly) instead of silently
 ## shortening them.
-@warning_ignore("unsafe_call_argument")
 static func coerce_string_array(values: Variant) -> PackedStringArray:
 	var result := PackedStringArray()
 	if typeof(values) != TYPE_ARRAY:
 		return result
 	for value: Variant in values:
 		if typeof(value) == TYPE_STRING:
+			@warning_ignore("unsafe_call_argument")
 			result.append(String(value))
 	return result
 
 
-@warning_ignore("unsafe_method_access")
 static func objects_to_dicts(values: Array) -> Array:
 	var result: Array = []
 	for value: Variant in values:
+		@warning_ignore("unsafe_method_access")
 		if typeof(value) == TYPE_OBJECT and value.has_method("to_dict"):
+			@warning_ignore("unsafe_method_access")
 			result.append(value.to_dict())
 	return result
 
@@ -133,7 +135,6 @@ static func objects_to_dicts(values: Array) -> Array:
 ## entries pass through verbatim (containers copied, per the no-aliasing
 ## contract) instead of shortening the roster. Falls back to the typed
 ## objects alone when [param raw] does not carry [param key] as an array.
-@warning_ignore("unsafe_method_access")
 static func roster_to_dicts(raw: Dictionary, key: String, objects: Array) -> Array:
 	var values: Variant = raw.get(key)
 	if typeof(values) != TYPE_ARRAY:
@@ -143,9 +144,11 @@ static func roster_to_dicts(raw: Dictionary, key: String, objects: Array) -> Arr
 	for value: Variant in values:
 		if typeof(value) == TYPE_DICTIONARY and next_object < objects.size():
 			var entry: Variant = objects[next_object]
+			@warning_ignore("unsafe_method_access")
 			result.append(entry.call("to_dict"))
 			next_object += 1
 		elif typeof(value) == TYPE_ARRAY or typeof(value) == TYPE_DICTIONARY:
+			@warning_ignore("unsafe_method_access")
 			result.append(value.duplicate(true))
 		else:
 			result.append(value)

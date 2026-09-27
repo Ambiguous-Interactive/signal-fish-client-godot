@@ -10,8 +10,9 @@ config/icon="res://demo/icon.svg"
 ; errors, so untyped or unsafely-typed code fails CI (issues #35, #42, #170).
 ; exclude_addons=false is load-bearing: the engine default exempts
 ; res://addons from every warning, which silenced these errors for the
-; entire addon. Functions that still carry untyped/unsafe debt carry an
-; explicit @warning_ignore marker; deleting one requires typing the code.
+; entire addon. Statements that still carry untyped/unsafe debt carry an
+; explicit @warning_ignore marker (per statement: portable across the
+; CI engine matrix); deleting one requires typing that statement.
 [debug]
 gdscript/warnings/enable=true
 gdscript/warnings/exclude_addons=false

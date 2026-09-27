@@ -106,8 +106,8 @@ class RateLimitInfo:
 		per_hour = _int_or_zero(data.get("per_hour"))
 		per_day = _int_or_zero(data.get("per_day"))
 
-	@warning_ignore("unsafe_call_argument")
 	func _int_or_zero(value: Variant) -> int:
+		@warning_ignore("unsafe_call_argument")
 		return int(value) if TypeUtils.is_i64_integer(value) else 0
 
 	func to_dict() -> Dictionary:
@@ -125,7 +125,6 @@ class PlayerNameRules:
 	var additional_allowed_characters: String = ""
 	var raw: Dictionary = {}
 
-	@warning_ignore("unsafe_call_argument")
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
 		max_length = _int_or_zero(data.get("max_length"))
@@ -137,12 +136,13 @@ class PlayerNameRules:
 		)
 		allowed_symbols = TypeUtils.coerce_string_array(data.get("allowed_symbols", []))
 		var additional_characters: Variant = data.get("additional_allowed_characters", "")
+		@warning_ignore("unsafe_call_argument")
 		additional_allowed_characters = (
 			String(additional_characters) if typeof(additional_characters) == TYPE_STRING else ""
 		)
 
-	@warning_ignore("unsafe_call_argument")
 	func _int_or_zero(value: Variant) -> int:
+		@warning_ignore("unsafe_call_argument")
 		return int(value) if TypeUtils.is_i64_integer(value) else 0
 
 	func to_dict() -> Dictionary:
@@ -171,7 +171,6 @@ class ProtocolInfo:
 	var max_outbound_message_size: int = 0
 	var raw: Dictionary = {}
 
-	@warning_ignore("unsafe_call_argument")
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
 		platform = _string_or_empty(data.get("platform"))
@@ -185,6 +184,7 @@ class ProtocolInfo:
 			data.has("player_name_rules")
 			and typeof(data.get("player_name_rules")) == TYPE_DICTIONARY
 		):
+			@warning_ignore("unsafe_call_argument")
 			player_name_rules = PlayerNameRules.new(data["player_name_rules"])
 		protocol_version = _int_or_zero(data.get("protocol_version"))
 		min_protocol_version = _int_or_zero(data.get("min_protocol_version"))
@@ -195,29 +195,29 @@ class ProtocolInfo:
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
-	@warning_ignore("unsafe_call_argument")
 	func _coerce_game_data_encodings(values: Variant) -> Array:
 		var result: Array = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
 			if typeof(value) == TYPE_STRING:
+				@warning_ignore("unsafe_call_argument")
 				result.append(
 					int(GAME_DATA_ENCODING_FROM_STRING.get(String(value), GameDataEncoding.UNKNOWN))
 				)
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _int_or_zero(value: Variant) -> int:
+		@warning_ignore("unsafe_call_argument")
 		# Sign is preserved (issue #96): a hostile negative must stay visible
 		# instead of clamping onto the 0 "absent" sentinel. Decode-path
 		# values are validated non-negative upstream of this class.
 		return int(value) if TypeUtils.is_i64_integer(value) else 0
 
-	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
+		@warning_ignore("unsafe_call_argument")
 		return String(value)
 
 
@@ -237,7 +237,6 @@ class ConnectionInfo:
 	var data: Variant = null
 	var raw: Dictionary = {}
 
-	@warning_ignore("unsafe_call_argument")
 	func _init(input: Dictionary = {}) -> void:
 		raw = input.duplicate(true)
 		type = _string_or_empty(input.get("type"))
@@ -247,6 +246,7 @@ class ConnectionInfo:
 		# assigned after it (issue #81). An out-of-i64-range magnitude must
 		# not collapse into a platform-dependent value (issue #96).
 		var port_value: Variant = input.get("port")
+		@warning_ignore("unsafe_call_argument")
 		port = int(port_value) if TypeUtils.is_i64_integer(port_value) else 0
 		if type == "relay" and (not input.has("transport") or input["transport"] == null):
 			transport = RelayTransport.AUTO
@@ -264,6 +264,7 @@ class ConnectionInfo:
 		# (issues #81/#96).
 		var client_id_value: Variant = input.get("client_id")
 		if TypeUtils.is_i64_integer(client_id_value):
+			@warning_ignore("unsafe_call_argument")
 			client_id = int(client_id_value)
 		else:
 			client_id = -1
@@ -273,7 +274,6 @@ class ConnectionInfo:
 		# tree: one object must not hold two divergent views (issue #73).
 		data = raw.get("data")
 
-	@warning_ignore("unsafe_call_argument", "unsafe_cast")
 	func to_dict() -> Dictionary:
 		if type.is_empty():
 			return raw.duplicate(true)
@@ -294,6 +294,7 @@ class ConnectionInfo:
 				if transport == RelayTransport.UNKNOWN:
 					result.erase("transport")
 				else:
+					@warning_ignore("unsafe_call_argument")
 					result["transport"] = String(
 						RELAY_TRANSPORT_TO_STRING.get(transport, "unknown")
 					)
@@ -309,6 +310,7 @@ class ConnectionInfo:
 				# message loudly instead.
 				var candidates: Variant = raw.get("ice_candidates")
 				if typeof(candidates) == TYPE_ARRAY:
+					@warning_ignore("unsafe_cast")
 					result["ice_candidates"] = (candidates as Array).duplicate(true)
 				else:
 					result["ice_candidates"] = Array(ice_candidates)
@@ -326,15 +328,15 @@ class ConnectionInfo:
 	## Open payloads (JSON null, scalars) pass through verbatim; containers
 	## are deep-copied so to_dict() never aliases the caller's wire tree
 	## (issue #73).
-	@warning_ignore("unsafe_cast")
 	func _copied_data(value: Variant) -> Variant:
 		if typeof(value) == TYPE_DICTIONARY:
+			@warning_ignore("unsafe_cast")
 			return (value as Dictionary).duplicate(true)
 		if typeof(value) == TYPE_ARRAY:
+			@warning_ignore("unsafe_cast")
 			return (value as Array).duplicate(true)
 		return value
 
-	@warning_ignore("unsafe_call_argument")
 	func _normalize_common_wire_fields(result: Dictionary) -> void:
 		for key: String in CONNECTION_INFO_OUTBOUND_NULL_FIELDS:
 			if result.has(key) and result[key] == null:
@@ -347,12 +349,13 @@ class ConnectionInfo:
 				result.erase("transport")
 		for key: String in ["port", "client_id"]:
 			if result.has(key) and TypeUtils.is_integral_number(result[key]):
+				@warning_ignore("unsafe_call_argument")
 				result[key] = int(result[key])
 
-	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
+		@warning_ignore("unsafe_call_argument")
 		return String(value)
 
 
@@ -366,7 +369,6 @@ class PlayerInfo:
 	var connection_info: ConnectionInfo = null
 	var raw: Dictionary = {}
 
-	@warning_ignore("unsafe_call_argument")
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
 		id = _string_or_empty(data.get("id"))
@@ -375,6 +377,7 @@ class PlayerInfo:
 		is_ready = TypeUtils.bool_or_false(data.get("is_ready"))
 		connected_at = _string_or_empty(data.get("connected_at"))
 		if data.has("connection_info") and typeof(data.get("connection_info")) == TYPE_DICTIONARY:
+			@warning_ignore("unsafe_call_argument")
 			connection_info = ConnectionInfo.new(data["connection_info"])
 
 	func to_dict() -> Dictionary:
@@ -383,10 +386,10 @@ class PlayerInfo:
 			result["connection_info"] = connection_info.to_dict()
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
+		@warning_ignore("unsafe_call_argument")
 		return String(value)
 
 
@@ -406,10 +409,10 @@ class SpectatorInfo:
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
-	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
+		@warning_ignore("unsafe_call_argument")
 		return String(value)
 
 
@@ -422,7 +425,6 @@ class PeerConnectionInfo:
 	var connection_info: ConnectionInfo = null
 	var raw: Dictionary = {}
 
-	@warning_ignore("unsafe_call_argument")
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
 		player_id = _string_or_empty(data.get("player_id"))
@@ -430,6 +432,7 @@ class PeerConnectionInfo:
 		is_authority = TypeUtils.bool_or_false(data.get("is_authority"))
 		relay_type = _string_or_empty(data.get("relay_type"))
 		if data.has("connection_info") and typeof(data.get("connection_info")) == TYPE_DICTIONARY:
+			@warning_ignore("unsafe_call_argument")
 			connection_info = ConnectionInfo.new(data["connection_info"])
 
 	func to_dict() -> Dictionary:
@@ -438,10 +441,10 @@ class PeerConnectionInfo:
 			result["connection_info"] = connection_info.to_dict()
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
+		@warning_ignore("unsafe_call_argument")
 		return String(value)
 
 
@@ -458,13 +461,14 @@ class SenderWatermark:
 	var seq: int = 0
 	var raw: Dictionary = {}
 
-	@warning_ignore("unsafe_call_argument")
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
 		player_id = data["player_id"] if _has_string(data, "player_id") else ""
+		@warning_ignore("unsafe_call_argument")
 		# Constructors cannot report errors: a hostile negative takes the 0
 		# absent sentinel instead of reading as valid (issue #73 class).
 		epoch = int(data["epoch"]) if _is_non_negative_integer(data.get("epoch")) else 0
+		@warning_ignore("unsafe_call_argument")
 		seq = int(data["seq"]) if _is_non_negative_integer(data.get("seq")) else 0
 
 	func to_dict() -> Dictionary:
@@ -533,8 +537,8 @@ class RoomJoinedInfo:
 		)
 		sender_watermarks = _coerce_watermarks(data.get("sender_watermarks", []))
 
-	@warning_ignore("unsafe_call_argument")
 	func _int_or_zero(value: Variant) -> int:
+		@warning_ignore("unsafe_call_argument")
 		return int(value) if TypeUtils.is_i64_integer(value) else 0
 
 	func to_dict() -> Dictionary:
@@ -548,50 +552,50 @@ class RoomJoinedInfo:
 			)
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _coerce_players(values: Variant) -> Array:
 		var result: Array = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
 			if typeof(value) == TYPE_DICTIONARY:
+				@warning_ignore("unsafe_call_argument")
 				result.append(PlayerInfo.new(value))
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _coerce_ice_servers(values: Variant) -> Array:
 		var result: Array = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
 			if typeof(value) == TYPE_DICTIONARY:
+				@warning_ignore("unsafe_call_argument")
 				result.append(SessionTypes.IceServerInfo.new(value))
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _coerce_spectators(values: Variant) -> Array:
 		var result: Array = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
 			if typeof(value) == TYPE_DICTIONARY:
+				@warning_ignore("unsafe_call_argument")
 				result.append(SpectatorInfo.new(value))
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _coerce_watermarks(values: Variant) -> Array:
 		var result: Array = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
 			if typeof(value) == TYPE_DICTIONARY:
+				@warning_ignore("unsafe_call_argument")
 				result.append(SenderWatermark.new(value))
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
+		@warning_ignore("unsafe_call_argument")
 		return String(value)
 
 
@@ -630,36 +634,36 @@ class SpectatorJoinedInfo:
 		)
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _coerce_players(values: Variant) -> Array:
 		var result: Array = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
 			if typeof(value) == TYPE_DICTIONARY:
+				@warning_ignore("unsafe_call_argument")
 				result.append(PlayerInfo.new(value))
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _coerce_spectators(values: Variant) -> Array:
 		var result: Array = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
 			if typeof(value) == TYPE_DICTIONARY:
+				@warning_ignore("unsafe_call_argument")
 				result.append(SpectatorInfo.new(value))
 		return result
 
-	@warning_ignore("unsafe_call_argument")
 	func _coerce_spectator_reason(value: Variant) -> int:
 		if typeof(value) != TYPE_STRING:
 			return SpectatorReason.UNKNOWN
+		@warning_ignore("unsafe_call_argument")
 		return int(SPECTATOR_REASON_FROM_STRING.get(String(value), SpectatorReason.UNKNOWN))
 
-	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
+		@warning_ignore("unsafe_call_argument")
 		return String(value)
 
 
@@ -687,51 +691,51 @@ class DecodedEvent:
 		raw = p_raw
 
 
-@warning_ignore("unsafe_call_argument")
 static func game_data_encoding_from_string(value: Variant) -> int:
 	if typeof(value) != TYPE_STRING:
 		return GameDataEncoding.UNKNOWN
+	@warning_ignore("unsafe_call_argument")
 	return int(GAME_DATA_ENCODING_FROM_STRING.get(String(value), GameDataEncoding.UNKNOWN))
 
 
-@warning_ignore("unsafe_call_argument")
 static func game_data_encoding_to_string(value: int) -> String:
+	@warning_ignore("unsafe_call_argument")
 	return String(GAME_DATA_ENCODING_TO_STRING.get(value, "unknown"))
 
 
-@warning_ignore("unsafe_call_argument")
 static func lobby_state_from_string(value: Variant) -> int:
 	if typeof(value) != TYPE_STRING:
 		return LobbyState.UNKNOWN
+	@warning_ignore("unsafe_call_argument")
 	return int(LOBBY_STATE_FROM_STRING.get(String(value), LobbyState.UNKNOWN))
 
 
-@warning_ignore("unsafe_call_argument")
 static func lobby_state_to_string(value: int) -> String:
+	@warning_ignore("unsafe_call_argument")
 	return String(LOBBY_STATE_TO_STRING.get(value, "unknown"))
 
 
-@warning_ignore("unsafe_call_argument")
 static func relay_transport_from_string(value: Variant) -> int:
 	if typeof(value) != TYPE_STRING:
 		return RelayTransport.UNKNOWN
+	@warning_ignore("unsafe_call_argument")
 	return int(RELAY_TRANSPORT_FROM_STRING.get(String(value), RelayTransport.UNKNOWN))
 
 
-@warning_ignore("unsafe_call_argument")
 static func relay_transport_to_string(value: int) -> String:
+	@warning_ignore("unsafe_call_argument")
 	return String(RELAY_TRANSPORT_TO_STRING.get(value, "unknown"))
 
 
-@warning_ignore("unsafe_call_argument")
 static func spectator_reason_from_string(value: Variant) -> int:
 	if typeof(value) != TYPE_STRING:
 		return SpectatorReason.UNKNOWN
+	@warning_ignore("unsafe_call_argument")
 	return int(SPECTATOR_REASON_FROM_STRING.get(String(value), SpectatorReason.UNKNOWN))
 
 
-@warning_ignore("unsafe_call_argument")
 static func spectator_reason_to_string(value: int) -> String:
+	@warning_ignore("unsafe_call_argument")
 	return String(SPECTATOR_REASON_TO_STRING.get(value, "unknown"))
 
 
@@ -739,7 +743,6 @@ static func error_code_from_variant(value: Variant) -> int:
 	return SFErrorCodesScript.from_string(value)
 
 
-@warning_ignore("unsafe_call_argument")
 static func validate_optional_spectator_reason(
 	data: Dictionary, key: String, context: String
 ) -> String:
@@ -747,6 +750,7 @@ static func validate_optional_spectator_reason(
 		return ""
 	if typeof(data[key]) != TYPE_STRING:
 		return "%s %s must be a string" % [context, key]
+	@warning_ignore("unsafe_call_argument")
 	if String(data[key]).is_empty():
 		return "%s %s must not be empty" % [context, key]
 	return ""
@@ -762,7 +766,6 @@ static func validate_rate_limit_info(data: Variant) -> String:
 	return ""
 
 
-@warning_ignore("unsafe_call_argument")
 static func validate_protocol_info(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "ProtocolInfo data must be an object"
@@ -780,6 +783,7 @@ static func validate_protocol_info(data: Variant) -> String:
 		for value: Variant in dict["game_data_formats"]:
 			if typeof(value) != TYPE_STRING:
 				return "ProtocolInfo game_data_formats must contain strings"
+			@warning_ignore("unsafe_call_argument")
 			if String(value).is_empty():
 				return "ProtocolInfo game_data_formats must not contain empty strings"
 	if dict.has("player_name_rules") and dict["player_name_rules"] != null:
@@ -797,6 +801,7 @@ static func validate_protocol_info(data: Variant) -> String:
 		if not _is_string_array_value(dict["transports"]):
 			return "ProtocolInfo transports must be a string array"
 		for token: Variant in dict["transports"]:
+			@warning_ignore("unsafe_call_argument")
 			if not MESSAGE_TRANSPORT_FROM_STRING.has(String(token)):
 				return "ProtocolInfo transports contains an unknown token"
 	return ""
@@ -991,15 +996,16 @@ static func validate_peer_connections_array(values: Variant) -> String:
 	return ""
 
 
-@warning_ignore("unsafe_call_argument")
 static func validate_connection_info(data: Variant, allow_unknown_strings: bool = true) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "connection_info must be an object"
 	var dict: Dictionary = data
 	if not _has_string(dict, "type"):
 		return "connection_info requires string type"
+	@warning_ignore("unsafe_call_argument")
 	if String(dict["type"]).is_empty():
 		return "connection_info type must not be empty"
+	@warning_ignore("unsafe_call_argument")
 	match String(dict["type"]):
 		"direct":
 			var direct_error := _require_connection_info_fields(dict, "direct", ["host", "port"])
@@ -1046,7 +1052,6 @@ static func validate_outbound_connection_info(data: Variant) -> String:
 	return ""
 
 
-@warning_ignore("unsafe_call_argument")
 static func _validate_common_connection_info_fields(
 	dict: Dictionary, allow_unknown_strings: bool
 ) -> String:
@@ -1059,6 +1064,7 @@ static func _validate_common_connection_info_fields(
 	):
 		return "connection_info port must be u16"
 	if dict.has("transport"):
+		@warning_ignore("unsafe_call_argument")
 		if (
 			dict["transport"] != null
 			and (typeof(dict["transport"]) != TYPE_STRING or String(dict["transport"]).is_empty())
@@ -1125,35 +1131,35 @@ static func make_decoded_event(
 	return DecodedEvent.new(type_name, signal_name, args, raw)
 
 
-@warning_ignore("unsafe_call_argument")
 static func players_from_array(values: Variant) -> Array:
 	var result: Array = []
 	if typeof(values) != TYPE_ARRAY:
 		return result
 	for value: Variant in values:
 		if typeof(value) == TYPE_DICTIONARY:
+			@warning_ignore("unsafe_call_argument")
 			result.append(PlayerInfo.new(value))
 	return result
 
 
-@warning_ignore("unsafe_call_argument")
 static func spectators_from_array(values: Variant) -> Array:
 	var result: Array = []
 	if typeof(values) != TYPE_ARRAY:
 		return result
 	for value: Variant in values:
 		if typeof(value) == TYPE_DICTIONARY:
+			@warning_ignore("unsafe_call_argument")
 			result.append(SpectatorInfo.new(value))
 	return result
 
 
-@warning_ignore("unsafe_call_argument")
 static func peer_connections_from_array(values: Variant) -> Array:
 	var result: Array = []
 	if typeof(values) != TYPE_ARRAY:
 		return result
 	for value: Variant in values:
 		if typeof(value) == TYPE_DICTIONARY:
+			@warning_ignore("unsafe_call_argument")
 			result.append(PeerConnectionInfo.new(value))
 	return result
 
@@ -1218,10 +1224,10 @@ static func _is_optional_string(data: Dictionary, key: String) -> bool:
 
 ## Absent or JSON-null `Reconnected.replay` (v3-only `Option<ReplayStatus>`,
 ## serde skip_serializing_if); a present value must be a known status token.
-@warning_ignore("unsafe_call_argument")
 static func _is_optional_replay_status(data: Dictionary) -> bool:
 	if not data.has("replay") or data["replay"] == null:
 		return true
+	@warning_ignore("unsafe_call_argument")
 	return (
 		typeof(data["replay"]) == TYPE_STRING
 		and REPLAY_STATUS_FROM_STRING.has(String(data["replay"]))
@@ -1232,7 +1238,6 @@ static func _is_optional_replay_status(data: Dictionary) -> bool:
 ## `Vec<SenderWatermark>`); a present value must be an array of watermark
 ## objects with a UUID `player_id`, u32 `epoch`, and
 ## i64-representable `seq` (issue #149).
-@warning_ignore("unsafe_call_argument")
 static func _is_optional_watermarks_array(data: Dictionary) -> bool:
 	if not data.has("sender_watermarks") or data["sender_watermarks"] == null:
 		return true
@@ -1241,10 +1246,13 @@ static func _is_optional_watermarks_array(data: Dictionary) -> bool:
 	for watermark: Variant in data["sender_watermarks"]:
 		if typeof(watermark) != TYPE_DICTIONARY:
 			return false
+		@warning_ignore("unsafe_call_argument")
 		if not _has_id(watermark, "player_id"):
 			return false
+		@warning_ignore("unsafe_call_argument")
 		if not _has_integer_in_range(watermark, "epoch", 0, U32_MAX):
 			return false
+		@warning_ignore("unsafe_call_argument")
 		if not _has_i64_integer(watermark, "seq"):
 			return false
 	return true
@@ -1254,12 +1262,12 @@ static func _is_optional_watermarks_array(data: Dictionary) -> bool:
 ## i64 representability so a hostile value cannot collapse in int()
 ## (issue #73). 2^63 is rejected even though it is the float I64_MAX rounds
 ## to — a present-as-float value that large is hostile, never a real cap.
-@warning_ignore("unsafe_call_argument")
 static func _is_i64_integer(value: Variant) -> bool:
 	if typeof(value) == TYPE_INT:
 		return value >= 0
 	if typeof(value) != TYPE_FLOAT or not TypeUtils.is_integral_number(value):
 		return false
+	@warning_ignore("unsafe_call_argument")
 	return float(value) >= 0.0 and float(value) < 9223372036854775808.0
 
 
@@ -1267,17 +1275,17 @@ static func _has_known_lobby_state(data: Dictionary, key: String) -> bool:
 	return _has_string(data, key) and lobby_state_from_string(data[key]) != LobbyState.UNKNOWN
 
 
-@warning_ignore("unsafe_call_argument")
 static func _is_integer_value_at_least(value: Variant, min_value: int) -> bool:
 	if not TypeUtils.is_integral_number(value):
 		return false
+	@warning_ignore("unsafe_call_argument")
 	return float(value) >= float(min_value)
 
 
-@warning_ignore("unsafe_call_argument")
 static func _is_integer_value_in_range(value: Variant, min_value: int, max_value: int) -> bool:
 	if not _is_integer_value_at_least(value, min_value):
 		return false
+	@warning_ignore("unsafe_call_argument")
 	return float(value) <= float(max_value)
 
 

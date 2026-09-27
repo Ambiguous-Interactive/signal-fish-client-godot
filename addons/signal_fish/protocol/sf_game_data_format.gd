@@ -31,7 +31,6 @@ static func label(encoding: int) -> String:
 ## stand. An empty statement means "no server opinion": keep the preference.
 ## Formats are rendered as wire tokens, not coerced enum ints, so the
 ## diagnostic stays readable (unknown tokens surface as "unknown").
-@warning_ignore("unsafe_call_argument")
 static func downgrade_reason(config_format: String, supported_formats: Array) -> String:
 	if supported_formats.is_empty():
 		return ""
@@ -46,8 +45,10 @@ static func downgrade_reason(config_format: String, supported_formats: Array) ->
 	for value: Variant in supported_formats:
 		match typeof(value):
 			TYPE_INT:
+				@warning_ignore("unsafe_call_argument")
 				labels.append(SFTypesScript.game_data_encoding_to_string(int(value)))
 			TYPE_STRING:
+				@warning_ignore("unsafe_call_argument")
 				labels.append(String(value))
 			_:
 				labels.append(str(value))
