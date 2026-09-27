@@ -5,38 +5,61 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import subprocess
 import sys
 import tarfile
 import tempfile
 from pathlib import Path
 
-# The Asset Library generates the user download from the release tag ref and
-# `git archive` applies `.gitattributes` export-ignore. Per the pinned
-# surface (issue #139), users get the addon, the runnable demo
-# (+ project.godot), and LICENSE/README/CHANGELOG - anything else in the
-# archive is a leak that ships to every user (issue #158).
-REQUIRED_ARCHIVE_ENTRIES = (
-    "CHANGELOG.md",
-    "LICENSE",
-    "README.md",
-    "addons",
-    "demo",
-    "project.godot",
-)
+# The Asset Library builds its download from the release ref. The addon alone
+# belongs in that archive; its local README and LICENSE travel with it.
+REQUIRED_ARCHIVE_ENTRIES = ("addons",)
 ALLOWED_ARCHIVE_ENTRIES = frozenset(REQUIRED_ARCHIVE_ENTRIES)
 TAR_BOOKKEEPING_ENTRIES = frozenset({"pax_global_header"})
+# Update this list when intentionally adding or removing a shipped file.
+# CI then checks the release tag's exact download, not just its directories.
+REQUIRED_ARCHIVE_FILES = frozenset(
+    {
+        "addons/signal_fish/LICENSE",
+        "addons/signal_fish/README.md",
+        "addons/signal_fish/icon.png",
+        "addons/signal_fish/icon.png.import",
+        "addons/signal_fish/plugin.cfg",
+        "addons/signal_fish/plugin.gd",
+        "addons/signal_fish/protocol/sf_binary_codec.gd",
+        "addons/signal_fish/protocol/sf_binary_frames.gd",
+        "addons/signal_fish/protocol/sf_envelope.gd",
+        "addons/signal_fish/protocol/sf_error_codes.gd",
+        "addons/signal_fish/protocol/sf_events.gd",
+        "addons/signal_fish/protocol/sf_game_data_format.gd",
+        "addons/signal_fish/protocol/sf_json_guard.gd",
+        "addons/signal_fish/protocol/sf_log.gd",
+        "addons/signal_fish/protocol/sf_messages.gd",
+        "addons/signal_fish/protocol/sf_msgpack.gd",
+        "addons/signal_fish/protocol/sf_session_types.gd",
+        "addons/signal_fish/protocol/sf_type_utils.gd",
+        "addons/signal_fish/protocol/sf_types.gd",
+        "addons/signal_fish/signal_fish_client.gd",
+        "addons/signal_fish/signal_fish_config.gd",
+        "addons/signal_fish/transport/sf_transport.gd",
+        "addons/signal_fish/transport/sf_websocket_peer_adapter.gd",
+        "addons/signal_fish/transport/sf_websocket_transport.gd",
+        "addons/signal_fish/webrtc/sf_webrtc_mesh.gd",
+    }
+)
 
 
 class ArchiveError(Exception):
     pass
 
 
-def run_git(repo_root: Path, *args: str) -> bytes:
+def run_git(repo_root: Path, *args: str, env: dict[str, str] | None = None) -> bytes:
     result = subprocess.run(
         ["git", "-C", str(repo_root), *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env,
     )
     if result.returncode != 0:
         raise ArchiveError(
@@ -47,11 +70,21 @@ def run_git(repo_root: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def archive_top_level_entries(repo_root: Path) -> list[str]:
-    """Top-level entries `git archive HEAD` ships, exactly what Asset
-    Library users download."""
-    blob = run_git(repo_root, "archive", "HEAD")
-    entries: set[str] = set()
+def worktree_ref(repo_root: Path) -> str:
+    """Write a temporary tree without changing the checkout's shared index."""
+    with tempfile.TemporaryDirectory() as tmp:
+        index = Path(tmp) / "index"
+        env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+        run_git(repo_root, "read-tree", "HEAD", env=env)
+        run_git(repo_root, "add", "--all", env=env)
+        return run_git(repo_root, "write-tree", env=env).decode().strip()
+
+
+def archive_entries(repo_root: Path, ref: str = "HEAD") -> tuple[list[str], list[str]]:
+    """Directory and file entries the Asset Library download contains."""
+    blob = run_git(repo_root, "archive", "--worktree-attributes", ref)
+    top_level: set[str] = set()
+    files: set[str] = set()
     with tarfile.open(fileobj=io.BytesIO(blob)) as archive:
         for member in archive.getmembers():
             name = member.name.split("/", 1)[0]
@@ -59,8 +92,10 @@ def archive_top_level_entries(repo_root: Path) -> list[str]:
             # pax global header, but a future format change must never
             # surface it as a phantom repo entry.
             if name and name not in TAR_BOOKKEEPING_ENTRIES:
-                entries.add(name)
-    return sorted(entries)
+                top_level.add(name)
+                if member.isfile():
+                    files.add(member.name)
+    return sorted(top_level), sorted(files)
 
 
 def duplicate_gitattributes_patterns(path: Path) -> list[str]:
@@ -77,9 +112,13 @@ def duplicate_gitattributes_patterns(path: Path) -> list[str]:
     return duplicates
 
 
-def check_archive(repo_root: Path) -> list[str]:
+def check_archive(
+    repo_root: Path,
+    expected_files: frozenset[str] = REQUIRED_ARCHIVE_FILES,
+    ref: str = "HEAD",
+) -> list[str]:
     errors: list[str] = []
-    entries = archive_top_level_entries(repo_root)
+    entries, files = archive_entries(repo_root, ref)
     attributes = repo_root / ".gitattributes"
     if not attributes.is_file():
         errors.append(".gitattributes is missing; the export-ignore contract cannot be checked")
@@ -90,7 +129,7 @@ def check_archive(repo_root: Path) -> list[str]:
     for entry in leaks:
         errors.append(
             f"'{entry}' ships in the Asset Library archive but is not allow-listed; "
-            f"add '/{entry} export-ignore' to .gitattributes (issue #158)"
+            "keep only addons/ unignored in .gitattributes"
         )
     shipped = set(entries)
     for entry in REQUIRED_ARCHIVE_ENTRIES:
@@ -99,6 +138,10 @@ def check_archive(repo_root: Path) -> list[str]:
                 f"required asset entry '{entry}' is missing from the archive; "
                 "fix or remove its export-ignore rule in .gitattributes"
             )
+    for entry in sorted(set(files) - expected_files):
+        errors.append(f"'{entry}' ships in the Asset Library archive but is not in the file manifest")
+    for entry in sorted(expected_files - set(files)):
+        errors.append(f"required asset file '{entry}' is missing from the archive")
     return errors
 
 
@@ -128,13 +171,15 @@ def write_self_test_repo(root: Path, files: dict[str, str], attributes: str = ""
 
 ASSET_FILES = {
     "addons/signal_fish/plugin.cfg": "[plugin]\n",
+    "addons/signal_fish/README.md": "# Signal Fish\n",
+    "addons/signal_fish/LICENSE": "MIT\n",
     "demo/main.tscn": "[node]\n",
     "CHANGELOG.md": "# Changelog\n",
     "LICENSE": "MIT\n",
     "README.md": "# Signal Fish\n",
     "project.godot": "config_version=5\n",
 }
-GOOD_ATTRIBUTES = "/.gitattributes export-ignore\n/scripts export-ignore\n"
+GOOD_ATTRIBUTES = "/* export-ignore\n/addons !export-ignore\n/addons/** !export-ignore\n"
 
 
 def self_test() -> int:
@@ -149,27 +194,42 @@ def self_test() -> int:
         root = Path(tmp) / "ok"
         root.mkdir()
         write_self_test_repo(root, ASSET_FILES, GOOD_ATTRIBUTES)
-        expect("clean archive", check_archive(root) == [], f"unexpected errors: {check_archive(root)}")
+        expected = frozenset(name for name in ASSET_FILES if name.startswith("addons/"))
+        expect(
+            "clean archive",
+            check_archive(root, expected) == [],
+            f"unexpected errors: {check_archive(root, expected)}",
+        )
 
-        # Leak: a tracked top-level path without export-ignore must be named.
+        # Leak: a stray unignore rule cannot ship another top-level path.
         leaky = Path(tmp) / "leak"
         leaky.mkdir()
-        write_self_test_repo(leaky, {**ASSET_FILES, "tools/build.py": "x = 1\n"}, GOOD_ATTRIBUTES)
-        errors = check_archive(leaky)
+        write_self_test_repo(
+            leaky,
+            {**ASSET_FILES, "tools/build.py": "x = 1\n"},
+            GOOD_ATTRIBUTES + "/tools !export-ignore\n/tools/** !export-ignore\n",
+        )
+        errors = check_archive(leaky, expected)
         expect("leak", any("'tools' ships" in error for error in errors), f"errors: {errors}")
 
         # Over-ignore: excluding a required entry must fail loudly.
         over = Path(tmp) / "over"
         over.mkdir()
-        write_self_test_repo(over, ASSET_FILES, GOOD_ATTRIBUTES + "/README.md export-ignore\n")
-        errors = check_archive(over)
-        expect("over-ignore", any("'README.md' is missing" in error for error in errors), f"errors: {errors}")
+        write_self_test_repo(
+            over, ASSET_FILES, GOOD_ATTRIBUTES + "/addons/signal_fish/README.md export-ignore\n"
+        )
+        errors = check_archive(over, expected)
+        expect(
+            "over-ignore",
+            any("'addons/signal_fish/README.md' is missing" in error for error in errors),
+            f"errors: {errors}",
+        )
 
         # Hygiene: a repeated pattern is a maintenance hazard.
         dup = Path(tmp) / "dup"
         dup.mkdir()
-        write_self_test_repo(dup, ASSET_FILES, GOOD_ATTRIBUTES + "/scripts export-ignore\n")
-        errors = check_archive(dup)
+        write_self_test_repo(dup, ASSET_FILES, GOOD_ATTRIBUTES + "/addons !export-ignore\n")
+        errors = check_archive(dup, expected)
         expect("duplicate", any("repeats the pattern" in error for error in errors), f"errors: {errors}")
 
         # Missing contract: no .gitattributes at all must fail with a clean,
@@ -177,10 +237,26 @@ def self_test() -> int:
         bare = Path(tmp) / "bare"
         bare.mkdir()
         write_self_test_repo(bare, ASSET_FILES)
-        errors = check_archive(bare)
+        errors = check_archive(bare, expected)
         expect(
             "missing attributes",
             any(".gitattributes is missing" in error for error in errors),
+            f"errors: {errors}",
+        )
+
+        # A test fixture hidden inside an allowed addon directory is still
+        # not part of the user download.
+        nested = Path(tmp) / "nested"
+        nested.mkdir()
+        write_self_test_repo(
+            nested,
+            {**ASSET_FILES, "addons/signal_fish/transport/sf_fake_transport.gd": "class_name Fake\n"},
+            GOOD_ATTRIBUTES,
+        )
+        errors = check_archive(nested, expected)
+        expect(
+            "nested fixture",
+            any("'addons/signal_fish/transport/sf_fake_transport.gd' ships" in error for error in errors),
             f"errors: {errors}",
         )
 
@@ -196,12 +272,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", default=".", help="repository root to check (default: .)")
     parser.add_argument("--self-test", action="store_true", help="run the self-test and exit")
+    parser.add_argument(
+        "--worktree", action="store_true", help="check current files using an isolated temporary index"
+    )
     args = parser.parse_args()
     if args.self_test:
         return self_test()
     repo_root = Path(args.repo_root).resolve()
     try:
-        errors = check_archive(repo_root)
+        ref = worktree_ref(repo_root) if args.worktree else "HEAD"
+        errors = check_archive(repo_root, ref=ref)
     except ArchiveError as exc:
         print(f"check-asset-archive: {exc}", file=sys.stderr)
         return 2

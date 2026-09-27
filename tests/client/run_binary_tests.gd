@@ -5,7 +5,7 @@ extends SceneTree
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
-const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")

@@ -54,7 +54,8 @@ covers everything from first connection to the P2P mesh:
 **Manual:** copy `addons/signal_fish/` into your project's `addons/` folder.
 
 **Release archive:** every [release](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases)
-tag ships the addon as a downloadable archive.
+tag ships only `addons/` as a downloadable archive. Asset Library downloads
+use the same addon-only layout; demos and full docs remain in this repository.
 
 Asset Library listing: planned for the v1 release (one-time human submission;
 the repo automates updates after that).

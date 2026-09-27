@@ -5,7 +5,7 @@ extends RefCounted
 ## real WebRTC runs in fast gates (PLAN §8). Receives the client runner
 ## instance so connect/auth fakes stay defined in one place.
 
-const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")

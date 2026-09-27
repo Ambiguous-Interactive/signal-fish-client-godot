@@ -1,42 +1,9 @@
 class_name SFJsonGuard
 extends RefCounted
 
-## Strict duplicate-key pre-scan for inbound text frames (issue #92).
-##
-## Godot's JSON parser is last-wins on duplicate object keys, so a hostile
-## frame such as [code]{"type":"GameData",...,"type":"RoomLeft"}[/code] used
-## to silently substitute the decoded event: the real message vanished, room
-## state was wiped, and a repeated [code]reconnection_token[/code] could
-## empty the retained auto-reconnect identity. Upstream (serde) rejects every
-## such frame, and the binary envelope path already rejects duplicate
-## fields — this scan gives the text path the same fail-closed strictness
-## before the engine parse runs.
-##
-## Single linear pass over the frame's UTF-8 bytes. String contents are
-## skipped with the native byte search (multi-byte characters never contain
-## ASCII quote or backslash bytes), so only object keys — short — are
-## decoded per byte. Keys compare after JSON escape decoding —
-## [code]"\u0061"[/code] and [code]"a"[/code] are the same string, matching
-## serde's unescaped comparison and the engine's own parse — so lookalike
-## spellings cannot smuggle a second copy of a key past the guard. The one
-## deliberate divergence from serde: a key whose decoded form contains U+0000
-## is refused outright, because the engine strips NUL from strings and would
-## merge such a key into a lookalike neighbour for a silent last-wins
-## overwrite. Unterminated strings fail closed as well; malformed JSON of
-## every other class is left to the engine parser — only the duplicate-key
-## class (plus unterminated strings and NUL keys) is diagnosed here.
-##
-## Cost (issue #92 decision gate, Godot 4.3 headless): the guard adds
-## ~0.02 ms to a small control frame and ~0.5 ms at the 256 KiB frame-cap
-## bound when the frame is string-dense (string content is skipped
-## natively). Legal object-dense frames are the expensive shape — a 256 KiB
-## frame of ~31200 tiny objects costs ~80 ms, dominated by the interpreted
-## per-byte structural scan (~0.3 us per byte), not by key-set allocations:
-## pooled key sets and pre-sized key buffers measured neutral (issue #161
-## round 3). Key sets stay Dictionary-backed to keep a single-object flood
-## of distinct keys linear. Bounded and linear in frame size; typical
-## control frames sit orders of magnitude below the cap. Measure with
-## [code]tests/protocol/decode_bench.gd[/code] ([code]json_guard_object_dense[/code]).
+## Rejects duplicate JSON object keys before Godot's last-wins parser runs.
+## Keys are compared after escape decoding. NUL keys are also rejected because
+## Godot strips NUL and could merge distinct keys (issue #92).
 
 const _MAX_REPORTED_KEY_BYTES := 32
 
@@ -59,9 +26,6 @@ static func duplicate_key_error(text: String) -> String:
 			if expect_key:
 				var key := _collect_key(bytes, index + 1, close)
 				if key.find(0x00) != -1:
-					# The engine strips NUL from decoded strings, so a NUL key
-					# would merge with a lookalike neighbour (last-wins)
-					# despite being distinct to this scan.
 					return "message contains a NUL character in a JSON key"
 				var keys: Dictionary = key_sets[key_sets.size() - 1]
 				if keys.has(key):
@@ -75,7 +39,6 @@ static func duplicate_key_error(text: String) -> String:
 			is_object.append(true)
 			expect_key = true
 		elif byte == 0x5B:  # '['
-			# Arrays never collect keys; the slot only balances the stack.
 			key_sets.append({})
 			is_object.append(false)
 			expect_key = false
@@ -92,8 +55,6 @@ static func duplicate_key_error(text: String) -> String:
 	return ""
 
 
-## Finds the quote that truly ends a string: a candidate preceded by an odd
-## number of backslashes is an escaped quote.
 static func _close_quote_index(bytes: PackedByteArray, start: int) -> int:
 	var close := bytes.find(0x22, start)
 	while close >= 0:
@@ -108,7 +69,6 @@ static func _close_quote_index(bytes: PackedByteArray, start: int) -> int:
 	return -1
 
 
-## Decodes the key bytes between the quotes into their canonical UTF-8 form.
 static func _collect_key(bytes: PackedByteArray, start: int, end: int) -> PackedByteArray:
 	var key := PackedByteArray()
 	var index := start
@@ -147,8 +107,6 @@ static func _collect_key(bytes: PackedByteArray, start: int, end: int) -> Packed
 	return key
 
 
-## Maps one simple escape character to its byte value, or -1 when the escape
-## is not a simple one ([code]\uXXXX[/code] and unknown escapes return -1).
 static func _escape_byte(byte: int) -> int:
 	match byte:
 		0x22, 0x5C, 0x2F:
@@ -167,7 +125,6 @@ static func _escape_byte(byte: int) -> int:
 			return -1
 
 
-## Reads four hex digits, or -1 when they are missing or not hex.
 static func _hex4(bytes: PackedByteArray, start: int, size: int) -> int:
 	if start + 4 > size:
 		return -1
@@ -185,8 +142,6 @@ static func _hex4(bytes: PackedByteArray, start: int, size: int) -> int:
 	return value
 
 
-## Appends one code point as UTF-8; out-of-range values become U+FFFD like
-## the engine's lenient decode.
 static func _append_utf8(key: PackedByteArray, code_point: int) -> void:
 	if code_point < 0 or code_point > 0x10FFFF:
 		code_point = 0xFFFD
@@ -206,8 +161,6 @@ static func _append_utf8(key: PackedByteArray, code_point: int) -> void:
 		key.append(0x80 | (code_point & 0x3F))
 
 
-## Renders a key for the diagnostic, truncated so a hostile frame cannot
-## bloat the log line. Invalid UTF-8 degrades to replacement characters.
 static func _render_key(key: PackedByteArray) -> String:
 	var shown := key
 	if shown.size() > _MAX_REPORTED_KEY_BYTES:

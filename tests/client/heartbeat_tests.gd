@@ -8,7 +8,7 @@ extends RefCounted
 ## is injected `_process` delta; no wall-clock sleeps. Receives the client
 ## runner so config/transport fakes stay in one place.
 
-const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")

@@ -134,11 +134,6 @@ static func _encoding_token(value: Variant, allow_v3_tokens: bool) -> int:
 			return SFTypesScript.GameDataEncoding.UNKNOWN
 
 
-## Reads one envelope field value, or [code]null[/code] when malformed. Only
-## the flat shapes the contract allows: [code]from_player[/code]/
-## [code]payload[/code] are binary (16 bytes for the UUID), [code]encoding[/code]
-## is a string, and [code]seq[/code]/[code]epoch[/code] accept any unsigned
-## integer marker width (rust parity).
 static func _read_field(peer: StreamPeerBuffer, key: String) -> Variant:
 	if peer.get_available_bytes() < 1:
 		return null
@@ -163,10 +158,7 @@ static func _read_field(peer: StreamPeerBuffer, key: String) -> Variant:
 			return _read_unsigned(peer, marker)
 
 
-## Returns the unsigned integer value, or [code]null[/code] when the marker is
-## not an unsigned integer form (negative/stamped integers are rejected).
-## u64 values above i64 max wrap negative in Godot; callers treat any non-zero
-## value (including wrapped ones) as a valid huge stamp.
+# Godot wraps u64 values above i64 max; callers accept wrapped non-zero stamps.
 static func _read_unsigned(peer: StreamPeerBuffer, marker: int) -> Variant:
 	if marker <= 0x7F:
 		return marker
@@ -184,9 +176,6 @@ static func _read_unsigned(peer: StreamPeerBuffer, marker: int) -> Variant:
 	return peer.get_u64()
 
 
-## Reads one string field (any fixstr/str8/str16/str32 form, rust parity);
-## [param length] -1 reads the marker first. Empty results are ambiguous with
-## truncation, which is safe: the contract requires non-empty strings.
 static func _read_string_after_marker(peer: StreamPeerBuffer, marker: int) -> String:
 	var length := -1
 	if marker >= 0xA0 and marker <= 0xBF:
@@ -210,7 +199,6 @@ static func _read_string_field(peer: StreamPeerBuffer) -> String:
 	return _read_string_after_marker(peer, peer.get_u8())
 
 
-## Returns the byte length after a bin marker, or -1 when malformed.
 static func _binary_length(peer: StreamPeerBuffer, marker: int) -> int:
 	var width := 0
 	if marker == 0xC4:
@@ -230,7 +218,6 @@ static func _binary_length(peer: StreamPeerBuffer, marker: int) -> int:
 	return peer.get_u32()
 
 
-## Returns the map entry count, or -1 when the frame is not a readable map.
 static func _read_map_header(peer: StreamPeerBuffer) -> int:
 	if peer.get_available_bytes() < 1:
 		return -1
@@ -249,7 +236,6 @@ static func _read_map_header(peer: StreamPeerBuffer) -> int:
 	return peer.get_u16() if width == 2 else peer.get_u32()
 
 
-## Formats 16 UUID bytes as the canonical lowercase 8-4-4-4-12 string.
 static func _uuid_string(bytes: PackedByteArray) -> String:
 	var cached: Variant = _uuid_cache.get(bytes)
 	if cached != null:

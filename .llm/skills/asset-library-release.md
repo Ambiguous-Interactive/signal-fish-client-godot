@@ -54,8 +54,10 @@ Handlebars over the workflow-dispatch webhook context plus process env:
 | `godot_version` | `4.3` | minimum supported engine |
 
 The tag is the store's `download_commit`: the Asset Library generates the
-archive from that ref, so `.gitattributes` `export-ignore` keeps dev-only paths
-out of what users download.
+archive from that ref. `.gitattributes` keeps only `addons/` in that download;
+the addon-local README and LICENSE travel with the plugin. The GitHub Release
+ZIP also contains only `addons/`. `scripts/check-asset-archive.py` checks every
+shipped file against a reviewed manifest. Update it when changing addon files.
 
 ## Pending-edit semantics
 
@@ -83,6 +85,8 @@ curl -sf -X POST "$BASE/logout" -H 'Content-Type: application/json' -d "{\"token
 
 ## Local verification
 
+- `python3 scripts/check-asset-archive.py --worktree` - check current files
+  with an isolated index before commit; CI and release check the committed ref.
 - `python scripts/validate-github-config.py --repo-root .` - workflow shape,
   pinned refs, permissions.
 - The submit job itself only runs with real credentials; rehearse changes with

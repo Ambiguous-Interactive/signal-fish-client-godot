@@ -5,7 +5,7 @@ const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
-const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 # No other suite loads the editor plugin; this keeps it under the warning
 # gate on every PR and every CI engine (issue #174).
 const SFPluginScript = preload("res://addons/signal_fish/plugin.gd")
@@ -1380,7 +1380,7 @@ func _room_joined_data(overrides: Dictionary = {}) -> Dictionary:
 
 
 class PollCountingTransport:
-	extends "res://addons/signal_fish/transport/sf_fake_transport.gd"
+	extends "res://tests/transport/sf_fake_transport.gd"
 
 	var poll_count := 0
 

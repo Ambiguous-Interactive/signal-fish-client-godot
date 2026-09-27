@@ -6,7 +6,7 @@ extends RefCounted
 ## (issue #100). Receives the client runner so config/transport fakes stay in
 ## one place.
 
-const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")

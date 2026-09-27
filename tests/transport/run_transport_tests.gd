@@ -1,6 +1,6 @@
 extends SceneTree
 
-const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const SFWebSocketTransportScript = preload(
 	"res://addons/signal_fish/transport/sf_websocket_transport.gd"
 )

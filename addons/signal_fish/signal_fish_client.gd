@@ -112,9 +112,9 @@ const _PLAYER_ROOM_STATES: Array[SessionState] = [
 ]
 
 @warning_ignore("untyped_declaration")
-## Active transport adapter. Tests may inject an [code]SFFakeTransport[/code]
-## before [method connect_to_server]; production code leaves this null and the
-## client builds a [code]SFWebSocketTransport[/code].
+## Active transport adapter. Tests may inject an [code]SFTransport[/code]
+## before [method connect_to_server]; otherwise the client builds an
+## [code]SFWebSocketTransport[/code].
 var transport = null
 
 var _config: SignalFishConfigScript = null

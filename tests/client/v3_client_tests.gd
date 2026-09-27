@@ -11,7 +11,7 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
-const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
