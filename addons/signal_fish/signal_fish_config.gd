@@ -136,14 +136,17 @@ func validation_error() -> String:
 		var format_error := _game_data_format_error()
 		if not format_error.is_empty():
 			return format_error
-	for cap: Array in [
-		["max_inbound_frame_bytes", max_inbound_frame_bytes],
-		["max_buffered_bytes", max_buffered_bytes],
-		["max_inbound_packets_per_poll", max_inbound_packets_per_poll],
-		["reconnect_max_attempts", reconnect_max_attempts],
-	]:
-		if cap[1] <= 0:
-			return "%s must be positive" % cap[0]
+	var cap_error := ""
+	if max_inbound_frame_bytes <= 0:
+		cap_error = "max_inbound_frame_bytes must be positive"
+	elif max_buffered_bytes <= 0:
+		cap_error = "max_buffered_bytes must be positive"
+	elif max_inbound_packets_per_poll <= 0:
+		cap_error = "max_inbound_packets_per_poll must be positive"
+	elif reconnect_max_attempts <= 0:
+		cap_error = "reconnect_max_attempts must be positive"
+	if not cap_error.is_empty():
+		return cap_error
 	if heartbeat_interval_sec < 0.0:
 		return "heartbeat_interval_sec must not be negative"
 	if heartbeat_interval_sec > 0.0 and pong_timeout_sec <= 0.0:
