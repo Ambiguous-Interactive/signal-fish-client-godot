@@ -8,24 +8,47 @@ import subprocess
 import tempfile
 import time
 import unittest
+from typing import TypedDict
+
+
+class DevcontainerConfig(TypedDict):
+    initializeCommand: list[str]
+    features: dict[str, object]
 
 ROOT = Path(__file__).resolve().parent
 
 
-def config():
+def config() -> DevcontainerConfig:
     text = (ROOT / "devcontainer.json").read_text(encoding="utf-8")
     text = re.sub(r'"(?:\\.|[^"\\])*"|//[^\n]*',
                   lambda m: "" if m[0].startswith("//") else m[0], text)
-    return json.loads(text)
+    parsed: object = json.loads(text)
+    if not isinstance(parsed, dict):
+        raise ValueError("devcontainer config must be an object")
+    command = parsed.get("initializeCommand")
+    features = parsed.get("features")
+    if not isinstance(command, list) or not isinstance(features, dict):
+        raise ValueError("devcontainer config lacks command or features")
+    command_values: list[str] = []
+    for value in command:
+        if not isinstance(value, str):
+            raise ValueError("devcontainer initializeCommand must contain text")
+        command_values.append(value)
+    feature_values: dict[str, object] = {}
+    for key, value in features.items():
+        if not isinstance(key, str):
+            raise ValueError("devcontainer feature keys must be text")
+        feature_values[key] = value
+    return {"initializeCommand": command_values, "features": feature_values}
 
 
 class Portability(unittest.TestCase):
-    def test_host_requires_only_docker(self):
+    def test_host_requires_only_docker(self) -> None:
         command = config()["initializeCommand"]
         self.assertEqual(command[0], "docker")
         self.assertIn("${localWorkspaceFolder}:/workspace", command)
 
-    def test_agents_installed_in_image(self):
+    def test_agents_installed_in_image(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("bash /usr/local/share/devcontainer/install-agent-tools.sh", dockerfile)
         for package in ("@openai/codex", "@opencode/cli",
@@ -33,13 +56,13 @@ class Portability(unittest.TestCase):
             self.assertIn(f"https://registry.npmjs.org/{package}/latest", dockerfile)
         self.assertNotIn("ghcr.io/devcontainers/features/node:2", config()["features"])
 
-    def test_restart_updates_are_opt_in(self):
+    def test_restart_updates_are_opt_in(self) -> None:
         script = (ROOT / "post-start.sh").read_text(encoding="utf-8")
         guard = script.index('"${SF_DEVCONTAINER_MAINTENANCE:-0}" != "1"')
         self.assertLess(guard, script.index('install-agent-tools.sh" --update'))
         self.assertIn("exit 0", script[guard:script.index('install-agent-tools.sh" --update')])
 
-    def test_env_guard_chown_is_best_effort(self):
+    def test_env_guard_chown_is_best_effort(self) -> None:
         # Some bind mounts reject ownership changes; create must survive
         # that (Bugbot on PR #159). Static pin for the source of the
         # docker-level behavior test below: the guard must attempt to
@@ -53,7 +76,7 @@ class Portability(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("SF_TEST_DOCKER") == "1", "set SF_TEST_DOCKER=1")
 class DockerBehavior(unittest.TestCase):
-    def test_bootstrap_and_offline_restart(self):
+    def test_bootstrap_and_offline_restart(self) -> None:
         with tempfile.TemporaryDirectory(prefix="sf container ' spaces ") as folder:
             workspace = Path(folder)
             scripts = workspace / ".devcontainer"
@@ -80,7 +103,7 @@ class DockerBehavior(unittest.TestCase):
             self.assertIn(b"Container ready", result.stdout)
             print(f"Offline restart including Docker launch: {time.monotonic() - started:.2f}s")
 
-    def test_create_survives_failing_chown(self):
+    def test_create_survives_failing_chown(self) -> None:
         # Some bind mounts reject ownership changes; the real guard must
         # still materialize .env.local and exit 0 (Bugbot on PR #159).
         with tempfile.TemporaryDirectory(prefix="sf chown fail ") as folder:
