@@ -1,8 +1,8 @@
 class_name SFFakeTransport
 extends "res://addons/signal_fish/transport/sf_transport.gd"
 
-var sent_text: Array = []
-var sent_binary: Array = []
+var sent_text: Array[String] = []
+var sent_binary: Array[PackedByteArray] = []
 var buffered_amount := 0
 var fail_on_connect := false
 ## When true, sends fail the session exactly like the real transport: a
