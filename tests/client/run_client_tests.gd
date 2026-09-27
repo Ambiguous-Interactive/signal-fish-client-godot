@@ -410,7 +410,7 @@ func _test_duplicate_authenticated_is_once_per_dial() -> void:
 	# Issue #24: duplicate Authenticated on a normal dial is hostile input; the guard keeps it silent.
 	var client := _make_connected_client()
 	var fake: SFFakeTransportScript = client.transport
-	var authenticated_events: Array = []
+	var authenticated_events: Array[int] = []
 	client.authenticated.connect(
 		func(_app: String, _org: String, _rate_limits: SFTypesScript.RateLimitInfo) -> void:
 			authenticated_events.append(1)
@@ -427,7 +427,7 @@ func _test_duplicate_authenticated_is_once_per_dial() -> void:
 
 	var room_client := _make_authenticated_client()
 	var room_fake: SFFakeTransportScript = room_client.transport
-	var room_events: Array = []
+	var room_events: Array[int] = []
 	room_client.authenticated.connect(
 		func(_app: String, _org: String, _rate_limits: SFTypesScript.RateLimitInfo) -> void:
 			room_events.append(1)
@@ -456,9 +456,9 @@ func _test_duplicate_authenticated_is_once_per_dial() -> void:
 func _test_room_lifecycle_state_machine() -> void:
 	var client := _make_authenticated_client()
 	var fake: SFFakeTransportScript = client.transport
-	var joined_payloads: Array = []
+	var joined_payloads: Array[SFTypesScript.RoomJoinedInfo] = []
 	var lobby_events: Array = []
-	var room_left_count := [0]
+	var room_left_count: Array[int] = [0]
 	client.room_joined.connect(
 		func(info: SFTypesScript.RoomJoinedInfo) -> void: joined_payloads.append(info)
 	)
@@ -539,7 +539,7 @@ func _test_spectators_keep_lobby_updates_and_rosters_stay_stable() -> void:
 	var client := _make_authenticated_client()
 	var fake: SFFakeTransportScript = client.transport
 	# Lambdas capture locals by value; hold the payload in an Array to observe it.
-	var room_holder: Array = []
+	var room_holder: Array[SFTypesScript.RoomJoinedInfo] = []
 	client.room_joined.connect(
 		func(info: SFTypesScript.RoomJoinedInfo) -> void: room_holder.append(info)
 	)
@@ -918,7 +918,7 @@ func _test_reconnected_restores_room_state() -> void:
 	]
 	fake.inject_server_message({"type": "Reconnected", "data": reconnected_data})
 	_assert_equal(1, restored.size(), "reconnected emitted")
-	var missed_events: Array = restored[0][1]
+	var missed_events: Array[SFTypesScript.DecodedEvent] = restored[0][1]
 	_assert_equal(2, missed_events.size(), "missed_events decoded")
 	_assert_equal(
 		SignalFishClientScript.SessionState.IN_ROOM_LOBBY,
@@ -1032,8 +1032,8 @@ func _test_process_and_exit_tree_paths() -> void:
 
 func _test_roster_accessors_are_copies() -> void:
 	var client := _make_in_room_client()
-	var roster: Array = client.get_players()
-	var spectators: Array = client.get_spectators()
+	var roster: Array[SFTypesScript.PlayerInfo] = client.get_players()
+	var spectators: Array[SFTypesScript.SpectatorInfo] = client.get_spectators()
 	_assert(not is_same(client.get_players(), roster), "get_players returns a copy")
 	_assert(not is_same(client.get_spectators(), spectators), "get_spectators returns a copy")
 	roster.clear()
@@ -1052,7 +1052,7 @@ func _test_roster_accessors_are_copies() -> void:
 
 func _test_failures_clean_up_and_failed_open_surfaces_reason() -> void:
 	var client := SignalFishClientScript.new()
-	var failures: Array = []
+	var failures: Array[String] = []
 	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
 	_assert_equal(OK, client.configure(_make_config()), "configure")
 	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
@@ -1076,7 +1076,7 @@ func _test_failures_clean_up_and_failed_open_surfaces_reason() -> void:
 
 	var drop_client := _make_in_room_client()
 	var drop_fake: SFFakeTransportScript = drop_client.transport
-	var drop_failures: Array = []
+	var drop_failures: Array[String] = []
 	drop_client.connection_failed.connect(func(error: String) -> void: drop_failures.append(error))
 	drop_fake.inject_failure("socket exploded")
 	_assert_equal(["socket exploded"], drop_failures, "failure surfaced")
@@ -1117,7 +1117,7 @@ func _test_frame_cap_drops_oversized_and_binary_frames() -> void:
 	# A frame exactly at the cap is accepted and decoded (the inbound frame
 	# cap in _on_transport_packet rejects strictly greater), so a cap-sized
 	# frame must survive the guard + parse.
-	var pong_events: Array = []
+	var pong_events: Array[bool] = []
 	client.pong.connect(func() -> void: pong_events.append(true))
 	var exact := '{"type":"Pong"'
 	while exact.length() < 31:

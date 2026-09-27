@@ -124,7 +124,7 @@ func _test_v3_config_advertises_capabilities() -> void:
 func _test_v3_events_surface() -> void:
 	var client := _make_authenticated_client()
 	var fake: SFFakeTransportScript = client.transport
-	var plans: Array = []
+	var plans: Array[SFSessionTypesScript.SessionPlanInfo] = []
 	client.session_plan.connect(
 		func(plan: SFSessionTypesScript.SessionPlanInfo) -> void: plans.append(plan)
 	)
