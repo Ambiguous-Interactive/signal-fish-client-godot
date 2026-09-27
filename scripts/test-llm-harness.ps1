@@ -545,7 +545,7 @@ function New-HookBehaviorSandbox {
         'requirements-automation.txt',
         '.llm/context.md', '.llm/index.md', '.llm/README.md',
         'scripts/run-llm-hooks.ps1',
-        'scripts/dependabot-auto-merge.sh',
+        'scripts/dependabot-auto-merge.py',
         'scripts/generate-llm-index.ps1',
         'scripts/test-llm-harness.ps1',
         'scripts/validate-github-config.py',
@@ -990,7 +990,7 @@ Assert-Test 'run-llm-hooks.ps1 treats GitHub config as tooling' {
             'Test-GitHubConfigPathTouched',
             '.github/dependabot.yml',
             '.github/dependabot.yaml',
-            'scripts/dependabot-auto-merge.sh',
+            'scripts/dependabot-auto-merge.py',
             'scripts/validate-github-config.py',
             'requirements-automation.txt',
             "Invoke-HookStage 'github-config'")) {
@@ -1097,7 +1097,7 @@ Assert-Test 'GitHub config PreCommit validates staged index instead of worktree'
         $fixedWorkflow = [System.IO.File]::ReadAllText($workflow)
         $badRun = 'run: |' + "`n" +
         '                  gh api --paginate --slurp "/repos/owner/repo/actions/runs" --jq ".[0]"'
-        $badWorkflow = $fixedWorkflow.Replace('run: bash scripts/dependabot-auto-merge.sh', $badRun)
+        $badWorkflow = $fixedWorkflow.Replace('run: python3 scripts/dependabot-auto-merge.py', $badRun)
         if ($badWorkflow -eq $fixedWorkflow) {
             throw 'Test setup failed: could not inject old gh api --slurp --jq pattern into auto-merge workflow.'
         }
@@ -1137,7 +1137,7 @@ Assert-Test 'GitHub config PreCommit validates staged index instead of worktree'
 
 Assert-Test 'Dependabot auto-merge script handles workflow and check states with fake gh' {
     if (-not (Get-Command bash -ErrorAction SilentlyContinue)) { return }
-    if (-not (Get-Command jq -ErrorAction SilentlyContinue)) { return }
+    if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) { return }
     if (-not (Get-Command chmod -ErrorAction SilentlyContinue)) { return }
 
     $repoRoot = Split-Path -Parent $ScriptsDir
@@ -1173,6 +1173,11 @@ JSON
 [{"workflow_runs":[{"name":"Runtime CI","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"},{"name":"LLM Harness","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:01:00Z","status":"completed","conclusion":"failure"}]}]
 JSON
         ;;
+      rerun_failure)
+        cat <<JSON
+[{"workflow_runs":[{"name":"Runtime CI","head_sha":"${HEAD_SHA}","run_started_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"},{"name":"LLM Harness","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:01:00Z","run_started_at":"2026-05-31T00:01:00Z","status":"completed","conclusion":"failure"},{"name":"LLM Harness","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:02:00Z","run_started_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"}]}]
+JSON
+        ;;
       *)
         cat <<JSON
 [{"workflow_runs":[{"name":"Runtime CI","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"},{"name":"LLM Harness","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:01:00Z","status":"completed","conclusion":"success"}]}]
@@ -1184,8 +1189,10 @@ JSON
 fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
+  view_sha="${HEAD_SHA}"
+  if [[ "${scenario}" == "stale_head" ]]; then view_sha="new-head"; fi
   cat <<JSON
-{"state":"OPEN","baseRefName":"main","isDraft":false,"headRefOid":"${HEAD_SHA}"}
+{"state":"OPEN","baseRefName":"main","isDraft":false,"headRefOid":"${view_sha}"}
 JSON
   exit 0
 fi
@@ -1257,6 +1264,8 @@ exit 99
             [pscustomobject]@{ Scenario = 'success'; ExpectMerge = $true; Pattern = '--match-head-commit abc123' },
             [pscustomobject]@{ Scenario = 'missing_workflow'; ExpectMerge = $false; Pattern = 'LLM Harness is missing' },
             [pscustomobject]@{ Scenario = 'failed_workflow'; ExpectMerge = $false; Pattern = 'LLM Harness concluded failure' },
+            [pscustomobject]@{ Scenario = 'rerun_failure'; ExpectMerge = $false; Pattern = 'LLM Harness concluded failure' },
+            [pscustomobject]@{ Scenario = 'stale_head'; ExpectMerge = $false; Pattern = 'skipping stale workflow_run' },
             [pscustomobject]@{ Scenario = 'pending_checks'; ExpectMerge = $false; Pattern = 'pending checks' }
         )
         foreach ($case in $cases) {
@@ -1266,7 +1275,7 @@ exit 99
             # Windows-style absolute script paths.
             Push-Location $repoRoot
             try {
-                $output = & bash 'scripts/dependabot-auto-merge.sh' 2>&1
+                $output = & bash -c 'python3 scripts/dependabot-auto-merge.py' 2>&1
                 $exitCode = $LASTEXITCODE
             }
             finally {
@@ -6122,7 +6131,7 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
                 '.github/workflows/dependabot-auto-merge.yml',
                 '.github/workflows/llm-harness.yml',
                 'requirements-automation.txt',
-                'scripts/dependabot-auto-merge.sh',
+                'scripts/dependabot-auto-merge.py',
                 'scripts/run-llm-hooks.ps1', 'scripts/preflight.ps1',
                 'scripts/generate-llm-index.ps1', 'scripts/lint-llm.ps1',
                 'scripts/test-llm-harness.ps1', 'scripts/validate-github-config.py',

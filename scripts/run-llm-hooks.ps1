@@ -161,7 +161,7 @@ function Test-GitHubConfigPathTouched {
             $path -in @(
                 '.github/dependabot.yml',
                 '.github/dependabot.yaml',
-                'scripts/dependabot-auto-merge.sh',
+                'scripts/dependabot-auto-merge.py',
                 'scripts/validate-github-config.py',
                 'requirements-automation.txt'
             )) {
