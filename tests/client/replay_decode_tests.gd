@@ -12,7 +12,7 @@ const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const TOKEN_V1 := "test-reconnect-token-not-secret"
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 var _runner: Object = null
 
@@ -21,7 +21,7 @@ func _done() -> void:
 	_test_done = true
 
 
-static func run(runner: Variant) -> Array:
+static func run(runner: Object) -> Array[String]:
 	var tests := new()
 	tests._runner = runner
 	tests.run_all()

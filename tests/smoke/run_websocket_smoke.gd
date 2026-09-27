@@ -14,13 +14,13 @@ const WsTestServerScript = preload("res://tests/smoke/ws_test_server.gd")
 const WAIT_TIMEOUT_SEC := 5.0
 const WATCHDOG_MS := 30000
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _server: WsTestServerScript = null
 var _transport: SFWebSocketTransportScript = null
 var _opened_count := 0
-var _packets: Array = []
+var _packets: Array[Dictionary] = []
 var _closed_events: Array = []
-var _failure_messages: Array = []
+var _failure_messages: Array[String] = []
 var _done := false
 var _started_ms := 0
 

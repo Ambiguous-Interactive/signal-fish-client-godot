@@ -22,7 +22,7 @@ const PLAYER_A := "10000000-0000-0000-0000-000000000001"
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const ROOM_ID := "20000000-0000-0000-0000-000000000001"
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 # Sentinel: an abort inside _run() unwinds before quit(); CI would hang instead of reporting red.
 var _run_completed := false
@@ -1280,8 +1280,8 @@ func _make_in_room_client() -> SignalFishClientScript:
 	return client
 
 
-func _track_protocol_errors(client: SignalFishClientScript) -> Array:
-	var errors: Array = []
+func _track_protocol_errors(client: SignalFishClientScript) -> Array[String]:
+	var errors: Array[String] = []
 	client.protocol_error.connect(func(error: String) -> void: errors.append(error))
 	return errors
 

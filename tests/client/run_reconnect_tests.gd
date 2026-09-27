@@ -30,7 +30,7 @@ const DELAY_BOUNDS := {
 	6: [15.0, 18.75],
 }
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 # Sentinel: an abort inside _run() unwinds before quit(); CI would hang instead of reporting red.
 var _run_completed := false

@@ -119,8 +119,8 @@ class SessionPlanInfo:
 	var transport: int = TransportKind.UNKNOWN
 	var host: String = ""
 	var direct_endpoint: DirectEndpointInfo = null
-	var peers: Array = []
-	var ice_servers: Array = []
+	var peers: Array[SessionPeerInfo] = []
+	var ice_servers: Array[IceServerInfo] = []
 	var fallback: int = TransportKind.UNKNOWN
 	var raw: Dictionary = {}
 
@@ -166,8 +166,8 @@ class SessionPlanInfo:
 			]
 		)
 
-	func _coerce_peers(values: Variant) -> Array:
-		var result: Array = []
+	func _coerce_peers(values: Variant) -> Array[SessionPeerInfo]:
+		var result: Array[SessionPeerInfo] = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
@@ -176,8 +176,8 @@ class SessionPlanInfo:
 				result.append(SessionPeerInfo.new(entry))
 		return result
 
-	func _coerce_ice_servers(values: Variant) -> Array:
-		var result: Array = []
+	func _coerce_ice_servers(values: Variant) -> Array[IceServerInfo]:
+		var result: Array[IceServerInfo] = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:

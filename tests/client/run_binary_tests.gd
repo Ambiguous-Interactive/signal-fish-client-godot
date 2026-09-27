@@ -13,7 +13,7 @@ const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_B := ClientFixtures.PLAYER_B
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 # Completion sentinel: a runtime abort inside _run() would otherwise leave
 # the process hanging until CI kills it.
@@ -348,8 +348,8 @@ func _protocol_info() -> Dictionary:
 	return ClientFixtures.protocol_info()
 
 
-func _track_protocol_errors(client: SignalFishClientScript) -> Array:
-	var errors: Array = []
+func _track_protocol_errors(client: SignalFishClientScript) -> Array[String]:
+	var errors: Array[String] = []
 	client.protocol_error.connect(func(error: String) -> void: errors.append(error))
 	return errors
 

@@ -145,7 +145,7 @@ class ProtocolInfo:
 	var recommended_version: String = ""
 	var capabilities: PackedStringArray = PackedStringArray()
 	var notes: String = ""
-	var game_data_formats: Array = []
+	var game_data_formats: Array[int] = []
 	var player_name_rules: PlayerNameRules = null
 	## Negotiated protocol version (v3+ only; 0 = absent on negotiated v2).
 	var protocol_version: int = 0
@@ -181,8 +181,8 @@ class ProtocolInfo:
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
-	func _coerce_game_data_encodings(values: Variant) -> Array:
-		var result: Array = []
+	func _coerce_game_data_encodings(values: Variant) -> Array[int]:
+		var result: Array[int] = []
 		if not values is Array:
 			return result
 		for value: Variant in values:
@@ -443,17 +443,17 @@ class RoomJoinedInfo:
 	var game_name: String = ""
 	var max_players: int = 0
 	var supports_authority: bool = false
-	var current_players: Array = []
+	var current_players: Array[PlayerInfo] = []
 	var is_authority: bool = false
 	var lobby_state: int = LobbyState.UNKNOWN
 	var ready_players: PackedStringArray = PackedStringArray()
 	var relay_type: String = ""
-	var current_spectators: Array = []
+	var current_spectators: Array[SpectatorInfo] = []
 	## ICE (STUN/TURN) servers for early candidate gathering (v3 ICE
 	## pre-gather, upstream `RoomJoinedPayload.ice_servers`). Empty for v2
 	## connections; the latest SFSessionTypes.SessionPlanInfo list supersedes
 	## this one (pre-gather TURN credentials may expire during a long lobby).
-	var ice_servers: Array = []
+	var ice_servers: Array[SessionTypes.IceServerInfo] = []
 	## Server-issued reconnection token (server messages.rs
 	## `RoomJoinedPayload.reconnection_token` / `ReconnectedPayload.reconnection_token`).
 	## Empty when the server omitted it or sent JSON null. Handle as a secret.
@@ -465,7 +465,7 @@ class RoomJoinedInfo:
 	var replay_status: int = ReplayStatus.UNKNOWN
 	## Per-sender relayed game-data baseline (v3 only, upstream
 	## `ReconnectedPayload.sender_watermarks`). Empty for v2 sessions.
-	var sender_watermarks: Array = []
+	var sender_watermarks: Array[SenderWatermark] = []
 	var raw: Dictionary = {}
 
 	func _init(data: Dictionary = {}) -> void:
@@ -502,8 +502,8 @@ class RoomJoinedInfo:
 			)
 		return result
 
-	func _coerce_players(values: Variant) -> Array:
-		var result: Array = []
+	func _coerce_players(values: Variant) -> Array[PlayerInfo]:
+		var result: Array[PlayerInfo] = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
@@ -512,8 +512,8 @@ class RoomJoinedInfo:
 				result.append(PlayerInfo.new(entry))
 		return result
 
-	func _coerce_ice_servers(values: Variant) -> Array:
-		var result: Array = []
+	func _coerce_ice_servers(values: Variant) -> Array[SessionTypes.IceServerInfo]:
+		var result: Array[SessionTypes.IceServerInfo] = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
@@ -522,8 +522,8 @@ class RoomJoinedInfo:
 				result.append(SessionTypes.IceServerInfo.new(entry))
 		return result
 
-	func _coerce_spectators(values: Variant) -> Array:
-		var result: Array = []
+	func _coerce_spectators(values: Variant) -> Array[SpectatorInfo]:
+		var result: Array[SpectatorInfo] = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
@@ -532,8 +532,8 @@ class RoomJoinedInfo:
 				result.append(SpectatorInfo.new(entry))
 		return result
 
-	func _coerce_watermarks(values: Variant) -> Array:
-		var result: Array = []
+	func _coerce_watermarks(values: Variant) -> Array[SenderWatermark]:
+		var result: Array[SenderWatermark] = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
@@ -549,8 +549,8 @@ class SpectatorJoinedInfo:
 	var room_code: String = ""
 	var spectator_id: String = ""
 	var game_name: String = ""
-	var current_players: Array = []
-	var current_spectators: Array = []
+	var current_players: Array[PlayerInfo] = []
+	var current_spectators: Array[SpectatorInfo] = []
 	var lobby_state: int = LobbyState.UNKNOWN
 	var reason: int = SpectatorReason.UNKNOWN
 	var raw: Dictionary = {}
@@ -578,8 +578,8 @@ class SpectatorJoinedInfo:
 		)
 		return result
 
-	func _coerce_players(values: Variant) -> Array:
-		var result: Array = []
+	func _coerce_players(values: Variant) -> Array[PlayerInfo]:
+		var result: Array[PlayerInfo] = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
@@ -588,8 +588,8 @@ class SpectatorJoinedInfo:
 				result.append(PlayerInfo.new(entry))
 		return result
 
-	func _coerce_spectators(values: Variant) -> Array:
-		var result: Array = []
+	func _coerce_spectators(values: Variant) -> Array[SpectatorInfo]:
+		var result: Array[SpectatorInfo] = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
@@ -1057,8 +1057,8 @@ static func make_decoded_event(
 	return DecodedEvent.new(type_name, signal_name, args, raw)
 
 
-static func players_from_array(values: Variant) -> Array:
-	var result: Array = []
+static func players_from_array(values: Variant) -> Array[PlayerInfo]:
+	var result: Array[PlayerInfo] = []
 	if typeof(values) != TYPE_ARRAY:
 		return result
 	for value: Variant in values:
@@ -1068,8 +1068,8 @@ static func players_from_array(values: Variant) -> Array:
 	return result
 
 
-static func spectators_from_array(values: Variant) -> Array:
-	var result: Array = []
+static func spectators_from_array(values: Variant) -> Array[SpectatorInfo]:
+	var result: Array[SpectatorInfo] = []
 	if typeof(values) != TYPE_ARRAY:
 		return result
 	for value: Variant in values:
@@ -1079,8 +1079,8 @@ static func spectators_from_array(values: Variant) -> Array:
 	return result
 
 
-static func peer_connections_from_array(values: Variant) -> Array:
-	var result: Array = []
+static func peer_connections_from_array(values: Variant) -> Array[PeerConnectionInfo]:
+	var result: Array[PeerConnectionInfo] = []
 	if typeof(values) != TYPE_ARRAY:
 		return result
 	for value: Variant in values:
@@ -1094,8 +1094,8 @@ static func objects_to_dicts(values: Array) -> Array:
 	return TypeUtils.objects_to_dicts(values)
 
 
-static func game_data_encodings_from_array(values: Variant) -> Array:
-	var result: Array = []
+static func game_data_encodings_from_array(values: Variant) -> Array[int]:
+	var result: Array[int] = []
 	if typeof(values) != TYPE_ARRAY:
 		return result
 	for value: Variant in values:

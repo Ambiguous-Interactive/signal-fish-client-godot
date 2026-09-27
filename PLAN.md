@@ -15,9 +15,10 @@ Per-session history: `progress/session-NNN-*.md`.
 ## Next work
 
 ### Static quality issues (#165-#170)
-- [ ] #165: Audit generic `Array`, `Dictionary`, and `Variant` uses and narrow
-      those that have a fixed shape. All 49 tracked GDScript files now load
-      under warning errors; four unused interface-signal ignores remain.
+- [ ] #165: Audit remaining generic `Array`, `Dictionary`, and `Variant` uses
+      at wire, event, and test boundaries. Narrow fixed-shape values after
+      checking public API compatibility. Four unused interface-signal ignores
+      remain under the warning-as-error Godot load gate.
 - [ ] #167: Pin and check formatters for the remaining script and doc formats.
 - [ ] #168: Move suitable automation to Python and uv while preserving the
       PowerShell harness and the runtime gate behavior.

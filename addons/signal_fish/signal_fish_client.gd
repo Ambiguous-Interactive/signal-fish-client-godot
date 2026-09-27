@@ -30,22 +30,33 @@ signal game_data_binary_received(from_player: String, encoding: int, payload: Pa
 signal authority_changed(authority_player: String, you_are_authority: bool)
 signal authority_response(granted: bool, reason: String, error_code: int)
 signal lobby_state_changed(lobby_state: int, ready_players: PackedStringArray, all_ready: bool)
-signal game_starting(peer_connections: Array)
+signal game_starting(peer_connections: Array[SFTypesScript.PeerConnectionInfo])
 signal pong
 ## [param missed_events] carries decoded [code]DecodedEvent[/code]s; malformed
 ## entries decode to [code]signal_name == &"protocol_error"[/code] sentinels —
 ## check them when replaying (see SFEvents).
-signal reconnected(info: SFTypesScript.RoomJoinedInfo, missed_events: Array)
+signal reconnected(
+	info: SFTypesScript.RoomJoinedInfo, missed_events: Array[SFTypesScript.DecodedEvent]
+)
 ## [param error_code] is the server's error code, or [code]Code.NONE[/code]
 ## for a local failure (e.g. a handshake send that never reached the wire).
 signal reconnection_failed(reason: String, error_code: int)
 signal spectator_joined(info: SFTypesScript.SpectatorJoinedInfo)
 signal spectator_join_failed(reason: String, error_code: int)
-signal spectator_left(room_id: String, room_code: String, reason: int, current_spectators: Array)
-signal new_spectator_joined(
-	spectator: SFTypesScript.SpectatorInfo, current_spectators: Array, reason: int
+signal spectator_left(
+	room_id: String,
+	room_code: String,
+	reason: int,
+	current_spectators: Array[SFTypesScript.SpectatorInfo]
 )
-signal spectator_disconnected(spectator_id: String, reason: int, current_spectators: Array)
+signal new_spectator_joined(
+	spectator: SFTypesScript.SpectatorInfo,
+	current_spectators: Array[SFTypesScript.SpectatorInfo],
+	reason: int
+)
+signal spectator_disconnected(
+	spectator_id: String, reason: int, current_spectators: Array[SFTypesScript.SpectatorInfo]
+)
 signal server_error(message: String, error_code: int)
 ## Relayed v3 signal, forwarded verbatim. Payload may be null or a future
 ## shape; check it before indexing. Empty generation marks a legacy plan.
@@ -120,8 +131,8 @@ var _player_id := ""
 var _room_id := ""
 var _room_code := ""
 var _lobby_state: int = SFTypesScript.LobbyState.UNKNOWN
-var _players: Array = []
-var _spectators: Array = []
+var _players: Array[SFTypesScript.PlayerInfo] = []
+var _spectators: Array[SFTypesScript.SpectatorInfo] = []
 # Credentials for the in-flight reconnect dial (sent on transport open instead
 # of Authenticate). Empty auth_token = the next open authenticates normally.
 var _reconnect_player_id := ""
@@ -358,11 +369,11 @@ func get_lobby_state() -> int:
 
 ## Returns a roster snapshot. Later authority changes replace entries, so
 ## earlier snapshots keep their values (issues #87 and #147).
-func get_players() -> Array:
+func get_players() -> Array[SFTypesScript.PlayerInfo]:
 	return _players.duplicate()
 
 
-func get_spectators() -> Array:
+func get_spectators() -> Array[SFTypesScript.SpectatorInfo]:
 	return _spectators.duplicate()
 
 
@@ -827,7 +838,7 @@ func _negotiated_game_data_format() -> int:
 	return SFGameDataFormatScript.negotiated(_config.game_data_format, _effective_game_data_format)
 
 
-func _reconcile_game_data_format(supported_formats: Array) -> void:
+func _reconcile_game_data_format(supported_formats: Array[int]) -> void:
 	var reason := SFGameDataFormatScript.downgrade_reason(
 		_config.game_data_format, supported_formats
 	)

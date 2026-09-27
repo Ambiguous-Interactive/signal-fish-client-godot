@@ -7,7 +7,7 @@ extends RefCounted
 ## `_test_` method missing from the case list.
 
 
-static func drive(owner: Object, cases: Array, failures: Array) -> void:
+static func drive(owner: Object, cases: Array[Callable], failures: Array[String]) -> void:
 	for case: Callable in cases:
 		owner.set("_test_done", false)
 		case.call()
@@ -15,7 +15,9 @@ static func drive(owner: Object, cases: Array, failures: Array) -> void:
 			failures.append("%s aborted before completion" % case.get_method())
 
 
-static func check_registration(owner: Object, cases: Array, failures: Array) -> void:
+static func check_registration(
+	owner: Object, cases: Array[Callable], failures: Array[String]
+) -> void:
 	var driven := {}
 	for case: Callable in cases:
 		var case_name: String = String(case.get_method())
@@ -30,7 +32,7 @@ static func check_registration(owner: Object, cases: Array, failures: Array) -> 
 
 ## Pins the guard itself: an incomplete case must be flagged, a completing
 ## case must not. Snapshot-restore keeps the host suite green.
-static func self_check(owner: Object, failures: Array) -> void:
+static func self_check(owner: Object, failures: Array[String]) -> void:
 	var base := failures.size()
 	drive(owner, [func() -> void: pass], failures)
 	var flagged := failures.size() > base
