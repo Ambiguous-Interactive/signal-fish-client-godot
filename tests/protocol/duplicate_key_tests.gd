@@ -166,6 +166,9 @@ func _test_clean_frames_still_decode() -> void:
 ## Direct guard vectors for the escape spellings the engine parser decodes:
 ## keys differing only in escape notation are the same key (duplicates),
 ## while escaped spellings of genuinely different keys never false-positive.
+## The container-scoping vectors pin where key uniqueness ends: an outer
+## object's key set survives inner containers closing, and array siblings
+## never share one.
 
 
 func _test_escape_canonicalization() -> void:
@@ -174,6 +177,7 @@ func _test_escape_canonicalization() -> void:
 		["simple escape spelling", '{"\\/":1,"/":2}'],
 		["surrogate pair vs literal", '{"\\ud83d\\ude00":1,"😀":2}'],
 		["empty key twice", '{"":1,"":2}'],
+		["key repeated after nested container closes", '{"k":[{"k":1}],"k":2}'],
 	]
 	for case: Array in duplicates:
 		var text: String = case[1]
@@ -184,6 +188,7 @@ func _test_escape_canonicalization() -> void:
 	var clean := [
 		["distinct keys, one escaped", '{"\\u0061":1,"b":2}'],
 		["same keys in sibling objects", '{"a":{"k":1},"b":{"k":2}}'],
+		["same keys across array siblings", '[{"k":1},{"k":2}]'],
 		["key repeated across nesting levels", '{"k":{"k":1}}'],
 		["lookalikes inside string values", '{"a":"k","k":1}'],
 		["escaped distinct emoji", '{"\\ud83d\\ude00":1,"\\u2728":2}'],

@@ -20,15 +20,6 @@ Per-session history: `progress/session-NNN-*.md`.
       `GODOT_ASSET_LIBRARY_ASSET_ID`. Runbook:
       `.llm/skills/asset-library-release.md`.
 
-### Post-v1 hardening (issue #161)
-- [ ] Remaining decode hot-path work: the JSON guard's object-dense shape
-      (~100 ms at the 256 KiB frame cap, dominated by per-object key-set
-      dictionaries) and wider workload profiling. The first four candidates
-      are resolved - two optimized, two measured negligible (see
-      `progress/session-060-*.md`; re-measure with
-      `godot --headless --script tests/protocol/decode_bench.gd`). The
-      fail-closed fuzz net landed (see `progress/session-059-*.md`).
-
 ### Post-v1 (P7, each gated)
 - [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke
       tests) - only after the separate compatibility decision (context.md
