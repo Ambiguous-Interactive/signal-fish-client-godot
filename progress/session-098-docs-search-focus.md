@@ -12,4 +12,4 @@ Branch: `codex/session-098-docs-search-focus` from `origin/main` at
 - MkDocs strict build, accessibility browser checks, docs style, and
   Prettier pass locally.
 
-PR for this recovery: pending.
+PR #212 is the recovery deliverable.
