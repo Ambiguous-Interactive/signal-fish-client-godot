@@ -52,20 +52,14 @@ class IceServerInfo:
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
 		urls = SFTypeUtils.coerce_string_array(data.get("urls", []))
-		username = _string_or_empty(data.get("username"))
-		credential = _string_or_empty(data.get("credential"))
+		username = SFTypeUtils.string_or_empty(data.get("username"))
+		credential = SFTypeUtils.string_or_empty(data.get("credential"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
 	func _to_string() -> String:
 		return "IceServerInfo(%s)" % [", ".join(urls)]
-
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
 
 
 ## A peer the recipient should connect to within a SessionPlanInfo (upstream
@@ -81,19 +75,13 @@ class SessionPeerInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		player_id = _string_or_empty(data.get("player_id"))
-		player_name = _string_or_empty(data.get("player_name"))
+		player_id = SFTypeUtils.string_or_empty(data.get("player_id"))
+		player_name = SFTypeUtils.string_or_empty(data.get("player_name"))
 		is_authority = SFTypeUtils.bool_or_false(data.get("is_authority"))
 		initiate = SFTypeUtils.bool_or_false(data.get("initiate"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
-
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
 
 
 ## A syntactically usable direct host endpoint for a [code]host + direct[/code]
@@ -107,22 +95,14 @@ class DirectEndpointInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		host = _string_or_empty(data.get("host"))
+		host = SFTypeUtils.string_or_empty(data.get("host"))
 		# Same gate as ConnectionInfo.port: a magnitude too large for int()
 		# takes the 0 absent sentinel instead of collapsing
 		# platform-dependently (issues #81/#96).
-		var port_value: Variant = data.get("port")
-		@warning_ignore("unsafe_call_argument")
-		port = int(port_value) if SFTypeUtils.is_i64_integer(port_value) else 0
+		port = SFTypeUtils.int_or_zero(data.get("port"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
-
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
 
 
 ## The per-recipient authoritative session directive (upstream
@@ -146,16 +126,23 @@ class SessionPlanInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		generation = _string_or_empty(data.get("generation"))
-		topology = _topology_token(data.get("topology"))
-		transport = _transport_kind_token(data.get("transport"))
-		host = _string_or_empty(data.get("host"))
-		if data.has("direct_endpoint") and typeof(data.get("direct_endpoint")) == TYPE_DICTIONARY:
-			@warning_ignore("unsafe_call_argument")
-			direct_endpoint = DirectEndpointInfo.new(data["direct_endpoint"])
-		peers = _coerce_objects(data.get("peers", []), SessionPeerInfo)
-		ice_servers = _coerce_objects(data.get("ice_servers", []), IceServerInfo)
-		fallback = _transport_kind_token(data.get("fallback"))
+		generation = SFTypeUtils.string_or_empty(data.get("generation"))
+		topology = SFTypeUtils.enum_value(
+			TOPOLOGY_FROM_STRING, data.get("topology"), Topology.UNKNOWN
+		)
+		transport = SFTypeUtils.enum_value(
+			TRANSPORT_KIND_FROM_STRING, data.get("transport"), TransportKind.UNKNOWN
+		)
+		host = SFTypeUtils.string_or_empty(data.get("host"))
+		var endpoint_value: Variant = data.get("direct_endpoint")
+		if endpoint_value is Dictionary:
+			var endpoint: Dictionary = endpoint_value
+			direct_endpoint = DirectEndpointInfo.new(endpoint)
+		peers = _coerce_peers(data.get("peers", []))
+		ice_servers = _coerce_ice_servers(data.get("ice_servers", []))
+		fallback = SFTypeUtils.enum_value(
+			TRANSPORT_KIND_FROM_STRING, data.get("fallback"), TransportKind.UNKNOWN
+		)
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
@@ -164,48 +151,40 @@ class SessionPlanInfo:
 		# Inner classes cannot call the outer script's static functions, so
 		# the wire labels are looked up through the shared constant tables.
 		var peer_ids := PackedStringArray()
-		@warning_ignore("untyped_declaration")
-		for peer in peers:
-			@warning_ignore("unsafe_call_argument")
-			peer_ids.append(peer.player_id)
-		@warning_ignore("unsafe_call_argument")
+		for peer: Variant in peers:
+			var session_peer: SessionPeerInfo = peer
+			peer_ids.append(session_peer.player_id)
+		var topology_text: String = TOPOLOGY_TO_STRING.get(topology, "unknown")
+		var transport_text: String = TRANSPORT_KIND_TO_STRING.get(transport, "unknown")
 		return (
 			"SessionPlanInfo(generation=%s topology=%s transport=%s peers=[%s])"
 			% [
 				generation,
-				String(TOPOLOGY_TO_STRING.get(topology, "unknown")),
-				String(TRANSPORT_KIND_TO_STRING.get(transport, "unknown")),
+				topology_text,
+				transport_text,
 				", ".join(peer_ids),
 			]
 		)
 
-	func _coerce_objects(values: Variant, object_type: Variant) -> Array:
+	func _coerce_peers(values: Variant) -> Array:
 		var result: Array = []
 		if typeof(values) != TYPE_ARRAY:
 			return result
 		for value: Variant in values:
-			if typeof(value) == TYPE_DICTIONARY:
-				@warning_ignore("unsafe_method_access")
-				result.append(object_type.new(value))
+			if value is Dictionary:
+				var entry: Dictionary = value
+				result.append(SessionPeerInfo.new(entry))
 		return result
 
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
-
-	func _transport_kind_token(value: Variant) -> int:
-		if typeof(value) != TYPE_STRING:
-			return TransportKind.UNKNOWN
-		@warning_ignore("unsafe_call_argument")
-		return int(TRANSPORT_KIND_FROM_STRING.get(String(value), TransportKind.UNKNOWN))
-
-	func _topology_token(value: Variant) -> int:
-		if typeof(value) != TYPE_STRING:
-			return Topology.UNKNOWN
-		@warning_ignore("unsafe_call_argument")
-		return int(TOPOLOGY_FROM_STRING.get(String(value), Topology.UNKNOWN))
+	func _coerce_ice_servers(values: Variant) -> Array:
+		var result: Array = []
+		if typeof(values) != TYPE_ARRAY:
+			return result
+		for value: Variant in values:
+			if value is Dictionary:
+				var entry: Dictionary = value
+				result.append(IceServerInfo.new(entry))
+		return result
 
 
 ## Compatibility directive for an additive WebRTC peer after finalization
@@ -220,17 +199,11 @@ class NewPeerInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		peer_id = _string_or_empty(data.get("peer_id"))
+		peer_id = SFTypeUtils.string_or_empty(data.get("peer_id"))
 		you_initiate = SFTypeUtils.bool_or_false(data.get("you_initiate"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
-
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
 
 
 ## A same-room peer's data-path transport state change (upstream
@@ -245,48 +218,32 @@ class PeerTransportStatusInfo:
 
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
-		peer_id = _string_or_empty(data.get("peer_id"))
-		transport = _transport_kind_token(data.get("transport"))
+		peer_id = SFTypeUtils.string_or_empty(data.get("peer_id"))
+		transport = SFTypeUtils.enum_value(
+			TRANSPORT_KIND_FROM_STRING, data.get("transport"), TransportKind.UNKNOWN
+		)
 		connected = SFTypeUtils.bool_or_false(data.get("connected"))
 
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
-	func _transport_kind_token(value: Variant) -> int:
-		if typeof(value) != TYPE_STRING:
-			return TransportKind.UNKNOWN
-		@warning_ignore("unsafe_call_argument")
-		return int(TRANSPORT_KIND_FROM_STRING.get(String(value), TransportKind.UNKNOWN))
-
-	func _string_or_empty(value: Variant) -> String:
-		if typeof(value) != TYPE_STRING:
-			return ""
-		@warning_ignore("unsafe_call_argument")
-		return String(value)
-
 
 static func topology_from_string(value: Variant) -> int:
-	if typeof(value) != TYPE_STRING:
-		return Topology.UNKNOWN
-	@warning_ignore("unsafe_call_argument")
-	return int(TOPOLOGY_FROM_STRING.get(String(value), Topology.UNKNOWN))
+	return SFTypeUtils.enum_value(TOPOLOGY_FROM_STRING, value, Topology.UNKNOWN)
 
 
 static func topology_to_string(value: int) -> String:
-	@warning_ignore("unsafe_call_argument")
-	return String(TOPOLOGY_TO_STRING.get(value, "unknown"))
+	var token: String = TOPOLOGY_TO_STRING.get(value, "unknown")
+	return token
 
 
 static func transport_kind_from_string(value: Variant) -> int:
-	if typeof(value) != TYPE_STRING:
-		return TransportKind.UNKNOWN
-	@warning_ignore("unsafe_call_argument")
-	return int(TRANSPORT_KIND_FROM_STRING.get(String(value), TransportKind.UNKNOWN))
+	return SFTypeUtils.enum_value(TRANSPORT_KIND_FROM_STRING, value, TransportKind.UNKNOWN)
 
 
 static func transport_kind_to_string(value: int) -> String:
-	@warning_ignore("unsafe_call_argument")
-	return String(TRANSPORT_KIND_TO_STRING.get(value, "unknown"))
+	var token: String = TRANSPORT_KIND_TO_STRING.get(value, "unknown")
+	return token
 
 
 static func validate_ice_servers_array(values: Variant) -> String:
@@ -328,12 +285,14 @@ static func validate_session_plan_info(data: Variant) -> String:
 		if typeof(dict["direct_endpoint"]) != TYPE_DICTIONARY:
 			return "SessionPlanInfo direct_endpoint must be an object"
 		var endpoint: Dictionary = dict["direct_endpoint"]
-		@warning_ignore("unsafe_cast")
 		# Upstream refuses an empty host when constructing a DirectEndpoint
 		# (`DirectEndpoint::from_connection_info`, src/protocol/validation.rs).
 		# The host is a free-text address, not a UUID identifier (issue #151
 		# keeps it on the #149 non-empty rule).
-		if not _has_string(endpoint, "host") or (endpoint["host"] as String).is_empty():
+		if (
+			not _has_string(endpoint, "host")
+			or SFTypeUtils.string_or_empty(endpoint.get("host")).is_empty()
+		):
 			return "SessionPlanInfo direct_endpoint requires non-empty string host"
 		if not _is_integer_value_in_range(endpoint.get("port", 0), 1, U16_MAX):
 			return "SessionPlanInfo direct_endpoint requires port in 1..65535"
@@ -368,11 +327,13 @@ static func _validate_ice_server(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "IceServer must be an object"
 	var dict: Dictionary = data
-	@warning_ignore("unsafe_cast")
 	# Deliberately stricter than the upstream `Vec<String>` type: an empty
 	# url list gathers no candidates, so the entry is treated as malformed
 	# (decode fails loud, link stays up) instead of silently useless.
-	if not _has_string_array(dict, "urls") or (dict["urls"] as Array).is_empty():
+	if not _has_string_array(dict, "urls"):
+		return "IceServer requires a non-empty string array urls"
+	var urls: Array = dict["urls"]
+	if urls.is_empty():
 		return "IceServer requires a non-empty string array urls"
 	for key: String in ["username", "credential"]:
 		if dict.has(key) and dict[key] != null and typeof(dict[key]) != TYPE_STRING:
@@ -422,8 +383,10 @@ static func _has_string_array(data: Dictionary, key: String) -> bool:
 
 
 static func _has_known_enum_token(data: Dictionary, key: String, table: Dictionary) -> bool:
-	@warning_ignore("unsafe_call_argument")
-	return _has_string(data, key) and table.has(String(data[key]))
+	if not _has_string(data, key):
+		return false
+	var token: String = data[key]
+	return table.has(token)
 
 
 static func _has_dict_array(data: Dictionary, key: String) -> bool:
@@ -438,6 +401,5 @@ static func _has_dict_array(data: Dictionary, key: String) -> bool:
 static func _is_integer_value_in_range(value: Variant, min_value: int, max_value: int) -> bool:
 	if not SFTypeUtils.is_integral_number(value):
 		return false
-	@warning_ignore("unsafe_call_argument")
-	var number := float(value)
+	var number: float = value
 	return number >= float(min_value) and number <= float(max_value)
