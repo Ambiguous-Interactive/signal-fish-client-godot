@@ -197,7 +197,7 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	# Lambdas capture locals by value; mutations must go through the Array.
 	var replay_fields: Array = []
 	client.reconnected.connect(
-		func(info: SFTypesScript.RoomJoinedInfo, missed: Array) -> void:
+		func(info: SFTypesScript.RoomJoinedInfo, missed: Array[SFTypesScript.DecodedEvent]) -> void:
 			reconnected_count[0] += 1
 			missed_count[0] = missed.size()
 			(
@@ -846,7 +846,10 @@ func _test_duplicate_reconnected_is_fully_silent() -> void:
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	var emissions: Array[int] = [0]
 	client.reconnected.connect(
-		func(_info: SFTypesScript.RoomJoinedInfo, _missed: Array) -> void: emissions[0] += 1
+		func(
+			_info: SFTypesScript.RoomJoinedInfo, _missed: Array[SFTypesScript.DecodedEvent]
+		) -> void:
+			emissions[0] += 1
 	)
 	var data := _room_joined_data({"lobby_state": "lobby"})
 	data["reconnection_token"] = TOKEN_V2
@@ -876,7 +879,10 @@ func _test_unsolicited_reconnected_is_loud() -> void:
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	var emissions: Array[int] = [0]
 	client.reconnected.connect(
-		func(_info: SFTypesScript.RoomJoinedInfo, _missed: Array) -> void: emissions[0] += 1
+		func(
+			_info: SFTypesScript.RoomJoinedInfo, _missed: Array[SFTypesScript.DecodedEvent]
+		) -> void:
+			emissions[0] += 1
 	)
 	var errors_before := errors.size()
 	var data := _room_joined_data({"lobby_state": "lobby"})
@@ -918,7 +924,9 @@ func _test_dial_contract_survives_authentication_error() -> void:
 		func(_error: String, _code: SFErrorCodesScript.Code) -> void: auth_error_events.append(1)
 	)
 	client.reconnected.connect(
-		func(_info: SFTypesScript.RoomJoinedInfo, _missed: Array) -> void:
+		func(
+			_info: SFTypesScript.RoomJoinedInfo, _missed: Array[SFTypesScript.DecodedEvent]
+		) -> void:
 			reconnected_events.append(1)
 	)
 	transport.inject_server_message(

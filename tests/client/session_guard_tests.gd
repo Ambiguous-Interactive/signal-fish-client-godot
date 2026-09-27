@@ -96,7 +96,12 @@ func _test_cross_flow_left_events_are_inert() -> void:
 	var in_room_fake: SFFakeTransportScript = in_room.transport
 	var in_room_left_events: Array[int] = []
 	in_room.spectator_left.connect(
-		func(_room_id: String, _room_code: String, _reason: int, _current: Array) -> void:
+		func(
+			_room_id: String,
+			_room_code: String,
+			_reason: int,
+			_current: Array[SFTypesScript.SpectatorInfo]
+		) -> void:
 			in_room_left_events.append(1)
 	)
 	in_room_fake.inject_server_message(spectator_left_frame)

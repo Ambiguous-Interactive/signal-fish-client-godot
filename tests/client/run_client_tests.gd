@@ -777,7 +777,9 @@ func _assert_flags(client: SignalFishClientScript, expected: Dictionary, label: 
 	_assert_flags_from(client.get_players(), expected, label)
 
 
-func _assert_flags_from(roster: Array, expected: Dictionary, label: String) -> void:
+func _assert_flags_from(
+	roster: Array[SFTypesScript.PlayerInfo], expected: Dictionary, label: String
+) -> void:
 	var flags := {}
 	for player: SFTypesScript.PlayerInfo in roster:
 		flags[player.id] = player.is_authority
@@ -794,16 +796,27 @@ func _test_spectator_flow() -> void:
 	)
 	client.new_spectator_joined.connect(
 		func(
-			spectator: SFTypesScript.SpectatorInfo, current_spectators: Array, reason: int
+			spectator: SFTypesScript.SpectatorInfo,
+			current_spectators: Array[SFTypesScript.SpectatorInfo],
+			reason: int
 		) -> void:
 			spectator_events.append(["new", spectator.id, current_spectators.size(), reason])
 	)
 	client.spectator_disconnected.connect(
-		func(spectator_id: String, reason: int, current_spectators: Array) -> void:
+		func(
+			spectator_id: String,
+			reason: int,
+			current_spectators: Array[SFTypesScript.SpectatorInfo]
+		) -> void:
 			spectator_events.append(["gone", spectator_id, current_spectators.size(), reason])
 	)
 	client.spectator_left.connect(
-		func(_room_id: String, room_code: String, reason: int, current_spectators: Array) -> void:
+		func(
+			_room_id: String,
+			room_code: String,
+			reason: int,
+			current_spectators: Array[SFTypesScript.SpectatorInfo]
+		) -> void:
 			spectator_events.append(["left", room_code, reason, current_spectators.size()])
 	)
 	client.spectator_join_failed.connect(
@@ -903,7 +916,7 @@ func _test_reconnected_restores_room_state() -> void:
 	var restored: Array = []
 	var failures: Array = []
 	client.reconnected.connect(
-		func(info: SFTypesScript.RoomJoinedInfo, missed: Array) -> void:
+		func(info: SFTypesScript.RoomJoinedInfo, missed: Array[SFTypesScript.DecodedEvent]) -> void:
 			restored.append([info, missed])
 	)
 	client.reconnection_failed.connect(
