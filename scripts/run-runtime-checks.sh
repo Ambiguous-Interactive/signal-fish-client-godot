@@ -86,7 +86,12 @@ run_sharded_tool() {
 	# when `set -e` aborts mid-wait, so an early failure cannot leak files.
 	(
 		trap 'rm -rf "'"$tmp_dir"'"' EXIT
+		# CI runs the helper analyzer, formatter, and linter together. Two
+		# shards per parser tool reduce contention on its small runner.
 		local shard_count=4
+		if [[ "${CI:-}" == "true" ]]; then
+			shard_count=2
+		fi
 		local shard_size=$((( ${#files[@]} + shard_count - 1 ) / shard_count))
 		local pids=() outs=() index=0 shard=0
 		while [[ "${index}" -lt "${#files[@]}" ]]; do
