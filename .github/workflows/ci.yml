@@ -35,11 +35,17 @@ jobs:
                   npm ci --ignore-scripts
                   pwsh -NoProfile -Command 'Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -AcceptLicense'
                   bash scripts/install-shfmt.sh "$RUNNER_TEMP/shfmt"
+                  bash scripts/install-shellcheck.sh "$RUNNER_TEMP/shellcheck"
 
             - name: Check source formatting
               env:
                   SHFMT_BIN: ${{ runner.temp }}/shfmt
               run: bash scripts/check-source-format.sh
+
+            - name: Analyze source scripts
+              env:
+                  SHELLCHECK_BIN: ${{ runner.temp }}/shellcheck
+              run: bash scripts/check-source-quality.sh
 
     static:
         name: Static checks

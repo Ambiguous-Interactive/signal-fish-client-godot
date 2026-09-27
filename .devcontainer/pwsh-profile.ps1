@@ -40,6 +40,6 @@ function prompt {
         $b = git rev-parse --abbrev-ref HEAD 2>$null
         if ($LASTEXITCODE -eq 0 -and $b) { $branch = " ($b)" }
     }
-    catch { }
+    catch { $branch = '' }
     "PS $cwd$branch> "
 }

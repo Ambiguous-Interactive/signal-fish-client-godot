@@ -11,7 +11,7 @@ param(
     [switch]$NoAutoFix,
     [switch]$VerboseOutput,
     # Print per-stage timings.
-    [switch]$Profile,
+    [Alias('Profile')][switch]$ProfileTimings,
     # Used by CI after it has already run scripts/preflight.ps1 as a separate
     # loud -NoAutoFix step.
     [switch]$PreflightAlreadyDone,
@@ -60,7 +60,7 @@ function Invoke-HookStage {
     finally {
         $sw.Stop()
         $script:timings.Add([pscustomobject]@{ Name = $Name; Milliseconds = $sw.ElapsedMilliseconds })
-        if ($Profile) {
+        if ($ProfileTimings) {
             Write-HookLine ("timing {0}: {1} ms" -f $Name, $sw.ElapsedMilliseconds)
         }
     }
@@ -530,7 +530,7 @@ function Test-HookPythonCommandPath {
 function Test-HookPythonCanImportYaml {
     param([Parameter(Mandatory)][string]$Python)
 
-    $output = @(& $Python -c 'import yaml' 2>&1)
+    $null = @(& $Python -c 'import yaml' 2>&1)
     return $LASTEXITCODE -eq 0
 }
 
@@ -807,7 +807,7 @@ function Get-ControlledStrayArtifacts {
             if (-not (Test-StrayArtifactLeafName -Leaf $file.Name -Matchers $leafMatchers)) { continue }
             $rel = (Get-LlmRepoRelativePath -RepoRoot $RepoRoot -Path $file.FullName)
             if ([string]::IsNullOrWhiteSpace($rel) -or $artifacts.ContainsKey($rel)) { continue }
-            if (-not (Test-LlmDeletableArtifact -RepoRoot $RepoRoot -RelativePath $rel -TrackedFiles $TrackedFiles)) { continue }
+            if (-not (Test-LlmDeletableArtifact -RelativePath $rel -TrackedFiles $TrackedFiles)) { continue }
             $artifacts[$rel] = [pscustomobject]@{
                 Path      = $rel
                 IsTracked = $TrackedFiles.Contains($rel)
@@ -848,7 +848,7 @@ function Invoke-StrayArtifactCheck {
         $full = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $stray))
         if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
 
-        $deletable = Test-LlmDeletableArtifact -RepoRoot $RepoRoot -RelativePath $stray -TrackedFiles $trackedSet
+        $deletable = Test-LlmDeletableArtifact -RelativePath $stray -TrackedFiles $trackedSet
         if (-not $deletable) {
             if ($autoFixEnabled) {
                 Write-HookLine "AutoFix: found stray $stray but it's outside controlled directories; leaving for manual review." 'Yellow'
@@ -1379,7 +1379,7 @@ try {
         }
     }
 
-    if ($Profile) {
+    if ($ProfileTimings) {
         $total = ($timings | Measure-Object -Property Milliseconds -Sum).Sum
         Write-HookLine ("timing total: {0} ms" -f $total)
     }

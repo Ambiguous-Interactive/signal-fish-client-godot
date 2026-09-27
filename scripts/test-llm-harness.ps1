@@ -832,13 +832,13 @@ $script:HookPredicateExact = @(
 function Get-HookShimPredicateTokens {
     param([Parameter(Mandatory)][string]$ShimText, [Parameter(Mandatory)][string]$Label)
 
-    $matches = [regex]::Matches(
+    $predicateMatches = [regex]::Matches(
         $ShimText,
         [regex]::Escape('.llm/*|') + '[A-Za-z0-9_./|*-]+\)')
-    if ($matches.Count -ne 1) {
-        throw "$Label must contain exactly one staged-path predicate pattern line; found $($matches.Count)."
+    if ($predicateMatches.Count -ne 1) {
+        throw "$Label must contain exactly one staged-path predicate pattern line; found $($predicateMatches.Count)."
     }
-    $pattern = $matches[0].Value.TrimEnd(')')
+    $pattern = $predicateMatches[0].Value.TrimEnd(')')
     $tokens = @($pattern -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     if ($tokens.Count -ne
         ($script:HookPredicatePrefixes.Count + $script:HookPredicateExact.Count)) {
@@ -932,7 +932,7 @@ Assert-Test 'run-llm-hooks.ps1 exposes -AutoFix and -NoAutoFix switches' {
     if ($content -notmatch "\[ValidateSet\('PreCommit', 'AgentFast', 'Full', 'CI'\)\]") {
         throw 'run-llm-hooks.ps1 must expose explicit PreCommit, AgentFast, Full, and CI modes.'
     }
-    if ($content -notmatch '\[switch\]\$Profile') {
+    if ($content -notmatch '\[Alias\(''Profile''\)\]\[switch\]\$ProfileTimings') {
         throw 'run-llm-hooks.ps1 must expose -Profile for hook performance diagnostics.'
     }
 }
@@ -4105,37 +4105,33 @@ Assert-Test 'Test-LlmDeletableArtifact: artifact in controlled dir is deletable'
     if (-not (Get-Command Test-LlmDeletableArtifact -ErrorAction SilentlyContinue)) {
         throw 'Test-LlmDeletableArtifact is not exported from the shared module.'
     }
-    $repoRoot = Split-Path -Parent $ScriptsDir
     $tracked = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-    $deletable = Test-LlmDeletableArtifact -RepoRoot $repoRoot -RelativePath 'scripts/foo.tmp' -TrackedFiles $tracked
+    $deletable = Test-LlmDeletableArtifact -RelativePath 'scripts/foo.tmp' -TrackedFiles $tracked
     if (-not $deletable) {
         throw 'A `.tmp` under scripts/ must be deletable (controlled directory).'
     }
 }
 
 Assert-Test 'Test-LlmDeletableArtifact: artifact outside controlled dirs is NOT deletable' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
     $tracked = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-    $deletable = Test-LlmDeletableArtifact -RepoRoot $repoRoot -RelativePath 'notes/random.md.swp' -TrackedFiles $tracked
+    $deletable = Test-LlmDeletableArtifact -RelativePath 'notes/random.md.swp' -TrackedFiles $tracked
     if ($deletable) {
         throw 'A `.swp` under notes/ must NOT be deletable; nothing tracks it.'
     }
 }
 
 Assert-Test 'Test-LlmDeletableArtifact: sibling-of-tracked-source is deletable' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
     $tracked = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     [void]$tracked.Add('whatever/foo.ps1')
-    $deletable = Test-LlmDeletableArtifact -RepoRoot $repoRoot -RelativePath 'whatever/foo.ps1.tmp' -TrackedFiles $tracked
+    $deletable = Test-LlmDeletableArtifact -RelativePath 'whatever/foo.ps1.tmp' -TrackedFiles $tracked
     if (-not $deletable) {
         throw 'A `.tmp` next to a tracked `.ps1` must be deletable (sibling rule).'
     }
 }
 
 Assert-Test 'Test-LlmDeletableArtifact: empty path is NOT deletable (defensive)' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
     $tracked = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-    $deletable = Test-LlmDeletableArtifact -RepoRoot $repoRoot -RelativePath '' -TrackedFiles $tracked
+    $deletable = Test-LlmDeletableArtifact -RelativePath '' -TrackedFiles $tracked
     if ($deletable) {
         throw 'Empty path must never be auto-deletable.'
     }
@@ -4178,14 +4174,13 @@ Assert-Test 'run-llm-hooks.ps1 fast sibling stray scan is directory-based' {
 # --- M-5: Test-LlmDeletableArtifact strips ./ prefix -----------------------
 
 Assert-Test 'Test-LlmDeletableArtifact strips leading ./ prefix' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
     $tracked = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-    $deletable = Test-LlmDeletableArtifact -RepoRoot $repoRoot -RelativePath './scripts/foo.ps1.tmp' -TrackedFiles $tracked
+    $deletable = Test-LlmDeletableArtifact -RelativePath './scripts/foo.ps1.tmp' -TrackedFiles $tracked
     if (-not $deletable) {
         throw "Path './scripts/foo.ps1.tmp' must be deletable; the './' prefix must be stripped before the controlled-dir check."
     }
     # Also test the backslash + ./ variant.
-    $deletable = Test-LlmDeletableArtifact -RepoRoot $repoRoot -RelativePath '.\scripts\foo.ps1.tmp' -TrackedFiles $tracked
+    $deletable = Test-LlmDeletableArtifact -RelativePath '.\scripts\foo.ps1.tmp' -TrackedFiles $tracked
     if (-not $deletable) {
         throw "Path '.\\scripts\\foo.ps1.tmp' must be deletable; backslash + ./ prefix must normalize."
     }
@@ -4194,15 +4189,14 @@ Assert-Test 'Test-LlmDeletableArtifact strips leading ./ prefix' {
 # --- NIT-1: Test-LlmDeletableArtifact collapses repeated `/` and `./` ------
 
 Assert-Test 'Test-LlmDeletableArtifact collapses repeated `./` and `//` prefixes' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
     $tracked = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     # Repeated `./` followed by `//` must reduce to `scripts/foo.ps1.tmp`.
-    $deletable = Test-LlmDeletableArtifact -RepoRoot $repoRoot -RelativePath './/scripts/foo.ps1.tmp' -TrackedFiles $tracked
+    $deletable = Test-LlmDeletableArtifact -RelativePath './/scripts/foo.ps1.tmp' -TrackedFiles $tracked
     if (-not $deletable) {
         throw "Path './/scripts/foo.ps1.tmp' must be deletable; repeated // must collapse before the controlled-dir check."
     }
     # Triple-slash and chained `./` segments.
-    $deletable = Test-LlmDeletableArtifact -RepoRoot $repoRoot -RelativePath './/./scripts///foo.ps1.tmp' -TrackedFiles $tracked
+    $deletable = Test-LlmDeletableArtifact -RelativePath './/./scripts///foo.ps1.tmp' -TrackedFiles $tracked
     if (-not $deletable) {
         throw "Path './/./scripts///foo.ps1.tmp' must be deletable; repeated `./` and `///` must normalize."
     }

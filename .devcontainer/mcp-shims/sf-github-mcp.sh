@@ -12,10 +12,12 @@
 set -euo pipefail
 
 export GITHUB_PERSONAL_ACCESS_TOKEN="${GITHUB_PERSONAL_ACCESS_TOKEN:-${GITHUB_MCP_PAT:-}}"
+# shellcheck disable=SC2016
 case "${GITHUB_PERSONAL_ACCESS_TOKEN}" in
 *'${'*)
     # A client that did not expand ${GITHUB_MCP_PAT:-} hands us the
     # literal text; that must fail loudly, not authenticate with garbage.
+    # shellcheck disable=SC2016
     printf 'sf-github-mcp: token is an unexpanded variable reference; this client does not substitute ${VAR} in .mcp.json env maps\n' >&2
     exit 1
     ;;

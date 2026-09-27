@@ -86,6 +86,7 @@ TOOLCHAIN_SUMMARY="$(mktemp "${TMPDIR:-/tmp}/sf-toolchain.XXXXXX")"
 {
     printf '  bash    : %s\n' "$(bash --version | head -n1)"
     printf '  git     : %s\n' "$(git --version)"
+    # shellcheck disable=SC2016
     printf '  pwsh    : %s\n' "$(pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>/dev/null || echo 'NOT FOUND')"
     printf '  python  : %s\n' "$(python3 --version 2>&1)"
     printf '  node    : %s\n' "$(node --version 2>/dev/null || echo 'NOT FOUND')"

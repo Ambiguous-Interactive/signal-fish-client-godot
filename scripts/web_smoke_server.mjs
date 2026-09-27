@@ -39,7 +39,7 @@ const MIME_TYPES = {
 };
 
 const staticServer = https.createServer(tlsOptions, (request, response) => {
-  let urlPath = "";
+  let urlPath;
   try {
     urlPath = decodeURIComponent(
       new URL(request.url, `https://${host}`).pathname,
@@ -159,7 +159,7 @@ wssServer.on("upgrade", (request, socket) => {
     const consumed = decodeClientFrames(
       pending,
       (text) => {
-        let type = "";
+        let type;
         try {
           type = String(JSON.parse(text).type ?? "");
         } catch {

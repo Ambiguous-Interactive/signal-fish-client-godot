@@ -26,8 +26,6 @@ and checks within about one hour. Session cadence:
       remain under the warning-as-error Godot load gate.
 - [ ] #168: Move suitable automation to Python and uv while preserving the
       PowerShell harness and the runtime gate behavior.
-- [ ] #170: Extend static analyzers and warning checks for PowerShell, shell,
-      and JavaScript. Review Python Ruff rule coverage and exceptions.
 
 ### Asset Library bootstrap (P6 remainder)
 

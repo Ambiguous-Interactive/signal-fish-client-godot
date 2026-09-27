@@ -111,7 +111,7 @@ def load_yaml(path: Path) -> object:
 
 def load_yaml_text(text: str, name: str = "<memory>") -> object:
     try:
-        parsed: object = yaml.load(text, Loader=UniqueKeyLoader)
+        parsed: object = yaml.load(text, Loader=UniqueKeyLoader)  # noqa: S506
         return parsed
     except ConfigError:
         raise
