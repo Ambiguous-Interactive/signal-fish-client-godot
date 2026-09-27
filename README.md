@@ -163,8 +163,8 @@ npm ci --ignore-scripts
 pwsh -NoProfile -Command 'Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -AcceptLicense'
 bash scripts/install-shfmt.sh /tmp/sf-shfmt
 bash scripts/install-shellcheck.sh /tmp/sf-shellcheck
-SHFMT_BIN=/tmp/sf-shfmt bash scripts/check-source-format.sh check
-SHELLCHECK_BIN=/tmp/sf-shellcheck bash scripts/check-source-quality.sh
+SHFMT_BIN=/tmp/sf-shfmt python3 scripts/check-source.py format
+SHELLCHECK_BIN=/tmp/sf-shellcheck python3 scripts/check-source.py quality
 ```
 
 Use `write` in place of `check` to format the tracked files.

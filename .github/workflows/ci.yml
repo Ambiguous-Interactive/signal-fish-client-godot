@@ -40,12 +40,12 @@ jobs:
             - name: Check source formatting
               env:
                   SHFMT_BIN: ${{ runner.temp }}/shfmt
-              run: bash scripts/check-source-format.sh
+              run: python3 scripts/check-source.py format
 
             - name: Analyze source scripts
               env:
                   SHELLCHECK_BIN: ${{ runner.temp }}/shellcheck
-              run: bash scripts/check-source-quality.sh
+              run: python3 scripts/check-source.py quality
 
     static:
         name: Static checks
