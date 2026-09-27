@@ -868,6 +868,13 @@ func _test_refused_relays_recover() -> void:
 	var limited_pc: FakePeerConnection = limited[3]
 	var limited_transport: SFFakeTransportScript = limited_client.transport
 	var limited_baseline: int = limited_transport.sent_text.size()
+	_inject_server_error(limited_client, "SIGNAL_RATE_LIMITED")
+	limited_mesh.poll()
+	_assert_equal(
+		limited_baseline,
+		limited_transport.sent_text.size(),
+		"rate-limit error before a relay sends nothing"
+	)
 	limited_pc.emit_session_description_created("offer", "v=0")
 	_assert_equal([_offer_signal()], _sent_after(limited_client, limited_baseline), "offer sent")
 	_inject_server_error(limited_client, "SIGNAL_RATE_LIMITED")
