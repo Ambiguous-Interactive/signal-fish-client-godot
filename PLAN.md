@@ -15,9 +15,9 @@ Per-session history: `progress/session-NNN-*.md`.
 ## Next work
 
 ### Static quality issues (#165-#170)
-- [ ] #165: Audit all addon, test, and demo GDScript for complete typing and
-      verify every script compiles under warning errors. The addon keeps four
-      deliberate unused interface-signal ignores in `sf_transport.gd`.
+- [ ] #165: Audit generic `Array`, `Dictionary`, and `Variant` uses and narrow
+      those that have a fixed shape. All 49 tracked GDScript files now load
+      under warning errors; four unused interface-signal ignores remain.
 - [ ] #166: Enforce strict typing across the seven tracked Python files.
 - [ ] #167: Pin and check formatters for the remaining script and doc formats.
 - [ ] #168: Move suitable automation to Python and uv while preserving the

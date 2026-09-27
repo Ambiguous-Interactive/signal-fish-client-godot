@@ -39,8 +39,10 @@ func _init() -> void:
 		# ship below the Asset Library's 128 px floor.
 		if image.get_width() != size or image.get_height() != size:
 			push_error(
-				"%s: rendered %dx%d, expected %dx%d (stale BASE_SIZE?)"
-				% [path, image.get_width(), image.get_height(), size, size]
+				(
+					"%s: rendered %dx%d, expected %dx%d (stale BASE_SIZE?)"
+					% [path, image.get_width(), image.get_height(), size, size]
+				)
 			)
 			failed = true
 			continue

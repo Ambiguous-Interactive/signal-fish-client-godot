@@ -42,7 +42,7 @@ fi
 
 python_bin="${PYTHON:-python3}"
 target="${1:-all}"
-GD_DIRS=(addons/signal_fish tests demo)
+GD_DIRS=(addons/signal_fish tests demo scripts)
 
 gdtoolkit_version() {
 	# importlib.metadata reads the dist-info without importing the gdtoolkit
@@ -626,11 +626,11 @@ run_changed() {
 		for gd_file in ${gd_suites[@]+"${gd_suites[@]}"}; do
 			[[ -f "${gd_file}" ]] && static_files+=("${gd_file}")
 		done
-		# Same directory scope as the gate (addons/signal_fish, tests, demo):
+		# Same directory scope as the gate (addons/signal_fish, tests, demo, scripts):
 		# the fast loop must never be stricter than the pre-push contract.
 		while IFS= read -r file; do
 			case "${file}" in
-				addons/signal_fish/*.gd | demo/*.gd)
+				addons/signal_fish/*.gd | demo/*.gd | scripts/*.gd)
 					[[ -f "${file}" ]] && static_files+=("${file}")
 					;;
 			esac
