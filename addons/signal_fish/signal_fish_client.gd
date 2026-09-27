@@ -47,14 +47,11 @@ signal new_spectator_joined(
 )
 signal spectator_disconnected(spectator_id: String, reason: int, current_spectators: Array)
 signal server_error(message: String, error_code: int)
-# Protocol v3 session-plan surface (upstream SessionPlan/Signal/NewPeer/
-# PeerTransportStatus). session_plan.plan is an SFSessionTypes.SessionPlanInfo; the
-# latest plan wins and a relay/relay plan with no peers is the floor reset.
-# signal_received.payload is the server-forwarded value verbatim (matchbox
-# convention: {"Offer"|"Answer"|"IceCandidate": ...}); generation is "" on the
-# legacy Server 0.4 shape.
+## Relayed v3 signal, forwarded verbatim. Payload may be null or a future
+## shape; check it before indexing. Empty generation marks a legacy plan.
 signal signal_received(from_player: String, generation: String, signal_payload: Variant)
 signal new_peer(peer_id: String, you_initiate: bool)
+## Latest v3 plan wins. A relay plan with no peers resets the mesh floor.
 signal session_plan(plan: SFSessionTypesScript.SessionPlanInfo)
 signal peer_transport_status(peer_id: String, transport: int, connected: bool)
 
@@ -104,8 +101,6 @@ const RECONNECT_JITTER_FRACTION := 0.25
 ## the episode is over and retrying can never rejoin.
 const CLOSE_CODE_KICKED := 4007
 
-## Session states that imply a live player-room baseline; `room_left` mutates
-## state only inside these (issue #106).
 const _PLAYER_ROOM_STATES: Array[SessionState] = [
 	SessionState.IN_ROOM_WAITING,
 	SessionState.IN_ROOM_LOBBY,
@@ -316,8 +311,6 @@ func close(code := 1000, reason := "") -> Error:
 	_capture_reconnect_context("", "", "")
 	match _connection_state:
 		ConnectionState.CONNECTING:
-			# Closing while connecting is a failed open: the transport surfaces
-			# `failed`, which transitions the client to FAILED.
 			_connection_state = ConnectionState.CLOSING
 			_reset_heartbeat()
 			transport.close(code, reason)
@@ -332,7 +325,6 @@ func close(code := 1000, reason := "") -> Error:
 
 
 func is_connected_to_server() -> bool:
-	# Named to avoid shadowing Object.is_connected(signal, callable).
 	return _connection_state == ConnectionState.CONNECTED
 
 
@@ -364,10 +356,9 @@ func get_lobby_state() -> int:
 	return _lobby_state
 
 
+## Returns a roster snapshot. Later authority changes replace entries, so
+## earlier snapshots keep their values (issues #87 and #147).
 func get_players() -> Array:
-	# Defensive copy (issue #87): the internal rosters are mutated in place by
-	# presence handling, so handing out live arrays would let a caller's
-	# mutation (or a long-held reference) corrupt session state.
 	return _players.duplicate()
 
 
@@ -465,7 +456,6 @@ func send_game_data_binary(bytes: PackedByteArray) -> Error:
 		return ERR_BUSY
 	var error: Error = transport.send_binary(bytes)
 	if error != OK:
-		# Transport failures also surface as `failed` -> connection_failed.
 		_emit_protocol_error("send_game_data_binary send failed: %s" % error_string(error))
 	return error
 
@@ -574,23 +564,6 @@ func _process(delta: float) -> void:
 		poll()
 
 
-## Optional dead-link detection (PLAN §4.7): with
-## [member SignalFishConfig.heartbeat_interval_sec] on, a [code]Ping[/code]
-## goes out every interval once the session is authenticated and connected;
-## a missing [signal pong] within
-## [member SignalFishConfig.pong_timeout_sec] ends the link through the
-## transport-failure path, so consumers observe [signal connection_failed]
-## and opt-in auto-reconnect engages exactly like any other abnormal
-## termination. Delta-accumulated (no timers, no threads); off by default.
-## A link that stays silent for the pong window during AUTHENTICATING (where
-## protocol Ping is not allowed) is dead the same way; issue #121. A CLOSING
-## window that never completes (silent link death mid-close-handshake) is
-## bounded by the same deadline; issue #126. A beat refused under
-## backpressure arms the same deadline (issue #128): the beat keeps
-## retrying each interval, a live-but-congested link answers Pong once its
-## buffer drains, and a dead link fails instead of living CONNECTED
-## forever. Upstream keeps the beat manual (Rust `ping()` only), so the
-## refused-beat deadline is a Godot-client rule, not mirrored behavior.
 func _tick_heartbeat(delta: float) -> void:
 	if _config == null or _config.heartbeat_interval_sec <= 0.0:
 		return
@@ -686,8 +659,6 @@ func _open_transport(target: String) -> Error:
 		_clear_reconnect_credentials()
 		_emit_protocol_error(scheme_error)
 		return ERR_INVALID_PARAMETER
-	# Remember the dial target so reconnect/auto-reconnect rejoin the same
-	# endpoint even when the session started with an explicit override.
 	_last_dial_url = target
 	_user_close_requested = false
 	_reconnect_handshake_sent = false
@@ -695,8 +666,6 @@ func _open_transport(target: String) -> Error:
 	_reconnected_seen = false
 	_protocol_info_seen = false
 	_reconnect_dial = not _reconnect_auth_token.is_empty()
-	# Each dial renegotiates the game-data format from the configured
-	# preference.
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
 	# A fresh dial supersedes any armed retry timer. The retry budget is NOT
 	# reset here: it resets only when a session actually re-establishes (a
@@ -709,7 +678,6 @@ func _open_transport(target: String) -> Error:
 	_wire_transport_signals()
 	var error: Error = transport.connect_to_url(target)
 	if error != OK:
-		# The transport already emitted `failed` for a synchronous refusal.
 		return error
 	return OK
 
@@ -744,8 +712,6 @@ func _on_transport_opened() -> void:
 	connected.emit()
 	if _connection_state != ConnectionState.CONNECTED:
 		return
-	# Every dial authenticates first (upstream parity); a reconnect dial sends
-	# its directed `Reconnect` once `Authenticated` arrives.
 	var error: Error = _send_authenticate()
 	if error != OK and _connection_state == ConnectionState.CONNECTED:
 		# A refused authenticate (e.g. the backpressure cap) leaves the dial
@@ -818,17 +784,6 @@ func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
 	_handle_event(event)
 
 
-## Binary frames carry game data once a binary format is negotiated
-## (PLAN P2): [code]message_pack[/code] frames are strict envelopes decoded
-## via [code]SFBinaryFrames[/code] — an [code]rkyv[/code] envelope
-## [code]encoding[/code] token (the server-reserved internal format, issue
-## #146) decodes fine and its payload passes through raw with the sender
-## identity attached. Anything else is dropped with a protocol error — the
-## link stays up, matching the text-path hardening. Upstream parity note: a
-## json-negotiated v2 recipient only ever receives game data as TEXT
-## (`BinaryFallbackV2`); json senders cannot originate binary frames because
-## the server drops them, so binary on a json connection is hostile or
-## buggy, never lost game data.
 func _handle_binary_frame(payload: PackedByteArray) -> void:
 	if _connection_state != ConnectionState.CONNECTED:
 		# Mirror the text path: while CLOSING the client only polls for the
@@ -880,10 +835,6 @@ func _reconcile_game_data_format(supported_formats: Array) -> void:
 		_downgrade_game_data_format(reason)
 
 
-## Pins the effective negotiation to JSON and explains why once. The server
-## still answers the preference mismatch itself (an `Error` event surfaces
-## through [signal server_error]); this only stops the client from sending
-## binary the server would drop.
 func _downgrade_game_data_format(reason: String) -> void:
 	if _effective_game_data_format == SFTypesScript.GameDataEncoding.JSON:
 		return
@@ -924,9 +875,6 @@ func _on_transport_failed(error: String) -> void:
 	_teardown_transport()
 	SFLogScript.info("transport failed: %s" % error, _secrets)
 	connection_failed.emit(error)
-	# A dead dial or dropped link is an abnormal termination, same as a
-	# server-initiated close: budget-limited retries keep auto-reconnect
-	# useful when the endpoint is briefly unreachable.
 	if _auto_reconnect_enabled and not user_close:
 		_schedule_auto_reconnect()
 
@@ -949,19 +897,8 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			if not _authenticated_seen:
 				_authenticated_seen = true
 				if _reconnect_dial:
-					# Reconnect dial: the directed handshake goes out once
-					# `Authenticated` arrives (upstream
-					# `take_auto_reconnect_operation` fires only post-auth).
-					# `authenticated` stays consumer-silent on dials: emitting
-					# it would invite a join-on-auth handler to race the
-					# handshake with a fresh JoinRoom; consumers observe
-					# `reconnected` (or `reconnection_failed`) next. The send
-					# is once-per-dial and only while the dial credentials are
-					# live: an `Authenticated` after an `AuthenticationError`
-					# (credentials cleared, issue #82) is hostile input and
-					# stays fully silent. A failed handshake send resolves the
-					# attempt instead of leaving the session authenticated-
-					# but-roomless.
+					# Keep authenticated silent on reconnect dials: a join-on-auth
+					# handler could race the directed handshake (issue #82).
 					if (
 						not _reconnect_handshake_sent
 						and not _reconnect_auth_token.is_empty()
@@ -975,7 +912,6 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 					_session_state = SessionState.AUTHENTICATED
 					authenticated.emit(event.args[0], event.args[1], event.args[2])
 		&"protocol_info":
-			# Upstream issues ProtocolInfo once per connection (issue #82).
 			if not _protocol_info_seen:
 				_protocol_info_seen = true
 				var info: SFTypesScript.ProtocolInfo = event.args[0]
@@ -996,7 +932,6 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			var info: SFTypesScript.RoomJoinedInfo = event.args[0]
 			_apply_room_info(info)
 			_session_state = _session_state_for_lobby(_lobby_state)
-			# A fresh authoritative session restarts the retry budget.
 			_auto_reconnect_attempts = 0
 			room_joined.emit(info)
 		&"room_join_failed":
@@ -1045,10 +980,8 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 					_session_state = _session_state_for_lobby(_lobby_state)
 			lobby_state_changed.emit(event.args[0], event.args[1], event.args[2])
 		&"game_starting":
-			# One-shot instruction event; session state stays FINALIZED.
 			game_starting.emit(event.args[0])
 		&"pong":
-			# Any pong proves the link alive, solicited or not.
 			_awaiting_pong = false
 			_pong_elapsed = 0.0
 			_beat_in_flight = false
@@ -1082,13 +1015,10 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			var info: SFTypesScript.RoomJoinedInfo = event.args[0]
 			_apply_room_info(info)
 			_session_state = _session_state_for_lobby(_lobby_state)
-			# The reconnection handshake completed: drop the dial credentials
-			# and reset the auto-reconnect budget.
 			_clear_reconnect_credentials()
 			_auto_reconnect_attempts = 0
 			reconnected.emit(info, event.args[1])
 		&"reconnection_failed":
-			# The handshake resolved negatively: consume the dial credentials.
 			_clear_reconnect_credentials()
 			if (
 				event.args[1]
@@ -1097,12 +1027,8 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 					SFErrorCodesScript.Code.RECONNECTION_EXPIRED,
 				]
 			):
-				# Terminal reconnection errors: retrying can never succeed.
 				_cancel_auto_reconnect()
 			reconnection_failed.emit(event.args[0], event.args[1])
-			# The server rejected the rejoin; nothing is left to do on this
-			# connection. Bring the link down so `disconnected` fires and
-			# retryable auto-reconnects continue from a clean state.
 			_terminate_reconnection_attempt()
 		&"spectator_joined":
 			# Mirror of `room_joined`: no duplicate latch; every
@@ -1177,7 +1103,6 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 		return ERR_INVALID_DATA
 	var error: Error = transport.send_text(wire)
 	if error != OK:
-		# Transport failures also surface as `failed` -> connection_failed.
 		_emit_protocol_error("%s send failed: %s" % [action, error_string(error)])
 	return error
 
@@ -1224,12 +1149,6 @@ func _remove_player(player_id: String) -> void:
 	_remove_by_id(_players, player_id)
 
 
-## Authority is the one cached roster field that moves without a fresh
-## RoomJoined baseline (issue #147): a handoff or release only arrives as
-## `AuthorityChanged`, so without this `get_players()` kept naming the old
-## authority and a Start button stayed offered to the wrong player. Entries
-## are replaced rather than mutated so previously returned rosters keep their
-## snapshot values (issue #87 contract).
 func _apply_authority_flags(authority_player: String) -> void:
 	for index: int in _players.size():
 		var player: SFTypesScript.PlayerInfo = _players[index]
@@ -1271,7 +1190,6 @@ func _session_state_for_lobby(lobby_state: int) -> SessionState:
 		SFTypesScript.LobbyState.FINALIZED:
 			return SessionState.IN_ROOM_FINALIZED
 		_:
-			# WAITING plus any UNKNOWN fallback: server-driven states only.
 			return SessionState.IN_ROOM_WAITING
 
 
@@ -1304,12 +1222,7 @@ func _schedule_auto_reconnect() -> void:
 		# scheduled first): one termination cascade arms exactly one retry.
 		return
 	if _user_close_requested:
-		# A consumer closed from a disconnect/failure handler after the flag
-		# was snapshotted: their clean close wins over arming a retry. The
-		# flag is deliberately left set so every scheduling point in one
-		# termination cascade observes the consumer's final intent — even
-		# double-nested handler cascades. The next dial or cascade entry
-		# clears it.
+		# A synchronous consumer close wins over retry scheduling (issue #73).
 		return
 	if (
 		_connection_state
@@ -1319,25 +1232,17 @@ func _schedule_auto_reconnect() -> void:
 			ConnectionState.CLOSING,
 		]
 	):
-		# A consumer dialed or closed from a disconnect handler; never arm a
-		# timer that would burn a budgeted attempt against a live dial.
+		# A handler may have started a new dial during the close cascade.
 		return
 	if _context_auth_token.is_empty():
-		# Nothing to reconnect with (never joined a room, spectator session,
-		# or a terminal reconnection error already cleared the context).
 		return
 	if _auto_reconnect_attempts >= _config.reconnect_max_attempts:
 		connection_failed.emit(
 			"auto-reconnect exhausted after %d attempt(s)" % _auto_reconnect_attempts
 		)
 		if _connection_state == ConnectionState.CONNECTING:
-			# A handler redialed during the notice — emission is synchronous,
-			# so the dial (and its fresh retained capture, issue #73) already
-			# happened. The wipe below must not clobber it, or the manual
-			# dial's later death would silent-dead-end auto-reconnect.
+			# Emission is synchronous; do not erase a handler's fresh identity.
 			return
-		# The episode is over: drop the retained identity so no later event
-		# can re-enter scheduling (retries restart on a fresh baseline).
 		_context_player_id = ""
 		_context_room_id = ""
 		_context_auth_token = ""
@@ -1371,13 +1276,8 @@ func _start_auto_reconnect() -> void:
 	var error: Error = reconnect(_context_player_id, _context_room_id, _context_auth_token)
 	if error == OK:
 		return
-	# The dial never started (e.g. a refused URL): re-enter scheduling so the
-	# consumed attempt still arms the next backoff window or ends the episode
-	# with the exhaustion notice instead of stalling. A transport-level
-	# refusal already scheduled from the `failed` cascade, so this re-entry
-	# no-ops on the armed timer; a scheme refusal returns before the
-	# transport is wired and only schedules here. Exactly one attempt is
-	# armed per cascade either way.
+	# A rejected dial still consumes the attempt; schedule the next one.
+	# _schedule_auto_reconnect deduplicates a transport-failure cascade.
 	_schedule_auto_reconnect()
 
 
@@ -1390,14 +1290,8 @@ func _cancel_auto_reconnect() -> void:
 	_context_auth_token = ""
 
 
-## After a `ReconnectionFailed` the server rejected the rejoin: tear the
-## connection down exactly like a close frame so consumers observe
-## `disconnected`, and give retryable auto-reconnects a fresh scheduling
-## point. Terminal codes cleared the context above, so their schedule is a
-## no-op.
 func _terminate_reconnection_attempt() -> void:
 	if _connection_state != ConnectionState.CONNECTED:
-		# A consumer handler already closed (CLOSING) or the link dropped.
 		return
 	_connection_state = ConnectionState.CLOSED
 	_reset_session()
@@ -1412,12 +1306,6 @@ func _remember_secret(secret: String) -> void:
 		_secrets.append(secret)
 
 
-## Unwires and closes the transport after a termination cascade. Known
-## deferred limitation (issue #24): the socket is closed but never polled
-## again, so the WebSocket close handshake may not complete before the
-## RefCounted peer is reclaimed; the engine force-closes the underlying TCP
-## socket on free, which is functionally fine. Revisit (poll-to-flush) only
-## if a server-side half-open is ever observed in practice.
 func _teardown_transport() -> void:
 	if transport != null:
 		transport.opened.disconnect(_on_transport_opened)
@@ -1427,6 +1315,7 @@ func _teardown_transport() -> void:
 		# Signals are already unwired, so this close cannot re-enter a
 		# cascade: a torn-down attempt must never leak a live socket (the
 		# server would otherwise pin the session until its own timeout).
+		# Peer reclamation may prevent the close handshake from flushing (issue #24).
 		transport.close(1000, "client teardown")
 	transport = null
 

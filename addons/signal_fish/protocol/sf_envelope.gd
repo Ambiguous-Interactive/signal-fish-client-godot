@@ -8,15 +8,8 @@ const INVALID_MESSAGE_ERROR_KEY := "_signal_fish_invalid_message_error"
 const INVALID_MESSAGE_ORIGINAL_TYPE_KEY := "_signal_fish_original_message_type"
 const INVALID_MESSAGE_TYPE := "__InvalidSignalFishMessage"
 
-## Float wire text memo: `_stringify_float` is a pure value→text function
-## whose dominant cost is the JSON parse-back proof (16-float bench envelope:
-## 96 us uncached vs 71 us warm, issue #161 audit). Game data resends values
-## (positions, timers) heavily, so each verified text is cached under its
-## float. Zeros bypass the memo — float keys cannot distinguish -0.0 from
-## 0.0, and only for zeros does the sign live in the wire text — so their
-## text is recomputed exactly as before. Cleared when full (same
-## hostile-churn bound as the binary decoder's uuid cache); a cached text is
-## byte-identical to what the uncached path produces, so hits cannot drift.
+# Bound memo growth under hostile input; zero bypasses the cache because float
+# keys cannot distinguish -0.0 from 0.0 (issue #161).
 const _FLOAT_MEMO_LIMIT := 256
 static var _float_memo: Dictionary = {}
 
@@ -60,21 +53,6 @@ static func encode(envelope: Dictionary, report_error: bool = true) -> String:
 	return wire
 
 
-## Round-trip-exact JSON serialization. `JSON.stringify` emits nested floats
-## at reduced precision (its `full_precision` flag only affects top-level
-## scalars), silently stringifies engine-only Variants, and renders non-finite
-## floats as `nan`/`inf` text no JSON parser accepts. Floats therefore
-## serialize through `String.num(value, 17)` — sufficient digits for every
-## f64, verified by parse-back (0/50000 random doubles in ±1e15 failed) —
-## normalized with a trailing ".0" so an integral float never flips JSON
-## number type on the wire; the engine's top-level full-precision writer is
-## the fallback candidate. A float neither candidate proves round-trip-exact
-## (only very small magnitudes are known to fail the engine's formatters)
-## refuses the frame
-## instead of corrupting it — the same reject-never-collapse policy as
-## hostile integers (issue #73). Depth is bounded like the decoder so a
-## hostile structure cannot overflow the script stack. An empty return means
-## "refuse": containers always render at least "{}"/"[]".
 static func _stringify_value(value: Variant, depth: int) -> String:
 	if depth > SFTypeUtils.MAX_MESSAGE_DEPTH:
 		return ""
@@ -120,6 +98,8 @@ static func _stringify_float(value: float) -> String:
 		var cached: Variant = _float_memo.get(value)
 		if cached != null:
 			return cached
+	# Godot's full_precision only covers top-level floats. Prove each nested
+	# value survives JSON parsing before it reaches the wire (issue #73).
 	var text := _normalized_float(String.num(value, 17))
 	if not _round_trips(text, value):
 		text = _normalized_float(JSON.stringify(value, "", false, true))

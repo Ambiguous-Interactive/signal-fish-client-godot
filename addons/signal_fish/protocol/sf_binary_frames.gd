@@ -30,9 +30,7 @@ const _KNOWN_FIELDS := {
 }
 const _REQUIRED_FIELDS := ["from_player", "encoding", "payload"]
 
-## Canonical UUID strings repeat across frames from the same sender; the cache
-## trades a bounded string-build for one lookup. Cleared when full so a
-## hostile peer cannot grow it without limit.
+# Bound UUID cache growth under hostile sender churn.
 const _UUID_CACHE_LIMIT := 256
 static var _uuid_cache: Dictionary = {}
 

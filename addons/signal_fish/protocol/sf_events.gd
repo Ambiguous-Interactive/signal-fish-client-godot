@@ -511,14 +511,6 @@ static func _decode_game_data_binary(
 	)
 
 
-## Relayed opaque WebRTC signal from another peer (protocol v3, upstream
-## `ServerMessage::Signal`). The payload is forwarded verbatim from the
-## sender's `Signal` client message (matchbox convention:
-## [code]{"Offer"|"Answer"|"IceCandidate": ...}[/code]); unknown future shapes
-## round-trip untouched, including JSON null (upstream `Value::Null`), so
-## consumers must null-check [code]args[2][/code] before indexing.
-## [code]generation[/code] is "" when the sender's
-## legacy Server 0.4 plan had none.
 static func _decode_signal(
 	type_name: String, data: Dictionary, envelope: Dictionary
 ) -> SFTypesScript.DecodedEvent:

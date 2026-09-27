@@ -55,28 +55,22 @@ enum Code {
 	# Cloud-compat alias: server/Rust use STORAGE_ERROR; the cloud also exposes
 	# DATABASE_ERROR (PLAN §13 item 10).
 	DATABASE_ERROR,
-	# Signaling errors (8xxx).
 	CROSS_ROOM_SIGNAL,
 	UNSUPPORTED_TRANSPORT,
 	SIGNAL_TARGET_NOT_FOUND,
 	SIGNAL_RATE_LIMITED,
 	SIGNAL_TOO_LARGE,
-	# Connection lifecycle (upstream doc: Authentication 1xxx table).
 	CONNECTION_IDLE_TIMEOUT,
 	SLOW_CONSUMER,
 	ACTIVITY_TIMEOUT,
-	# Game-start (upstream doc: Room 3xxx table).
 	GAME_START_NOT_READY,
 	GAME_START_FORBIDDEN,
 	ROOM_SESSION_INCOMPATIBLE,
 	SERVER_DRAINING,
-	# Delivery-class validation (upstream doc: Validation 2xxx table).
 	INVALID_DELIVERY_CLASS,
-	# Authentication (1xxx).
 	UNSUPPORTED_PROTOCOL_VERSION,
 	CONNECT_TOKEN_INVALID,
 	CONNECT_TOKEN_REQUIRED,
-	# Moderation (upstream doc: Room 3xxx table).
 	NOT_ROOM_AUTHORITY,
 	KICK_TARGET_NOT_FOUND,
 	KICKED,
@@ -96,10 +90,6 @@ const NON_EMITTED_CODES: Array[String] = [
 	"SERVICE_UNAVAILABLE",
 ]
 
-## Category per code, following the upstream `docs/reference/error-codes.md`
-## tables (category ranges 1xxx–9xxx). NON_EMITTED tokens and the cloud-only
-## DATABASE_ERROR alias sit in their historic groups. Completeness (every enum
-## member except UNKNOWN/NONE present) is pinned by the protocol test suite.
 const _CODE_TO_CATEGORY: Dictionary = {
 	Code.UNAUTHORIZED: "authentication",
 	Code.INVALID_TOKEN: "authentication",

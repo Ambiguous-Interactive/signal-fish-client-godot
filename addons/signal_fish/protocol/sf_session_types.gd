@@ -360,11 +360,6 @@ static func _has_string(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_STRING
 
 
-## A present upstream-UUID identifier (`PlayerId`/`SessionGeneration`) must be
-## canonical lowercase hyphenated UUID text: empty cannot deserialize upstream
-## and it would collide with the retired negotiated-rkyv "" sender-unknowable
-## sentinel (issues #149/#151). Delegates to the one shared gate in
-## sf_type_utils.gd.
 static func _has_id(data: Dictionary, key: String) -> bool:
 	return SFTypeUtils.is_canonical_uuid_text(data.get(key))
 
