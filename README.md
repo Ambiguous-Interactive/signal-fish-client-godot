@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/docs/assets/logo-banner.svg" alt="Signal Fish Client SDK for Godot" width="640">
+  <img src="docs/assets/logo-banner.svg" alt="Signal Fish Client SDK for Godot" width="640">
 </p>
 
 <p align="center">
@@ -7,7 +7,7 @@
   <a href="https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases"><img src="https://img.shields.io/github/v/release/Ambiguous-Interactive/signal-fish-client-godot" alt="Release"></a>
   <a href="https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/ci.yml"><img src="https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/Godot-4.3%2B-478CBF?logo=godot-engine&logoColor=white" alt="Godot 4.3+">
-  <a href="https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
 A pure-GDScript client for the [Signal Fish](https://github.com/Ambiguous-Interactive/signal-fish-server)
