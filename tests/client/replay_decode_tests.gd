@@ -53,7 +53,9 @@ func _test_tokens_decode_from_baselines() -> void:
 		elif case[1] != null:
 			overrides["reconnection_token"] = case[1]
 		var decoded := _decode_envelope("RoomJoined", overrides)
-		if not _assert(decoded.signal_name != &"protocol_error", "%s: RoomJoined decodes" % case[0]):
+		if not _assert(
+			decoded.signal_name != &"protocol_error", "%s: RoomJoined decodes" % case[0]
+		):
 			continue
 		var info: SFTypesScript.RoomJoinedInfo = decoded.args[0]
 		_assert_equal(case[2], info.reconnection_token, "%s: RoomJoined" % case[0])

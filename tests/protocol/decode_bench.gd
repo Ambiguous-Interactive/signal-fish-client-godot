@@ -54,7 +54,9 @@ func _init() -> void:
 	_bench("text_control_decode", 20000, func() -> void: SFEventsScript.decode_text(_control_text))
 	_bench("text_game_decode", 20000, func() -> void: SFEventsScript.decode_text(_game_text))
 	_bench(
-		"json_guard_control", 20000, func() -> void: SFJsonGuardScript.duplicate_key_error(_control_text)
+		"json_guard_control",
+		20000,
+		func() -> void: SFJsonGuardScript.duplicate_key_error(_control_text)
 	)
 	_bench(
 		"json_guard_object_dense",
