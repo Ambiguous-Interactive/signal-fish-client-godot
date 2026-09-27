@@ -12,10 +12,8 @@ config/icon="res://demo/icon.svg"
 ; given engine does not know are ignored by that engine; the 4.4+/4.7-only
 ; keys guard those CI shards. exclude_addons=false is load-bearing: the
 ; engine default exempts res://addons from every warning, which silenced
-; these errors for the entire addon. Statements that still carry
-; untyped/unsafe debt carry an explicit @warning_ignore marker (per
-; statement: portable across the CI engine matrix); deleting one requires
-; typing that statement.
+; these errors for the entire addon. The base SFTransport keeps four
+; unused_signal ignores: adapters emit those contract signals.
 ; Two classes stay ignorable by style: inferred_declaration (`:=` is the
 ; house style) and return_value_discarded (assert helpers and engine calls
 ; discard returns on purpose; flagging them would add ~1,200 markers). The

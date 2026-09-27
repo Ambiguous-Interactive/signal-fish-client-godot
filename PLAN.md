@@ -14,12 +14,18 @@ Per-session history: `progress/session-NNN-*.md`.
 
 ## Next work
 
-### Addon warning-net burn-down (#170)
-- [ ] Delete `@warning_ignore` markers by typing the code under them
-      (111 typed-debt markers plus 4 deliberate interface markers in
-      `sf_transport.gd`; live list: `grep -rn "@warning_ignore" addons/`).
-      46 of the 49 GDScript warning classes the matrix registers sit at
-      error level; the exceptions are documented in `project.godot`.
+### Static quality issues (#165-#170)
+- [ ] #165: Audit all addon, test, and demo GDScript for complete typing and
+      verify every script compiles under warning errors. The addon keeps four
+      deliberate unused interface-signal ignores in `sf_transport.gd`.
+- [ ] #166: Enforce strict typing across the seven tracked Python files.
+- [ ] #167: Pin and check formatters for the remaining script and doc formats.
+- [ ] #168: Move suitable automation to Python and uv while preserving the
+      PowerShell harness and the runtime gate behavior.
+- [ ] #169: Remove narration comments across the addon; retain public API
+      docs and non-obvious protocol or lifecycle rationale.
+- [ ] #170: Add useful static analyzers for Python, PowerShell, shell, and
+      JavaScript, then verify their findings and warning exceptions.
 
 ### Asset Library bootstrap (P6 remainder)
 - [ ] One-time human submission + moderation, then repo secrets
