@@ -113,7 +113,8 @@ function Get-LlmRepoRelativePath {
     )
     try {
         return ([System.IO.Path]::GetRelativePath($RepoRoot, $Path)).Replace('\', '/')
-    } catch {
+    }
+    catch {
         return $Path
     }
 }
@@ -147,7 +148,8 @@ function Resolve-LlmGitPath {
                 }
                 return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $raw))
             }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
     }
@@ -276,7 +278,8 @@ function Get-LlmStagingArtifacts {
         }
 
         return @($artifacts.Values | Sort-Object -Property Path)
-    } finally {
+    }
+    finally {
         Pop-Location
         Remove-Item -LiteralPath $trackedErrorPath, $untrackedErrorPath -Force -ErrorAction SilentlyContinue
     }
@@ -377,7 +380,8 @@ function Get-LlmStrayWorkingTreeArtifacts {
         }
 
         return @($artifacts.Values | Sort-Object -Property Path)
-    } finally {
+    }
+    finally {
         Pop-Location
         Remove-Item -LiteralPath $trackedErrorPath, $untrackedErrorPath, $ignoredErrorPath -Force -ErrorAction SilentlyContinue
     }
@@ -467,7 +471,8 @@ function Test-LlmDeletableArtifact {
     if ($leaf -match '^\.#(.+)$') {
         $base = if ([string]::IsNullOrWhiteSpace($dir)) { $Matches[1] } else { "$dir/$($Matches[1])" }
         if ($TrackedFiles.Contains($base)) { return $true }
-    } elseif ($leaf -match '^#(.+)#$') {
+    }
+    elseif ($leaf -match '^#(.+)#$') {
         $base = if ([string]::IsNullOrWhiteSpace($dir)) { $Matches[1] } else { "$dir/$($Matches[1])" }
         if ($TrackedFiles.Contains($base)) { return $true }
     }
@@ -499,7 +504,8 @@ function Get-LlmTrackedFileSet {
             if ([string]::IsNullOrWhiteSpace($p)) { continue }
             [void]$set.Add(($p -replace '\\', '/'))
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
     return $set
@@ -603,7 +609,8 @@ function New-LlmIndexLines {
 
     if ($skillFiles.Count -eq 0) {
         $lines.Add('- No skill files found.')
-    } else {
+    }
+    else {
         foreach ($file in $skillFiles) {
             $category = Get-LlmFrontmatterValue -Metadata $file.Metadata -Key 'category' -Fallback 'Uncategorized'
             $description = Get-LlmFrontmatterValue -Metadata $file.Metadata -Key 'description' -Fallback 'No description.'
@@ -619,7 +626,8 @@ function New-LlmIndexLines {
 
     if ($otherFiles.Count -eq 0) {
         $lines.Add('- No additional LLM files found.')
-    } else {
+    }
+    else {
         foreach ($file in $otherFiles) {
             $description = Get-LlmFrontmatterValue -Metadata $file.Metadata -Key 'description' -Fallback 'No description.'
             $lines.Add("- [$($file.Title)]($($file.RelativePath)) - $description")
@@ -656,7 +664,8 @@ function Get-LlmGeneratedContentState {
     $skillsIndex = [Array]::IndexOf($indexLines, '## Skills')
     $embeddedLines = if ($skillsIndex -lt 0) {
         $indexLines
-    } else {
+    }
+    else {
         @($indexLines[$skillsIndex..($indexLines.Count - 1)])
     }
     $embedded = (Join-LlmLines -Lines $embeddedLines).TrimEnd()
@@ -744,7 +753,8 @@ function Invoke-LlmIndexGenerator {
     if ($wroteContext) { $writtenPaths.Add('.llm/context.md') }
     if ($wroteIndex -or $wroteContext) {
         Write-Host '[llm-index] Generated .llm/index.md and updated .llm/context.md'
-    } elseif ($VerboseOutput) {
+    }
+    elseif ($VerboseOutput) {
         Write-Host '[llm-index] Generated files already up to date.'
     }
     if ($PassThru) {
@@ -810,7 +820,8 @@ function Invoke-LlmLint {
             $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop | Select-Object -First 1
             if ($null -eq $resolved) { return $null }
             return [System.IO.Path]::GetFullPath($resolved.ProviderPath)
-        } catch {
+        }
+        catch {
             Add-LlmLintError "Failed to resolve file path '$Path': $($_.Exception.Message)"
             return $null
         }
@@ -843,7 +854,8 @@ function Invoke-LlmLint {
             } | ForEach-Object {
                 Add-LlmLintTrackedFile -Files $files -Path $_.FullName
             }
-        } catch {
+        }
+        catch {
             Add-LlmLintError "Failed to enumerate markdown files in .llm: $($_.Exception.Message)"
         }
     }
@@ -857,10 +869,12 @@ function Invoke-LlmLint {
             $lineCount = @(Read-LlmFileLines -Path $path).Count
             if ($lineCount -gt $MaxLines) {
                 Add-LlmLintError "$(Get-LlmLintRelPath $path): $lineCount lines exceeds max $MaxLines"
-            } elseif ($VerboseOutput) {
+            }
+            elseif ($VerboseOutput) {
                 Write-Host "[llm-lint] OK: $(Get-LlmLintRelPath $path) ($lineCount lines)"
             }
-        } catch {
+        }
+        catch {
             Add-LlmLintError "Failed to read $(Get-LlmLintRelPath $path): $($_.Exception.Message)"
         }
     }
@@ -879,7 +893,8 @@ function Invoke-LlmLint {
                     }
                 }
             }
-        } catch {
+        }
+        catch {
             Add-LlmLintError "Failed while validating frontmatter metadata: $($_.Exception.Message)"
         }
     }
@@ -901,11 +916,13 @@ function Invoke-LlmLint {
                 $message = "$($pointerCheck.Path) must point to .llm/context.md"
                 if ($pointerCheck.Required) {
                     Add-LlmLintError $message
-                } else {
+                }
+                else {
                     Write-Host "[llm-lint] WARNING: $message" -ForegroundColor Yellow
                 }
             }
-        } catch {
+        }
+        catch {
             Add-LlmLintError "Failed to read pointer file $($pointerCheck.Path): $($_.Exception.Message)"
         }
     }
@@ -916,7 +933,8 @@ function Invoke-LlmLint {
             if ($state.Changes.Count -gt 0) {
                 Add-LlmLintError "Generated LLM index validation failed (stale: $($state.Changes -join ', '))."
             }
-        } catch {
+        }
+        catch {
             Add-LlmLintError "Generated LLM index validation failed: $($_.Exception.Message)"
         }
     }
@@ -929,10 +947,12 @@ function Invoke-LlmLint {
                 foreach ($artifact in $offenders) {
                     Add-LlmLintError "Stray staging artifact: $($artifact.Path) (patterns: $($patterns -join ', '))"
                 }
-            } catch {
+            }
+            catch {
                 Add-LlmLintError $_.Exception.Message
             }
-        } else {
+        }
+        else {
             Write-LlmLintDiagnostic 'git not available; skipping staging-artifact check.'
         }
     }
@@ -946,7 +966,8 @@ function Invoke-LlmLint {
                     Add-LlmLintError "git ls-files (powershell sources) failed with exit $LASTEXITCODE."
                     $psFiles = @()
                 }
-            } finally {
+            }
+            finally {
                 Pop-Location
             }
 
@@ -958,7 +979,8 @@ function Invoke-LlmLint {
                 try {
                     [void][System.Management.Automation.Language.Parser]::ParseFile(
                         $full, [ref]$tokens, [ref]$parseErrors)
-                } catch {
+                }
+                catch {
                     Add-LlmLintError "PowerShell parse threw for $rel`: $($_.Exception.Message)"
                     continue
                 }
@@ -966,11 +988,13 @@ function Invoke-LlmLint {
                     foreach ($err in $parseErrors) {
                         Add-LlmLintError "PowerShell parse error in $rel`:$($err.Extent.StartLineNumber): $($err.Message)"
                     }
-                } else {
+                }
+                else {
                     Write-LlmLintDiagnostic "parse OK: $rel"
                 }
             }
-        } else {
+        }
+        else {
             Write-LlmLintDiagnostic 'git not available; skipping PowerShell parse check.'
         }
     }

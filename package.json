@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "devDependencies": {
+    "prettier": "3.9.6",
+    "prettier-plugin-toml": "3.0.2"
+  }
+}

@@ -57,7 +57,7 @@ Never invent protocol details; re-verify against the pinned commits before use.
   `client_core.rs` `resolve_effective_game_data_format`); `JoinRoomParams`
   optionals default `None` -> omitted on the wire (`protocol.rs` @ `da8f2d1`);
   an omitted `supports_authority` means **enabled** (server `room_service.rs:
-  585` `unwrap_or(true)` @ `5af5fee`).
+585` `unwrap_or(true)` @ `5af5fee`).
 - Field naming (verified 2026-09-23, server `main` @ `272cfa0c`): payload
   structs have **no `rename_all`** - fields serialize snake_case inside
   PascalCase-tagged envelopes (`RoomJoined`/`Reconnected`/

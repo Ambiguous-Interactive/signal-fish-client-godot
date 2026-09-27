@@ -21,26 +21,26 @@ if [ "${SF_DEVCONTAINER_MAINTENANCE:-0}" != "1" ]; then
 fi
 
 if [ "${SF_DEVCONTAINER_SKIP_TOOL_UPDATES:-0}" != "1" ]; then
-echo "==> Checking agent CLI versions (best-effort refresh)"
-if bash "${REPO_ROOT}/.devcontainer/install-agent-tools.sh" --update; then
-    echo "==> Agent CLI refresh attempted"
-else
-    echo "WARN: agent CLI refresh failed; using installed versions." >&2
-fi
+    echo "==> Checking agent CLI versions (best-effort refresh)"
+    if bash "${REPO_ROOT}/.devcontainer/install-agent-tools.sh" --update; then
+        echo "==> Agent CLI refresh attempted"
+    else
+        echo "WARN: agent CLI refresh failed; using installed versions." >&2
+    fi
 
-echo "==> Checking npm-based MCP servers (best-effort refresh)"
-if bash "${REPO_ROOT}/.devcontainer/install-mcp-servers.sh" --update; then
-    echo "==> MCP server refresh attempted"
-else
-    echo "WARN: MCP server refresh failed; using installed versions." >&2
-fi
+    echo "==> Checking npm-based MCP servers (best-effort refresh)"
+    if bash "${REPO_ROOT}/.devcontainer/install-mcp-servers.sh" --update; then
+        echo "==> MCP server refresh attempted"
+    else
+        echo "WARN: MCP server refresh failed; using installed versions." >&2
+    fi
 
-echo "==> Seeding agent MCP configurations (best-effort)"
-if bash "${REPO_ROOT}/.devcontainer/seed-mcp-config.sh" --update; then
-    echo "==> MCP configuration seeding attempted"
-else
-    echo "WARN: MCP configuration seeding failed; using existing configurations." >&2
-fi
+    echo "==> Seeding agent MCP configurations (best-effort)"
+    if bash "${REPO_ROOT}/.devcontainer/seed-mcp-config.sh" --update; then
+        echo "==> MCP configuration seeding attempted"
+    else
+        echo "WARN: MCP configuration seeding failed; using existing configurations." >&2
+    fi
 
 fi
 
@@ -56,15 +56,15 @@ venv_ok() {
     # onto this shell's PATH, or the heal below would run inside the very
     # environment it is trying to repair.
     (
-        . .venv-ci/bin/activate \
-            && python -c 'import yaml' >/dev/null 2>&1 \
-            && gdformat --version >/dev/null 2>&1 \
-            && ruff --version >/dev/null 2>&1
+        . .venv-ci/bin/activate &&
+            python -c 'import yaml' >/dev/null 2>&1 &&
+            gdformat --version >/dev/null 2>&1 &&
+            ruff --version >/dev/null 2>&1
     )
 }
 if ! python3 -c 'import yaml' >/dev/null 2>&1; then
-    if python3 -m pip install --user -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1 \
-        && python3 -c 'import yaml' >/dev/null 2>&1; then
+    if python3 -m pip install --user -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1 &&
+        python3 -c 'import yaml' >/dev/null 2>&1; then
         echo "==> Installed PyYAML into user site-packages"
     else
         echo "WARN: python3 cannot import PyYAML; GitHub config validation fails until it is installed" \
@@ -84,10 +84,10 @@ if [ ! -f ".venv-ci/bin/activate" ] || ! venv_ok; then
     # interpreter is the same: a dead interpreter symlink (e.g. after the
     # image's Python moved) makes `venv` die with Errno 2 on the old
     # bin/python3.
-    if rm -rf .venv-ci && python3 -m venv .venv-ci \
-        && ( . .venv-ci/bin/activate \
-            && python -m pip install -r "${REPO_ROOT}/requirements-python-quality.txt" -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1 ) \
-        && venv_ok; then
+    if rm -rf .venv-ci && python3 -m venv .venv-ci &&
+        (. .venv-ci/bin/activate &&
+            python -m pip install -r "${REPO_ROOT}/requirements-python-quality.txt" -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1) &&
+        venv_ok; then
         echo "==> .venv-ci ready with runtime and automation dependencies"
     else
         echo "WARN: could not provision .venv-ci; runtime checks fall back to user site-packages." >&2

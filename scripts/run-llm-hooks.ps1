@@ -56,7 +56,8 @@ function Invoke-HookStage {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         & $Body
-    } finally {
+    }
+    finally {
         $sw.Stop()
         $script:timings.Add([pscustomobject]@{ Name = $Name; Milliseconds = $sw.ElapsedMilliseconds })
         if ($Profile) {
@@ -76,7 +77,7 @@ function ConvertFrom-GeneratedFileStatusLine {
     $hasIndexChange = -not $isUntracked -and $index -ne ' '
     $hasWorktreeChange = -not $isUntracked -and $worktree -ne ' '
     $needsWorktreeStaging = -not [string]::IsNullOrWhiteSpace($Line) -and
-        ($isUntracked -or $hasWorktreeChange)
+    ($isUntracked -or $hasWorktreeChange)
 
     return [pscustomobject]@{
         Raw                  = $Line
@@ -107,16 +108,18 @@ function Get-ChangedPaths {
             if ($LASTEXITCODE -eq 0) {
                 $raw += $untrackedRaw
             }
-        } else {
+        }
+        else {
             $raw = @(& git diff --cached --name-only -z 2>$null)
             if ($LASTEXITCODE -ne 0) { return @() }
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
     $joined = ($raw -join '')
     return @($joined -split "`0" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        ForEach-Object { ($_ -replace '\\', '/') })
+            ForEach-Object { ($_ -replace '\\', '/') })
 }
 
 function Test-LlmPathTouched {
@@ -199,7 +202,8 @@ function Invoke-PreflightIfNeeded {
     try {
         [void][System.Management.Automation.Language.Parser]::ParseFile(
             $Preflight, [ref]$preflightTokens, [ref]$preflightErrors)
-    } catch {
+    }
+    catch {
         Write-HookLine "Failed to parse-check preflight.ps1: $($_.Exception.Message)" 'Red'
         exit 1
     }
@@ -218,7 +222,8 @@ function Invoke-PreflightIfNeeded {
                 -RelativePath 'scripts/preflight.ps1' `
                 -FullPath $Preflight `
                 -BackupPath $backupPath
-        } else {
+        }
+        else {
             Write-HookLine 'Re-run with -AutoFix to recover from the index first, then HEAD fallback, with backups preserved.' 'Yellow'
             exit 1
         }
@@ -236,7 +241,8 @@ function Invoke-PreflightIfNeeded {
     }
     if ($preExit -eq 2) {
         Write-HookLine 'Preflight auto-recovered one or more sources. Continuing.' 'Yellow'
-    } elseif ($preExit -ne 0) {
+    }
+    elseif ($preExit -ne 0) {
         Write-HookLine "Preflight failed with unexpected exit $preExit." 'Red'
         exit $preExit
     }
@@ -262,7 +268,8 @@ function New-HookRecoveryBackup {
         $backupPath = Join-Path $dir $encoded
         [System.IO.File]::Copy($full, $backupPath, $true)
         return $backupPath
-    } catch {
+    }
+    catch {
         Write-HookLine "AutoFix: failed to back up $RelativePath before restore: $($_.Exception.Message)" 'Red'
         return $null
     }
@@ -289,7 +296,8 @@ function Copy-HookGitBlobToFile {
         $stream = [System.IO.File]::Open($Destination, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
         try {
             $proc.StandardOutput.BaseStream.CopyTo($stream)
-        } finally {
+        }
+        finally {
             $stream.Dispose()
         }
         $stderr = $proc.StandardError.ReadToEnd()
@@ -298,7 +306,8 @@ function Copy-HookGitBlobToFile {
             Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
             throw "git cat-file blob $Blob failed with exit $($proc.ExitCode): $stderr"
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 }
@@ -315,7 +324,8 @@ function New-HookIndexRecoveryBackup {
         if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($stageLine)) {
             return $null
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
     if ($stageLine -notmatch '^(?<Mode>\d+)\s+(?<Sha>[0-9a-f]{40,64})\s+\d+\s+') {
@@ -348,7 +358,8 @@ function Restore-HookIndexRecoveryBackup {
         if ($LASTEXITCODE -ne 0) {
             Write-HookLine "AutoFix: failed to restore index backup for $RelativePath (exit $LASTEXITCODE): $($updateOutput -join '; ')" 'Red'
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 }
@@ -361,7 +372,8 @@ function Get-HookPowerShellParseErrors {
     try {
         [void][System.Management.Automation.Language.Parser]::ParseFile(
             $Path, [ref]$tokens, [ref]$parseErrors)
-    } catch {
+    }
+    catch {
         return @($_)
     }
     return @($parseErrors)
@@ -382,7 +394,8 @@ function Restore-HookPowerShellFileFromGit {
         if ($null -ne $indexBackup) {
             Write-HookLine "AutoFix: backed up index copy of $RelativePath to $($indexBackup.Path)" 'Yellow'
         }
-    } catch {
+    }
+    catch {
         Write-HookLine "AutoFix: failed to write index recovery backup for $RelativePath`: $($_.Exception.Message). Refusing to overwrite staged WIP." 'Red'
         exit 1
     }
@@ -394,10 +407,12 @@ function Restore-HookPowerShellFileFromGit {
             $recheckErrors = @(Get-HookPowerShellParseErrors -Path $FullPath)
             if ($recheckErrors.Count -eq 0) {
                 $restoredFrom = 'index'
-            } else {
+            }
+            else {
                 Write-HookLine "AutoFix: index copy of $RelativePath also has parse errors; falling back to HEAD." 'Yellow'
             }
-        } else {
+        }
+        else {
             Write-HookLine "AutoFix: git checkout from index failed for $RelativePath (exit $LASTEXITCODE): $($indexOut -join '; '). Falling back to HEAD." 'Yellow'
         }
 
@@ -418,7 +433,8 @@ function Restore-HookPowerShellFileFromGit {
                 $restoredFrom = 'HEAD'
             }
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 
@@ -426,7 +442,8 @@ function Restore-HookPowerShellFileFromGit {
         Write-HookLine "AutoFix: HEAD copy of $RelativePath is also corrupt; restoring backed-up WIP." 'Red'
         try {
             Copy-Item -LiteralPath $BackupPath -Destination $FullPath -Force
-        } catch {
+        }
+        catch {
             Write-HookLine "AutoFix: failed to restore $RelativePath from $BackupPath`: $($_.Exception.Message)" 'Red'
         }
         if ($null -ne $indexBackup) {
@@ -457,7 +474,8 @@ function Resolve-HookGitPath {
                 }
                 return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $raw))
             }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
     }
@@ -531,7 +549,8 @@ function New-GitHubConfigIndexSnapshot {
         if ($LASTEXITCODE -ne 0) {
             throw "git checkout-index failed with exit $LASTEXITCODE`: $($output -join '; ')"
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
     return $snapshot
@@ -555,7 +574,8 @@ function Invoke-GitHubConfigCheck {
     if ($Mode -eq 'PreCommit' -and -not $SkipStagedCheck) {
         try {
             $snapshot = New-GitHubConfigIndexSnapshot
-        } catch {
+        }
+        catch {
             Write-HookLine "Failed to materialize staged GitHub config snapshot: $($_.Exception.Message)" 'Red'
             exit 1
         }
@@ -579,7 +599,8 @@ function Invoke-GitHubConfigCheck {
             Write-HookLine "GitHub config validation failed (exit $LASTEXITCODE)." 'Red'
             exit $LASTEXITCODE
         }
-    } finally {
+    }
+    finally {
         if ($null -ne $snapshot) {
             Remove-Item -LiteralPath $snapshot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -595,7 +616,8 @@ function Invoke-FastPowerShellParseCheck {
             Write-HookLine "git ls-files (PowerShell sources) failed with exit $LASTEXITCODE." 'Red'
             exit 1
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
     foreach ($rel in ($files | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
@@ -654,18 +676,20 @@ function Test-InstallGitHooksUndefinedVariables {
             if ($target -is [System.Management.Automation.Language.VariableExpressionAst]) {
                 [void]$defined.Add($target.VariablePath.UserPath)
             }
-        } elseif ($node -is [System.Management.Automation.Language.ParameterAst]) {
+        }
+        elseif ($node -is [System.Management.Automation.Language.ParameterAst]) {
             [void]$defined.Add($node.Name.VariablePath.UserPath)
-        } elseif ($node -is [System.Management.Automation.Language.ForEachStatementAst]) {
+        }
+        elseif ($node -is [System.Management.Automation.Language.ForEachStatementAst]) {
             [void]$defined.Add($node.Variable.VariablePath.UserPath)
         }
     }
 
     $undefined = [System.Collections.Generic.List[string]]::new()
     foreach ($u in @($ast.FindAll({
-                param($node)
-                $node -is [System.Management.Automation.Language.VariableExpressionAst]
-            }, $true))) {
+                    param($node)
+                    $node -is [System.Management.Automation.Language.VariableExpressionAst]
+                }, $true))) {
         $name = $u.VariablePath.UserPath
         if ($u.VariablePath.IsDriveQualified) { continue }
         if ($defined.Contains($name)) { continue }
@@ -804,12 +828,15 @@ function Invoke-StrayArtifactCheck {
     try {
         $strayArtifacts = if ($ControlledOnly) {
             @(Get-ControlledStrayArtifacts -TrackedFiles $trackedSet -Patterns $patterns)
-        } elseif ($Broad) {
+        }
+        elseif ($Broad) {
             @(Get-LlmStrayWorkingTreeArtifacts -RepoRoot $RepoRoot -Patterns $patterns)
-        } else {
+        }
+        else {
             @(Get-LlmStagingArtifacts -RepoRoot $RepoRoot -Patterns $patterns)
         }
-    } catch {
+    }
+    catch {
         Write-HookLine $_.Exception.Message 'Red'
         exit 1
     }
@@ -825,7 +852,8 @@ function Invoke-StrayArtifactCheck {
         if (-not $deletable) {
             if ($autoFixEnabled) {
                 Write-HookLine "AutoFix: found stray $stray but it's outside controlled directories; leaving for manual review." 'Yellow'
-            } else {
+            }
+            else {
                 $reportable.Add($stray)
             }
             continue
@@ -837,7 +865,8 @@ function Invoke-StrayArtifactCheck {
         try {
             Remove-Item -LiteralPath $full -Force -ErrorAction Stop
             Write-HookLine "AutoFix: removed stray staging artifact: $stray" 'Yellow'
-        } catch {
+        }
+        catch {
             Write-HookLine "AutoFix: failed to remove $stray`: $($_.Exception.Message)" 'Red'
             $autoFixFailed = $true
         }
@@ -894,7 +923,7 @@ function Test-ContextWorktreeDiffOnlyOutsideGeneratedBlock {
     if ($null -eq $worktreeBlock -or $null -eq $indexBlock) { return $false }
 
     return (ConvertTo-LlmNormalizedNewlines $worktreeBlock) -eq
-        (ConvertTo-LlmNormalizedNewlines $indexBlock)
+    (ConvertTo-LlmNormalizedNewlines $indexBlock)
 }
 
 function Set-ContextGeneratedBlockInIndex {
@@ -953,7 +982,8 @@ function Set-ContextGeneratedBlockInIndex {
             return $false
         }
         return $true
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
     }
 }
@@ -971,7 +1001,8 @@ function Get-UntrackedLlmMarkdownGenerationInputs {
             $err = (Get-Content -LiteralPath $errorPath -Raw -ErrorAction SilentlyContinue).Trim()
             if ([string]::IsNullOrWhiteSpace($err)) {
                 Write-HookLine "git ls-files (untracked .llm markdown) failed with exit $LASTEXITCODE." 'Red'
-            } else {
+            }
+            else {
                 Write-HookLine "git ls-files (untracked .llm markdown) failed with exit $LASTEXITCODE`: $err" 'Red'
             }
             exit 1
@@ -986,13 +1017,15 @@ function Get-UntrackedLlmMarkdownGenerationInputs {
             $err = (Get-Content -LiteralPath $errorPath -Raw -ErrorAction SilentlyContinue).Trim()
             if ([string]::IsNullOrWhiteSpace($err)) {
                 Write-HookLine "git ls-files (ignored untracked .llm markdown) failed with exit $LASTEXITCODE." 'Red'
-            } else {
+            }
+            else {
                 Write-HookLine "git ls-files (ignored untracked .llm markdown) failed with exit $LASTEXITCODE`: $err" 'Red'
             }
             exit 1
         }
         $raw += $ignoredRaw
-    } finally {
+    }
+    finally {
         Pop-Location
         Remove-Item -LiteralPath $errorPath -Force -ErrorAction SilentlyContinue
     }
@@ -1050,7 +1083,8 @@ function Invoke-GeneratedStagingCheck {
         if (-not $statusEntry.NeedsWorktreeStaging) { continue }
         if ($statusEntry.IsUntracked) {
             $dirty.Add("untracked: $($statusEntry.Path)")
-        } else {
+        }
+        else {
             $dirty.Add("unstaged: $($statusEntry.Path)")
         }
     }
@@ -1080,7 +1114,8 @@ function Invoke-GeneratedStagingCheck {
         }
         if ($statusEntry.Index -eq '?' -and $statusEntry.Worktree -eq '?') {
             $reportDirty.Add("untracked: $($statusEntry.Path)")
-        } else {
+        }
+        else {
             $reportDirty.Add("unstaged: $($statusEntry.Path)")
         }
     }
@@ -1099,7 +1134,8 @@ function Invoke-GeneratedStagingCheck {
                     Write-HookLine 'AutoFix: refusing to stage .llm/context.md wholesale because unrelated prose may be present outside the generated block.' 'Red'
                     exit 1
                 }
-            } else {
+            }
+            else {
                 $fullStagePaths.Add($path)
             }
         }
@@ -1122,9 +1158,11 @@ function Invoke-GeneratedStagingCheck {
     Write-HookLine 'Stage them with: git add .llm/index.md .llm/context.md' 'Yellow'
     if ($AutoFixPaths.Count -gt 0) {
         Write-HookLine 'Or re-run with -AutoFix to stage them automatically.' 'Yellow'
-    } elseif ($Mode -eq 'AgentFast') {
+    }
+    elseif ($Mode -eq 'AgentFast') {
         Write-HookLine 'AgentFast is non-mutating; run PreCommit or Full after reviewing generated drift.' 'Yellow'
-    } else {
+    }
+    else {
         Write-HookLine 'AutoFix did not stage these files because this hook did not regenerate them.' 'Yellow'
     }
     exit 1
@@ -1212,7 +1250,8 @@ try {
             $checkOnly = ($Mode -eq 'AgentFast')
             if ($checkOnly) {
                 Write-HookLine 'Checking generated LLM index and context section...'
-            } else {
+            }
+            else {
                 Write-HookLine 'Regenerating LLM index and context section...'
             }
             $result = Invoke-LlmIndexGenerator -RepoRoot $RepoRoot -Check:$checkOnly -VerboseOutput:$VerboseOutput -PassThru
@@ -1252,7 +1291,8 @@ try {
             if ($env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS -eq '1') {
                 Write-HookLine 'Nested self-test child detected; running only the core shard (behavioral tests are owned by the parent suite).'
                 $shardNames = @('core')
-            } else {
+            }
+            else {
                 $shardNames = @('core', 'behavioral-1', 'behavioral-2')
             }
             # The behavioral half is itself split round-robin into two
@@ -1312,15 +1352,18 @@ try {
                     Write-HookLine "Self-tests shard(s) failed: $detail" 'Red'
                     exit $exitCodes[$failedShards[0]]
                 }
-            } finally {
+            }
+            finally {
                 foreach ($name in $shardNames) {
                     Remove-Item -LiteralPath $logs[$name].Out, $logs[$name].Err -Force -ErrorAction SilentlyContinue
                 }
             }
         }
-    } elseif ($Mode -in @('Full', 'CI') -and $SkipSelfTests) {
+    }
+    elseif ($Mode -in @('Full', 'CI') -and $SkipSelfTests) {
         Write-HookLine 'Skipping the self-tests stage (both shards; a parallel CI job owns them).'
-    } elseif ($toolingTouched) {
+    }
+    elseif ($toolingTouched) {
         Write-HookLine 'Skipping behavioral subprocess self-tests in fast mode; in-process static guards already ran. Run agent-check.ps1 -Full or Mode Full for exhaustive validation.'
     }
 
@@ -1342,6 +1385,7 @@ try {
     }
     Write-HookLine 'LLM harness OK.' 'Green'
     exit 0
-} finally {
+}
+finally {
     Pop-Location
 }

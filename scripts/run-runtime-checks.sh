@@ -18,12 +18,13 @@ bootstrap_python="${PYTHON:-python3}"
 # Only needed to fall back to user site-packages when the project venv is
 # unusable; skip the interpreter spawn on the common venv path.
 if [[ ! -f ".venv-ci/bin/activate" ]]; then
-	original_user_site="$("${bootstrap_python}" - <<'PY'
+	original_user_site="$(
+		"${bootstrap_python}" - <<'PY'
 import site
 
 print(site.getusersitepackages())
 PY
-)"
+	)"
 fi
 
 export HOME="${GDSCRIPT_TOOL_HOME:-${RUNNER_TEMP:-/tmp}/signal-fish-runtime-home}"
@@ -48,11 +49,11 @@ check_gdscript_roots() {
 	local file failed=0
 	while IFS= read -r -d '' file; do
 		case "${file}" in
-			addons/signal_fish/*.gd | tests/*.gd | demo/*.gd | scripts/*.gd) ;;
-			*)
-				echo "GDScript outside checked roots: ${file}" >&2
-				failed=1
-				;;
+		addons/signal_fish/*.gd | tests/*.gd | demo/*.gd | scripts/*.gd) ;;
+		*)
+			echo "GDScript outside checked roots: ${file}" >&2
+			failed=1
+			;;
 		esac
 	done < <(git ls-files -z --cached --others --exclude-standard -- '*.gd')
 	[[ "${failed}" -eq 0 ]]
@@ -106,7 +107,7 @@ run_sharded_tool() {
 		if [[ "${CI:-}" == "true" ]]; then
 			shard_count=2
 		fi
-		local shard_size=$((( ${#files[@]} + shard_count - 1 ) / shard_count))
+		local shard_size=$(((${#files[@]} + shard_count - 1) / shard_count))
 		local pids=() outs=() index=0 shard=0
 		while [[ "${index}" -lt "${#files[@]}" ]]; do
 			local batch=() output
@@ -168,7 +169,7 @@ run_sharded_tool_on() {
 	(
 		trap 'rm -rf "'"$tmp_dir"'"' EXIT
 		local shard_count=4
-		local shard_size=$((( ${#files[@]} + shard_count - 1 ) / shard_count))
+		local shard_size=$(((${#files[@]} + shard_count - 1) / shard_count))
 		local pids=() outs=() index=0 shard=0
 		while [[ "${index}" -lt "${#files[@]}" ]]; do
 			local batch=() output
@@ -234,7 +235,6 @@ run_static_on() {
 	[[ "${rc}" -eq 0 ]] || failed=1
 	return "${failed}"
 }
-
 
 run_format() {
 	prepare_gdtoolkit_cache
@@ -628,30 +628,30 @@ run_changed() {
 	while IFS= read -r file; do
 		[[ "${file}" == requirements-ci.txt ]] && tool_pins_changed=1
 		case "${file}" in
-			*.py | ruff.toml | requirements-python-quality.txt) python_changed=1 ;;
+		*.py | ruff.toml | requirements-python-quality.txt) python_changed=1 ;;
 		esac
 		case "${file}" in
-			*.py | ruff.toml | requirements-python-quality.txt | *.md | llms.txt | .markdownlint* | LICENSE) ;;
-			*) python_only=0 ;;
+		*.py | ruff.toml | requirements-python-quality.txt | *.md | llms.txt | .markdownlint* | LICENSE) ;;
+		*) python_only=0 ;;
 		esac
 		case "${file}" in
-			# Docs-ish edits only decide WHEN the style gate runs; WHAT it
-			# scans is the checker's own scope (--changed), so this list
-			# cannot drift from CI the way the file list once did.
-			*.md | llms.txt | .markdownlint* | LICENSE)
-				dirty_docs=1
-				;;
-			*)
-				md_only=""
-				;;
+		# Docs-ish edits only decide WHEN the style gate runs; WHAT it
+		# scans is the checker's own scope (--changed), so this list
+		# cannot drift from CI the way the file list once did.
+		*.md | llms.txt | .markdownlint* | LICENSE)
+			dirty_docs=1
+			;;
+		*)
+			md_only=""
+			;;
 		esac
 		case "${file}" in
-			addons/* | demo/* | scripts/* | project.godot | export_presets.cfg | requirements-ci.txt | tests/fixtures/*)
-				runtime_changed="full"
-				;;
-			tests/*.gd)
-				gd_suites+=("${file}")
-				;;
+		addons/* | demo/* | scripts/* | project.godot | export_presets.cfg | requirements-ci.txt | tests/fixtures/*)
+			runtime_changed="full"
+			;;
+		tests/*.gd)
+			gd_suites+=("${file}")
+			;;
 		esac
 	done <<<"${files}"
 
@@ -704,9 +704,9 @@ run_changed() {
 		# the fast loop must never be stricter than the pre-push contract.
 		while IFS= read -r file; do
 			case "${file}" in
-				addons/signal_fish/*.gd | demo/*.gd | scripts/*.gd)
-					[[ -f "${file}" ]] && static_files+=("${file}")
-					;;
+			addons/signal_fish/*.gd | demo/*.gd | scripts/*.gd)
+				[[ -f "${file}" ]] && static_files+=("${file}")
+				;;
 			esac
 		done <<<"${files}"
 		if [[ "${tool_pins_changed}" -eq 1 ]]; then
@@ -768,55 +768,55 @@ run_changed() {
 }
 
 case "${target}" in
-	all)
-		# Static checks and the godot suites are independent: run them
-		# concurrently and the gate wall drops to the slower half.
-		local_all_output="$(mktemp)"
-		cleanup_paths+=("${local_all_output}")
-		run_static >"${local_all_output}" 2>&1 &
-		static_pid=$!
-		godot_rc=0
-		run_godot || godot_rc=$?
-		static_rc=0
-		wait "${static_pid}" || static_rc=$?
-		cat "${local_all_output}"
-		if [[ "${static_rc}" -ne 0 || "${godot_rc}" -ne 0 ]]; then
-			exit 1
-		fi
-		;;
-	static)
-		run_static
-		;;
-	gdscript-static)
-		run_gdscript_static
-		;;
-	python-types)
-		run_python_types
-		;;
-	private-helpers)
-		run_private_helpers
-		;;
-	format)
-		run_format
-		;;
-	lint)
-		run_lint
-		;;
-	godot)
-		shift
-		run_godot "$@"
-		;;
-	changed)
-		run_changed
-		;;
-	smoke)
-		run_smoke
-		;;
-	*)
-		echo "usage: $0 [all|static|gdscript-static|python-types|private-helpers|format|lint|godot [suite...]|changed|smoke]" >&2
-		echo "  godot suites: protocol transport client binary reconnect demo_boot p2p_boot" >&2
-		echo "  a single godot suite runs warm in-tree; SF_COLD=1 forces the cold copy" >&2
-		echo "  changed checks only what the dirty tree can affect (agent fast loop)" >&2
-		exit 2
-		;;
+all)
+	# Static checks and the godot suites are independent: run them
+	# concurrently and the gate wall drops to the slower half.
+	local_all_output="$(mktemp)"
+	cleanup_paths+=("${local_all_output}")
+	run_static >"${local_all_output}" 2>&1 &
+	static_pid=$!
+	godot_rc=0
+	run_godot || godot_rc=$?
+	static_rc=0
+	wait "${static_pid}" || static_rc=$?
+	cat "${local_all_output}"
+	if [[ "${static_rc}" -ne 0 || "${godot_rc}" -ne 0 ]]; then
+		exit 1
+	fi
+	;;
+static)
+	run_static
+	;;
+gdscript-static)
+	run_gdscript_static
+	;;
+python-types)
+	run_python_types
+	;;
+private-helpers)
+	run_private_helpers
+	;;
+format)
+	run_format
+	;;
+lint)
+	run_lint
+	;;
+godot)
+	shift
+	run_godot "$@"
+	;;
+changed)
+	run_changed
+	;;
+smoke)
+	run_smoke
+	;;
+*)
+	echo "usage: $0 [all|static|gdscript-static|python-types|private-helpers|format|lint|godot [suite...]|changed|smoke]" >&2
+	echo "  godot suites: protocol transport client binary reconnect demo_boot p2p_boot" >&2
+	echo "  a single godot suite runs warm in-tree; SF_COLD=1 forces the cold copy" >&2
+	echo "  changed checks only what the dirty tree can affect (agent fast loop)" >&2
+	exit 2
+	;;
 esac

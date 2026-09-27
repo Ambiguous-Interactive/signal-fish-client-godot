@@ -29,11 +29,11 @@ GDExtension, no compilation - and it runs everywhere Godot runs, including web e
 - **Optional `SFWebRTCMesh`** (`Node`): v3 session plans in, `WebRTCMultiplayerPeer`
   mesh out - server-assigned offerer roles, ICE replacement, and teardown handled.
 
-| | |
-|---|---|
-| Engine | Godot 4.3+ (GDScript) |
+|          |                                                                                                |
+| -------- | ---------------------------------------------------------------------------------------------- |
+| Engine   | Godot 4.3+ (GDScript)                                                                          |
 | Protocol | Signal Fish v2 + v3 session-plan signaling (fixtures pinned to upstream; drift-checked weekly) |
-| License | [MIT](LICENSE) |
+| License  | [MIT](LICENSE)                                                                                 |
 
 ## Documentation
 
@@ -154,3 +154,14 @@ bash scripts/run-runtime-checks.sh smoke  # opt-in: real WebSocketPeer round-tri
 
 Requires Godot 4.3+ and Python 3 with `requirements-python-quality.txt`. AI/agent
 context lives in [.llm/context.md](.llm/context.md).
+
+Source formatting uses pinned Prettier, shfmt, and PSScriptAnalyzer:
+
+```bash
+npm ci --ignore-scripts
+pwsh -NoProfile -Command 'Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -AcceptLicense'
+bash scripts/install-shfmt.sh /tmp/sf-shfmt
+SHFMT_BIN=/tmp/sf-shfmt bash scripts/check-source-format.sh check
+```
+
+Use `write` in place of `check` to format the tracked files.

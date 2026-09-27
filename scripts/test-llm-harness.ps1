@@ -68,7 +68,7 @@ if ($BehavioralSubshard -lt 1 -or $BehavioralSubshard -gt $BehavioralSubshardCou
 # wins over both so the behavioral shard always runs real tests.
 $script:OnlyBehavioral = [bool]$OnlyBehavioralTests
 $script:SkipBehavioral = -not $script:OnlyBehavioral -and
-    ([bool]$SkipBehavioralTests -or ($env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS -eq '1'))
+([bool]$SkipBehavioralTests -or ($env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS -eq '1'))
 $script:BehavioralSubshard = $BehavioralSubshard
 $script:BehavioralSubshardCount = $BehavioralSubshardCount
 $script:BehavioralSeen = 0
@@ -133,7 +133,8 @@ function Assert-Test {
         if ($VerboseOutput) {
             Write-Host ("[llm-test] PASS ({0:F1}s): {1}" -f $sw.Elapsed.TotalSeconds, $Name) -ForegroundColor Green
         }
-    } catch {
+    }
+    catch {
         $script:failures.Add("$Name -> $($_.Exception.Message)")
         Write-Host "[llm-test] FAIL: $Name -> $($_.Exception.Message)" -ForegroundColor Red
     }
@@ -164,7 +165,8 @@ function Restore-EnvVar {
     $path = "Env:$($Snapshot.Name)"
     if ($Snapshot.Exists) {
         Set-Item -Path $path -Value $Snapshot.Value
-    } else {
+    }
+    else {
         Remove-Item -Path $path -ErrorAction SilentlyContinue
     }
 }
@@ -204,7 +206,8 @@ function Assert-TextMatches {
     if ($Content -match $Pattern) { return }
     $details = if ([string]::IsNullOrWhiteSpace($DiagnosticPattern)) {
         ''
-    } else {
+    }
+    else {
         "`nDiagnostic lines:`n$(Get-TextDiagnosticLines -Content $Content -Pattern $DiagnosticPattern)"
     }
     throw "$Subject must $Requirement. Missing pattern: $Pattern$details"
@@ -222,7 +225,8 @@ function Assert-TextDoesNotMatch {
     if ($Content -notmatch $Pattern) { return }
     $details = if ([string]::IsNullOrWhiteSpace($DiagnosticPattern)) {
         ''
-    } else {
+    }
+    else {
         "`nMatching lines:`n$(Get-TextDiagnosticLines -Content $Content -Pattern $DiagnosticPattern)"
     }
     throw "$Subject must $Requirement. Forbidden pattern: $Pattern$details"
@@ -246,7 +250,8 @@ function Assert-ScriptParsesWithBash {
         if ($LASTEXITCODE -ne 0) {
             throw "$Name failed bash -n syntax validation."
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 }
@@ -287,7 +292,8 @@ function ConvertTo-BashPath {
     $env:SF_WSLPATH_INPUT = $Path
     try {
         $converted = @(& bash -c 'wslpath -a "$SF_WSLPATH_INPUT"' 2>$null)
-    } finally {
+    }
+    finally {
         Remove-Item Env:SF_WSLPATH_INPUT -ErrorAction SilentlyContinue
     }
     if ($LASTEXITCODE -ne 0 -or -not $converted) {
@@ -328,7 +334,8 @@ function Invoke-SandboxBash {
     if ($inlined -match '"\$@"') {
         if ($Arguments.Count -eq 0) {
             $inlined = $inlined.Replace('"$@"', '')
-        } else {
+        }
+        else {
             $expanded = ($Arguments | ForEach-Object { "'$_'" }) -join ' '
             $inlined = $inlined.Replace('"$@"', $expanded)
         }
@@ -566,7 +573,8 @@ function New-HookBehaviorSandbox {
         & git config user.name 'test' 2>&1 | Out-Null
         & git add -A 2>&1 | Out-Null
         & git commit -q -m 'baseline' 2>&1 | Out-Null
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 
@@ -591,7 +599,8 @@ Assert-Test 'frontmatter: parses standard block' {
         Expect-Equal $meta['description'] 'Hello'
         Expect-Equal $meta['triggers'] 'a, b'
         Expect-Equal $meta['category'] 'Core'
-    } finally { Remove-Item -LiteralPath $path -Force }
+    }
+    finally { Remove-Item -LiteralPath $path -Force }
 }
 
 Assert-Test 'frontmatter: Read-LlmFrontmatter delegates to line parser' {
@@ -628,7 +637,8 @@ Assert-Test 'frontmatter: parses UTF-8 BOM-prefixed block' {
         Expect-Equal $meta['description'] 'BOM ok'
         Expect-Equal $meta['triggers'] 'bom'
         Expect-Equal $meta['category'] 'Core'
-    } finally { Remove-Item -LiteralPath $path -Force }
+    }
+    finally { Remove-Item -LiteralPath $path -Force }
 }
 
 Assert-Test 'frontmatter: strips surrounding quotes' {
@@ -637,7 +647,8 @@ Assert-Test 'frontmatter: strips surrounding quotes' {
         $meta = Read-LlmFrontmatter -Path $path
         Expect-Equal $meta['description'] 'quoted'
         Expect-Equal $meta['triggers'] 'single'
-    } finally { Remove-Item -LiteralPath $path -Force }
+    }
+    finally { Remove-Item -LiteralPath $path -Force }
 }
 
 Assert-Test 'frontmatter: lowercases keys' {
@@ -647,7 +658,8 @@ Assert-Test 'frontmatter: lowercases keys' {
         Expect-Equal $meta['description'] 'x'
         Expect-Equal $meta['triggers'] 'y'
         Expect-Equal $meta['category'] 'z'
-    } finally { Remove-Item -LiteralPath $path -Force }
+    }
+    finally { Remove-Item -LiteralPath $path -Force }
 }
 
 Assert-Test 'frontmatter: returns empty when no opening fence' {
@@ -655,7 +667,8 @@ Assert-Test 'frontmatter: returns empty when no opening fence' {
     try {
         $meta = Read-LlmFrontmatter -Path $path
         Expect-Equal $meta.Count 0
-    } finally { Remove-Item -LiteralPath $path -Force }
+    }
+    finally { Remove-Item -LiteralPath $path -Force }
 }
 
 Assert-Test 'frontmatter: returns empty when closing fence missing' {
@@ -663,7 +676,8 @@ Assert-Test 'frontmatter: returns empty when closing fence missing' {
     try {
         $meta = Read-LlmFrontmatter -Path $path
         Expect-Equal $meta.Count 0 'Unclosed frontmatter must be treated as no frontmatter to avoid silent acceptance.'
-    } finally { Remove-Item -LiteralPath $path -Force }
+    }
+    finally { Remove-Item -LiteralPath $path -Force }
 }
 
 Assert-Test 'frontmatter: returns empty for too-short files' {
@@ -671,7 +685,8 @@ Assert-Test 'frontmatter: returns empty for too-short files' {
     try {
         $meta = Read-LlmFrontmatter -Path $path
         Expect-Equal $meta.Count 0
-    } finally { Remove-Item -LiteralPath $path -Force }
+    }
+    finally { Remove-Item -LiteralPath $path -Force }
 }
 
 # --- Get-LlmFrontmatterValue ----------------------------------------------
@@ -829,9 +844,9 @@ function Get-HookShimPredicateTokens {
         ($script:HookPredicatePrefixes.Count + $script:HookPredicateExact.Count)) {
         throw (
             "{0} predicate has {1} tokens; expected {2} (prefixes + exact names)." -f
-                $label,
-                $tokens.Count,
-                ($script:HookPredicatePrefixes.Count + $script:HookPredicateExact.Count)
+            $label,
+            $tokens.Count,
+            ($script:HookPredicatePrefixes.Count + $script:HookPredicateExact.Count)
         )
     }
     return $tokens
@@ -1081,7 +1096,7 @@ Assert-Test 'GitHub config PreCommit validates staged index instead of worktree'
         $workflow = Join-Path $sandbox $workflowRel
         $fixedWorkflow = [System.IO.File]::ReadAllText($workflow)
         $badRun = 'run: |' + "`n" +
-            '                  gh api --paginate --slurp "/repos/owner/repo/actions/runs" --jq ".[0]"'
+        '                  gh api --paginate --slurp "/repos/owner/repo/actions/runs" --jq ".[0]"'
         $badWorkflow = $fixedWorkflow.Replace('run: bash scripts/dependabot-auto-merge.sh', $badRun)
         if ($badWorkflow -eq $fixedWorkflow) {
             throw 'Test setup failed: could not inject old gh api --slurp --jq pattern into auto-merge workflow.'
@@ -1091,7 +1106,8 @@ Assert-Test 'GitHub config PreCommit validates staged index instead of worktree'
         Push-Location $sandbox
         try {
             & git add -- $workflowRel 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         [System.IO.File]::WriteAllText($workflow, $fixedWorkflow, [System.Text.UTF8Encoding]::new($false))
@@ -1101,7 +1117,8 @@ Assert-Test 'GitHub config PreCommit validates staged index instead of worktree'
         try {
             $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -NoAutoFix 2>&1
             $exitCode = $LASTEXITCODE
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         $combined = ($output | Out-String)
@@ -1112,7 +1129,8 @@ Assert-Test 'GitHub config PreCommit validates staged index instead of worktree'
             $combined -notmatch 'gh api must not combine --slurp and --jq') {
             throw "PreCommit output must show staged snapshot validation and the gh api policy failure. Output: $combined"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -1250,7 +1268,8 @@ exit 99
             try {
                 $output = & bash 'scripts/dependabot-auto-merge.sh' 2>&1
                 $exitCode = $LASTEXITCODE
-            } finally {
+            }
+            finally {
                 Pop-Location
             }
             $combined = ($output | Out-String)
@@ -1270,7 +1289,8 @@ exit 99
                 throw "Auto-merge scenario '$($case.Scenario)' should not merge. Log: $([System.IO.File]::ReadAllText($fakeGhLogWin)) Output: $combined"
             }
         }
-    } finally {
+    }
+    finally {
         foreach ($snapshot in $snapshots) {
             Restore-EnvVar -Snapshot $snapshot
         }
@@ -1426,7 +1446,8 @@ Assert-Test 'staging artifact helper default patterns find non-ignored editor ar
         if ($found[0].IsTracked) {
             throw "$tempName should be reported as IsTracked=false."
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
     }
 }
@@ -1459,7 +1480,8 @@ Assert-Test 'stray helpers find nested basename-style editor artifacts' {
                 throw "Expected Get-LlmStrayWorkingTreeArtifacts to find nested artifact $($file.Rel); got: $($strayArtifacts.Path -join ', ')"
             }
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath (Join-Path $repoRoot $tempDirName) -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
@@ -1490,7 +1512,8 @@ Assert-Test 'all committed PowerShell sources parse cleanly' {
             throw "git ls-files (PowerShell sources) failed with exit $LASTEXITCODE`: $($files -join '; ')"
         }
         $files = @($files | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    } finally {
+    }
+    finally {
         Pop-Location
     }
     $failed = New-Object System.Collections.Generic.List[string]
@@ -1524,7 +1547,8 @@ Assert-Test 'tracked shebang scripts use LF attributes and bytes' {
             throw "git ls-files (shebang candidates) failed with exit $LASTEXITCODE`: $($files -join '; ')"
         }
         $files = @($files | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 
@@ -1540,7 +1564,8 @@ Assert-Test 'tracked shebang scripts use LF attributes and bytes' {
         $checked++
         try {
             Assert-TestShebangLineUsesLf -Path $full -Name $rel
-        } catch {
+        }
+        catch {
             $failed.Add($_.Exception.Message)
         }
         Push-Location $repoRoot
@@ -1550,7 +1575,8 @@ Assert-Test 'tracked shebang scripts use LF attributes and bytes' {
                 $failed.Add("git check-attr failed for $rel`: $($attrOutput -join '; ')")
                 continue
             }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         $attrLine = ($attrOutput -join "`n")
@@ -1577,7 +1603,8 @@ Assert-Test 'generated executable test fixtures normalize shebang newlines' {
             -LfNewlines
         Assert-TestShebangLineUsesLf -Path $fixture -Name 'generated fake executable'
         Assert-TestFileHasNoCarriageReturns -Path $fixture -Name 'generated fake executable'
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
@@ -2027,13 +2054,15 @@ exit 127
                     if ($case.V1 -and -not $case.ForeignV2) {
                         Expect-Equal $versionValue '1.2.3' "$($case.Name): active v1 version"
                     }
-                } elseif (Test-Path -LiteralPath "$bin/opencode") {
+                }
+                elseif (Test-Path -LiteralPath "$bin/opencode") {
                     throw "$($case.Name): active OpenCode was retained after rollback failure"
                 }
                 $outputText = $output -join "`n"
                 if ($case.FinalReady) {
                     Expect-Equal ($outputText -match 'agent-tools: ready:') $true "$($case.Name): final verification was not green"
-                } else {
+                }
+                else {
                     Expect-Equal ($outputText -match 'agent-tools: ready:') $false "$($case.Name): final verification was falsely green"
                 }
                 if ($case.FailV1Restore) {
@@ -2053,10 +2082,12 @@ exit 127
                     Expect-Equal $LASTEXITCODE 0 "$($case.Name): dangling opencode2 was retained"
                 }
             }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
-    } finally {
+    }
+    finally {
         foreach ($snapshot in $snapshots) { Restore-EnvVar $snapshot }
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -2163,41 +2194,41 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
                 Requirement = 'refresh agent CLIs via install-agent-tools.sh --update'
                 Diagnostic  = 'agent-tools|--update|refresh'
             },
-             [pscustomobject]@{
-                 Pattern     = 'WARN: agent CLI refresh failed'
-                 Requirement = 'warn instead of failing when the registry refresh fails'
-                 Diagnostic  = 'WARN|refresh|installed versions'
-             },
-             [pscustomobject]@{
-                 Pattern     = 'Agent CLI refresh attempted'
-                 Requirement = 'say the refresh was attempted after warn-only migration failures'
-                 Diagnostic  = 'refresh attempted|Agent CLIs checked'
-             },
-             [pscustomobject]@{
-                 Pattern     = 'python3 -m pip install --user -r requirements-automation\.txt'
-                 Requirement = 'heal a missing PyYAML import on every start so sandbox self-tests and config validation match CI'
-                 Diagnostic  = 'PyYAML|import yaml|pip install'
-             },
-             [pscustomobject]@{
-                 Pattern     = 'python3 -m venv \.venv-ci'
-                 Requirement = 'provision .venv-ci with runtime (gdtoolkit) and automation (PyYAML) deps so both local gates match CI'
-                 Diagnostic  = 'venv|\.venv-ci|requirements'
-             },
-             [pscustomobject]@{
-                 Pattern     = 'WARN: python3 cannot import PyYAML'
-                 Requirement = 'warn instead of blocking attach when the PyYAML heal fails (e.g. offline)'
-                 Diagnostic  = 'WARN|PyYAML'
-             },
-             [pscustomobject]@{
-                 Pattern     = 'WARN: could not provision \.venv-ci'
-                 Requirement = 'warn instead of blocking attach when the venv bootstrap fails (e.g. offline)'
-                 Diagnostic  = 'WARN|venv'
-             },
-             [pscustomobject]@{
-                 Pattern     = '\(\s*\. \.venv-ci/bin/activate'
-                 Requirement = 'verify and install inside subshells so a broken venv never leaks onto the healing shell PATH'
-                 Diagnostic  = 'subshell|activate|PATH'
-             }
+            [pscustomobject]@{
+                Pattern     = 'WARN: agent CLI refresh failed'
+                Requirement = 'warn instead of failing when the registry refresh fails'
+                Diagnostic  = 'WARN|refresh|installed versions'
+            },
+            [pscustomobject]@{
+                Pattern     = 'Agent CLI refresh attempted'
+                Requirement = 'say the refresh was attempted after warn-only migration failures'
+                Diagnostic  = 'refresh attempted|Agent CLIs checked'
+            },
+            [pscustomobject]@{
+                Pattern     = 'python3 -m pip install --user -r requirements-automation\.txt'
+                Requirement = 'heal a missing PyYAML import on every start so sandbox self-tests and config validation match CI'
+                Diagnostic  = 'PyYAML|import yaml|pip install'
+            },
+            [pscustomobject]@{
+                Pattern     = 'python3 -m venv \.venv-ci'
+                Requirement = 'provision .venv-ci with runtime (gdtoolkit) and automation (PyYAML) deps so both local gates match CI'
+                Diagnostic  = 'venv|\.venv-ci|requirements'
+            },
+            [pscustomobject]@{
+                Pattern     = 'WARN: python3 cannot import PyYAML'
+                Requirement = 'warn instead of blocking attach when the PyYAML heal fails (e.g. offline)'
+                Diagnostic  = 'WARN|PyYAML'
+            },
+            [pscustomobject]@{
+                Pattern     = 'WARN: could not provision \.venv-ci'
+                Requirement = 'warn instead of blocking attach when the venv bootstrap fails (e.g. offline)'
+                Diagnostic  = 'WARN|venv'
+            },
+            [pscustomobject]@{
+                Pattern     = '\(\s*\. \.venv-ci/bin/activate'
+                Requirement = 'verify and install inside subshells so a broken venv never leaks onto the healing shell PATH'
+                Diagnostic  = 'subshell|activate|PATH'
+            }
 
         )) {
         Assert-TextMatches `
@@ -2551,7 +2582,7 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     Assert-TextMatches `
         -Subject '.devcontainer/devcontainer.json' `
         -Content $devcontainer `
-        -Pattern '"--env-file",\s*\n\s*"\$\{localWorkspaceFolder\}/\.env\.local"' `
+        -Pattern '"--env-file",\s*"\$\{localWorkspaceFolder\}/\.env\.local"' `
         -Requirement 'load .env.local into the container environment at create time' `
         -DiagnosticPattern 'env-file|\.env\.local'
     if (-not (Test-Path -LiteralPath (Join-Path $repoRoot '.env.example') -PathType Leaf)) {
@@ -2610,9 +2641,11 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
             if (Test-BashIsWsl) {
                 $modeSuffix = if ($Mode) { ' ' + $Mode } else { '' }
                 $out = & bash -c ("HOME='{0}' exec bash '{1}'{2}" -f $env:HOME, (ConvertTo-BashPath $seeder), $modeSuffix) 2>&1
-            } elseif ($Mode) {
+            }
+            elseif ($Mode) {
                 $out = & bash (ConvertTo-BashPath $seeder) $Mode 2>&1
-            } else {
+            }
+            else {
                 $out = & bash (ConvertTo-BashPath $seeder) 2>&1
             }
             $allOutputs.Add(($out | Out-String))
@@ -2723,7 +2756,8 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
         }
         $leaks = & bash -c "grep -rl -F -e '$($canary1)' -e '$($canary2)' '$(ConvertTo-BashPath $tempRoot)' 2>/dev/null || true"
         if ($leaks) { throw "seed-mcp-config.sh wrote a secret value to: $($leaks -join ', ')" }
-    } finally {
+    }
+    finally {
         foreach ($snapshot in $snapshots) { Restore-EnvVar $snapshot }
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -2886,10 +2920,10 @@ exit 127
                 New-Item -ItemType Directory -Path $prefix -Force | Out-Null
                 if ($case.Installed) {
                     Write-TestUtf8NoBomFile -Path "$state/packages" -Content ((@(
-                            "$godotPackage $godotVersion",
-                            "$playwrightPackage $playwrightVersion",
-                            "$context7Package $context7Version"
-                        ) -join "`n") + "`n")
+                                "$godotPackage $godotVersion",
+                                "$playwrightPackage $playwrightVersion",
+                                "$context7Package $context7Version"
+                            ) -join "`n") + "`n")
                     New-Item -ItemType Directory -Path "$prefix/bin" -Force | Out-Null
                     foreach ($mcpBin in 'godot-mcp', 'playwright-mcp', 'context7-mcp') {
                         Write-TestUtf8NoBomFile -Path (Join-Path $prefix "bin/$mcpBin") -Content ('#!/usr/bin/env bash' + "`n")
@@ -2897,7 +2931,8 @@ exit 127
                     if (Get-Command chmod -ErrorAction SilentlyContinue) {
                         & chmod +x -- (Join-Path $prefix 'bin/godot-mcp') (Join-Path $prefix 'bin/playwright-mcp') (Join-Path $prefix 'bin/context7-mcp')
                     }
-                } else {
+                }
+                else {
                     Write-TestUtf8NoBomFile -Path "$state/packages" -Content ''
                 }
 
@@ -2938,10 +2973,12 @@ exit 127
             # not have reached npm's recorded process environment anywhere.
             $leaks = @(Get-ChildItem -LiteralPath $tempRoot -Recurse -File -ErrorAction SilentlyContinue | Select-String -SimpleMatch $canary -List)
             if ($leaks) { throw "installer leaked the canary secret to: $(($leaks | ForEach-Object { $_.Path }) -join ', ')" }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
-    } finally {
+    }
+    finally {
         foreach ($snapshot in $snapshots) { Restore-EnvVar $snapshot }
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -3083,7 +3120,8 @@ function Import-Module {
         if ($output -notcontains 'profile-ok') {
             throw "profile load did not reach completion. Output: $($output -join '; ')"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempScript -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -3124,9 +3162,11 @@ Assert-Test 'install-git-hooks.ps1 has no undefined variable references' {
             if ($target -is [System.Management.Automation.Language.VariableExpressionAst]) {
                 [void]$defined.Add($target.VariablePath.UserPath)
             }
-        } elseif ($node -is [System.Management.Automation.Language.ParameterAst]) {
+        }
+        elseif ($node -is [System.Management.Automation.Language.ParameterAst]) {
             [void]$defined.Add($node.Name.VariablePath.UserPath)
-        } elseif ($node -is [System.Management.Automation.Language.ForEachStatementAst]) {
+        }
+        elseif ($node -is [System.Management.Automation.Language.ForEachStatementAst]) {
             [void]$defined.Add($node.Variable.VariablePath.UserPath)
         }
     }
@@ -3484,7 +3524,8 @@ Assert-Test 'preflight.ps1 self-check surfaces structured failure on corruption'
         if ($combined -notmatch 'Self-parse failed' -and $combined -notmatch 'ParserError' -and $combined -notmatch 'parse error') {
             throw "Expected branded preflight self-parse failure or pwsh parse error, got: $combined"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -3512,7 +3553,8 @@ Assert-Test 'Get-LlmStrayWorkingTreeArtifacts finds gitignored .tmp files' {
         if ($found[0].IsTracked) {
             throw "$tempName should not be IsTracked."
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
     }
 }
@@ -3586,7 +3628,8 @@ Assert-Test '.claude/settings.json wires PostToolUse parse-check hook' {
     $json = $null
     try {
         $json = $content | ConvertFrom-Json
-    } catch {
+    }
+    catch {
         throw ".claude/settings.json is not valid JSON: $($_.Exception.Message)"
     }
     if (-not ($json.PSObject.Properties.Name -contains 'hooks')) {
@@ -3726,7 +3769,8 @@ Assert-Test 'preflight-stop.ps1 block reason mentions index-first recovery' {
             $json.reason -notmatch 'index first, then HEAD fallback') {
             throw "preflight-stop reason must describe index-first recovery with HEAD fallback; got '$($json.reason)'."
         }
-    } finally {
+    }
+    finally {
         Restore-EnvVar -Snapshot $envSnapshot
         Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -3750,7 +3794,8 @@ Assert-Test '.claude/settings.local.json is local-only, untracked, and gitignore
             if ($LASTEXITCODE -ne 0) {
                 throw "git status failed while checking .claude/settings.local.json: $($status -join '; ')"
             }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         $trackedLocalSettings = @($tracked | Where-Object { $_ -eq '.claude/settings.local.json' })
@@ -3809,10 +3854,10 @@ Assert-Test '.claude hook JSON variables use explicit names' {
         }
         $variables = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($node in @($ast.FindAll({
-                    param($n)
-                    $n -is [System.Management.Automation.Language.VariableExpressionAst] -and
-                    -not $n.VariablePath.IsDriveQualified
-                }, $true))) {
+                        param($n)
+                        $n -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        -not $n.VariablePath.IsDriveQualified
+                    }, $true))) {
             [void]$variables.Add($node.VariablePath.UserPath)
         }
         if ($variables.Contains('payload')) {
@@ -3891,10 +3936,12 @@ Assert-Test 'parse-check-powershell.ps1 emits stdout decision-block JSON on pars
                 [string]::IsNullOrWhiteSpace($parsed.reason)) {
                 throw 'parse-check hook stdout JSON must contain a non-empty `reason` field.'
             }
-        } finally {
+        }
+        finally {
             Remove-Item -LiteralPath $stdoutPath, $stderrPath, $stdinPath -Force -ErrorAction SilentlyContinue
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempScript -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -3935,13 +3982,16 @@ Assert-Test 'validate-llm-context.ps1 ignores .llm paths outside the repo' {
                 if ($exitCode -ne 0) {
                     throw "Hook must exit 0 silently for paths outside `$CLAUDE_PROJECT_DIR; got $exitCode."
                 }
-            } finally {
+            }
+            finally {
                 $env:CLAUDE_PROJECT_DIR = $envBackup
             }
-        } finally {
+        }
+        finally {
             Remove-Item -LiteralPath $stdinPath -Force -ErrorAction SilentlyContinue
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4004,10 +4054,12 @@ Assert-Test 'validate-llm-context.ps1 blocks invalid and accepts valid repo-loca
                 Stdout   = (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue)
                 Stderr   = (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue)
             }
-        } finally {
+        }
+        finally {
             if ($null -eq $envBackup) {
                 Remove-Item Env:CLAUDE_PROJECT_DIR -ErrorAction SilentlyContinue
-            } else {
+            }
+            else {
                 $env:CLAUDE_PROJECT_DIR = $envBackup
             }
             Remove-Item -LiteralPath $stdinPath, $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
@@ -4041,7 +4093,8 @@ Assert-Test 'validate-llm-context.ps1 blocks invalid and accepts valid repo-loca
         if ($valid.ExitCode -ne 0) {
             throw "validate hook must exit 0 for valid frontmatter; got $($valid.ExitCode). stdout: '$($valid.Stdout)' stderr: '$($valid.Stderr)'"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4181,7 +4234,8 @@ Assert-Test 'lint-llm.ps1 fails on stray .tmp file inside controlled dir' {
         if ($combined -notmatch 'Stray staging artifact') {
             throw "lint-llm.ps1 must use the 'Stray staging artifact' prefix; got: $combined"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4209,7 +4263,8 @@ Assert-Test 'run-llm-hooks.ps1 -NoAutoFix reports stray .tmp and fails' {
         if ($combined -notmatch [regex]::Escape($strayName)) {
             throw "run-llm-hooks.ps1 -NoAutoFix must name the stray artifact; got: $combined"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4235,7 +4290,8 @@ Assert-Test 'run-llm-hooks.ps1 PreCommit reports gitignored scripts .tmp before 
         if ($combined -notmatch [regex]::Escape($strayName)) {
             throw "PreCommit must name the gitignored stray artifact; got: $combined"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4422,7 +4478,8 @@ Assert-Test 'NIT-5: explicit switch suppresses inner preflight pass and emits sk
             Invoke-PreflightIfNeeded -Required
         } 2>&1
         $sentinelExists = Test-Path -LiteralPath $sentinel -PathType Leaf
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     $combined = ($output | Out-String)
@@ -4473,7 +4530,8 @@ Assert-Test 'NIT-5: leaked preflight env var does not suppress direct Full prefl
             Invoke-PreflightIfNeeded -Required
         } 2>&1
         $sentinelExists = Test-Path -LiteralPath $sentinel -PathType Leaf
-    } finally {
+    }
+    finally {
         Restore-EnvVar -Snapshot $preflightSnapshot
         Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -4604,7 +4662,8 @@ exit 0
             if ($LASTEXITCODE -ne 0) {
                 throw "agent-check fast sandbox failed: $($fastOutput | Out-String)"
             }
-        } finally {
+        }
+        finally {
             Restore-EnvVar -Snapshot $skipSnapshot
         }
 
@@ -4614,7 +4673,8 @@ exit 0
         if (($fastOutput | Out-String) -notmatch 'skip=1') {
             throw "agent-check fast path must still set LLM_HARNESS_SKIP_BEHAVIORAL_TESTS for its runner. Output: $($fastOutput | Out-String)"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4685,7 +4745,8 @@ Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without 
             & git init -q --initial-branch=main 2>&1 | Out-Null
             & git config user.email 'test@example.com' 2>&1 | Out-Null
             & git config user.name 'test' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         foreach ($f in @(
                 'scripts/run-llm-hooks.ps1',
@@ -4710,7 +4771,8 @@ Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without 
         try {
             & git add -A 2>&1 | Out-Null
             & git commit -q -m 'baseline' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         Add-Content -LiteralPath (Join-Path $sandbox 'scripts/install-git-hooks.ps1') `
             -Value "`n`$undefinedFastGuardProbe | Out-Null`n"
@@ -4733,8 +4795,10 @@ Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without 
             try {
                 $output = & $realPwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -NoAutoFix 2>&1
                 $exitCode = $LASTEXITCODE
-            } finally { Pop-Location }
-        } finally {
+            }
+            finally { Pop-Location }
+        }
+        finally {
             $env:PATH = $pathBackup
         }
 
@@ -4748,7 +4812,8 @@ Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without 
         if (Test-Path -LiteralPath $fakeLog -PathType Leaf) {
             throw "AgentFast spawned a child pwsh despite fast static-guard mode. Fake log: $([System.IO.File]::ReadAllText($fakeLog))"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4777,7 +4842,8 @@ Assert-Test 'MIN-2: AgentFast reports controlled gitignored strays without delet
         if (-not (Test-Path -LiteralPath $strayFull -PathType Leaf)) {
             throw 'AgentFast is non-mutating and must not delete controlled strays in NoAutoFix mode.'
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4795,7 +4861,8 @@ Assert-Test 'adversarial: AgentFast checks controlled strays before no-change OK
             $output = & pwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -AutoFix 2>&1
             $exitCode = $LASTEXITCODE
             $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         $combined = ($output | Out-String)
@@ -4814,7 +4881,8 @@ Assert-Test 'adversarial: AgentFast checks controlled strays before no-change OK
         if (@($stagedGenerated | Where-Object { $_ -match '^\.llm/' }).Count -gt 0) {
             throw "AgentFast -AutoFix must not stage generated files; staged: $($stagedGenerated -join ', ')"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4837,7 +4905,8 @@ Assert-Test 'adversarial: AgentFast catches tracked sibling strays outside contr
             $output = & pwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -AutoFix 2>&1
             $exitCode = $LASTEXITCODE
             $staged = @(& git diff --cached --name-only 2>&1)
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -4859,7 +4928,8 @@ Assert-Test 'adversarial: AgentFast catches tracked sibling strays outside contr
         if (@($staged | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
             throw "AgentFast -AutoFix must not stage files; staged: $($staged -join ', ')"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4882,7 +4952,8 @@ Assert-Test 'adversarial: PreCommit AutoFix deletes tracked sibling strays outsi
             $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -AutoFix 2>&1
             $exitCode = $LASTEXITCODE
             $staged = @(& git diff --cached --name-only 2>&1)
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -4901,7 +4972,8 @@ Assert-Test 'adversarial: PreCommit AutoFix deletes tracked sibling strays outsi
         if (@($staged | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
             throw "PreCommit stray cleanup must not stage unrelated files; staged: $($staged -join ', ')"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4918,7 +4990,8 @@ Assert-Test 'adversarial: AgentFast ignores unrelated gitignored tmp outside fas
             $hooks = Join-Path $sandbox 'scripts/run-llm-hooks.ps1'
             $output = & pwsh -NoProfile -File $hooks -Mode AgentFast -SkipStagedCheck -NoAutoFix 2>&1
             $exitCode = $LASTEXITCODE
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -4932,7 +5005,8 @@ Assert-Test 'adversarial: AgentFast ignores unrelated gitignored tmp outside fas
         if (-not (Test-Path -LiteralPath $unrelatedFull -PathType Leaf)) {
             throw 'AgentFast must not delete unrelated ignored tmp files.'
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -4948,7 +5022,8 @@ Assert-Test 'adversarial: AgentFast rejects ignored LLM markdown inputs before n
             Add-Content -LiteralPath (Join-Path $sandbox '.gitignore') -Value "`n$ignoredRel`n"
             & git add -- '.gitignore' 2>&1 | Out-Null
             & git commit -q -m 'ignore AgentFast LLM markdown probe' 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -4975,7 +5050,8 @@ category: Test
             $exitCode = $LASTEXITCODE
             $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
             $unstagedGenerated = @(& git diff --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -4999,7 +5075,8 @@ category: Test
         if (-not (Test-Path -LiteralPath $ignoredPath -PathType Leaf)) {
             throw 'AgentFast must not delete ignored untracked LLM markdown inputs.'
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -5013,7 +5090,8 @@ Assert-Test 'adversarial: PreCommit AutoFix does not stage generated drift for t
         Push-Location $sandbox
         try {
             & git add -- 'scripts/lint-llm.ps1' 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         Add-Content -LiteralPath (Join-Path $sandbox '.llm/index.md') `
@@ -5026,7 +5104,8 @@ Assert-Test 'adversarial: PreCommit AutoFix does not stage generated drift for t
             $exitCode = $LASTEXITCODE
             $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
             $unstagedGenerated = @(& git diff --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5039,7 +5118,8 @@ Assert-Test 'adversarial: PreCommit AutoFix does not stage generated drift for t
         if ($unstagedGenerated -notcontains '.llm/index.md') {
             throw "Expected pre-existing generated drift to remain unstaged in the worktree; got: $($unstagedGenerated -join ', ')"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -5057,7 +5137,8 @@ Assert-Test 'adversarial: PreCommit AutoFix does not stage context prose when ge
             }
             & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
             & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5066,7 +5147,8 @@ Assert-Test 'adversarial: PreCommit AutoFix does not stage context prose when ge
         Push-Location $sandbox
         try {
             & git add -- '.llm/README.md' 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         Add-Content -LiteralPath (Join-Path $sandbox '.llm/context.md') `
@@ -5079,7 +5161,8 @@ Assert-Test 'adversarial: PreCommit AutoFix does not stage context prose when ge
             $exitCode = $LASTEXITCODE
             $staged = @(& git diff --cached --name-only 2>&1)
             $unstaged = @(& git diff --name-only 2>&1)
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5099,7 +5182,8 @@ Assert-Test 'adversarial: PreCommit AutoFix does not stage context prose when ge
         if ($combined -match 'AutoFix: staging regenerated LLM files') {
             throw "PreCommit -AutoFix must not announce generated staging when the generator wrote nothing. Output: $combined"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -5118,7 +5202,8 @@ Assert-Test 'final-review: PreCommit AutoFix stages only generated context block
             }
             & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
             & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5139,7 +5224,8 @@ category: Test
         Push-Location $sandbox
         try {
             & git add -- $skillRel 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         Add-Content -LiteralPath (Join-Path $sandbox '.llm/context.md') -Value "`n$proseMarker`n"
@@ -5153,7 +5239,8 @@ category: Test
             $unstaged = @(& git diff --name-only 2>&1)
             $stagedContext = (@(& git show ':.llm/context.md' 2>&1) -join "`n")
             $worktreeContext = [System.IO.File]::ReadAllText((Join-Path $sandbox '.llm/context.md'))
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5178,7 +5265,8 @@ category: Test
         if ($unstaged -notcontains '.llm/context.md') {
             throw "Unstaged context prose should remain as a worktree diff; unstaged: $($unstaged -join ', ')"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -5196,7 +5284,8 @@ Assert-Test 'final-review: PreCommit AutoFix rejects untracked LLM markdown gene
             }
             & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
             & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5233,7 +5322,8 @@ category: Test
             $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
             $unstagedGenerated = @(& git diff --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
             $stagedAll = @(& git diff --cached --name-only 2>&1)
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5254,7 +5344,8 @@ category: Test
         if ($stagedAll -notcontains $stagedRel) {
             throw "Sandbox setup expected staged LLM input to remain staged; staged: $($stagedAll -join ', ')"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -5277,7 +5368,8 @@ Assert-Test 'final-review: PreCommit AutoFix rejects ignored untracked LLM markd
                 -Value "`n.llm/skills/ignored-generation-probe.md`n"
             & git add -- '.gitignore' 2>&1 | Out-Null
             & git commit -q -m 'ignore ignored LLM markdown probe' 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5319,7 +5411,8 @@ category: Test
             $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
             $unstagedGenerated = @(& git diff --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
             $stagedAll = @(& git diff --cached --name-only 2>&1)
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5343,7 +5436,8 @@ category: Test
         if (-not (Test-Path -LiteralPath $ignoredPath -PathType Leaf)) {
             throw 'PreCommit must not delete ignored untracked LLM markdown inputs.'
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -5361,7 +5455,8 @@ Assert-Test 'adversarial: AgentFast AutoFix does not stage generated drift' {
             $exitCode = $LASTEXITCODE
             $stagedGenerated = @(& git diff --cached --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
             $unstagedGenerated = @(& git diff --name-only -- '.llm/index.md' '.llm/context.md' 2>&1)
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         if ($exitCode -eq 0) {
@@ -5373,7 +5468,8 @@ Assert-Test 'adversarial: AgentFast AutoFix does not stage generated drift' {
         if ($unstagedGenerated -notcontains '.llm/index.md') {
             throw "Expected AgentFast generated drift to remain unstaged in the worktree; got: $($unstagedGenerated -join ', ')"
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -5399,7 +5495,8 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
             & git init -q --initial-branch=main 2>&1 | Out-Null
             & git config user.email 'test@example.com' 2>&1 | Out-Null
             & git config user.name 'test' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         # Materialise the scripts/ tree we need: install-git-hooks, the
         # entry script, preflight, lint, generator, self-tests, module.
@@ -5436,7 +5533,8 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
             if (-not (Test-Path -LiteralPath $hookPath -PathType Leaf)) {
                 throw "Installer did not materialise $hookPath."
             }
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         # Corrupt run-llm-hooks.ps1 so the shim's parse-check + git
         # checkout path actually has to fire.
@@ -5448,7 +5546,8 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
         Push-Location $sandbox
         try {
             & git add -- 'scripts/run-llm-hooks.ps1' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
         [System.IO.File]::WriteAllText($sandboxEntry, "$entryOriginal`n}}}$shimWorktreeSentinel`n")
 
         # Invoke the shim directly via sh, exactly like git would.
@@ -5457,7 +5556,8 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
         try {
             $shOutput = & sh '.git/hooks/pre-commit' 2>&1
             $shExit = $LASTEXITCODE
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
         $combined = ($shOutput | Out-String)
         # The shim must announce the recovery action.
         if ($combined -notmatch 'WARNING.*has parse errors.*restoring from index or HEAD' -and
@@ -5475,7 +5575,7 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
         }
         $recoveryParent = Resolve-TestGitPath -RepoRoot $sandbox -GitPath 'preflight-recovery'
         $backupFiles = @(Get-ChildItem -LiteralPath $recoveryParent -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -eq 'scripts__run-llm-hooks.ps1' })
+                Where-Object { $_.Name -eq 'scripts__run-llm-hooks.ps1' })
         if ($backupFiles.Count -eq 0) {
             throw "Shim recovery must preserve corrupt run-llm-hooks.ps1 WIP under $recoveryParent. Output: $combined"
         }
@@ -5485,7 +5585,7 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
             throw "Shim recovery backup must contain the corrupt WIP bytes; got: $backupText"
         }
         $indexBackupFiles = @(Get-ChildItem -LiteralPath $recoveryParent -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -eq 'scripts__run-llm-hooks.ps1.index' })
+                Where-Object { $_.Name -eq 'scripts__run-llm-hooks.ps1.index' })
         if ($indexBackupFiles.Count -eq 0) {
             throw "Shim recovery must preserve corrupt staged/index run-llm-hooks.ps1 WIP under $recoveryParent. Output: $combined"
         }
@@ -5494,7 +5594,8 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
             $indexBackupText -match [regex]::Escape($shimWorktreeSentinel)) {
             throw "Shim recovery index backup must contain the corrupt staged bytes; got: $indexBackupText"
         }
-    } finally {
+    }
+    finally {
         $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = $envBehaviorBackup
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -5513,7 +5614,8 @@ Assert-Test 'MIN-4: preflight prunes recovery dirs to 20 most-recent' {
             & git init -q --initial-branch=main 2>&1 | Out-Null
             & git config user.email 'test@example.com' 2>&1 | Out-Null
             & git config user.name 'test' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         $sandboxScripts = Join-Path $sandbox 'scripts'
         $sandboxLib = Join-Path $sandboxScripts 'lib'
@@ -5541,7 +5643,8 @@ Assert-Test 'MIN-4: preflight prunes recovery dirs to 20 most-recent' {
         try {
             & git add -A 2>&1 | Out-Null
             & git commit -q -m 'baseline' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         # Materialise 25 fake recovery dirs with staggered mtimes so we
         # can verify the most-recent 20 survive.
@@ -5568,11 +5671,12 @@ Assert-Test 'MIN-4: preflight prunes recovery dirs to 20 most-recent' {
         Push-Location $sandbox
         try {
             & pwsh -NoProfile -File $sandboxPreflight 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         $after = @(Get-ChildItem -LiteralPath $recoveryParent -Directory |
-            Where-Object { $_.Name -like 'dummy*' } |
-            Sort-Object -Property LastWriteTimeUtc -Descending)
+                Where-Object { $_.Name -like 'dummy*' } |
+                Sort-Object -Property LastWriteTimeUtc -Descending)
         if ($after.Count -ne 20) {
             throw "Expected 20 dummy dirs to remain after prune; got $($after.Count): $($after.Name -join ', ')"
         }
@@ -5588,7 +5692,8 @@ Assert-Test 'MIN-4: preflight prunes recovery dirs to 20 most-recent' {
                 throw "$name should have survived the prune (in the top 20)."
             }
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -5606,7 +5711,8 @@ Assert-Test 'MIN-5: AutoFix restores working-tree WIP when HEAD copy is also cor
             & git init -q --initial-branch=main 2>&1 | Out-Null
             & git config user.email 'test@example.com' 2>&1 | Out-Null
             & git config user.name 'test' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         # Copy the real preflight + module + the tracked toolkit so
         # preflight's git ls-files enumerates this file.
@@ -5626,7 +5732,8 @@ Assert-Test 'MIN-5: AutoFix restores working-tree WIP when HEAD copy is also cor
         try {
             & git add -A 2>&1 | Out-Null
             & git commit -q -m 'baseline-with-broken-victim' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         # Write DIFFERENT corrupt content in the working tree. AutoFix
         # will: backup the WIP, checkout HEAD (still corrupt), detect HEAD
@@ -5641,7 +5748,8 @@ Assert-Test 'MIN-5: AutoFix restores working-tree WIP when HEAD copy is also cor
         try {
             $preOutput = & pwsh -NoProfile -File $sandboxPreflight -AutoFix 2>&1
             $preExit = $LASTEXITCODE
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
         $combined = ($preOutput | Out-String)
         if ($preExit -ne 1) {
             throw "Expected exit 1 when HEAD is also corrupt; got $preExit. Output: $combined"
@@ -5656,7 +5764,8 @@ Assert-Test 'MIN-5: AutoFix restores working-tree WIP when HEAD copy is also cor
         if (-not ([System.Linq.Enumerable]::SequenceEqual([byte[]]$afterBytes, [byte[]]$wipBytes))) {
             throw "Working-tree WIP was NOT restored byte-for-byte; backup-restore branch failed."
         }
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
     }
 } -Behavioral
@@ -5693,7 +5802,8 @@ Assert-Test 'MIN-6: preflight refuses AutoFix when recovery dir is read-only' {
             & git init -q --initial-branch=main 2>&1 | Out-Null
             & git config user.email 'test@example.com' 2>&1 | Out-Null
             & git config user.name 'test' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         $sandboxScripts = Join-Path $sandbox 'scripts'
         $sandboxLib = Join-Path $sandboxScripts 'lib'
@@ -5709,7 +5819,8 @@ Assert-Test 'MIN-6: preflight refuses AutoFix when recovery dir is read-only' {
         try {
             & git add -A 2>&1 | Out-Null
             & git commit -q -m 'baseline-clean' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
 
         # Corrupt working tree.
         $wipText = "param()`n}}}wipcorrupt`n"
@@ -5729,7 +5840,8 @@ Assert-Test 'MIN-6: preflight refuses AutoFix when recovery dir is read-only' {
         try {
             $preOutput = & pwsh -NoProfile -File $sandboxPreflight -AutoFix 2>&1
             $preExit = $LASTEXITCODE
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
         $combined = ($preOutput | Out-String)
         if ($preExit -ne 1) {
             throw "Expected exit 1 when recovery dir cannot be created; got $preExit. Output: $combined"
@@ -5743,7 +5855,8 @@ Assert-Test 'MIN-6: preflight refuses AutoFix when recovery dir is read-only' {
         if (-not ([System.Linq.Enumerable]::SequenceEqual([byte[]]$afterBytes, [byte[]]$wipBytes))) {
             throw "Working tree was modified despite recovery-dir failure; preflight must refuse to touch WIP without a backup."
         }
-    } finally {
+    }
+    finally {
         # Restore perms BEFORE recursive delete or rmdir fails.
         if ($null -ne $recoveryParent -and (Test-Path -LiteralPath $recoveryParent)) {
             & chmod 755 -- $recoveryParent 2>&1 | Out-Null
@@ -5763,7 +5876,8 @@ Assert-Test 'worktree: preflight AutoFix writes backups under resolved git path'
             if ($LASTEXITCODE -ne 0) {
                 throw "git worktree add failed: $($out -join '; ')"
             }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5784,7 +5898,8 @@ Assert-Test 'worktree: preflight AutoFix writes backups under resolved git path'
         Push-Location $worktree
         try {
             & git add -- $victimRel 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         [System.IO.File]::WriteAllText($victimFull, "$victimOriginal`n}}}worktree-preflight-corrupt`n")
@@ -5793,7 +5908,8 @@ Assert-Test 'worktree: preflight AutoFix writes backups under resolved git path'
         try {
             $output = & pwsh -NoProfile -File $preflight -AutoFix 2>&1
             $exitCode = $LASTEXITCODE
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5808,7 +5924,7 @@ Assert-Test 'worktree: preflight AutoFix writes backups under resolved git path'
             throw "Preflight must not create recovery data under linked worktree .git file path: $legacyRecoveryParent"
         }
         $backupFiles = @(Get-ChildItem -LiteralPath $resolvedRecoveryParent -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -eq ($victimRel -replace '[\\/]', '__') })
+                Where-Object { $_.Name -eq ($victimRel -replace '[\\/]', '__') })
         if ($backupFiles.Count -eq 0) {
             throw "Expected corrupt worktree WIP backup under $resolvedRecoveryParent. Output: $combined"
         }
@@ -5817,7 +5933,7 @@ Assert-Test 'worktree: preflight AutoFix writes backups under resolved git path'
             throw "Preflight worktree backup did not contain corrupt WIP bytes; got: $backupText"
         }
         $indexBackupFiles = @(Get-ChildItem -LiteralPath $resolvedRecoveryParent -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -eq "$( $victimRel -replace '[\\/]', '__' ).index" })
+                Where-Object { $_.Name -eq "$( $victimRel -replace '[\\/]', '__' ).index" })
         if ($indexBackupFiles.Count -eq 0) {
             throw "Expected corrupt staged/index backup under $resolvedRecoveryParent. Output: $combined"
         }
@@ -5825,7 +5941,8 @@ Assert-Test 'worktree: preflight AutoFix writes backups under resolved git path'
         if ($indexBackupText -notmatch 'worktree-preflight-index-corrupt') {
             throw "Preflight index backup did not contain corrupt staged bytes; got: $indexBackupText"
         }
-    } finally {
+    }
+    finally {
         if (Test-Path -LiteralPath $worktree) {
             & git -C $sandbox worktree remove --force $worktree 2>&1 | Out-Null
             Remove-Item -LiteralPath $worktree -Recurse -Force -ErrorAction SilentlyContinue
@@ -5849,7 +5966,8 @@ Assert-Test 'worktree: run-llm-hooks recovery backup uses resolved git path' {
             if ($LASTEXITCODE -ne 0) {
                 throw "git worktree add failed: $($out -join '; ')"
             }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5867,7 +5985,8 @@ Assert-Test 'worktree: run-llm-hooks recovery backup uses resolved git path' {
         Push-Location $worktree
         try {
             & git add -- $preflightRel 2>&1 | Out-Null
-        } finally {
+        }
+        finally {
             Pop-Location
         }
         [System.IO.File]::WriteAllText($preflight, "$preflightOriginal`n}}}worktree-runner-corrupt`n")
@@ -5876,7 +5995,8 @@ Assert-Test 'worktree: run-llm-hooks recovery backup uses resolved git path' {
         try {
             $output = & pwsh -NoProfile -File $hooks -Mode PreCommit -SkipStagedCheck -AutoFix 2>&1
             $exitCode = $LASTEXITCODE
-        } finally {
+        }
+        finally {
             Pop-Location
         }
 
@@ -5895,7 +6015,7 @@ Assert-Test 'worktree: run-llm-hooks recovery backup uses resolved git path' {
             throw "run-llm-hooks.ps1 must not create recovery data under linked worktree .git file path: $legacyRecoveryParent"
         }
         $backupFiles = @(Get-ChildItem -LiteralPath $resolvedRecoveryParent -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -eq 'scripts__preflight.ps1' })
+                Where-Object { $_.Name -eq 'scripts__preflight.ps1' })
         if ($backupFiles.Count -eq 0) {
             throw "Expected preflight.ps1 recovery backup under $resolvedRecoveryParent. Output: $combined"
         }
@@ -5904,7 +6024,7 @@ Assert-Test 'worktree: run-llm-hooks recovery backup uses resolved git path' {
             throw "run-llm-hooks worktree backup did not contain corrupt WIP bytes; got: $backupText"
         }
         $indexBackupFiles = @(Get-ChildItem -LiteralPath $resolvedRecoveryParent -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -eq 'scripts__preflight.ps1.index' })
+                Where-Object { $_.Name -eq 'scripts__preflight.ps1.index' })
         if ($indexBackupFiles.Count -eq 0) {
             throw "Expected preflight.ps1 staged/index recovery backup under $resolvedRecoveryParent. Output: $combined"
         }
@@ -5912,7 +6032,8 @@ Assert-Test 'worktree: run-llm-hooks recovery backup uses resolved git path' {
         if ($indexBackupText -notmatch 'worktree-runner-index-corrupt') {
             throw "run-llm-hooks index backup did not contain corrupt staged bytes; got: $indexBackupText"
         }
-    } finally {
+    }
+    finally {
         $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = $envBehaviorBackup
         $env:LLM_HARNESS_PREFLIGHT_DONE = $envPreflightBackup
         if (Test-Path -LiteralPath $worktree) {
@@ -5995,7 +6116,8 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
             & git init -q --initial-branch=main 2>&1 | Out-Null
             & git config user.email 'test@example.com' 2>&1 | Out-Null
             & git config user.name 'test' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
         $sandboxScripts = Join-Path $sandbox 'scripts'
         $sandboxLib = Join-Path $sandboxScripts 'lib'
         New-Item -ItemType Directory -Path $sandboxLib -Force | Out-Null
@@ -6025,7 +6147,8 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
         try {
             & git add -A 2>&1 | Out-Null
             & git commit -q -m 'baseline' 2>&1 | Out-Null
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
         # NOW corrupt preflight.ps1 in the sandbox working tree.
         $sandboxPreflight = Join-Path $sandbox 'scripts/preflight.ps1'
         Add-Content -LiteralPath $sandboxPreflight -Value "`n}}}garbage`n"
@@ -6035,7 +6158,8 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
         Push-Location $sandbox
         try {
             $output = & pwsh -NoProfile -File $sandboxHooks -SkipStagedCheck -AutoFix 2>&1
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
         $combined = ($output | Out-String)
         if ($combined -notmatch 'preflight\.ps1 has parse errors') {
             throw "run-llm-hooks.ps1 must print 'preflight.ps1 has parse errors' when corruption is detected. Output: $combined"
@@ -6050,7 +6174,7 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
         }
         $recoveryParent = Resolve-TestGitPath -RepoRoot $sandbox -GitPath 'preflight-recovery'
         $backupFiles = @(Get-ChildItem -LiteralPath $recoveryParent -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -eq 'scripts__preflight.ps1' })
+                Where-Object { $_.Name -eq 'scripts__preflight.ps1' })
         if ($backupFiles.Count -eq 0) {
             throw "run-llm-hooks.ps1 recovery must preserve corrupt preflight.ps1 WIP under $recoveryParent. Output: $combined"
         }
@@ -6058,7 +6182,8 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
         if ($backupText -notmatch 'garbage') {
             throw "preflight recovery backup must contain the corrupt WIP bytes; got: $backupText"
         }
-    } finally {
+    }
+    finally {
         $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = $envBehaviorBackup
         $env:LLM_HARNESS_PREFLIGHT_DONE = $envPreflightBackup
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue

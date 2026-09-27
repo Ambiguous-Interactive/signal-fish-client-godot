@@ -43,29 +43,28 @@
   ],
   // Docker provides the shell on every host, including native Windows.
   "initializeCommand": [
-    "docker", "run", "--rm", "--network=none",
-    "--volume", "${localWorkspaceFolder}:/workspace",
-    "--workdir", "/workspace",
+    "docker",
+    "run",
+    "--rm",
+    "--network=none",
+    "--volume",
+    "${localWorkspaceFolder}:/workspace",
+    "--workdir",
+    "/workspace",
     "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
-    "bash", ".devcontainer/initialize.sh"
+    "bash",
+    ".devcontainer/initialize.sh"
   ],
   // Load the user's local secrets (.env.local, git-ignored; copy from
   // .env.example) into the container environment at create time. MCP
   // configuration files reference these variables by NAME only, so values
   // exist solely in the process environment - never in committed files.
   // Requires .env.local to exist on the host before (re)building.
-  "runArgs": [
-    "--env-file",
-    "${localWorkspaceFolder}/.env.local"
-  ],
+  "runArgs": ["--env-file", "${localWorkspaceFolder}/.env.local"],
   "remoteUser": "vscode",
   "containerUser": "vscode",
   "updateRemoteUserUID": true,
-  "forwardPorts": [
-    6005,
-    6006,
-    6007
-  ],
+  "forwardPorts": [6005, 6006, 6007],
   "portsAttributes": {
     "6005": {
       "label": "Godot LSP",
@@ -155,10 +154,7 @@
         "editor.guides.indentation": true,
         "editor.renderWhitespace": "boundary",
         "editor.renderLineHighlight": "all",
-        "editor.rulers": [
-          80,
-          100
-        ],
+        "editor.rulers": [80, 100],
         "editor.stickyScroll.enabled": true,
         "editor.suggestSelection": "first",
         "editor.inlineSuggest.enabled": true,
@@ -204,9 +200,7 @@
           "pwsh": {
             "path": "/usr/bin/pwsh",
             "icon": "terminal-powershell",
-            "args": [
-              "-NoLogo"
-            ]
+            "args": ["-NoLogo"]
           },
           "bash": {
             "path": "bash",
@@ -293,14 +287,8 @@
           "files.eol": "\n"
         },
         // Error Lens
-        "errorLens.enabledDiagnosticLevels": [
-          "error",
-          "warning",
-          "info"
-        ],
-        "errorLens.excludeBySource": [
-          "cSpell"
-        ],
+        "errorLens.enabledDiagnosticLevels": ["error", "warning", "info"],
+        "errorLens.excludeBySource": ["cSpell"],
         // Spell checker — project vocabulary
         "cSpell.language": "en",
         "cSpell.words": [

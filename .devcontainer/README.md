@@ -38,18 +38,18 @@ tooling for manual `.pre-commit-config.yaml` runs.
 
 ## What's inside
 
-| Tool        | Version / Source                                    |
-| ----------- | --------------------------------------------------- |
-| OS          | Ubuntu 24.04 (`mcr.microsoft.com/devcontainers/base`) |
-| Godot       | `4.3-stable` editor binary (run headless via `--headless`) plus web export templates |
-| PowerShell  | 7.x via `ghcr.io/devcontainers/features/powershell` |
+| Tool        | Version / Source                                                                                           |
+| ----------- | ---------------------------------------------------------------------------------------------------------- |
+| OS          | Ubuntu 24.04 (`mcr.microsoft.com/devcontainers/base`)                                                      |
+| Godot       | `4.3-stable` editor binary (run headless via `--headless`) plus web export templates                       |
+| PowerShell  | 7.x via `ghcr.io/devcontainers/features/powershell`                                                        |
 | Python      | 3.12 via Ubuntu (apt); docs CI pins 3.12, runtime CI tracks 3.x - PEP 668 pre-unlocked via `/etc/pip.conf` |
-| Node.js     | LTS from the official multi-platform Node image (>= 22 required) |
-| Agent CLIs  | `codex`, OpenCode v2, `nanocoder`, `claude` at `@latest`; installed during image build |
-| MCP servers | `godot`, `github`, `context7`, `deepwiki`, `git`, `fetch`, `playwright` - see "MCP servers" below |
-| GitHub CLI  | Latest via devcontainer feature                     |
-| Git hooks   | Direct `git rev-parse --git-path hooks` shim via post-create |
-| pre-commit  | Optional compatibility CLI; no framework hook install |
+| Node.js     | LTS from the official multi-platform Node image (>= 22 required)                                           |
+| Agent CLIs  | `codex`, OpenCode v2, `nanocoder`, `claude` at `@latest`; installed during image build                     |
+| MCP servers | `godot`, `github`, `context7`, `deepwiki`, `git`, `fetch`, `playwright` - see "MCP servers" below          |
+| GitHub CLI  | Latest via devcontainer feature                                                                            |
+| Git hooks   | Direct `git rev-parse --git-path hooks` shim via post-create                                               |
+| pre-commit  | Optional compatibility CLI; no framework hook install                                                      |
 
 ## Extensions
 
@@ -86,23 +86,23 @@ Tools.
 Install other themes from the Marketplace as needed. These optional choices
 are omitted from automatic setup to reduce first-open downloads:
 
-| Group | Extensions |
-| ----- | ---------- |
-| Godot-focused | `javier-garrido-galdon.godot-theme-vscode`, `MrPogofu.true-godot`, `ryanabx.godot-vscode-theme` |
-| Core dark staples | `github.github-vscode-theme`, `dracula-theme.theme-dracula`, `Catppuccin.catppuccin-vsc`, `enkia.tokyo-night`, `zhuangtongfa.Material-theme`, `akamud.vscode-theme-onedark`, `sdras.night-owl`, `arcticicestudio.nord-visual-studio-code` |
-| Distinctive palettes | `BeardedBear.beardedtheme`, `johnpapa.winteriscoming`, `jdinhlife.gruvbox`, `teabyii.ayu`, `wesbos.theme-cobalt2`, `fisheva.eva-theme`, `miguelsolorio.min-theme`, `DaltonMenezes.aura-theme`, `rocketseat.theme-omni`, `PawelBorkar.jellyfish` |
-| Dark/light options | `uloco.theme-bluloco-dark`, `uloco.theme-bluloco-light`, plus light variants bundled by GitHub Theme and Catppuccin |
-| Icon/product icon themes | `pkief.material-icon-theme`, `vscode-icons-team.vscode-icons`, `miguelsolorio.fluent-icons` |
+| Group                    | Extensions                                                                                                                                                                                                                                      |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Godot-focused            | `javier-garrido-galdon.godot-theme-vscode`, `MrPogofu.true-godot`, `ryanabx.godot-vscode-theme`                                                                                                                                                 |
+| Core dark staples        | `github.github-vscode-theme`, `dracula-theme.theme-dracula`, `Catppuccin.catppuccin-vsc`, `enkia.tokyo-night`, `zhuangtongfa.Material-theme`, `akamud.vscode-theme-onedark`, `sdras.night-owl`, `arcticicestudio.nord-visual-studio-code`       |
+| Distinctive palettes     | `BeardedBear.beardedtheme`, `johnpapa.winteriscoming`, `jdinhlife.gruvbox`, `teabyii.ayu`, `wesbos.theme-cobalt2`, `fisheva.eva-theme`, `miguelsolorio.min-theme`, `DaltonMenezes.aura-theme`, `rocketseat.theme-omni`, `PawelBorkar.jellyfish` |
+| Dark/light options       | `uloco.theme-bluloco-dark`, `uloco.theme-bluloco-light`, plus light variants bundled by GitHub Theme and Catppuccin                                                                                                                             |
+| Icon/product icon themes | `pkief.material-icon-theme`, `vscode-icons-team.vscode-icons`, `miguelsolorio.fluent-icons`                                                                                                                                                     |
 
 Switch color themes with the `Preferences: Color Theme` command.
 
 ## Forwarded ports
 
-| Port | Purpose                |
-| ---- | ---------------------- |
-| 6005 | Godot LSP server       |
-| 6006 | Godot debugger         |
-| 6007 | Godot debugger (alt)   |
+| Port | Purpose              |
+| ---- | -------------------- |
+| 6005 | Godot LSP server     |
+| 6006 | Godot debugger       |
+| 6007 | Godot debugger (alt) |
 
 ## Files
 
@@ -180,15 +180,15 @@ inside the container and sign in according to its vendor's docs.
 Seven MCP servers are wired into every agent CLI (claude, opencode v2,
 nanocoder, codex, and the VS Code agent host):
 
-| Server    | What it does | Source |
-| --------- | ------------ | ------ |
-| `godot`   | Launch/run the project headless, capture debug output, scene ops; drives the installed editor via `GODOT_PATH=/usr/local/bin/godot` | [`@coding-solo/godot-mcp`](https://github.com/Coding-Solo/godot-mcp) (pinned npm) |
-| `github`  | Official GitHub API tools; **read-only by default** | [`github-mcp-server`](https://github.com/github/github-mcp-server) binary (pinned, checksum-verified) |
-| `context7`| Up-to-date library documentation | [`@upstash/context7-mcp`](https://github.com/upstash/context7) (pinned npm, local stdio) |
-| `deepwiki`| Q&A over public GitHub repositories | remote `https://mcp.deepwiki.com/mcp` (no auth) |
-| `git`     | Read/search git repositories | `mcp-server-git` (pipx, pinned) |
-| `fetch`   | Fetch web pages as markdown | `mcp-server-fetch` (pipx, pinned) |
-| `playwright` | Drive Chromium for web-export debugging | [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) (pinned npm) |
+| Server       | What it does                                                                                                                        | Source                                                                                                |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `godot`      | Launch/run the project headless, capture debug output, scene ops; drives the installed editor via `GODOT_PATH=/usr/local/bin/godot` | [`@coding-solo/godot-mcp`](https://github.com/Coding-Solo/godot-mcp) (pinned npm)                     |
+| `github`     | Official GitHub API tools; **read-only by default**                                                                                 | [`github-mcp-server`](https://github.com/github/github-mcp-server) binary (pinned, checksum-verified) |
+| `context7`   | Up-to-date library documentation                                                                                                    | [`@upstash/context7-mcp`](https://github.com/upstash/context7) (pinned npm, local stdio)              |
+| `deepwiki`   | Q&A over public GitHub repositories                                                                                                 | remote `https://mcp.deepwiki.com/mcp` (no auth)                                                       |
+| `git`        | Read/search git repositories                                                                                                        | `mcp-server-git` (pipx, pinned)                                                                       |
+| `fetch`      | Fetch web pages as markdown                                                                                                         | `mcp-server-fetch` (pipx, pinned)                                                                     |
+| `playwright` | Drive Chromium for web-export debugging                                                                                             | [`@playwright/mcp`](https://github.com/microsoft/playwright-mcp) (pinned npm)                         |
 
 ### Where the configuration lives
 
@@ -282,7 +282,7 @@ local one is what the shared file ships).
   error):** update the checkout and rebuild. The guard now invokes Docker
   directly and runs its shell inside the Linux bootstrap container.
 - **Changed a value in `.env.local` but the container kept the old one:**
-  the env file is read by Docker at container *create* time - use
+  the env file is read by Docker at container _create_ time - use
   **Rebuild Container** (or Dev Containers: Rebuild Without Cache);
   a plain reload/restart will not re-read it.
 - **`sf-github-mcp: no token found`:** set `GITHUB_MCP_PAT` in `.env.local`

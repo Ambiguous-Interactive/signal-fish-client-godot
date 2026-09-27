@@ -19,12 +19,12 @@ set -euo pipefail
 
 MODE="${1:-install}"
 case "$MODE" in
-    install) ;;
-    --update) ;;
-    *)
-        echo "mcp-servers: ERROR: unknown mode '${MODE}' (expected 'install' or '--update')" >&2
-        exit 2
-        ;;
+install) ;;
+--update) ;;
+*)
+    echo "mcp-servers: ERROR: unknown mode '${MODE}' (expected 'install' or '--update')" >&2
+    exit 2
+    ;;
 esac
 if [ "$#" -gt 1 ]; then
     echo "mcp-servers: ERROR: unexpected extra arguments: $*" >&2
@@ -98,8 +98,7 @@ export PATH="${npm_bin_dir}:${PATH}"
 
 # One `npm list --json` call per invocation of installed_versions(); each
 # call forks npm once and the result is consumed by a single node parse.
-installed_versions()
-{
+installed_versions() {
     npm list --global --depth=0 --json 2>/dev/null || true
 }
 
@@ -135,8 +134,8 @@ spec_version() {
     local version="${1##*@}"
 
     case "$version" in
-        */*) printf '' ;;
-        *) printf '%s' "$version" ;;
+    */*) printf '' ;;
+    *) printf '%s' "$version" ;;
     esac
 }
 

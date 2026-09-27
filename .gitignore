@@ -2,6 +2,7 @@
 .godot/
 .nomedia
 .venv-ci/
+.venv-docs/
 __pycache__/
 
 # MkDocs build output

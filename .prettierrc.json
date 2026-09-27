@@ -1,0 +1,16 @@
+{
+  "tabWidth": 2,
+  "proseWrap": "preserve",
+  "plugins": ["prettier-plugin-toml"],
+  "overrides": [
+    {
+      "files": [
+        ".github/workflows/*.yml",
+        "docs/javascripts/*.js",
+        "docs/stylesheets/*.css",
+        "scripts/check-docs-accessibility.cjs"
+      ],
+      "options": { "tabWidth": 4 }
+    }
+  ]
+}

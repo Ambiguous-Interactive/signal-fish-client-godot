@@ -55,9 +55,9 @@
     "style": "backtick"
   },
 
-  "comment-21": "MD049: Emphasis style — standardize on asterisks for consistency.",
+  "comment-21": "MD049: Match the document's existing emphasis style.",
   "MD049": {
-    "style": "asterisk"
+    "style": "consistent"
   },
 
   "comment-22": "MD050: Strong emphasis style — standardize on double asterisks.",

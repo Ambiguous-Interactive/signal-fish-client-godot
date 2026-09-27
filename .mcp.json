@@ -36,12 +36,7 @@
     },
     "playwright": {
       "command": "playwright-mcp",
-      "args": [
-        "--browser",
-        "chromium",
-        "--headless",
-        "--no-sandbox"
-      ]
+      "args": ["--browser", "chromium", "--headless", "--no-sandbox"]
     }
   }
 }

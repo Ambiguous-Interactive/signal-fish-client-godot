@@ -19,18 +19,18 @@ and checks within about one hour. Session cadence:
 `.llm/skills/architectural-planning.md`.
 
 ### Static quality issues (#165-#170)
+
 - [ ] #165: Audit remaining generic `Array`, `Dictionary`, and `Variant` uses
       at wire, event, and test boundaries. Narrow fixed-shape values after
       checking public API compatibility. Four unused interface-signal ignores
       remain under the warning-as-error Godot load gate.
-- [ ] #167: Pin and check formatters for PowerShell, shell, JavaScript, config,
-      and docs files. Python and GDScript format checks are in the runtime gate.
 - [ ] #168: Move suitable automation to Python and uv while preserving the
       PowerShell harness and the runtime gate behavior.
 - [ ] #170: Extend static analyzers and warning checks for PowerShell, shell,
       and JavaScript. Review Python Ruff rule coverage and exceptions.
 
 ### Asset Library bootstrap (P6 remainder)
+
 - [ ] Publish the `v0.1.0` GitHub Release, then complete the first Asset
       Library submission and moderation. Configure repo secrets
       `GODOT_ASSET_LIBRARY_USERNAME` / `GODOT_ASSET_LIBRARY_PASSWORD` and var
@@ -38,6 +38,7 @@ and checks within about one hour. Session cadence:
       `.llm/skills/asset-library-release.md`.
 
 ### Post-v1 (P7, each gated)
+
 - [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke
       tests) - only after the separate compatibility decision (context.md
       MVP rule).
