@@ -3,10 +3,12 @@
 User-facing changes only. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [SemVer](https://semver.org/) - `vMAJOR.MINOR.PATCH`, pre-1.0 while the API stabilizes.
 CI, tests, and internal tooling are not listed.
-Before the first release, list the initial features under Added. Use Changed and
-Fixed only for differences from a released version.
+List new features under Added. Use Changed and Fixed for differences from a
+released version.
 
 ## [Unreleased]
+
+## [v0.1.0] - 2026-09-27
 
 ### Added
 
