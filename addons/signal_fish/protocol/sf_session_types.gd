@@ -151,9 +151,8 @@ class SessionPlanInfo:
 		# Inner classes cannot call the outer script's static functions, so
 		# the wire labels are looked up through the shared constant tables.
 		var peer_ids := PackedStringArray()
-		for peer: Variant in peers:
-			var session_peer: SessionPeerInfo = peer
-			peer_ids.append(session_peer.player_id)
+		for peer: SessionPeerInfo in peers:
+			peer_ids.append(peer.player_id)
 		var topology_text: String = TOPOLOGY_TO_STRING.get(topology, "unknown")
 		var transport_text: String = TRANSPORT_KIND_TO_STRING.get(transport, "unknown")
 		return (

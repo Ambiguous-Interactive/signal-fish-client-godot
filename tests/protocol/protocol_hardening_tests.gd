@@ -1098,7 +1098,7 @@ func _test_reconnected_missed_events_depth_hardening() -> void:
 	_assert_protocol_error_contains(over_depth, "nesting exceeds depth", "depth cap enforced")
 
 	var oversized_data := _minimal_room_joined_data()
-	var oversized_missed_events: Array = []
+	var oversized_missed_events: Array[Dictionary] = []
 	for _index: int in SFEventsScript.MAX_MISSED_EVENTS + 1:
 		oversized_missed_events.append({"type": "Pong"})
 	oversized_data["missed_events"] = oversized_missed_events
@@ -1269,7 +1269,7 @@ func _minimal_spectator_data() -> Dictionary:
 	return {"id": "30000000-0000-0000-0000-000000000001", "name": "Watcher", "connected_at": "now"}
 
 
-func _game_starting_envelope(peer_connections: Array) -> Dictionary:
+func _game_starting_envelope(peer_connections: Array[Dictionary]) -> Dictionary:
 	return {"type": "GameStarting", "data": {"peer_connections": peer_connections}}
 
 

@@ -144,7 +144,7 @@ func _track_protocol_errors(client: SignalFishClientScript) -> Array[String]:
 
 func _inject_plan(
 	client: SignalFishClientScript,
-	peers: Array,
+	peers: Array[Dictionary],
 	generation: String = "40000000-0000-0000-0000-000000000001",
 	transport: String = "webrtc",
 	ice_servers: Variant = null,
@@ -172,7 +172,7 @@ func _peer(player_id: String, initiate: bool) -> Dictionary:
 	}
 
 
-func _sent_after(client: SignalFishClientScript, before: int) -> Array:
+func _sent_after(client: SignalFishClientScript, before: int) -> Array[String]:
 	var fake_transport: SFFakeTransportScript = client.transport
 	return fake_transport.sent_text.slice(before)
 
