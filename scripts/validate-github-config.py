@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import subprocess
 import sys
@@ -300,7 +301,7 @@ def validate_auto_merge(
     repo_root: Path, workflows: dict[str, tuple[Path, dict[object, object]]], reporter: Reporter
 ) -> None:
     path = repo_root / ".github" / "workflows" / "dependabot-auto-merge.yml"
-    script_path = repo_root / "scripts" / "dependabot-auto-merge.sh"
+    script_path = repo_root / "scripts" / "dependabot-auto-merge.py"
     if not path.is_file():
         reporter.error(f"{path}: missing Dependabot auto-merge workflow")
         return
@@ -341,41 +342,33 @@ def validate_auto_merge(
         reporter.error(f"{path}: merge job permissions must be exactly {expected_job_permissions}")
 
     run_steps = [run.strip() for run in iter_workflow_runs(data)]
-    if "bash scripts/dependabot-auto-merge.sh" not in run_steps:
-        reporter.error(f"{path}: workflow must delegate to scripts/dependabot-auto-merge.sh")
+    if "python3 scripts/dependabot-auto-merge.py" not in run_steps:
+        reporter.error(f"{path}: workflow must delegate to scripts/dependabot-auto-merge.py")
 
     shebang_error = shebang_lf_error(script_path, require_shebang=True)
     if shebang_error:
         reporter.error(shebang_error)
 
     script = script_path.read_text(encoding="utf-8")
-    for offender in find_gh_api_slurp_jq(script):
-        reporter.error(
-            f"{script_path}: gh api must not combine --slurp and --jq; "
-            f"pipe to external jq instead: {offender}"
-        )
     required_tokens = [
-        "set -euo pipefail",
         "DEPENDABOT_LOGIN",
         "dependabot[bot]",
         "DEPENDABOT_TARGET_BRANCH",
-        ".user.login == $login",
-        ".base.ref == $base",
-        ".head.repo.full_name == $repo",
-        ".head.sha == $sha",
-        '[[ "${head_ref_oid}" != "${HEAD_SHA}" ]]',
+        'field(pr.get("user"), "login") == login',
+        'field(pr.get("base"), "ref") == target',
+        'field(field(pr.get("head"), "repo"), "full_name") == repo',
+        'field(pr.get("head"), "sha") == sha',
+        'pr.get("headRefOid") != sha',
         "--match-head-commit",
     ]
     for token in required_tokens:
         if token not in script:
             reporter.error(f"{script_path}: missing auto-merge safety token {token!r}")
 
-    if "--jq" in script:
-        reporter.error(f"{script_path}: use external jq instead of GitHub CLI --jq")
-
-    ok, stderr = bash_syntax_check(script_path)
-    if not ok:
-        reporter.error(f"{script_path}: bash -n failed: {stderr}")
+    try:
+        ast.parse(script, filename=str(script_path))
+    except SyntaxError as exc:
+        reporter.error(f"{script_path}: Python syntax failed: {exc}")
 
 
 def bash_syntax_check(script_path: Path) -> tuple[bool, str]:

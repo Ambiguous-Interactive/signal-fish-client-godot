@@ -58,7 +58,6 @@ def format_sources(mode: str) -> None:
     for path in tracked("*.sh"):
         indent = {
             "scripts/run-runtime-checks.sh": 0,
-            "scripts/dependabot-auto-merge.sh": 2,
         }.get(path, 4)
         run(shfmt, "-i", str(indent), "-w" if mode == "write" else "-d", path)
     run(prettier, "--write" if mode == "write" else "--check", *tracked(*PRETTIER_SUFFIXES))

@@ -103,8 +103,8 @@ These checks enforce:
 - `scripts/validate-github-config.py` validates `.github/workflows/*.yml`
   and `.github/dependabot.yml` without network calls. It self-tests duplicate
   YAML-key rejection, preserves GitHub's `on:` key, rejects
-  `gh api --slurp` with `--jq`, runs `bash -n` for the Dependabot auto-merge
-  script, rejects CRLF shebangs there, checks workflow-name/required-check
+  `gh api --slurp` with `--jq`, parses the Dependabot auto-merge
+  Python script, rejects CRLF shebangs there, checks workflow-name/required-check
   drift, and rejects `groups` or `multi-ecosystem-group` under the
   `devcontainers` Dependabot updater because grouped scans have been
   unreliable for that ecosystem. In `PreCommit`, `run-llm-hooks.ps1` validates
@@ -120,7 +120,7 @@ bash scripts/run-runtime-checks.sh all
 ```
 
 GitHub workflow and Dependabot policy checks are part of the LLM harness.
-After editing `.github/**`, `scripts/dependabot-auto-merge.sh`, or
+After editing `.github/**`, `scripts/dependabot-auto-merge.py`, or
 `scripts/validate-github-config.py`, run:
 
 ```bash

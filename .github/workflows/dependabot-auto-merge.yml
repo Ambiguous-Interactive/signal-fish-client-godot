@@ -37,4 +37,4 @@ jobs:
 
             - name: Merge Dependabot PR after required checks pass
               shell: bash
-              run: bash scripts/dependabot-auto-merge.sh
+              run: python3 scripts/dependabot-auto-merge.py
