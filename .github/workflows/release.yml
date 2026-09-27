@@ -124,7 +124,6 @@ jobs:
                   fi
                   echo "available=true" >> "$GITHUB_OUTPUT"
                   echo "RELEASE_VERSION=${VERSION#v}" >> "$GITHUB_ENV"
-                  echo "RELEASE_TAG=$VERSION" >> "$GITHUB_ENV"
 
             - name: Submit Asset Library edit
               if: steps.gate.outputs.available == 'true'

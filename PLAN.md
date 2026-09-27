@@ -27,7 +27,8 @@ Per-session history: `progress/session-NNN-*.md`.
       and JavaScript. Review Python Ruff rule coverage and exceptions.
 
 ### Asset Library bootstrap (P6 remainder)
-- [ ] One-time human submission + moderation, then repo secrets
+- [ ] Publish the `v0.1.0` GitHub Release, then complete the first Asset
+      Library submission and moderation. Configure repo secrets
       `GODOT_ASSET_LIBRARY_USERNAME` / `GODOT_ASSET_LIBRARY_PASSWORD` and var
       `GODOT_ASSET_LIBRARY_ASSET_ID`. Runbook:
       `.llm/skills/asset-library-release.md`.

@@ -21,9 +21,12 @@ The first store entry must be submitted by hand. Moderators review it before
 it goes live. Later updates are submitted automatically, but each one also
 waits in the moderation queue (see *After release* below).
 
-1. Log in at the
-   [Asset Library](https://godotengine.org/asset-library/asset) and open
-   **Submit a resource**.
+Publish the first GitHub Release with the workflow below. It creates the tag.
+Use the full commit SHA behind that tag for the Asset Library download field.
+The store step skips until the first asset ID and credentials are configured.
+
+1. Log in and open the
+   [Asset Library submission form](https://godotengine.org/asset-library/asset/submit).
 2. Fill in the form with these values (they mirror the automated template):
 
    | Field | Value |
@@ -37,7 +40,7 @@ waits in the moderation queue (see *After release* below).
    | Repository URL | `https://github.com/Ambiguous-Interactive/signal-fish-client-godot` |
    | Issues URL | repository URL + `/issues` |
    | Icon URL | `https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/docs/assets/icon-256.png` |
-   | Download commit | the release tag (e.g. `v0.1.0`) |
+   | Download commit | full commit SHA for the release tag (`git rev-list -n 1 v0.1.0`) |
 
 3. Submit, then wait for moderation.
 4. When the entry is live, note its numeric **asset ID** from the entry URL.

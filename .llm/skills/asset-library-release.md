@@ -23,12 +23,14 @@ configured, so releases stay usable before the one-time bootstrap.
 
 ## One-time manual bootstrap (cannot be automated)
 
-1. Push the addon and a tag with the right layout (done: see
-   `addons/signal_fish/plugin.cfg`, `icon.png`, `README.md`, `LICENSE`).
-2. Log in at <https://godotengine.org/asset-library/asset/new> (or
+1. Publish the first GitHub Release with the `Release` workflow. It creates
+   the tag. Check the package layout in
+   `addons/signal_fish/plugin.cfg`, `icon.png`, `README.md`, and `LICENSE`.
+2. Log in at <https://godotengine.org/asset-library/asset/submit> (or
    `POST /asset`) and submit the first entry with the same field values as
    `.asset-template.json.hb` (category: **Scripts**, `godot_version` 4.3,
-   `download_provider` GitHub, `download_commit` = the release tag).
+   `download_provider` GitHub, `download_commit` = the full SHA behind the
+   release tag). The live form requires 40 or 64 hexadecimal digits.
 3. Wait for moderation. Record the numeric asset ID.
 4. Add repo secrets + var (Settings -> Secrets and variables -> Actions):
    - secret `GODOT_ASSET_LIBRARY_USERNAME`
@@ -48,13 +50,14 @@ Handlebars over the workflow-dispatch webhook context plus process env:
 | Field | Value | Source |
 |---|---|---|
 | `version_string` | `0.1.0` style | `env.RELEASE_VERSION` (tag minus `v`) |
-| `download_commit` | `v0.1.0` style tag | `env.RELEASE_TAG` |
+| `download_commit` | full release commit SHA | `env.GITHUB_SHA` |
 | `browse_url` / `issues_url` / `icon_url` | repo URLs | `context.repository` |
 | `category_id` | `6` (Scripts) | pinned from `GET /configure?type=addon` |
 | `godot_version` | `4.3` | minimum supported engine |
 
-The tag is the store's `download_commit`: the Asset Library generates the
-archive from that ref. `.gitattributes` keeps only `addons/` in that download;
+The release workflow tags `GITHUB_SHA`, which is the store's
+`download_commit`: the Asset Library generates the archive from that commit.
+`.gitattributes` keeps only `addons/` in that download;
 the addon-local README and LICENSE travel with the plugin. The GitHub Release
 ZIP also contains only `addons/`. `scripts/check-asset-archive.py` checks every
 shipped file against a reviewed manifest. Update it when changing addon files.
@@ -78,8 +81,9 @@ repo. Inputs: `action` (default `addEdit`), `username`, `password`, `assetId`,
 BASE=https://godotengine.org/asset-library/api
 TOKEN=$(curl -sf -X POST "$BASE/login" -H 'Content-Type: application/json' \
   -d "{\"username\":\"$GODOT_AL_USER\",\"password\":\"$GODOT_AL_PASS\"}" | jq -r .token)
+SHA=$(git rev-list -n 1 "$TAG")
 curl -sf -X POST "$BASE/asset/$ASSET_ID" -H 'Content-Type: application/json' \
-  -d "{\"token\":\"$TOKEN\",\"version_string\":\"${TAG#v}\",\"godot_version\":\"4.3\",\"download_commit\":\"$TAG\"}"
+  -d "{\"token\":\"$TOKEN\",\"version_string\":\"${TAG#v}\",\"godot_version\":\"4.3\",\"download_commit\":\"$SHA\"}"
 curl -sf -X POST "$BASE/logout" -H 'Content-Type: application/json' -d "{\"token\":\"$TOKEN\"}"
 ```
 
