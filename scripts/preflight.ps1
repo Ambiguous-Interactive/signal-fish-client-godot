@@ -120,7 +120,8 @@ function Get-PreflightRepoRoot {
                     [System.IO.Path]::DirectorySeparatorChar,
                     [System.IO.Path]::AltDirectorySeparatorChar)
             }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
     }
@@ -144,7 +145,8 @@ function Resolve-PreflightGitPath {
                 }
                 return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $raw))
             }
-        } finally {
+        }
+        finally {
             Pop-Location
         }
     }
@@ -167,7 +169,8 @@ function Test-PowerShellFileParse {
     try {
         [void][System.Management.Automation.Language.Parser]::ParseFile(
             $Path, [ref]$tokens, [ref]$parseErrors)
-    } catch {
+    }
+    catch {
         return [pscustomobject]@{
             Ok       = $false
             Errors   = @("parse threw: $($_.Exception.Message)")
@@ -238,14 +241,15 @@ if (Test-Path -LiteralPath $recoveryParent -PathType Container) {
         # ordering. We write to each recovery dir exactly once at
         # creation, so mtime == creation time in practice anyway. (NIT-2)
         $existing = @(Get-ChildItem -LiteralPath $recoveryParent -Directory -ErrorAction SilentlyContinue |
-            Sort-Object -Property LastWriteTimeUtc -Descending)
+                Sort-Object -Property LastWriteTimeUtc -Descending)
         if ($existing.Count -gt $RecoveryRetainCount) {
             $stale = $existing | Select-Object -Skip $RecoveryRetainCount
             foreach ($d in $stale) {
                 try {
                     Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction Stop
                     if ($VerboseOutput) { Write-PreLine "Pruned stale recovery dir: $($d.Name)" }
-                } catch {
+                }
+                catch {
                     # Swallow per-dir errors; cleanup is best-effort. We
                     # do NOT log loudly because cleanup must never look
                     # like a failure to the caller.
@@ -253,7 +257,8 @@ if (Test-Path -LiteralPath $recoveryParent -PathType Container) {
                 }
             }
         }
-    } catch {
+    }
+    catch {
         if ($VerboseOutput) { Write-PreLine "Recovery prune skipped: $($_.Exception.Message)" }
     }
 }
@@ -265,7 +270,8 @@ try {
         Write-PreLine "git ls-files (PowerShell sources) failed with exit $LASTEXITCODE." 'Red'
         exit 1
     }
-} finally {
+}
+finally {
     Pop-Location
 }
 
@@ -311,7 +317,8 @@ function Get-RecoveryDir {
         New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
         $script:recoveryRoot = $dir
         return $dir
-    } catch {
+    }
+    catch {
         # Recovery dir cannot be created (read-only fs, EACCES, etc).
         # The backup is the safety contract: we REFUSE to restore from
         # HEAD if we cannot first preserve the working-tree WIP. Caller
@@ -351,7 +358,8 @@ function Copy-GitBlobToFile {
         $stream = [System.IO.File]::Open($Destination, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
         try {
             $proc.StandardOutput.BaseStream.CopyTo($stream)
-        } finally {
+        }
+        finally {
             $stream.Dispose()
         }
         $stderr = $proc.StandardError.ReadToEnd()
@@ -360,7 +368,8 @@ function Copy-GitBlobToFile {
             Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
             throw "git cat-file blob $Blob failed with exit $($proc.ExitCode): $stderr"
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 }
@@ -377,7 +386,8 @@ function New-IndexRecoveryBackup {
         if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($stageLine)) {
             return $null
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 
@@ -411,7 +421,8 @@ function Restore-IndexRecoveryBackup {
         if ($LASTEXITCODE -ne 0) {
             Write-PreLine "AutoFix: failed to restore index backup for $RelativePath (exit $LASTEXITCODE): $($updateOutput -join '; ')" 'Red'
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
 }
@@ -464,7 +475,8 @@ foreach ($rel in $sources) {
         $corruptBytes = [System.IO.File]::ReadAllBytes($full)
         [System.IO.File]::WriteAllBytes($backupPath, $corruptBytes)
         Write-PreLine "AutoFix: backed up corrupt $rel to $backupPath" 'Yellow'
-    } catch {
+    }
+    catch {
         if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
             # Vanished between the parse and the backup read; skip, not fatal.
             if ($VerboseOutput) { Write-PreLine "skipped (vanished before backup): $rel" }
@@ -481,7 +493,8 @@ foreach ($rel in $sources) {
         if ($null -ne $indexBackup) {
             Write-PreLine "AutoFix: backed up index copy of $rel to $($indexBackup.Path)" 'Yellow'
         }
-    } catch {
+    }
+    catch {
         Write-PreLine "AutoFix: failed to write index recovery backup for $rel`: $($_.Exception.Message). Refusing to overwrite staged WIP." 'Red'
         $corruptedFatal.Add($rel)
         continue
@@ -498,10 +511,12 @@ foreach ($rel in $sources) {
             $recheck = Test-PowerShellFileParse -Path $full
             if ($recheck.Ok) {
                 $restoredFrom = 'index'
-            } else {
+            }
+            else {
                 Write-PreLine "AutoFix: index copy of $rel also has parse errors; falling back to HEAD." 'Yellow'
             }
-        } else {
+        }
+        else {
             # File may not be in the index (e.g., never staged); fall through.
             Write-PreLine "AutoFix: git checkout from index failed for $rel (exit $indexExit): $($checkoutOutput -join '; '). Falling back to HEAD." 'Yellow'
         }
@@ -525,7 +540,8 @@ foreach ($rel in $sources) {
                 $restoredFrom = 'HEAD'
             }
         }
-    } finally {
+    }
+    finally {
         Pop-Location
     }
     if ($null -eq $restoredFrom) {
@@ -533,7 +549,8 @@ foreach ($rel in $sources) {
         foreach ($msg in $recheck.Errors) { Write-PreLine "  HEAD ${rel}:$msg" 'Red' }
         try {
             [System.IO.File]::WriteAllBytes($full, $corruptBytes)
-        } catch {
+        }
+        catch {
             Write-PreLine "AutoFix: failed to restore working-tree copy of $rel from backup ($($_.Exception.Message)). Recover from $backupPath." 'Red'
         }
         if ($null -ne $indexBackup) {
@@ -546,7 +563,8 @@ foreach ($rel in $sources) {
     if ($restoredFrom -eq 'HEAD') {
         $indexNote = if ($null -ne $indexBackup) { "; staged/index WIP is preserved in $($indexBackup.Path)" } else { '' }
         Write-PreLine "AutoFix: recovered $rel from HEAD. NOTE: working-tree WIP is preserved in $backupPath$indexNote." 'Yellow'
-    } else {
+    }
+    else {
         Write-PreLine "AutoFix: recovered $rel from index (staged version)." 'Yellow'
     }
     $corruptedRecovered = $true

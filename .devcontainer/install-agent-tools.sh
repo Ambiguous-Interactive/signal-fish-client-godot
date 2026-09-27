@@ -17,13 +17,13 @@ set -euo pipefail
 
 MODE="${1:-install}"
 case "$MODE" in
-    install) ;;
-    --verify) ;;
-    --update) ;;
-    *)
-        echo "agent-tools: ERROR: unknown mode '${MODE}' (expected 'install', '--verify', or '--update')" >&2
-        exit 2
-        ;;
+install) ;;
+--verify) ;;
+--update) ;;
+*)
+    echo "agent-tools: ERROR: unknown mode '${MODE}' (expected 'install', '--verify', or '--update')" >&2
+    exit 2
+    ;;
 esac
 
 # Registry requests and package lifecycle scripts must never see forwarded
@@ -55,7 +55,7 @@ ALLOW_SCRIPTS="@opencode/cli,@nanocollective/nanocoder,@anthropic-ai/claude-code
 # tarballs are far bigger than a version lookup.
 npm_fetch_timeout_ms="${AGENT_TOOLS_NPM_FETCH_TIMEOUT_MS:-5000}"
 case "$npm_fetch_timeout_ms" in
-    '' | *[!0-9]*) npm_fetch_timeout_ms=5000 ;;
+'' | *[!0-9]*) npm_fetch_timeout_ms=5000 ;;
 esac
 
 # Delay between failed `npm install` retry attempts. The hermetic
@@ -63,7 +63,7 @@ esac
 # the state-machine matrix fast; real attach/post-create runs keep 2000 ms.
 retry_sleep_ms="${AGENT_TOOLS_RETRY_SLEEP_MS:-2000}"
 case "$retry_sleep_ms" in
-    '' | *[!0-9]*) retry_sleep_ms=2000 ;;
+'' | *[!0-9]*) retry_sleep_ms=2000 ;;
 esac
 retry_sleep="$((retry_sleep_ms / 1000)).$(printf '%03d' $((retry_sleep_ms % 1000)))"
 
@@ -201,7 +201,7 @@ opencode_major_from_version() {
     version="${version#=}"
     version="${version%% *}"
     case "${version%%.*}" in
-        '' | *[!0-9]*) return 1 ;;
+    '' | *[!0-9]*) return 1 ;;
     esac
     printf '%s' "${version%%.*}"
 }
@@ -229,8 +229,8 @@ opencode_binary_is_owned_by_package() {
     [ -f "${package_root}/package.json" ] || return 1
     target="$(readlink -f -- "$binary" 2>/dev/null)" || return 1
     case "$target" in
-        "${package_root}"/*) ;;
-        *) return 1 ;;
+    "${package_root}"/*) ;;
+    *) return 1 ;;
     esac
 }
 
@@ -375,143 +375,143 @@ promote_opencode_v2() {
 if [ "$MODE" = "--verify" ]; then
     refresh_installed_versions
 else
-probe_ok=()
-for index in "${!pids[@]}"; do
-    if wait "${pids[$index]}"; then
-        probe_ok[$index]=1
-    else
-        probe_ok[$index]=0
-        echo "agent-tools: WARNING: npm registry probe failed for ${PACKAGES[$index]}" >&2
-    fi
-done
-
-refresh_installed_versions
-
-opencode_v1_installed="$(global_package_version "${OPENCODE_V1_PACKAGE}")"
-opencode_migration_blocked=0
-if [ -n "$opencode_v1_installed" ]; then
-    if active_opencode_is_v2; then
-        printf 'agent-tools: removing OpenCode v1 package %s after proving the active binary is v2\n' "$opencode_v1_installed"
-        if remove_opencode_v1; then
-            opencode_v1_installed=""
-            refresh_installed_versions
+    probe_ok=()
+    for index in "${!pids[@]}"; do
+        if wait "${pids[$index]}"; then
+            probe_ok[$index]=1
         else
-            warn_or_fail "could not remove OpenCode v1 after activating v2" || exit 1
-            exit 0
-        fi
-    elif [ "${probe_ok[1]}" = 1 ]; then
-        printf 'agent-tools: staging OpenCode v2 before replacing v1 %s\n' "$opencode_v1_installed"
-        opencode_migration_status=0
-        promote_opencode_v2 "${PACKAGES[1]}" "$opencode_v1_installed" || opencode_migration_status=$?
-        if [ "$opencode_migration_status" -ne 0 ]; then
-            opencode_migration_blocked=1
-            if [ "$opencode_migration_status" = 2 ]; then
-                warn_or_fail "could not prove and activate OpenCode v2; OpenCode v1 could not be restored" || exit 1
-            else
-                warn_or_fail "could not prove and activate OpenCode v2; retaining OpenCode v1" || exit 1
-            fi
-        fi
-    else
-        opencode_migration_blocked=1
-        echo "agent-tools: WARNING: retaining OpenCode v1 because the v2 package is unavailable" >&2
-    fi
-fi
-
-install_specs=()
-for index in "${!PACKAGES[@]}"; do
-    spec="${PACKAGES[$index]}"
-    package="${spec%@*}"
-    # A version-less scoped override ("@openai/codex") strips to "" at its
-    # leading '@'; the package name is then the spec itself.
-    if [ -z "$package" ]; then
-        package="$spec"
-    fi
-    binary="${BINARIES[$index]}"
-
-    latest=""
-    if [ "${probe_ok[$index]}" = 1 ] && [ -s "${probe_dir}/${index}" ]; then
-        latest="$(tr -d '[:space:]' <"${probe_dir}/${index}")"
-    fi
-
-    installed="$(global_package_version "$package")"
-
-    if [ "$index" = 1 ] && [ -n "$opencode_v1_installed" ] \
-        && { [ "$opencode_migration_blocked" = 1 ] || [ "${probe_ok[$index]}" != 1 ]; }; then
-        printf 'agent-tools: deferring OpenCode v2 install for %s while retaining v1\n' "$binary" >&2
-        continue
-    fi
-
-    # In --update mode, an unreachable registry plus an absent CLI means every
-    # install attempt is doomed; skip instead of paying it on every attach.
-    if [ "$MODE" = "--update" ] && [ "${probe_ok[$index]}" != 1 ] \
-        && [ -z "$installed" ] && [ ! -x "${npm_bin_dir}/${binary}" ]; then
-        printf 'agent-tools: skipping %s: registry unreachable and not installed (rerun post-create when online)\n' "$binary" >&2
-        continue
-    fi
-
-    opencode_needs_install=0
-    if [ "$index" = 1 ] && ! active_opencode_is_v2; then
-        opencode_needs_install=1
-    fi
-    if [ ! -x "${npm_bin_dir}/${binary}" ] \
-        || [ -z "$installed" ] \
-        || [ "$opencode_needs_install" = 1 ] \
-        || { [ -n "$latest" ] && [ "$installed" != "$latest" ]; }; then
-        install_specs+=("$spec")
-    fi
-done
-
-# --- Install ------------------------------------------------------------------
-
-# Each package is installed by its own `npm install --global` invocation.
-# npm treats one multi-package command as a single transaction: if ANY
-# postinstall fails (OpenCode's did, when a root-owned ~/.cache crashed its
-# verify step), npm rolls back EVERY package in the command while leaving
-# their bin symlinks behind -- so one broken package used to destroy the
-# whole toolchain. Per-package installs bound the blast radius to that
-# package alone; the remaining CLIs still land.
-if [ "${#install_specs[@]}" -gt 0 ]; then
-    printf 'agent-tools: installing %d package(s) into %s\n' "${#install_specs[@]}" "$npm_prefix"
-    failed_specs=()
-    for spec in "${install_specs[@]}"; do
-        attempts=3
-        [ "$MODE" = "--update" ] && attempts=1
-
-        spec_ok=0
-        attempt=1
-        while [ "$attempt" -le "$attempts" ]; do
-            if npm install --global --no-audit --no-fund \
-                "${npm_allow_scripts_args[@]}" \
-                "$spec"; then
-                refresh_installed_versions
-                spec_ok=1
-                break
-            fi
-            # A failed attempt rolls back package directories but may leave
-            # dangling bin links; sweep so the next attempt (or the version
-            # probe) sees the true state.
-            sweep_dangling_bins
-            if [ "$attempt" -lt "$attempts" ]; then
-                printf 'agent-tools: npm install of %s failed (attempt %d/%d); retrying\n' "$spec" "$attempt" "$attempts" >&2
-                if [ "$retry_sleep_ms" -gt 0 ]; then
-                    sleep "$retry_sleep"
-                fi
-            fi
-            attempt=$((attempt + 1))
-        done
-
-        if [ "$spec_ok" != 1 ]; then
-            failed_specs+=("$spec")
+            probe_ok[$index]=0
+            echo "agent-tools: WARNING: npm registry probe failed for ${PACKAGES[$index]}" >&2
         fi
     done
 
-    if [ "${#failed_specs[@]}" -gt 0 ]; then
-        warn_or_fail "npm could not install: ${failed_specs[*]}" || exit 1
-        exit 0
+    refresh_installed_versions
+
+    opencode_v1_installed="$(global_package_version "${OPENCODE_V1_PACKAGE}")"
+    opencode_migration_blocked=0
+    if [ -n "$opencode_v1_installed" ]; then
+        if active_opencode_is_v2; then
+            printf 'agent-tools: removing OpenCode v1 package %s after proving the active binary is v2\n' "$opencode_v1_installed"
+            if remove_opencode_v1; then
+                opencode_v1_installed=""
+                refresh_installed_versions
+            else
+                warn_or_fail "could not remove OpenCode v1 after activating v2" || exit 1
+                exit 0
+            fi
+        elif [ "${probe_ok[1]}" = 1 ]; then
+            printf 'agent-tools: staging OpenCode v2 before replacing v1 %s\n' "$opencode_v1_installed"
+            opencode_migration_status=0
+            promote_opencode_v2 "${PACKAGES[1]}" "$opencode_v1_installed" || opencode_migration_status=$?
+            if [ "$opencode_migration_status" -ne 0 ]; then
+                opencode_migration_blocked=1
+                if [ "$opencode_migration_status" = 2 ]; then
+                    warn_or_fail "could not prove and activate OpenCode v2; OpenCode v1 could not be restored" || exit 1
+                else
+                    warn_or_fail "could not prove and activate OpenCode v2; retaining OpenCode v1" || exit 1
+                fi
+            fi
+        else
+            opencode_migration_blocked=1
+            echo "agent-tools: WARNING: retaining OpenCode v1 because the v2 package is unavailable" >&2
+        fi
     fi
-else
-    echo "agent-tools: all agent CLIs are current; skipped npm install"
-fi
+
+    install_specs=()
+    for index in "${!PACKAGES[@]}"; do
+        spec="${PACKAGES[$index]}"
+        package="${spec%@*}"
+        # A version-less scoped override ("@openai/codex") strips to "" at its
+        # leading '@'; the package name is then the spec itself.
+        if [ -z "$package" ]; then
+            package="$spec"
+        fi
+        binary="${BINARIES[$index]}"
+
+        latest=""
+        if [ "${probe_ok[$index]}" = 1 ] && [ -s "${probe_dir}/${index}" ]; then
+            latest="$(tr -d '[:space:]' <"${probe_dir}/${index}")"
+        fi
+
+        installed="$(global_package_version "$package")"
+
+        if [ "$index" = 1 ] && [ -n "$opencode_v1_installed" ] &&
+            { [ "$opencode_migration_blocked" = 1 ] || [ "${probe_ok[$index]}" != 1 ]; }; then
+            printf 'agent-tools: deferring OpenCode v2 install for %s while retaining v1\n' "$binary" >&2
+            continue
+        fi
+
+        # In --update mode, an unreachable registry plus an absent CLI means every
+        # install attempt is doomed; skip instead of paying it on every attach.
+        if [ "$MODE" = "--update" ] && [ "${probe_ok[$index]}" != 1 ] &&
+            [ -z "$installed" ] && [ ! -x "${npm_bin_dir}/${binary}" ]; then
+            printf 'agent-tools: skipping %s: registry unreachable and not installed (rerun post-create when online)\n' "$binary" >&2
+            continue
+        fi
+
+        opencode_needs_install=0
+        if [ "$index" = 1 ] && ! active_opencode_is_v2; then
+            opencode_needs_install=1
+        fi
+        if [ ! -x "${npm_bin_dir}/${binary}" ] ||
+            [ -z "$installed" ] ||
+            [ "$opencode_needs_install" = 1 ] ||
+            { [ -n "$latest" ] && [ "$installed" != "$latest" ]; }; then
+            install_specs+=("$spec")
+        fi
+    done
+
+    # --- Install ------------------------------------------------------------------
+
+    # Each package is installed by its own `npm install --global` invocation.
+    # npm treats one multi-package command as a single transaction: if ANY
+    # postinstall fails (OpenCode's did, when a root-owned ~/.cache crashed its
+    # verify step), npm rolls back EVERY package in the command while leaving
+    # their bin symlinks behind -- so one broken package used to destroy the
+    # whole toolchain. Per-package installs bound the blast radius to that
+    # package alone; the remaining CLIs still land.
+    if [ "${#install_specs[@]}" -gt 0 ]; then
+        printf 'agent-tools: installing %d package(s) into %s\n' "${#install_specs[@]}" "$npm_prefix"
+        failed_specs=()
+        for spec in "${install_specs[@]}"; do
+            attempts=3
+            [ "$MODE" = "--update" ] && attempts=1
+
+            spec_ok=0
+            attempt=1
+            while [ "$attempt" -le "$attempts" ]; do
+                if npm install --global --no-audit --no-fund \
+                    "${npm_allow_scripts_args[@]}" \
+                    "$spec"; then
+                    refresh_installed_versions
+                    spec_ok=1
+                    break
+                fi
+                # A failed attempt rolls back package directories but may leave
+                # dangling bin links; sweep so the next attempt (or the version
+                # probe) sees the true state.
+                sweep_dangling_bins
+                if [ "$attempt" -lt "$attempts" ]; then
+                    printf 'agent-tools: npm install of %s failed (attempt %d/%d); retrying\n' "$spec" "$attempt" "$attempts" >&2
+                    if [ "$retry_sleep_ms" -gt 0 ]; then
+                        sleep "$retry_sleep"
+                    fi
+                fi
+                attempt=$((attempt + 1))
+            done
+
+            if [ "$spec_ok" != 1 ]; then
+                failed_specs+=("$spec")
+            fi
+        done
+
+        if [ "${#failed_specs[@]}" -gt 0 ]; then
+            warn_or_fail "npm could not install: ${failed_specs[*]}" || exit 1
+            exit 0
+        fi
+    else
+        echo "agent-tools: all agent CLIs are current; skipped npm install"
+    fi
 
 fi
 

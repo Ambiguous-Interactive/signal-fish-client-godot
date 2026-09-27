@@ -18,13 +18,13 @@ and [Godot 4.4 typed dictionaries][dict-44].
 
 ## Required dynamic values
 
-| Boundary | Reason |
-| --- | --- |
-| `sf_envelope`, `sf_events`, `sf_types`, `sf_session_types`, `sf_json_guard` | JSON objects and arrays enter as raw `Dictionary`, `Array`, or `Variant`. Validators inspect wrong-typed members before constructors make typed models. |
-| `sf_msgpack`, `sf_binary_codec`, `sf_binary_frames` | Binary decoders accept arbitrary wire values or engine result tuples. MessagePack arrays may contain several value types. |
-| `sf_types.DecodedEvent.args` and `sf_events._event` | One event carries a different argument tuple from another. The client emits separate typed signals after decoding. |
-| `signal_fish_client`, `sf_messages`, `sf_type_utils` | Game data and signaling payloads are caller-defined JSON values; optional wire fields also use `null`. Roster round trips preserve malformed raw entries. |
-| `sf_webrtc_mesh`, `sf_game_data_format` | Engine/browser interfaces and mixed format diagnostics cross dynamic boundaries. |
+| Boundary                                                                    | Reason                                                                                                                                                    |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sf_envelope`, `sf_events`, `sf_types`, `sf_session_types`, `sf_json_guard` | JSON objects and arrays enter as raw `Dictionary`, `Array`, or `Variant`. Validators inspect wrong-typed members before constructors make typed models.   |
+| `sf_msgpack`, `sf_binary_codec`, `sf_binary_frames`                         | Binary decoders accept arbitrary wire values or engine result tuples. MessagePack arrays may contain several value types.                                 |
+| `sf_types.DecodedEvent.args` and `sf_events._event`                         | One event carries a different argument tuple from another. The client emits separate typed signals after decoding.                                        |
+| `signal_fish_client`, `sf_messages`, `sf_type_utils`                        | Game data and signaling payloads are caller-defined JSON values; optional wire fields also use `null`. Roster round trips preserve malformed raw entries. |
+| `sf_webrtc_mesh`, `sf_game_data_format`                                     | Engine/browser interfaces and mixed format diagnostics cross dynamic boundaries.                                                                          |
 
 Keep fixed collections typed after conversion. Do not narrow raw inputs before
 validation or replace heterogeneous public event arguments with a single

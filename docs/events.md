@@ -127,9 +127,9 @@ v2 wire bytes) and the server negotiates a v3 session plan.
 
 Optional wire values decode to stable sentinels:
 
-| Wire value | Decoded as |
-| --- | --- |
-| Missing string | `""` |
-| Missing array | Empty array |
+| Wire value          | Decoded as                         |
+| ------------------- | ---------------------------------- |
+| Missing string      | `""`                               |
+| Missing array       | Empty array                        |
 | Unknown enum string | The owning enum's `UNKNOWN` member |
-| Absent error code | `SFErrorCodes.Code.NONE` |
+| Absent error code   | `SFErrorCodes.Code.NONE`           |

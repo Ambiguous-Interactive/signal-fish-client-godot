@@ -11,8 +11,9 @@
     ".git/**",
     ".venv/**",
     ".venv-ci/**",
+    ".venv-docs/**",
     "node_modules/**",
     "progress/**",
-    "PLAN.md"
-  ]
+    "PLAN.md",
+  ],
 }

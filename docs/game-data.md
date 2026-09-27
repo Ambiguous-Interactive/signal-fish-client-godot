@@ -64,9 +64,9 @@ so the recipient gets the exact bytes plus a sender identity.
 
 Two signals cover inbound game data:
 
-| Signal | Payload |
-| --- | --- |
-| `game_data_received(from_player, data)` | Decoded JSON, or decoded MessagePack with opt-in decode on. |
+| Signal                                                      | Payload                                                                       |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `game_data_received(from_player, data)`                     | Decoded JSON, or decoded MessagePack with opt-in decode on.                   |
 | `game_data_binary_received(from_player, encoding, payload)` | Envelope payload bytes plus the `encoding` enum (`SFTypes.GameDataEncoding`). |
 
 ## MessagePack decode

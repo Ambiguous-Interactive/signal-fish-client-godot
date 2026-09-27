@@ -14,7 +14,8 @@ $selfErrors = $null
 try {
     [void][System.Management.Automation.Language.Parser]::ParseFile(
         $PSCommandPath, [ref]$selfTokens, [ref]$selfErrors)
-} catch { exit 0 }
+}
+catch { exit 0 }
 if ($null -ne $selfErrors -and $selfErrors.Count -gt 0) { exit 0 }
 
 $reminder = 'Harness: hooks validate PowerShell and .llm edits. Recovery: pwsh -NoProfile -File scripts/preflight.ps1 -AutoFix'

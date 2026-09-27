@@ -31,7 +31,8 @@ $selfErrors = $null
 try {
     [void][System.Management.Automation.Language.Parser]::ParseFile(
         $PSCommandPath, [ref]$selfTokens, [ref]$selfErrors)
-} catch { exit 0 }
+}
+catch { exit 0 }
 if ($null -ne $selfErrors -and $selfErrors.Count -gt 0) { exit 0 }
 
 function Get-RepoRoot {
@@ -101,14 +102,16 @@ $repoRoot = Get-RepoRoot
 if ([string]::IsNullOrWhiteSpace($repoRoot)) { exit 0 }
 try {
     $fullPath = [System.IO.Path]::GetFullPath($filePath)
-} catch {
+}
+catch {
     exit 0
 }
 $repoPrefix = $repoRoot + [System.IO.Path]::DirectorySeparatorChar
 $pathComparison = if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
         [System.Runtime.InteropServices.OSPlatform]::Windows)) {
     [System.StringComparison]::OrdinalIgnoreCase
-} else {
+}
+else {
     [System.StringComparison]::Ordinal
 }
 if (-not ($fullPath.StartsWith($repoPrefix, $pathComparison) -or
@@ -128,7 +131,8 @@ if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
 }
 try {
     Import-Module $modulePath -Force -ErrorAction Stop
-} catch {
+}
+catch {
     # Module failed to import; do not block on a harness bug.
     exit 0
 }
@@ -143,7 +147,8 @@ $isGeneratedIndex = ($relative -eq '.llm/index.md')
 
 try {
     $lines = @(Get-Content -LiteralPath $fullPath -ErrorAction Stop)
-} catch {
+}
+catch {
     Send-BlockReason "${relative}: failed to read file: $($_.Exception.Message)"
 }
 
@@ -155,7 +160,8 @@ if ($lines.Count -gt $maxLines) {
 if (-not $isGeneratedIndex) {
     try {
         $metadata = Read-LlmFrontmatter -Path $fullPath
-    } catch {
+    }
+    catch {
         Send-BlockReason "${relative}: frontmatter parse failed: $($_.Exception.Message)"
     }
     $required = @('description', 'triggers', 'category')

@@ -24,7 +24,10 @@ function arg(name, fallback) {
 
 const webRoot = path.resolve(REPO_ROOT, arg("web-root", "build/web"));
 const tlsKey = path.resolve(REPO_ROOT, arg("key", "build/smoke-certs/key.pem"));
-const tlsCert = path.resolve(REPO_ROOT, arg("cert", "build/smoke-certs/cert.pem"));
+const tlsCert = path.resolve(
+  REPO_ROOT,
+  arg("cert", "build/smoke-certs/cert.pem"),
+);
 
 class SmokeServer {
   constructor() {
@@ -84,13 +87,19 @@ class SmokeServer {
     return new Promise((resolve, reject) => {
       const started = Date.now();
       const poll = () => {
-        const found = this.events.find((e) => e.event === event && predicate(e));
+        const found = this.events.find(
+          (e) => e.event === event && predicate(e),
+        );
         if (found) {
           resolve(found);
           return;
         }
         if (Date.now() - started > timeoutMs) {
-          reject(new Error(`timed out waiting for ${event}; events: ${JSON.stringify(this.events)}`));
+          reject(
+            new Error(
+              `timed out waiting for ${event}; events: ${JSON.stringify(this.events)}`,
+            ),
+          );
           return;
         }
         setTimeout(poll, 100);
@@ -142,18 +151,31 @@ async function main() {
     // Phase 1: engine boot over HTTPS + real wss:// dial with browser-set Origin.
     await server.start();
     const bootResponse = await page.goto(
-      demoUrl({ sf_smoke_endpoint: `wss://${HOST}:${WSS_PORT}`, sf_smoke_app_id: "web-smoke" }),
+      demoUrl({
+        sf_smoke_endpoint: `wss://${HOST}:${WSS_PORT}`,
+        sf_smoke_app_id: "web-smoke",
+      }),
       { waitUntil: "domcontentloaded", timeout: 30_000 },
     );
     if (!bootResponse || bootResponse.status() !== 200) {
-      fail(`index.html did not load over HTTPS (status ${bootResponse && bootResponse.status()})`);
+      fail(
+        `index.html did not load over HTTPS (status ${bootResponse && bootResponse.status()})`,
+      );
       return;
     }
     await waitForLog(page, "fill in endpoint + app id, then Connect");
     await waitForLog(page, "pong");
     const logs = await collectSmokeLogs(page);
-    const expected = ["connect: OK", "connected", "authenticated as app 'web-smoke' (smoke)", "ping: OK", "pong"];
-    const missing = expected.filter((line) => !logs.some((log) => log.includes(line)));
+    const expected = [
+      "connect: OK",
+      "connected",
+      "authenticated as app 'web-smoke' (smoke)",
+      "ping: OK",
+      "pong",
+    ];
+    const missing = expected.filter(
+      (line) => !logs.some((log) => log.includes(line)),
+    );
     if (missing.length > 0) {
       fail(`wss flow missing log lines: ${missing.join(" | ")}`, logs);
       return;
@@ -167,25 +189,39 @@ async function main() {
     await server.stop();
     await server.start();
     await page.goto(
-      demoUrl({ sf_smoke_endpoint: `ws://${HOST}:${WSS_PORT}`, sf_smoke_app_id: "web-smoke" }),
+      demoUrl({
+        sf_smoke_endpoint: `ws://${HOST}:${WSS_PORT}`,
+        sf_smoke_app_id: "web-smoke",
+      }),
       { waitUntil: "domcontentloaded", timeout: 30_000 },
     );
-    await waitForLog(page, "protocol error: ws:// is blocked from secure pages");
+    await waitForLog(
+      page,
+      "protocol error: ws:// is blocked from secure pages",
+    );
     await waitForLog(page, "connect: Invalid parameter");
     const insecureLogs = await collectSmokeLogs(page);
     if (insecureLogs.some((line) => line === "connected")) {
-      fail("ws:// dial unexpectedly connected from a secure page", insecureLogs);
+      fail(
+        "ws:// dial unexpectedly connected from a secure page",
+        insecureLogs,
+      );
       return;
     }
     if (server.events.some((e) => e.event === "ws_open")) {
-      fail("a ws:// dial reached the smoke server despite the predial refusal", insecureLogs);
+      fail(
+        "a ws:// dial reached the smoke server despite the predial refusal",
+        insecureLogs,
+      );
       return;
     }
     if (pageErrors.length > 0) {
       fail(`page errors during smoke: ${pageErrors.join(" | ")}`, logs);
       return;
     }
-    console.log("web-export browser check passed: HTTPS boot, wss+Origin, ws:// predial refusal");
+    console.log(
+      "web-export browser check passed: HTTPS boot, wss+Origin, ws:// predial refusal",
+    );
   } catch (error) {
     fail(String(error && error.stack ? error.stack : error));
   } finally {

@@ -15,7 +15,7 @@ cross-run absolutes swing more than the within-run 12-15% noise floor
 
 - **Value-indexed cursor decoders** (drop `StreamPeerBuffer`, walk a
   `PackedByteArray` with an int cursor + `decode_*`): -3.5% on binary v2
-  envelopes (below noise), *slower* on v3 and **13% slower** on MessagePack
+  envelopes (below noise), _slower_ on v3 and **13% slower** on MessagePack
   decode. The engine's typed stream getters beat hand-rolled value indexing;
   interpreted statement count, not allocations, dominates. Also required
   manual big-endian assembly -- `PackedByteArray.decode_u16/u32/u64` are

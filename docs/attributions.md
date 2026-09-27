@@ -11,11 +11,11 @@ The docs site bundles fonts and artwork that carry their own licenses.
 All fonts are bundled as latin-subset WOFF2 files under the
 [SIL Open Font License 1.1](https://openfontlicense.org/):
 
-| Font | Used for |
-| --- | --- |
-| Space Grotesk | Display headings |
-| Hanken Grotesk | Body text |
-| JetBrains Mono | Code |
+| Font           | Used for         |
+| -------------- | ---------------- |
+| Space Grotesk  | Display headings |
+| Hanken Grotesk | Body text        |
+| JetBrains Mono | Code             |
 
 ## Logo and banner
 

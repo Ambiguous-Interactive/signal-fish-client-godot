@@ -21,12 +21,12 @@ set -euo pipefail
 
 MODE="${1:-install}"
 case "$MODE" in
-    install) ;;
-    --update) ;;
-    *)
-        echo "seed-mcp-config: ERROR: unknown mode '${MODE}' (expected 'install' or '--update')" >&2
-        exit 2
-        ;;
+install) ;;
+--update) ;;
+*)
+    echo "seed-mcp-config: ERROR: unknown mode '${MODE}' (expected 'install' or '--update')" >&2
+    exit 2
+    ;;
 esac
 if [ "$#" -gt 1 ]; then
     echo "seed-mcp-config: ERROR: unexpected extra arguments: $*" >&2
@@ -176,9 +176,9 @@ validate_json_configs() {
     while IFS='|' read -r kind label rest; do
         [ -n "$kind" ] || continue
         case "$kind" in
-            FILE_MISSING)   warn_or_fail "missing ${label} (${rest})" || status=1 ;;
-            FILE_INVALID)   warn_or_fail "${label} is not valid JSON: ${rest}" || status=1 ;;
-            SERVER_MISSING) warn_or_fail "${label} does not declare the '${rest}' MCP server" || status=1 ;;
+        FILE_MISSING) warn_or_fail "missing ${label} (${rest})" || status=1 ;;
+        FILE_INVALID) warn_or_fail "${label} is not valid JSON: ${rest}" || status=1 ;;
+        SERVER_MISSING) warn_or_fail "${label} does not declare the '${rest}' MCP server" || status=1 ;;
         esac
     done <<<"$JSON_REPORT"
     return "$status"
@@ -361,8 +361,8 @@ doctor() {
         file_ok=1
         json_server_ok ".mcp.json" "$server" || file_ok=0
         printf ' mcp.json:%s' "$([ "$file_ok" -eq 1 ] && echo ok || echo MISSING)"
-        json_server_ok "opencode.json" "$server" \
-            && printf ' opencode:%s' ok || printf ' opencode:%s' MISSING
+        json_server_ok "opencode.json" "$server" &&
+            printf ' opencode:%s' ok || printf ' opencode:%s' MISSING
         codex_ok=1
         codex_table_present "$codex_tables" "$server" || codex_ok=0
         printf ' codex:%s' "$([ "$codex_ok" -eq 1 ] && echo ok || echo MISSING)"

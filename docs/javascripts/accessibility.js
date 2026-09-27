@@ -2,19 +2,31 @@
     "use strict";
 
     let keyboardMode = false;
-    document.addEventListener("keydown", () => {
-        keyboardMode = true;
-    }, true);
-    document.addEventListener("pointerdown", () => {
-        keyboardMode = false;
-    }, true);
+    document.addEventListener(
+        "keydown",
+        () => {
+            keyboardMode = true;
+        },
+        true,
+    );
+    document.addEventListener(
+        "pointerdown",
+        () => {
+            keyboardMode = false;
+        },
+        true,
+    );
 
     const focusControl = (element) => {
         if (keyboardMode) {
             element.dataset.sfKeyboardFocus = "true";
-            element.addEventListener("blur", () => {
-                delete element.dataset.sfKeyboardFocus;
-            }, { once: true });
+            element.addEventListener(
+                "blur",
+                () => {
+                    delete element.dataset.sfKeyboardFocus;
+                },
+                { once: true },
+            );
         }
         element.focus();
     };
@@ -27,58 +39,64 @@
     const isContainedHorizontally = (element, container) => {
         const elementBounds = element.getBoundingClientRect();
         const containerBounds = container.getBoundingClientRect();
-        return elementBounds.left >= containerBounds.left - 0.5
-            && elementBounds.right <= containerBounds.right + 0.5;
+        return (
+            elementBounds.left >= containerBounds.left - 0.5 &&
+            elementBounds.right <= containerBounds.right + 0.5
+        );
     };
 
     const intersectsHorizontally = (element, container) => {
         const elementBounds = element.getBoundingClientRect();
         const containerBounds = container.getBoundingClientRect();
-        return elementBounds.right > containerBounds.left
-            && elementBounds.left < containerBounds.right;
+        return (
+            elementBounds.right > containerBounds.left &&
+            elementBounds.left < containerBounds.right
+        );
     };
 
-    const isDrawerOverlay = () => (
-        window.matchMedia("(max-width: 76.234375em)").matches
-    );
-    const isSearchOverlay = () => (
-        window.matchMedia("(max-width: 59.984375em)").matches
-    );
+    const isDrawerOverlay = () =>
+        window.matchMedia("(max-width: 76.234375em)").matches;
+    const isSearchOverlay = () =>
+        window.matchMedia("(max-width: 59.984375em)").matches;
 
     const trapFocus = (
         container,
         isActive,
         activeScope = () => container,
-        isHorizontallyEligible = intersectsHorizontally
+        isHorizontallyEligible = intersectsHorizontally,
     ) => {
         if (container.dataset.sfFocusTrap === "true") {
             return;
         }
         container.dataset.sfFocusTrap = "true";
-        container.addEventListener("keydown", (event) => {
-            if (event.key !== "Tab" || !isActive()) {
-                return;
-            }
-            const scope = activeScope();
-            const focusable = [
-                ...scope.querySelectorAll("*"),
-            ].filter((element) => (
-                element.tabIndex >= 0
-                && isVisible(element)
-                && isHorizontallyEligible(element, container)
-                && !element.closest("[inert]")
-            ));
-            if (focusable.length === 0) {
-                return;
-            }
-            const current = focusable.indexOf(document.activeElement);
-            const offset = event.shiftKey ? -1 : 1;
-            const origin = current >= 0 ? current : (event.shiftKey ? 0 : -1);
-            const next = (origin + offset + focusable.length) % focusable.length;
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            focusControl(focusable[next]);
-        }, true);
+        container.addEventListener(
+            "keydown",
+            (event) => {
+                if (event.key !== "Tab" || !isActive()) {
+                    return;
+                }
+                const scope = activeScope();
+                const focusable = [...scope.querySelectorAll("*")].filter(
+                    (element) =>
+                        element.tabIndex >= 0 &&
+                        isVisible(element) &&
+                        isHorizontallyEligible(element, container) &&
+                        !element.closest("[inert]"),
+                );
+                if (focusable.length === 0) {
+                    return;
+                }
+                const current = focusable.indexOf(document.activeElement);
+                const offset = event.shiftKey ? -1 : 1;
+                const origin = current >= 0 ? current : event.shiftKey ? 0 : -1;
+                const next =
+                    (origin + offset + focusable.length) % focusable.length;
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                focusControl(focusable[next]);
+            },
+            true,
+        );
     };
 
     const bindButtonLabel = (label, name) => {
@@ -103,7 +121,7 @@
     const enhanceShell = () => {
         const drawer = document.querySelector("#__drawer");
         const drawerOpener = document.querySelector(
-            'label.md-header__button[for="__drawer"]'
+            'label.md-header__button[for="__drawer"]',
         );
         const drawerCloser = document.querySelector("button.sf-drawer-close");
         const sidebar = document.querySelector(".md-sidebar--primary");
@@ -118,20 +136,24 @@
                 drawerCloser.dataset.sfKeyboardButton = "true";
                 drawerCloser.addEventListener("click", () => {
                     drawer.checked = false;
-                    drawer.dispatchEvent(new Event("change", { bubbles: true }));
+                    drawer.dispatchEvent(
+                        new Event("change", { bubbles: true }),
+                    );
                 });
             }
             if (sidebar.dataset.sfEscapeClose !== "true") {
                 sidebar.dataset.sfEscapeClose = "true";
                 sidebar.addEventListener("keydown", (event) => {
                     if (
-                        event.key === "Escape"
-                        && isDrawerOverlay()
-                        && drawer.checked
+                        event.key === "Escape" &&
+                        isDrawerOverlay() &&
+                        drawer.checked
                     ) {
                         event.preventDefault();
                         drawer.checked = false;
-                        drawer.dispatchEvent(new Event("change", { bubbles: true }));
+                        drawer.dispatchEvent(
+                            new Event("change", { bubbles: true }),
+                        );
                     }
                 });
             }
@@ -139,13 +161,20 @@
                 let active = sidebar;
                 let activeDepth = -1;
                 const labels = [
-                    ...sidebar.querySelectorAll("label.md-nav__link[aria-controls]"),
+                    ...sidebar.querySelectorAll(
+                        "label.md-nav__link[aria-controls]",
+                    ),
                 ];
-                for (const panel of sidebar.querySelectorAll("nav.md-nav[id]")) {
+                for (const panel of sidebar.querySelectorAll(
+                    "nav.md-nav[id]",
+                )) {
                     const label = labels.find(
-                        (candidate) => candidate.getAttribute("aria-controls") === panel.id
+                        (candidate) =>
+                            candidate.getAttribute("aria-controls") ===
+                            panel.id,
                     );
-                    const toggle = label && document.getElementById(label.htmlFor);
+                    const toggle =
+                        label && document.getElementById(label.htmlFor);
                     let depth = 0;
                     for (
                         let parent = panel.parentElement;
@@ -155,10 +184,10 @@
                         depth += 1;
                     }
                     if (
-                        toggle?.checked
-                        && !panel.inert
-                        && isVisible(panel)
-                        && depth >= activeDepth
+                        toggle?.checked &&
+                        !panel.inert &&
+                        isVisible(panel) &&
+                        depth >= activeDepth
                     ) {
                         active = panel;
                         activeDepth = depth;
@@ -167,23 +196,27 @@
                 return active;
             };
             const alignDrawerScope = (scope) => {
-                const scrollwrap = sidebar.querySelector(".md-sidebar__scrollwrap");
+                const scrollwrap = sidebar.querySelector(
+                    ".md-sidebar__scrollwrap",
+                );
                 if (!scrollwrap) {
                     return;
                 }
                 const scopeBounds = scope.getBoundingClientRect();
                 const sidebarBounds = sidebar.getBoundingClientRect();
                 if (scopeBounds.left < sidebarBounds.left) {
-                    scrollwrap.scrollLeft += scopeBounds.left - sidebarBounds.left;
+                    scrollwrap.scrollLeft +=
+                        scopeBounds.left - sidebarBounds.left;
                 } else if (scopeBounds.right > sidebarBounds.right) {
-                    scrollwrap.scrollLeft += scopeBounds.right - sidebarBounds.right;
+                    scrollwrap.scrollLeft +=
+                        scopeBounds.right - sidebarBounds.right;
                 }
             };
             trapFocus(
                 sidebar,
                 () => isDrawerOverlay() && drawer.checked,
                 activeDrawerScope,
-                isContainedHorizontally
+                isContainedHorizontally,
             );
 
             const syncDrawer = () => {
@@ -202,10 +235,17 @@
                 }
                 drawerOpener.setAttribute(
                     "aria-label",
-                    expanded ? "Close primary navigation" : "Open primary navigation"
+                    expanded
+                        ? "Close primary navigation"
+                        : "Open primary navigation",
                 );
-                drawerCloser.setAttribute("aria-label", "Close primary navigation");
-                const focusWasInSidebar = sidebar.contains(document.activeElement);
+                drawerCloser.setAttribute(
+                    "aria-label",
+                    "Close primary navigation",
+                );
+                const focusWasInSidebar = sidebar.contains(
+                    document.activeElement,
+                );
                 sidebar.inert = overlay && !expanded;
                 if (sidebar.inert) {
                     sidebar.setAttribute("aria-hidden", "true");
@@ -219,16 +259,17 @@
                         alignDrawerScope(scope);
                         const focused = document.activeElement;
                         if (
-                            !scope.contains(focused)
-                            || !isVisible(focused)
-                            || !isContainedHorizontally(focused, sidebar)
-                            || focused.closest("[inert]")
+                            !scope.contains(focused) ||
+                            !isVisible(focused) ||
+                            !isContainedHorizontally(focused, sidebar) ||
+                            focused.closest("[inert]")
                         ) {
-                            const back = scope === sidebar
-                                ? null
-                                : scope.querySelector(
-                                    ':scope > label.md-nav__title[role="button"]'
-                                );
+                            const back =
+                                scope === sidebar
+                                    ? null
+                                    : scope.querySelector(
+                                          ':scope > label.md-nav__title[role="button"]',
+                                      );
                             focusControl(back || drawerCloser);
                         }
                     });
@@ -236,21 +277,23 @@
                     if (overlay) {
                         focusControl(drawerOpener);
                     } else if (!isVisible(document.activeElement)) {
-                        const home = document.querySelector(".md-header__button.md-logo");
+                        const home = document.querySelector(
+                            ".md-header__button.md-logo",
+                        );
                         if (home) {
                             focusControl(home);
                         }
                     }
                 }
                 if (
-                    !overlay
-                    && drawer.checked
-                    && (
-                        document.activeElement === document.body
-                        || !isVisible(document.activeElement)
-                    )
+                    !overlay &&
+                    drawer.checked &&
+                    (document.activeElement === document.body ||
+                        !isVisible(document.activeElement))
                 ) {
-                    const home = document.querySelector(".md-header__button.md-logo");
+                    const home = document.querySelector(
+                        ".md-header__button.md-logo",
+                    );
                     if (home) {
                         focusControl(home);
                     }
@@ -272,10 +315,12 @@
             if (!toggle || toggle.type !== "checkbox") {
                 continue;
             }
-            const controlledPanel = [
-                ...document.querySelectorAll("nav.md-nav"),
-            ].find((panel) => panel.getAttribute("aria-labelledby") === label.id)
-                || label.closest("li")?.querySelector("nav.md-nav--secondary");
+            const controlledPanel =
+                [...document.querySelectorAll("nav.md-nav")].find(
+                    (panel) =>
+                        panel.getAttribute("aria-labelledby") === label.id,
+                ) ||
+                label.closest("li")?.querySelector("nav.md-nav--secondary");
             if (!controlledPanel) {
                 continue;
             }
@@ -283,14 +328,17 @@
             if (!controlledPanel.id) {
                 controlledPanel.id = `sf-panel-${toggle.id.replace(/^__/, "")}`;
             }
-            const labelName = label.textContent.trim()
-                || label.parentElement?.querySelector("a.md-nav__link")?.textContent.trim()
-                || "Toggle navigation section";
+            const labelName =
+                label.textContent.trim() ||
+                label.parentElement
+                    ?.querySelector("a.md-nav__link")
+                    ?.textContent.trim() ||
+                "Toggle navigation section";
             bindButtonLabel(label, labelName);
             label.setAttribute("aria-controls", controlledPanel.id);
 
             const backLabel = controlledPanel.querySelector(
-                `:scope > label.md-nav__title[for="${toggle.id}"]`
+                `:scope > label.md-nav__title[for="${toggle.id}"]`,
             );
             if (backLabel) {
                 bindButtonLabel(backLabel, `Back from ${labelName}`);
@@ -301,7 +349,9 @@
                 const expanded = !isDrawerOverlay() || toggle.checked;
                 label.setAttribute("aria-expanded", String(expanded));
                 backLabel?.setAttribute("aria-expanded", String(expanded));
-                const focusWasInPanel = controlledPanel.contains(document.activeElement);
+                const focusWasInPanel = controlledPanel.contains(
+                    document.activeElement,
+                );
                 controlledPanel.inert = !expanded;
                 if (controlledPanel.inert) {
                     controlledPanel.setAttribute("aria-hidden", "true");
@@ -311,10 +361,10 @@
                 if (!expanded && focusWasInPanel) {
                     focusControl(label);
                 } else if (
-                    isDrawerOverlay()
-                    && toggle.checked
-                    && document.activeElement === label
-                    && backLabel
+                    isDrawerOverlay() &&
+                    toggle.checked &&
+                    document.activeElement === label &&
+                    backLabel
                 ) {
                     requestAnimationFrame(() => focusControl(backLabel));
                 }
@@ -328,7 +378,7 @@
 
         const search = document.querySelector("#__search");
         const searchButton = document.querySelector(
-            'label.md-header__button[for="__search"]'
+            'label.md-header__button[for="__search"]',
         );
         const searchDialog = document.querySelector(".md-search");
         if (search && searchButton && searchDialog) {
@@ -336,10 +386,7 @@
             searchDialog.setAttribute("aria-label", "Search documentation");
             bindButtonLabel(searchButton, "Search documentation");
             searchButton.setAttribute("aria-controls", searchDialog.id);
-            trapFocus(
-                searchDialog,
-                () => isSearchOverlay() && search.checked
-            );
+            trapFocus(searchDialog, () => isSearchOverlay() && search.checked);
             const syncSearch = () => {
                 const overlay = isSearchOverlay();
                 const expanded = overlay && search.checked;
@@ -349,7 +396,9 @@
                 } else {
                     searchDialog.removeAttribute("aria-modal");
                 }
-                const focusWasInSearch = searchDialog.contains(document.activeElement);
+                const focusWasInSearch = searchDialog.contains(
+                    document.activeElement,
+                );
                 searchDialog.inert = overlay && !expanded;
                 if (searchDialog.inert) {
                     searchDialog.setAttribute("aria-hidden", "true");
@@ -359,7 +408,10 @@
                 if (expanded) {
                     requestAnimationFrame(() => {
                         const input = searchDialog.querySelector("input");
-                        if (input && !searchDialog.contains(document.activeElement)) {
+                        if (
+                            input &&
+                            !searchDialog.contains(document.activeElement)
+                        ) {
                             focusControl(input);
                         }
                     });
@@ -367,19 +419,19 @@
                     if (overlay) {
                         focusControl(searchButton);
                     } else if (!isVisible(document.activeElement)) {
-                        const home = document.querySelector(".md-header__button.md-logo");
+                        const home = document.querySelector(
+                            ".md-header__button.md-logo",
+                        );
                         if (home) {
                             focusControl(home);
                         }
                     }
                 }
                 if (
-                    !overlay
-                    && search.checked
-                    && (
-                        document.activeElement === document.body
-                        || !isVisible(document.activeElement)
-                    )
+                    !overlay &&
+                    search.checked &&
+                    (document.activeElement === document.body ||
+                        !isVisible(document.activeElement))
                 ) {
                     const input = searchDialog.querySelector("input");
                     if (input) {
@@ -395,7 +447,9 @@
         }
 
         const paletteLabels = [
-            ...document.querySelectorAll('label.md-header__button[for^="__palette_"]'),
+            ...document.querySelectorAll(
+                'label.md-header__button[for^="__palette_"]',
+            ),
         ];
         for (const label of paletteLabels) {
             bindButtonLabel(label, label.title || "Change color scheme");
@@ -420,9 +474,9 @@
 
         console.assert(
             !document.querySelector(
-                '[role="button"] a, [role="button"] button, [role="button"] input, [role="button"] select, [role="button"] textarea'
+                '[role="button"] a, [role="button"] button, [role="button"] input, [role="button"] select, [role="button"] textarea',
             ),
-            "Button-role controls must not contain interactive descendants"
+            "Button-role controls must not contain interactive descendants",
         );
     };
 

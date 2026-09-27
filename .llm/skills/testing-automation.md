@@ -56,7 +56,7 @@ These checks enforce:
   (issue #132): `-SkipBehavioralTests` (in-process tests) plus
   `-OnlyBehavioralTests` (pwsh-forking tests), which itself splits
   round-robin into two passes via `-BehavioralSubshard k
-  -BehavioralSubshardCount 2` (requires `-OnlyBehavioralTests`; the union
+-BehavioralSubshardCount 2` (requires `-OnlyBehavioralTests`; the union
   of the passes is exactly the behavioral subset). The llm-harness
   workflow runs preflight and the core shard in one job, plus each
   behavioral pass in its own dedicated job (issue #145: fork-heavy tests

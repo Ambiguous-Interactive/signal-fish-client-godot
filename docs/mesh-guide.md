@@ -58,12 +58,12 @@ multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
 
 ## Related signals
 
-| Signal | Arguments |
-| --- | --- |
-| `session_plan(plan)` | The negotiated plan (`SFSessionTypes.SessionPlanInfo`). |
-| `new_peer(peer_id, you_initiate)` | A peer joined the mesh plan. |
-| `signal_received(from_player, generation, signal_payload)` | Signaling payload from another peer. |
-| `peer_transport_status(peer_id, transport, connected)` | A peer's transport went up or down. |
+| Signal                                                     | Arguments                                               |
+| ---------------------------------------------------------- | ------------------------------------------------------- |
+| `session_plan(plan)`                                       | The negotiated plan (`SFSessionTypes.SessionPlanInfo`). |
+| `new_peer(peer_id, you_initiate)`                          | A peer joined the mesh plan.                            |
+| `signal_received(from_player, generation, signal_payload)` | Signaling payload from another peer.                    |
+| `peer_transport_status(peer_id, transport, connected)`     | A peer's transport went up or down.                     |
 
 ## Platform note
 

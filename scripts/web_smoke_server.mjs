@@ -41,7 +41,9 @@ const MIME_TYPES = {
 const staticServer = https.createServer(tlsOptions, (request, response) => {
   let urlPath = "";
   try {
-    urlPath = decodeURIComponent(new URL(request.url, `https://${host}`).pathname);
+    urlPath = decodeURIComponent(
+      new URL(request.url, `https://${host}`).pathname,
+    );
   } catch {
     response.writeHead(400);
     response.end("bad request");
@@ -50,13 +52,18 @@ const staticServer = https.createServer(tlsOptions, (request, response) => {
   const filePath = path.join(webRoot, urlPath === "/" ? "index.html" : urlPath);
   const relative = path.relative(webRoot, filePath);
   const insideRoot = relative !== "" && !relative.startsWith("..");
-  if (!insideRoot || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+  if (
+    !insideRoot ||
+    !fs.existsSync(filePath) ||
+    !fs.statSync(filePath).isFile()
+  ) {
     response.writeHead(404);
     response.end("not found");
     return;
   }
   response.writeHead(200, {
-    "content-type": MIME_TYPES[path.extname(filePath)] ?? "application/octet-stream",
+    "content-type":
+      MIME_TYPES[path.extname(filePath)] ?? "application/octet-stream",
   });
   fs.createReadStream(filePath).pipe(response);
 });
@@ -64,7 +71,10 @@ const staticServer = https.createServer(tlsOptions, (request, response) => {
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 function acceptKey(key) {
-  return crypto.createHash("sha1").update(key + WS_GUID).digest("base64");
+  return crypto
+    .createHash("sha1")
+    .update(key + WS_GUID)
+    .digest("base64");
 }
 
 function encodeTextFrame(text) {
@@ -72,12 +82,18 @@ function encodeTextFrame(text) {
   if (payload.length > 0xffff) {
     throw new Error(`smoke frame too large: ${payload.length} bytes`);
   }
-  const header = Buffer.from([0x81, payload.length < 126 ? payload.length : 126]);
-  const extension = payload.length < 126 ? Buffer.alloc(0) : (() => {
-    const bytes = Buffer.alloc(2);
-    bytes.writeUInt16BE(payload.length);
-    return bytes;
-  })();
+  const header = Buffer.from([
+    0x81,
+    payload.length < 126 ? payload.length : 126,
+  ]);
+  const extension =
+    payload.length < 126
+      ? Buffer.alloc(0)
+      : (() => {
+          const bytes = Buffer.alloc(2);
+          bytes.writeUInt16BE(payload.length);
+          return bytes;
+        })();
   return Buffer.concat([header, extension, payload]);
 }
 
@@ -123,7 +139,10 @@ function decodeClientFrames(buffer, onText, onClose, onFatal) {
 const wssServer = https.createServer(tlsOptions);
 wssServer.on("upgrade", (request, socket) => {
   const originOk = request.headers.origin === expectedOrigin;
-  emit("ws_open", { origin: request.headers.origin ?? null, origin_ok: originOk });
+  emit("ws_open", {
+    origin: request.headers.origin ?? null,
+    origin_ok: originOk,
+  });
   if (!originOk || !request.headers["sec-websocket-key"]) {
     socket.destroy();
     return;
@@ -155,7 +174,11 @@ wssServer.on("upgrade", (request, socket) => {
                 data: {
                   app_name: "web-smoke",
                   organization: "smoke",
-                  rate_limits: { per_minute: 60, per_hour: 600, per_day: 6000 },
+                  rate_limits: {
+                    per_minute: 60,
+                    per_hour: 600,
+                    per_day: 6000,
+                  },
                 },
               }),
             ),

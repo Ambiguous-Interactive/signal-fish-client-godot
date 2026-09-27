@@ -31,7 +31,8 @@ $selfErrors = $null
 try {
     [void][System.Management.Automation.Language.Parser]::ParseFile(
         $PSCommandPath, [ref]$selfTokens, [ref]$selfErrors)
-} catch {
+}
+catch {
     # Keep stderr clean (Write-Host is captured but not stderr-noisy).
     # Do not block the agent on a hook bug; preflight will catch it.
     Write-Host "[parse-check-hook] self-parse threw: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -70,7 +71,8 @@ if ([string]::IsNullOrWhiteSpace($raw)) { exit 0 }
 $hookInput = $null
 try {
     $hookInput = $raw | ConvertFrom-Json -ErrorAction Stop
-} catch {
+}
+catch {
     # Malformed input is not the agent's fault; bail out silently.
     exit 0
 }
@@ -96,7 +98,8 @@ $parseErrors = $null
 try {
     [void][System.Management.Automation.Language.Parser]::ParseFile(
         $filePath, [ref]$tokens, [ref]$parseErrors)
-} catch {
+}
+catch {
     Send-BlockReason "${filePath}: PowerShell parser threw '$($_.Exception.Message)'. Re-read the file and fix any duplicate / orphan code blocks. Do NOT commit until the file parses cleanly."
 }
 if ($null -ne $parseErrors -and $parseErrors.Count -gt 0) {

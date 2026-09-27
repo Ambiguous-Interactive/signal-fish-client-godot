@@ -488,7 +488,9 @@ html {
     color: var(--sf-accent);
     font-family: var(--sf-display-font);
     font-weight: 600;
-    transition: box-shadow var(--sf-transition-fast), transform var(--sf-transition-fast);
+    transition:
+        box-shadow var(--sf-transition-fast),
+        transform var(--sf-transition-fast);
 }
 
 .md-typeset .md-button:hover,
@@ -568,7 +570,11 @@ html {
     background-color: rgba(0, 0, 0, 0.03);
 }
 
-[data-md-color-scheme="slate"] .md-typeset table:not([class]) tbody tr:nth-child(odd) {
+[data-md-color-scheme="slate"]
+    .md-typeset
+    table:not([class])
+    tbody
+    tr:nth-child(odd) {
     background-color: rgba(255, 255, 255, 0.02);
 }
 

@@ -47,13 +47,13 @@ After this, every release run submits a store edit automatically.
 
 Handlebars over the workflow-dispatch webhook context plus process env:
 
-| Field | Value | Source |
-|---|---|---|
-| `version_string` | `0.1.0` style | `env.RELEASE_VERSION` (tag minus `v`) |
-| `download_commit` | full release commit SHA | `env.GITHUB_SHA` |
-| `browse_url` / `issues_url` / `icon_url` | repo URLs | `context.repository` |
-| `category_id` | `6` (Scripts) | pinned from `GET /configure?type=addon` |
-| `godot_version` | `4.3` | minimum supported engine |
+| Field                                    | Value                   | Source                                  |
+| ---------------------------------------- | ----------------------- | --------------------------------------- |
+| `version_string`                         | `0.1.0` style           | `env.RELEASE_VERSION` (tag minus `v`)   |
+| `download_commit`                        | full release commit SHA | `env.GITHUB_SHA`                        |
+| `browse_url` / `issues_url` / `icon_url` | repo URLs               | `context.repository`                    |
+| `category_id`                            | `6` (Scripts)           | pinned from `GET /configure?type=addon` |
+| `godot_version`                          | `4.3`                   | minimum supported engine                |
 
 The release workflow tags `GITHUB_SHA`, which is the store's
 `download_commit`: the Asset Library generates the archive from that commit.

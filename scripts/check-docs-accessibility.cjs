@@ -51,7 +51,7 @@ const assertBuildFreshness = async () => {
         expectState(
             source.equals(built),
             `site/${relative} is stale; run mkdocs build --strict first`,
-            { relative }
+            { relative },
         );
     }
 };
@@ -72,12 +72,12 @@ const startServer = async () => {
         const server = http.createServer(async (request, response) => {
             try {
                 const pathname = decodeURIComponent(
-                    new URL(request.url, "http://localhost").pathname
+                    new URL(request.url, "http://localhost").pathname,
                 );
                 let filePath = path.resolve(siteRoot, `.${pathname}`);
                 if (
-                    filePath !== siteRoot
-                    && !filePath.startsWith(`${siteRoot}${path.sep}`)
+                    filePath !== siteRoot &&
+                    !filePath.startsWith(`${siteRoot}${path.sep}`)
                 ) {
                     response.writeHead(403).end();
                     return;
@@ -87,16 +87,17 @@ const startServer = async () => {
                 }
                 const canonicalPath = await fs.realpath(filePath);
                 if (
-                    canonicalPath !== siteRoot
-                    && !canonicalPath.startsWith(`${siteRoot}${path.sep}`)
+                    canonicalPath !== siteRoot &&
+                    !canonicalPath.startsWith(`${siteRoot}${path.sep}`)
                 ) {
                     response.writeHead(403).end();
                     return;
                 }
                 const content = await fs.readFile(canonicalPath);
                 response.writeHead(200, {
-                    "Content-Type": contentTypes.get(path.extname(canonicalPath))
-                        || "application/octet-stream",
+                    "Content-Type":
+                        contentTypes.get(path.extname(canonicalPath)) ||
+                        "application/octet-stream",
                 });
                 response.end(content);
             } catch (error) {
@@ -112,13 +113,14 @@ const startServer = async () => {
     });
 };
 
-const closeServer = (server) => new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-});
+const closeServer = (server) =>
+    new Promise((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+    });
 
 const cleanup = () => {
-    const previousCleanup = cleanupPromise?.catch(() => undefined)
-        || Promise.resolve();
+    const previousCleanup =
+        cleanupPromise?.catch(() => undefined) || Promise.resolve();
     cleanupPromise = previousCleanup.then(async () => {
         const browser = activeBrowser;
         const server = activeServer;
@@ -146,9 +148,11 @@ const accessibilityDeadline = () => {
     const deadline = new Promise((_, reject) => {
         const timer = setTimeout(() => {
             timedOut = true;
-            reject(new Error(
-                `Documentation accessibility checks exceeded ${ACCESSIBILITY_BUDGET_MS / 1000} seconds.`
-            ));
+            reject(
+                new Error(
+                    `Documentation accessibility checks exceeded ${ACCESSIBILITY_BUDGET_MS / 1000} seconds.`,
+                ),
+            );
         }, ACCESSIBILITY_BUDGET_MS);
         timer.unref();
         releaseDeadline = () => clearTimeout(timer);
@@ -200,8 +204,8 @@ const attachErrorCapture = (page, errors) => {
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => {
         if (
-            message.type() === "error"
-            && !message.text().startsWith("Failed to load resource:")
+            message.type() === "error" &&
+            !message.text().startsWith("Failed to load resource:")
         ) {
             errors.push(message.text());
         }
@@ -213,82 +217,84 @@ const attachErrorCapture = (page, errors) => {
     });
 };
 
-const drawerFocusState = (page) => page.evaluate(() => {
-    const sidebar = document.querySelector(".md-sidebar--primary");
-    const scrollwrap = sidebar.querySelector(".md-sidebar__scrollwrap");
-    const toc = sidebar.querySelector(".md-nav--secondary");
-    const focused = document.activeElement;
-    const sidebarBounds = sidebar.getBoundingClientRect();
-    const focusBounds = focused.getBoundingClientRect();
-    const tocBounds = toc.getBoundingClientRect();
-    return {
-        drawerChecked: document.querySelector("#__drawer").checked,
-        tocChecked: document.querySelector("#__toc").checked,
-        modal: sidebar.getAttribute("aria-modal"),
-        inert: sidebar.inert,
-        scrollLeft: scrollwrap.scrollLeft,
-        maxScroll: scrollwrap.scrollWidth - scrollwrap.clientWidth,
-        tocVisible: tocBounds.width > 0 && tocBounds.height > 0,
-        focusLabel: focused.getAttribute("aria-label"),
-        focusInside: sidebar.contains(focused),
-        focusVisible: focusBounds.width > 0 && focusBounds.height > 0,
-        focusContained: focusBounds.left >= sidebarBounds.left - 0.5
-            && focusBounds.right <= sidebarBounds.right + 0.5,
-        focusInert: Boolean(focused.closest("[inert]")),
-        sidebarBounds: [sidebarBounds.left, sidebarBounds.right],
-        focusBounds: [focusBounds.left, focusBounds.right],
-        tocBounds: [tocBounds.left, tocBounds.right],
-    };
-});
+const drawerFocusState = (page) =>
+    page.evaluate(() => {
+        const sidebar = document.querySelector(".md-sidebar--primary");
+        const scrollwrap = sidebar.querySelector(".md-sidebar__scrollwrap");
+        const toc = sidebar.querySelector(".md-nav--secondary");
+        const focused = document.activeElement;
+        const sidebarBounds = sidebar.getBoundingClientRect();
+        const focusBounds = focused.getBoundingClientRect();
+        const tocBounds = toc.getBoundingClientRect();
+        return {
+            drawerChecked: document.querySelector("#__drawer").checked,
+            tocChecked: document.querySelector("#__toc").checked,
+            modal: sidebar.getAttribute("aria-modal"),
+            inert: sidebar.inert,
+            scrollLeft: scrollwrap.scrollLeft,
+            maxScroll: scrollwrap.scrollWidth - scrollwrap.clientWidth,
+            tocVisible: tocBounds.width > 0 && tocBounds.height > 0,
+            focusLabel: focused.getAttribute("aria-label"),
+            focusInside: sidebar.contains(focused),
+            focusVisible: focusBounds.width > 0 && focusBounds.height > 0,
+            focusContained:
+                focusBounds.left >= sidebarBounds.left - 0.5 &&
+                focusBounds.right <= sidebarBounds.right + 0.5,
+            focusInert: Boolean(focused.closest("[inert]")),
+            sidebarBounds: [sidebarBounds.left, sidebarBounds.right],
+            focusBounds: [focusBounds.left, focusBounds.right],
+            tocBounds: [tocBounds.left, tocBounds.right],
+        };
+    });
 
 const assertTrappedDrawerFocus = async (page, keys, context) => {
     for (const key of keys) {
         await page.keyboard.press(key);
         const state = await drawerFocusState(page);
         expectState(
-            state.focusInside
-                && state.focusVisible
-                && state.focusContained
-                && !state.focusInert,
+            state.focusInside &&
+                state.focusVisible &&
+                state.focusContained &&
+                !state.focusInert,
             `${context}: ${key} left a fully visible drawer target`,
-            state
+            state,
         );
     }
 };
 
-const hasValidDrawerFocus = (state) => (
-    state.focusInside
-    && state.focusVisible
-    && state.focusContained
-    && !state.focusInert
-);
+const hasValidDrawerFocus = (state) =>
+    state.focusInside &&
+    state.focusVisible &&
+    state.focusContained &&
+    !state.focusInert;
 
-const searchFocusState = (page) => page.evaluate(() => {
-    const search = document.querySelector(".md-search");
-    const focused = document.activeElement;
-    const bounds = focused.getBoundingClientRect();
-    return {
-        checked: document.querySelector("#__search").checked,
-        modal: search.getAttribute("aria-modal"),
-        inert: search.inert,
-        focusInside: search.contains(focused),
-        focusVisible: bounds.width > 0 && bounds.height > 0,
-        focusInViewport: bounds.left >= -0.5
-            && bounds.right <= window.innerWidth + 0.5
-            && bounds.top >= -0.5
-            && bounds.bottom <= window.innerHeight + 0.5,
-        focusInert: Boolean(focused.closest("[inert]")),
-        focusLabel: focused.getAttribute("aria-label"),
-        focusBounds: [bounds.left, bounds.top, bounds.right, bounds.bottom],
-    };
-});
+const searchFocusState = (page) =>
+    page.evaluate(() => {
+        const search = document.querySelector(".md-search");
+        const focused = document.activeElement;
+        const bounds = focused.getBoundingClientRect();
+        return {
+            checked: document.querySelector("#__search").checked,
+            modal: search.getAttribute("aria-modal"),
+            inert: search.inert,
+            focusInside: search.contains(focused),
+            focusVisible: bounds.width > 0 && bounds.height > 0,
+            focusInViewport:
+                bounds.left >= -0.5 &&
+                bounds.right <= window.innerWidth + 0.5 &&
+                bounds.top >= -0.5 &&
+                bounds.bottom <= window.innerHeight + 0.5,
+            focusInert: Boolean(focused.closest("[inert]")),
+            focusLabel: focused.getAttribute("aria-label"),
+            focusBounds: [bounds.left, bounds.top, bounds.right, bounds.bottom],
+        };
+    });
 
-const hasValidSearchFocus = (state) => (
-    state.focusInside
-    && state.focusVisible
-    && state.focusInViewport
-    && !state.focusInert
-);
+const hasValidSearchFocus = (state) =>
+    state.focusInside &&
+    state.focusVisible &&
+    state.focusInViewport &&
+    !state.focusInert;
 
 const checkClosedBoundaries = async (page) => {
     const cases = [
@@ -309,7 +315,7 @@ const checkClosedBoundaries = async (page) => {
             const sidebar = document.querySelector(".md-sidebar--primary");
             const search = document.querySelector(".md-search");
             const opener = document.querySelector(
-                'label.md-header__button[for="__drawer"]'
+                'label.md-header__button[for="__drawer"]',
             );
             const sidebarBounds = sidebar.getBoundingClientRect();
             const openerBounds = opener.getBoundingClientRect();
@@ -321,33 +327,37 @@ const checkClosedBoundaries = async (page) => {
                     sidebarBounds.right,
                     sidebarBounds.width,
                 ],
-                openerVisible: openerBounds.width > 0 && openerBounds.height > 0,
+                openerVisible:
+                    openerBounds.width > 0 && openerBounds.height > 0,
                 searchInert: search.inert,
                 searchHidden: search.getAttribute("aria-hidden"),
-                overflow: document.documentElement.scrollWidth
-                    - document.documentElement.clientWidth,
+                overflow:
+                    document.documentElement.scrollWidth -
+                    document.documentElement.clientWidth,
             };
         });
         expectState(
-            state.drawerInert === drawerOverlay
-                && (state.drawerHidden === "true") === drawerOverlay
-                && state.openerVisible === drawerOverlay
-                && (
-                    drawerOverlay
-                        ? state.drawerBounds[1] <= 0.5
-                        : state.drawerBounds[0] >= -0.5
-                            && state.drawerBounds[2] > 0
-                ),
+            state.drawerInert === drawerOverlay &&
+                (state.drawerHidden === "true") === drawerOverlay &&
+                state.openerVisible === drawerOverlay &&
+                (drawerOverlay
+                    ? state.drawerBounds[1] <= 0.5
+                    : state.drawerBounds[0] >= -0.5 &&
+                      state.drawerBounds[2] > 0),
             `drawer boundary mismatch at ${width}px`,
-            state
+            state,
         );
         expectState(
-            state.searchInert === searchOverlay
-                && (state.searchHidden === "true") === searchOverlay,
+            state.searchInert === searchOverlay &&
+                (state.searchHidden === "true") === searchOverlay,
             `search boundary mismatch at ${width}px`,
-            state
+            state,
         );
-        expectState(state.overflow <= 1, `document overflow at ${width}px`, state);
+        expectState(
+            state.overflow <= 1,
+            `document overflow at ${width}px`,
+            state,
+        );
     }
 };
 
@@ -361,92 +371,94 @@ const checkDrawerResize = async (page, direction) => {
     await page.locator('label.md-header__button[for="__drawer"]').focus();
     await page.keyboard.press("Enter");
     await settleShell(page);
-    await page.locator(
-        '.md-sidebar--primary label.md-nav__link[for="__toc"]'
-    ).focus();
+    await page
+        .locator('.md-sidebar--primary label.md-nav__link[for="__toc"]')
+        .focus();
     await page.keyboard.press("Enter");
     await settleShell(page);
     let state = await drawerFocusState(page);
     expectState(
-        state.drawerChecked
-            && state.tocChecked
-            && state.tocVisible
-            && state.modal === "true"
-            && hasValidDrawerFocus(state),
+        state.drawerChecked &&
+            state.tocChecked &&
+            state.tocVisible &&
+            state.modal === "true" &&
+            hasValidDrawerFocus(state),
         `${direction}: phone TOC did not open inside the drawer`,
-        state
+        state,
     );
 
     await page.setViewportSize({ width: 1100, height: 800 });
     await settleShell(page);
     state = await drawerFocusState(page);
     expectState(
-        state.drawerChecked
-            && state.tocChecked
-            && !state.tocVisible
-            && state.modal === "true"
-            && Math.abs(state.scrollLeft) <= 0.5
-            && state.focusLabel === "Back from Start Here"
-            && hasValidDrawerFocus(state),
+        state.drawerChecked &&
+            state.tocChecked &&
+            !state.tocVisible &&
+            state.modal === "true" &&
+            Math.abs(state.scrollLeft) <= 0.5 &&
+            state.focusLabel === "Back from Start Here" &&
+            hasValidDrawerFocus(state),
         `${direction}: tablet resize did not restore the root drawer geometry`,
-        state
+        state,
     );
     await assertTrappedDrawerFocus(
         page,
         [...Array(20).fill("Tab"), ...Array(20).fill("Shift+Tab")],
-        `${direction}: tablet drawer`
+        `${direction}: tablet drawer`,
     );
 
     await page.setViewportSize({ width: 1219, height: 800 });
     await settleShell(page);
     state = await drawerFocusState(page);
     expectState(
-        state.drawerChecked
-            && state.modal === "true"
-            && Math.abs(state.scrollLeft) <= 0.5
-            && hasValidDrawerFocus(state),
+        state.drawerChecked &&
+            state.modal === "true" &&
+            Math.abs(state.scrollLeft) <= 0.5 &&
+            hasValidDrawerFocus(state),
         `${direction}: upper drawer boundary lost geometry or focus`,
-        state
+        state,
     );
     await assertTrappedDrawerFocus(
         page,
         [...Array(10).fill("Tab"), ...Array(10).fill("Shift+Tab")],
-        `${direction}: 1219px drawer`
+        `${direction}: 1219px drawer`,
     );
     await page.keyboard.press("Escape");
     await settleShell(page);
     state = await drawerFocusState(page);
     expectState(
-        !state.drawerChecked
-            && state.inert
-            && state.focusLabel === "Open primary navigation",
+        !state.drawerChecked &&
+            state.inert &&
+            state.focusLabel === "Open primary navigation",
         `${direction}: drawer Escape did not restore its opener`,
-        state
+        state,
     );
     await page.keyboard.press("Enter");
     await settleShell(page);
     state = await drawerFocusState(page);
     expectState(
-        state.drawerChecked && state.modal === "true" && hasValidDrawerFocus(state),
+        state.drawerChecked &&
+            state.modal === "true" &&
+            hasValidDrawerFocus(state),
         `${direction}: drawer did not reopen at 1219px`,
-        state
+        state,
     );
 
     await page.setViewportSize({ width: 800, height: 800 });
     await settleShell(page);
     state = await drawerFocusState(page);
     expectState(
-        state.tocVisible
-            && Math.abs(Math.abs(state.scrollLeft) - state.maxScroll) <= 0.5
-            && state.focusLabel?.startsWith("Back from Installation")
-            && hasValidDrawerFocus(state),
+        state.tocVisible &&
+            Math.abs(Math.abs(state.scrollLeft) - state.maxScroll) <= 0.5 &&
+            state.focusLabel?.startsWith("Back from Installation") &&
+            hasValidDrawerFocus(state),
         `${direction}: phone resize did not restore the selected TOC geometry`,
-        state
+        state,
     );
     await assertTrappedDrawerFocus(
         page,
         [...Array(10).fill("Tab"), ...Array(10).fill("Shift+Tab")],
-        `${direction}: restored phone TOC`
+        `${direction}: restored phone TOC`,
     );
 
     await page.setViewportSize({ width: 1280, height: 800 });
@@ -455,7 +467,7 @@ const checkDrawerResize = async (page, direction) => {
     expectState(
         state.modal === null && !state.inert && state.focusVisible,
         `${direction}: desktop resize retained modal or hidden focus state`,
-        state
+        state,
     );
 };
 
@@ -467,20 +479,23 @@ const checkSearchResize = async (page) => {
     await settleShell(page);
     let state = await searchFocusState(page);
     expectState(
-        state.checked
-            && state.modal === "true"
-            && !state.inert
-            && hasValidSearchFocus(state),
+        state.checked &&
+            state.modal === "true" &&
+            !state.inert &&
+            hasValidSearchFocus(state),
         "959px search did not open as a modal",
-        state
+        state,
     );
-    for (const key of [...Array(10).fill("Tab"), ...Array(10).fill("Shift+Tab")]) {
+    for (const key of [
+        ...Array(10).fill("Tab"),
+        ...Array(10).fill("Shift+Tab"),
+    ]) {
         await page.keyboard.press(key);
         state = await searchFocusState(page);
         expectState(
             hasValidSearchFocus(state),
             `959px search trap failed on ${key}`,
-            state
+            state,
         );
     }
 
@@ -488,34 +503,36 @@ const checkSearchResize = async (page) => {
     await settleShell(page);
     state = await searchFocusState(page);
     expectState(
-        state.checked
-            && state.modal === null
-            && !state.inert
-            && state.focusVisible
-            && state.focusInViewport
-            && !state.focusInert,
+        state.checked &&
+            state.modal === null &&
+            !state.inert &&
+            state.focusVisible &&
+            state.focusInViewport &&
+            !state.focusInert,
         "960px search did not become a usable non-modal control",
-        state
+        state,
     );
 
     await page.setViewportSize({ width: 959, height: 800 });
     await settleShell(page);
     state = await searchFocusState(page);
     expectState(
-        state.checked
-            && state.modal === "true"
-            && !state.inert
-            && hasValidSearchFocus(state),
+        state.checked &&
+            state.modal === "true" &&
+            !state.inert &&
+            hasValidSearchFocus(state),
         "959px search did not return to a usable modal",
-        state
+        state,
     );
     await page.keyboard.press("Escape");
     await settleShell(page);
     state = await searchFocusState(page);
     expectState(
-        !state.checked && state.inert && state.focusLabel === "Search documentation",
+        !state.checked &&
+            state.inert &&
+            state.focusLabel === "Search documentation",
         "search Escape did not restore its trigger",
-        state
+        state,
     );
 };
 
@@ -584,15 +601,23 @@ const runBrowserChecks = async () => {
     page = configurePage(await context.newPage());
     attachErrorCapture(page, browserErrors);
     await runPhase("closed boundaries", () => checkClosedBoundaries(page));
-    await runPhase("drawer resize ltr", (phasePage) => checkDrawerResize(phasePage, "ltr"));
-    await runPhase("drawer resize rtl", (phasePage) => checkDrawerResize(phasePage, "rtl"));
-    await runPhase("search resize", (phasePage) => checkSearchResize(phasePage));
+    await runPhase("drawer resize ltr", (phasePage) =>
+        checkDrawerResize(phasePage, "ltr"),
+    );
+    await runPhase("drawer resize rtl", (phasePage) =>
+        checkDrawerResize(phasePage, "rtl"),
+    );
+    await runPhase("search resize", (phasePage) =>
+        checkSearchResize(phasePage),
+    );
     expectState(
         browserErrors.length === 0,
         "documentation pages emitted browser errors",
-        browserErrors
+        browserErrors,
     );
-    process.stdout.write("Documentation accessibility browser checks passed.\n");
+    process.stdout.write(
+        "Documentation accessibility browser checks passed.\n",
+    );
 };
 
 (async () => {
@@ -608,7 +633,9 @@ const runBrowserChecks = async () => {
             await cleanup();
         } catch (cleanupError) {
             // Never let cleanup noise mask the primary (timeout) error.
-            process.stderr.write(`Accessibility cleanup failed: ${cleanupError.message}\n`);
+            process.stderr.write(
+                `Accessibility cleanup failed: ${cleanupError.message}\n`,
+            );
             flowError = flowError || cleanupError;
         }
     }

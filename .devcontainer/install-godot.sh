@@ -15,12 +15,12 @@ CACHE_DIR="${2:-}"
 ARCH="$(uname -m)"
 
 case "${ARCH}" in
-    x86_64)  GODOT_ARCH="linux.x86_64" ;;
-    aarch64) GODOT_ARCH="linux.arm64"  ;;
-    *)
-        echo "Unsupported architecture: ${ARCH}" >&2
-        exit 1
-        ;;
+x86_64) GODOT_ARCH="linux.x86_64" ;;
+aarch64) GODOT_ARCH="linux.arm64" ;;
+*)
+    echo "Unsupported architecture: ${ARCH}" >&2
+    exit 1
+    ;;
 esac
 
 ZIP_NAME="Godot_v${VERSION}_${GODOT_ARCH}.zip"
@@ -31,16 +31,19 @@ trap 'rm -rf "${TMPDIR}"' EXIT
 
 ZIP_PATH="${TMPDIR}/godot.zip"
 if [ -n "${CACHE_DIR}" ]; then
-    mkdir -p "${CACHE_DIR}" || { echo "Cannot create cache dir ${CACHE_DIR}" >&2; exit 1; }
+    mkdir -p "${CACHE_DIR}" || {
+        echo "Cannot create cache dir ${CACHE_DIR}" >&2
+        exit 1
+    }
     ZIP_PATH="${CACHE_DIR}/${ZIP_NAME}"
 fi
 
 # A cached copy is only trusted after the same checks a fresh download gets:
 # size floor plus zip integrity. A partial or corrupt transfer must never be
 # reused (or cached as good).
-if [ -f "${ZIP_PATH}" ] \
-    && [ "$(stat -c%s "${ZIP_PATH}")" -ge 1000000 ] \
-    && unzip -tq "${ZIP_PATH}" >/dev/null 2>&1; then
+if [ -f "${ZIP_PATH}" ] &&
+    [ "$(stat -c%s "${ZIP_PATH}")" -ge 1000000 ] &&
+    unzip -tq "${ZIP_PATH}" >/dev/null 2>&1; then
     echo "==> Using cached ${ZIP_PATH}"
 else
     echo "==> Downloading ${URL}"

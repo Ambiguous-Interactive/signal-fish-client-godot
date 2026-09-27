@@ -16,6 +16,31 @@ concurrency:
     cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+    source-format:
+        name: Source formatting
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Set up Node
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+                  cache: npm
+
+            - name: Install formatters
+              run: |
+                  npm ci --ignore-scripts
+                  pwsh -NoProfile -Command 'Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -AcceptLicense'
+                  bash scripts/install-shfmt.sh "$RUNNER_TEMP/shfmt"
+
+            - name: Check source formatting
+              env:
+                  SHFMT_BIN: ${{ runner.temp }}/shfmt
+              run: bash scripts/check-source-format.sh
+
     static:
         name: Static checks
         runs-on: ubuntu-24.04

@@ -53,7 +53,7 @@ payloads inside `transport/`.
 - No `OS.delay`, no timers with threads, no awaits in addon runtime code; use
   accumulated process deltas.
 - Sends are guarded by backpressure: `get_buffered_amount() >
-  max_buffered_bytes` -> `ERR_BUSY` + `protocol_error`, nothing queued.
+max_buffered_bytes` -> `ERR_BUSY` + `protocol_error`, nothing queued.
 - Frames over `max_inbound_frame_bytes` are dropped pre-parse with
   `protocol_error`.
 
@@ -81,7 +81,7 @@ clobber generalized into standing rules:
 
 - Never write state after an `emit` in the same function unless the write is
   proven harmless against handler mutations. The exhaustion path once wiped
-  the retained reconnect identity *after* emitting `connection_failed`,
+  the retained reconnect identity _after_ emitting `connection_failed`,
   clobbering the fresh identity a handler had just captured by redialing
   inside the notice. Either move the write before the emit or guard it on
   the pre-emit condition still holding (e.g. "no dial is in flight").
@@ -96,7 +96,7 @@ clobber generalized into standing rules:
   rule - with the interval injectable for deterministic tests. One refused
   send is one diagnostic; a stalled link must not flood `protocol_error`
   once per frame.
-- Pin each rule with a handler-re-entry test: redial/flap from *inside* the
+- Pin each rule with a handler-re-entry test: redial/flap from _inside_ the
   handler, kill the follow-up dial pre-baseline, assert the retained
   identity and the next scheduling step. See
   `_test_redial_from_exhaustion_handler_keeps_the_fresh_identity`
@@ -167,12 +167,12 @@ Relay-only users pay nothing.
 
 ## Verification shape
 
-| Layer | Suite |
-|---|---|
-| Protocol codec (F) | `tests/protocol/` fixtures, byte-pinned to upstream samples |
-| Transport (K) | `tests/transport/` fake + adapter tests |
-| Client (K) | `tests/client/` (incl. reconnect, binary, v3, mesh) |
-| Real socket (S, opt-in) | `tests/smoke/` via `run-runtime-checks.sh smoke` |
+| Layer                   | Suite                                                       |
+| ----------------------- | ----------------------------------------------------------- |
+| Protocol codec (F)      | `tests/protocol/` fixtures, byte-pinned to upstream samples |
+| Transport (K)           | `tests/transport/` fake + adapter tests                     |
+| Client (K)              | `tests/client/` (incl. reconnect, binary, v3, mesh)         |
+| Real socket (S, opt-in) | `tests/smoke/` via `run-runtime-checks.sh smoke`            |
 
 Fast gates stay deterministic: fake transports, injected clocks, byte-pinned
 fixtures, no live network.

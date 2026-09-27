@@ -41,11 +41,11 @@ scripts that maintain AI context.
    `generate-llm-index.ps1` + `lint-llm.ps1` + `test-llm-harness.ps1`
    individually.
 4. Include regenerated `.llm/index.md` and `.llm/context.md` when changed.
-    Local hook entry points (the installed hook from `git rev-parse --git-path
-    hooks` and `.pre-commit-config.yaml`) run with `-AutoFix` and will
-    auto-stage these and delete scoped stray artifacts matching the shared
-    harness junk list; CI and `agent-check.ps1` run with `-NoAutoFix` and will
-    fail loudly on any drift, so do not rely on auto-fix as the only safety net.
+   Local hook entry points (the installed hook from `git rev-parse --git-path
+ hooks` and `.pre-commit-config.yaml`) run with `-AutoFix` and will
+   auto-stage these and delete scoped stray artifacts matching the shared
+   harness junk list; CI and `agent-check.ps1` run with `-NoAutoFix` and will
+   fail loudly on any drift, so do not rely on auto-fix as the only safety net.
 
 ## Shared Library
 
@@ -79,7 +79,7 @@ scripts that maintain AI context.
   It is the first line of defense against stale-editor-buffer corruption.
 - `scripts/install-git-hooks.ps1` materializes a portable POSIX-sh shim
   (`#!/usr/bin/env sh`) into the hooks directory resolved by `git rev-parse
-  --git-path hooks` (usually `.git/hooks/pre-commit`).
+--git-path hooks` (usually `.git/hooks/pre-commit`).
   Sh is shipped on every platform git supports (Linux, macOS, Git for
   Windows); a pwsh shebang would break on Windows because `pwsh -File`
   refuses files without a `.ps1` extension. The committed
@@ -172,7 +172,7 @@ When `preflight.ps1 -AutoFix` restores a file from the index or `HEAD`, the
 corrupt working-tree copy is backed up first so no WIP is silently destroyed.
 
 - Backups live under the path from `git rev-parse --git-path
-  preflight-recovery`, with layout `<resolved-parent>/<token>/<encoded-path>`.
+preflight-recovery`, with layout `<resolved-parent>/<token>/<encoded-path>`.
 - `<token>` is `<unixMs>-<pid>-<guid>` so concurrent preflights cannot
   collide on the same directory; the final recovery directory create omits
   `-Force` and uses `New-Item -ErrorAction Stop` so any collision is LOUD
@@ -212,11 +212,11 @@ The harness layers parse-checks so a corruption in any single layer is
 caught and recovered by the layer above. Each row parse-checks the row
 below it before invoking:
 
-| Layer                            | Recovers                          |
-|----------------------------------|-----------------------------------|
-| Installed pre-commit sh shim      | `scripts/run-llm-hooks.ps1`       |
-| `scripts/run-llm-hooks.ps1`       | `scripts/preflight.ps1`           |
-| `scripts/preflight.ps1`           | all other tracked `.ps1`/`.psm1`/`.psd1` |
+| Layer                        | Recovers                                 |
+| ---------------------------- | ---------------------------------------- |
+| Installed pre-commit sh shim | `scripts/run-llm-hooks.ps1`              |
+| `scripts/run-llm-hooks.ps1`  | `scripts/preflight.ps1`                  |
+| `scripts/preflight.ps1`      | all other tracked `.ps1`/`.psm1`/`.psd1` |
 
 Recovery is via the index/staged copy first and `git checkout HEAD -- <path>`
 as fallback after backing up the working-tree copy (see "Recovery From

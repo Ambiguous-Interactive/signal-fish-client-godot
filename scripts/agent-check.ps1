@@ -35,15 +35,18 @@ $exitCode = 1
 try {
     if ($SkipBehavioralTests -or -not $Full) {
         $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = '1'
-    } else {
+    }
+    else {
         Remove-Item Env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS -ErrorAction SilentlyContinue
     }
     & $entry @runnerArgs
     $exitCode = $LASTEXITCODE
-} finally {
+}
+finally {
     if ($hadSkipBehavioralEnv) {
         $env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS = $skipBehavioralBackup
-    } else {
+    }
+    else {
         Remove-Item Env:LLM_HARNESS_SKIP_BEHAVIORAL_TESTS -ErrorAction SilentlyContinue
     }
 }

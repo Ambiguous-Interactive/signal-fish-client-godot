@@ -14,33 +14,33 @@ glob_ignore_case = true
 # Directories and paths to exclude from scanning
 # -------------------------------------------------------------
 exclude_path = [
-    "(^|/)site/",
-    "^\\.git/",
-    "(^|/)\\.venv/",
-    "(^|/)\\.venv-ci/",
-    "(^|/)node_modules/",
-    "^progress/",
+  "(^|/)site/",
+  "^\\.git/",
+  "(^|/)\\.venv/",
+  "(^|/)\\.venv-ci/",
+  "(^|/)node_modules/",
+  "^progress/",
 ]
 
 # -------------------------------------------------------------
 # URL patterns to exclude from checking
 # -------------------------------------------------------------
 exclude = [
-    # Mail links - cannot be validated
-    "^mailto:",
+  # Mail links - cannot be validated
+  "^mailto:",
 
-    # New Pages routes return 404 until the merge-triggered deployment. MkDocs
-    # strict navigation validates every route locally before publication.
-    "^https://[Aa]mbiguous-[Ii]nteractive\\.github\\.io/signal-fish-client-godot/",
+  # New Pages routes return 404 until the merge-triggered deployment. MkDocs
+  # strict navigation validates every route locally before publication.
+  "^https://[Aa]mbiguous-[Ii]nteractive\\.github\\.io/signal-fish-client-godot/",
 
-    # Badge image URLs - shields.io can be flaky
-    "^https://img\\.shields\\.io/",
+  # Badge image URLs - shields.io can be flaky
+  "^https://img\\.shields\\.io/",
 
-    # GitHub Actions status badges - may 404 before repo is public
-    "^https://github\\.com/[Aa]mbiguous-?[Ii]nteractive/signal-fish-client.*/actions",
+  # GitHub Actions status badges - may 404 before repo is public
+  "^https://github\\.com/[Aa]mbiguous-?[Ii]nteractive/signal-fish-client.*/actions",
 
-    # Anchor-only links (intra-page) - mkdocs generates these
-    "^#",
+  # Anchor-only links (intra-page) - mkdocs generates these
+  "^#",
 ]
 
 # -------------------------------------------------------------

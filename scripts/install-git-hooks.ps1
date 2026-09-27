@@ -68,7 +68,8 @@ function ConvertTo-NormalizedHooksPath {
     }
     if ([System.IO.Path]::IsPathRooted($Path)) {
         $full = [System.IO.Path]::GetFullPath($Path)
-    } else {
+    }
+    else {
         $full = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $Path))
     }
     return $full.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
@@ -108,7 +109,8 @@ try {
     }
     if ([System.IO.Path]::IsPathRooted($hooksDirRaw)) {
         $hooksDir = [System.IO.Path]::GetFullPath($hooksDirRaw)
-    } else {
+    }
+    else {
         $hooksDir = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $hooksDirRaw))
     }
     if (-not (Test-Path -LiteralPath $hooksDir)) {
@@ -433,12 +435,14 @@ exit "`$HOOK_STATUS"
         if ($isLegacy -or $Force) {
             & git config --unset core.hooksPath 2>$null | Out-Null
             Write-Install "Cleared previous core.hooksPath '$existingHooksPath'."
-        } else {
+        }
+        else {
             Write-Install "WARNING: core.hooksPath is set to '$existingHooksPath'; the installed git hooks-path pre-commit shim will be ignored. Re-run with -Force to clear it." 'Yellow'
         }
     }
 
     Write-Install "Installed pre-commit hook at $installedHook" 'Green'
-} finally {
+}
+finally {
     Pop-Location
 }
