@@ -111,11 +111,10 @@ const _PLAYER_ROOM_STATES: Array[SessionState] = [
 	SessionState.IN_ROOM_FINALIZED,
 ]
 
-@warning_ignore("untyped_declaration")
 ## Active transport adapter. Tests may inject an [code]SFTransport[/code]
 ## before [method connect_to_server]; otherwise the client builds an
 ## [code]SFWebSocketTransport[/code].
-var transport = null
+var transport: SFTransportScript = null
 
 var _config: SignalFishConfigScript = null
 var _connection_state: ConnectionState = ConnectionState.DISCONNECTED
@@ -303,7 +302,6 @@ func set_auto_reconnect(enabled: bool) -> void:
 func poll() -> void:
 	if transport == null:
 		return
-	@warning_ignore("unsafe_method_access")
 	transport.poll()
 
 
@@ -321,13 +319,11 @@ func close(code := 1000, reason := "") -> Error:
 			# `failed`, which transitions the client to FAILED.
 			_connection_state = ConnectionState.CLOSING
 			_reset_heartbeat()
-			@warning_ignore("unsafe_method_access")
 			transport.close(code, reason)
 			return OK
 		ConnectionState.CONNECTED:
 			_connection_state = ConnectionState.CLOSING
 			_reset_heartbeat()
-			@warning_ignore("unsafe_method_access")
 			transport.close(code, reason)
 			return OK
 		_:
@@ -391,7 +387,6 @@ func get_authority_player() -> String:
 func get_buffered_amount() -> int:
 	if transport == null:
 		return 0
-	@warning_ignore("unsafe_method_access")
 	return transport.get_buffered_amount()
 
 
@@ -456,7 +451,6 @@ func send_game_data_binary(bytes: PackedByteArray) -> Error:
 			)
 		)
 		return ERR_UNAVAILABLE
-	@warning_ignore("unsafe_method_access")
 	var buffered: int = transport.get_buffered_amount()
 	if buffered > _config.max_buffered_bytes:
 		_emit_protocol_error(
@@ -469,7 +463,6 @@ func send_game_data_binary(bytes: PackedByteArray) -> Error:
 			)
 		)
 		return ERR_BUSY
-	@warning_ignore("unsafe_method_access")
 	var error: Error = transport.send_binary(bytes)
 	if error != OK:
 		# Transport failures also surface as `failed` -> connection_failed.
@@ -715,7 +708,6 @@ func _open_transport(target: String) -> Error:
 	if transport == null:
 		transport = _make_transport()
 	_wire_transport_signals()
-	@warning_ignore("unsafe_method_access")
 	var error: Error = transport.connect_to_url(target)
 	if error != OK:
 		# The transport already emitted `failed` for a synchronous refusal.
@@ -723,23 +715,17 @@ func _open_transport(target: String) -> Error:
 	return OK
 
 
-@warning_ignore("untyped_declaration")
-func _make_transport():
+func _make_transport() -> SFTransportScript:
 	return SFWebSocketTransportScript.new()
 
 
 func _wire_transport_signals() -> void:
-	@warning_ignore("unsafe_method_access")
 	transport.opened.connect(_on_transport_opened)
-	@warning_ignore("unsafe_method_access")
 	transport.packet_received.connect(_on_transport_packet)
-	@warning_ignore("unsafe_method_access")
 	transport.closed.connect(_on_transport_closed)
-	@warning_ignore("unsafe_method_access")
 	transport.failed.connect(_on_transport_failed)
-	@warning_ignore("unsafe_method_access")
 	if transport.get("max_packets_per_poll") != null:
-		transport.max_packets_per_poll = _config.max_inbound_packets_per_poll
+		transport.set("max_packets_per_poll", _config.max_inbound_packets_per_poll)
 
 
 func _on_transport_opened() -> void:
@@ -1171,7 +1157,6 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 		# down mid-dispatch, e.g. from a `connected` signal handler.
 		_emit_protocol_error("%s requires a connected transport" % action)
 		return ERR_UNCONFIGURED
-	@warning_ignore("unsafe_method_access")
 	var buffered: int = transport.get_buffered_amount()
 	if buffered > _config.max_buffered_bytes:
 		_emit_protocol_error(
@@ -1189,7 +1174,6 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 	if wire.is_empty():
 		_emit_protocol_error("%s: payload is not losslessly JSON-representable" % action)
 		return ERR_INVALID_DATA
-	@warning_ignore("unsafe_method_access")
 	var error: Error = transport.send_text(wire)
 	if error != OK:
 		# Transport failures also surface as `failed` -> connection_failed.
@@ -1447,15 +1431,10 @@ func _remember_secret(secret: String) -> void:
 ## if a server-side half-open is ever observed in practice.
 func _teardown_transport() -> void:
 	if transport != null:
-		@warning_ignore("unsafe_method_access")
 		transport.opened.disconnect(_on_transport_opened)
-		@warning_ignore("unsafe_method_access")
 		transport.packet_received.disconnect(_on_transport_packet)
-		@warning_ignore("unsafe_method_access")
 		transport.closed.disconnect(_on_transport_closed)
-		@warning_ignore("unsafe_method_access")
 		transport.failed.disconnect(_on_transport_failed)
-		@warning_ignore("unsafe_method_access")
 		# Signals are already unwired, so this close cannot re-enter a
 		# cascade: a torn-down attempt must never leak a live socket (the
 		# server would otherwise pin the session until its own timeout).

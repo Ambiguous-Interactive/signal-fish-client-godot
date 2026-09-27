@@ -206,7 +206,7 @@ func _test_auto_authenticate_matches_builder_bytes() -> void:
 	minimal_transport.inject_open()
 	_assert_equal(
 		[SFMessagesScript.encode(SFMessagesScript.authenticate("test-app"))],
-		minimal.transport.sent_text,
+		minimal_transport.sent_text,
 		"unset optionals omitted from authenticate"
 	)
 	minimal.free()
@@ -1005,15 +1005,15 @@ func _test_process_and_exit_tree_paths() -> void:
 	client.transport = transport
 	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
 	client._process(0.016)
-	_assert_equal(1, client.transport.poll_count, "_process drives transport poll")
+	_assert_equal(1, transport.poll_count, "_process drives transport poll")
 	transport.inject_open()
 	client._process(0.016)
-	_assert_equal(2, client.transport.poll_count, "poll continues while connected")
+	_assert_equal(2, transport.poll_count, "poll continues while connected")
 
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	config.auto_poll = false
 	client._process(0.016)
-	_assert_equal(2, client.transport.poll_count, "auto_poll off disables _process polling")
+	_assert_equal(2, transport.poll_count, "auto_poll off disables _process polling")
 
 	client._exit_tree()
 	_assert_equal(

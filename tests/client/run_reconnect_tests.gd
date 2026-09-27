@@ -170,8 +170,8 @@ func _test_manual_reconnect_guards_and_wire_bytes() -> void:
 		"reconnect dials into AUTHENTICATING"
 	)
 	var auth_bytes := SFMessagesScript.encode(SFMessagesScript.authenticate("test-app"))
-	_assert_equal([auth_bytes], reconnector.transport.sent_text, "first wire bytes authenticate")
 	var reconnector_transport: SFFakeTransportScript = reconnector.transport
+	_assert_equal([auth_bytes], reconnector_transport.sent_text, "first wire bytes authenticate")
 	reconnector_transport.inject_server_message(
 		{"type": "Authenticated", "data": _authenticated_data()}
 	)
@@ -179,7 +179,7 @@ func _test_manual_reconnect_guards_and_wire_bytes() -> void:
 	var expected := SFMessagesScript.encode(SFMessagesScript.reconnect(PLAYER_A, ROOM_ID, TOKEN_V1))
 	_assert_equal(
 		[auth_bytes, expected],
-		reconnector.transport.sent_text,
+		reconnector_transport.sent_text,
 		"Reconnect handshake follows Authenticated"
 	)
 	reconnector.free()
@@ -243,7 +243,7 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	_step(client, 1.0)
 	_assert_equal(OK, _wait_open(client), "auto dial after baseline")
 	var expected := SFMessagesScript.encode(SFMessagesScript.reconnect(PLAYER_A, ROOM_ID, TOKEN_V2))
-	_assert_equal(expected, client.transport.sent_text[-1], "auto dial uses rotated token")
+	_assert_equal(expected, transport.sent_text[-1], "auto dial uses rotated token")
 
 	transport.inject_server_message({"type": "Reconnected", "data": data})
 	_assert_equal(0, client._auto_reconnect_attempts, "budget resets after baseline")
@@ -287,7 +287,8 @@ func _test_manual_reconnect_dial_refreshes_auto_reconnect_context() -> void:
 	_step(client, 30.0)
 	_assert_equal(OK, _wait_open(client), "auto dial after the manual dial dropped")
 	var expected := SFMessagesScript.encode(SFMessagesScript.reconnect(PLAYER_A, ROOM_ID, TOKEN_V2))
-	_assert_equal(expected, client.transport.sent_text[-1], "auto retry uses the rotated token")
+	var auto_transport: SFFakeTransportScript = client.transport
+	_assert_equal(expected, auto_transport.sent_text[-1], "auto retry uses the rotated token")
 	_assert_no_protocol_errors()
 	client.free()
 	_done()
@@ -319,7 +320,8 @@ func _test_reconnect_reuses_last_dialed_url() -> void:
 		client.transport = SFFakeTransportScript.new()
 		_step(client, 30.0)
 		_assert_equal(OK, _wait_open(client), "%s: auto dial" % case[0])
-		_assert_equal(connect_url, client.transport._connected_url, "%s: rejoin target" % case[0])
+		var redial_transport: SFFakeTransportScript = client.transport
+		_assert_equal(connect_url, redial_transport._connected_url, "%s: rejoin target" % case[0])
 		_assert_no_protocol_errors()
 		client.free()
 	_done()
@@ -480,7 +482,8 @@ func _test_timer_dial_sync_refusal_arms_next_attempt_once() -> void:
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_close(4999, "dropped")
 	client.transport = SFFakeTransportScript.new()
-	client.transport.fail_on_connect = true
+	var refusing_transport: SFFakeTransportScript = client.transport
+	refusing_transport.fail_on_connect = true
 	_step(client, 30.0)
 	_assert_equal(
 		SignalFishClientScript.ConnectionState.FAILED,
@@ -803,7 +806,7 @@ func _test_duplicate_authenticated_sends_handshake_once() -> void:
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
-	_assert_equal([auth_bytes, handshake], client.transport.sent_text, "handshake sent once")
+	_assert_equal([auth_bytes, handshake], transport.sent_text, "handshake sent once")
 	_assert_no_protocol_errors()
 	client.free()
 
@@ -941,7 +944,7 @@ func _test_dial_contract_survives_authentication_error() -> void:
 	)
 	_assert_equal(
 		[SFMessagesScript.encode(SFMessagesScript.authenticate("test-app"))],
-		client.transport.sent_text,
+		transport.sent_text,
 		"no handshake for a dial whose authentication failed"
 	)
 	# Issue #108: the hostile post-error Reconnected is loud, not silent; the
@@ -1349,7 +1352,7 @@ func _wait_open(client: SignalFishClientScript) -> Error:
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_open()
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
-	var sent: Array = client.transport.sent_text
+	var sent: Array = transport.sent_text
 	if sent.size() < 2:
 		_failures.append(
 			"expected Authenticate + handshake after open, got %d message(s)" % sent.size()

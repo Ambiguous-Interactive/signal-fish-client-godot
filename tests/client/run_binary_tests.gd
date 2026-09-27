@@ -79,15 +79,15 @@ func _test_send_guards_and_wire_bytes() -> void:
 	var client_transport: SFFakeTransportScript = client.transport
 	var payload := PackedByteArray([0x81, 0xA1, 0x68, 0x2A])
 	_assert_equal(OK, client.send_game_data_binary(payload), "binary send under message_pack")
-	_assert_equal([payload], client.transport.sent_binary, "binary send bytes hit the wire")
-	client.transport.buffered_amount = config.max_buffered_bytes + 1
+	_assert_equal([payload], client_transport.sent_binary, "binary send bytes hit the wire")
+	client_transport.buffered_amount = config.max_buffered_bytes + 1
 	_assert_equal(
 		ERR_BUSY, client.send_game_data_binary(payload), "binary send honors backpressure"
 	)
 	_assert_equal(1, client_transport.sent_binary.size(), "backpressure drops binary")
 	var backpressure_error: String = errors[0]
 	_assert_string_contains(backpressure_error, "backpressure", "binary backpressure message")
-	client.transport.buffered_amount = 0
+	client_transport.buffered_amount = 0
 	client.free()
 	_done()
 
