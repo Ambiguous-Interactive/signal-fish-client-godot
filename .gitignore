@@ -48,5 +48,6 @@ GOAL.md
 # Session logs are local working notes, never shared (issue #155).
 /progress/
 
-# Node packages for local browser-check runs.
+# Node packages for local browser checks. Keep the tracked .gdignore so
+# Godot skips Playwright SVGs during editor import.
 node_modules/
