@@ -9,5 +9,6 @@ at `eaeca86`.
   mixed values.
 - The full local runtime gate passes. Main CI was green at `eaeca86` before
   the branch.
+- PR #199 is the session deliverable.
 
 #165 remains open for the wider wire, event, and test boundary audit.
