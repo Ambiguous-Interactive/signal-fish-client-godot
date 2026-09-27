@@ -685,6 +685,7 @@ class _MeshPeer:
 	extends RefCounted
 	var uuid: String = ""
 	var peer_id: int = 0
+	# Holds WebRTCPeerConnection or a test-injected double (the factory seam).
 	@warning_ignore("untyped_declaration") var connection = null
 	var initiate: bool = false
 	var generation: String = ""
