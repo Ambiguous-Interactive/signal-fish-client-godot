@@ -96,10 +96,10 @@ var _client: SignalFishClientScript = null
 # freed": Godot reads a freed object held by a script-typed variable as null,
 # so the vanished-client case must be detected by the flag, not the reference.
 var _attached := false
-var _plan = null
+@warning_ignore("untyped_declaration") var _plan = null
 var _ice_servers: Array = []
 var _peers: Dictionary = {}
-var _mp_peer = null
+@warning_ignore("untyped_declaration") var _mp_peer = null
 var _reported_connected := false
 var _status_retry_due_msec := 0
 
@@ -164,14 +164,18 @@ func poll() -> void:
 	# end in consumer handlers, which may legally mutate the mesh re-entrantly
 	# (a peer dropped mid-poll is simply skipped).
 	for uuid: String in _peers.keys():
+		@warning_ignore("untyped_declaration")
 		var entry = _peers.get(uuid)
 		if entry == null:
 			continue
+		@warning_ignore("unsafe_method_access")
 		entry.connection.poll()
+		@warning_ignore("unsafe_call_argument")
 		_drain_relay(entry)
 	_update_transport_status()
 
 
+@warning_ignore("untyped_declaration")
 ## The mesh multiplayer peer, ready for [code]MultiplayerAPI.multiplayer_peer
 ## [/code]; null until the mesh holds at least one plan peer (and after
 ## teardown).
@@ -236,13 +240,16 @@ func _client_is_live() -> bool:
 	return true
 
 
+@warning_ignore("untyped_declaration")
 func _on_client_room_joined(info) -> void:
 	# A fresh room baseline: any stale mesh dies, and the pre-gathered ICE
 	# list seeds connections opened before the first plan arrives.
 	_reset_mesh()
+	@warning_ignore("unsafe_method_access")
 	_ice_servers = info.ice_servers.duplicate()
 
 
+@warning_ignore("untyped_declaration")
 func _on_client_session_plan(plan) -> void:
 	# A plan is room-scoped (issue #120): a plan landing before any room
 	# baseline is off-contract server input, and applying it would open peer
@@ -250,14 +257,17 @@ func _on_client_session_plan(plan) -> void:
 	# the mesh, so dropping the stray plan loses nothing.
 	if _client == null or _client.get_room_id().is_empty():
 		return
+	@warning_ignore("unsafe_call_argument")
 	_apply_plan(plan)
 
 
+@warning_ignore("untyped_declaration")
 func _on_client_signal_received(from_player: String, generation: String, payload) -> void:
 	if _plan == null or _plan.transport != SFSessionTypesScript.TransportKind.WEBRTC:
 		return
 	if generation != _plan.generation:
 		return
+	@warning_ignore("untyped_declaration")
 	var entry = _peers.get(from_player)
 	if entry == null:
 		return
@@ -265,10 +275,13 @@ func _on_client_signal_received(from_player: String, generation: String, payload
 		return
 	var message: Dictionary = payload
 	if message.has("Offer"):
+		@warning_ignore("unsafe_call_argument", "unsafe_method_access")
 		entry.connection.set_remote_description("offer", String(message["Offer"]))
 	elif message.has("Answer"):
+		@warning_ignore("unsafe_call_argument", "unsafe_method_access")
 		entry.connection.set_remote_description("answer", String(message["Answer"]))
 	elif message.has("IceCandidate"):
+		@warning_ignore("unsafe_call_argument", "unsafe_method_access")
 		# Matchbox convention relays the candidate string only; media and
 		# index are not part of the Signal Fish signal payload.
 		entry.connection.add_ice_candidate("", 0, String(message["IceCandidate"]))
@@ -303,6 +316,7 @@ func _on_client_connection_failed(_error: String) -> void:
 	_reset_mesh()
 
 
+@warning_ignore("untyped_declaration")
 func _on_client_reconnected(_info, _missed_events: Array) -> void:
 	# Replay delivers the missed events through this signal only, so the old
 	# mesh cannot be revived by a replayed plan. No peer reopens until the
@@ -310,8 +324,10 @@ func _on_client_reconnected(_info, _missed_events: Array) -> void:
 	_reset_mesh()
 
 
+@warning_ignore("untyped_declaration")
 func _apply_plan(plan) -> void:
 	_plan = plan
+	@warning_ignore("unsafe_method_access")
 	# Replace, never merge: the plan's list governs connections opened from
 	# here on, and an empty list is an authoritative clear.
 	_ice_servers = plan.ice_servers.duplicate()
@@ -323,9 +339,11 @@ func _apply_plan(plan) -> void:
 			_drop_peer(uuid)
 		return
 	var wanted: Dictionary = {}
+	@warning_ignore("untyped_declaration")
 	for peer in plan.peers:
 		wanted[peer.player_id] = peer
 	for uuid: String in wanted:
+		@warning_ignore("untyped_declaration")
 		var entry = _peers.get(uuid)
 		if entry == null:
 			continue
@@ -335,6 +353,7 @@ func _apply_plan(plan) -> void:
 			_drop_peer(uuid)
 	for uuid: String in wanted:
 		if not _peers.has(uuid):
+			@warning_ignore("unsafe_call_argument")
 			_open_peer(uuid, wanted[uuid].initiate)
 	for uuid: String in _peers.keys():
 		if not wanted.has(uuid):
@@ -344,16 +363,21 @@ func _apply_plan(plan) -> void:
 func _open_peer(uuid: String, initiate: bool) -> void:
 	if _client == null or uuid.is_empty() or uuid == _client.get_player_id():
 		return
+	@warning_ignore("untyped_declaration")
 	var connection = _make_peer_connection()
 	if connection == null:
 		return
+	@warning_ignore("unsafe_method_access")
 	var error: Error = connection.initialize(_rtc_configuration())
 	if error != OK:
 		SFLogScript.error("mesh: peer connection refused (%d)" % error)
+		@warning_ignore("unsafe_method_access")
 		connection.close()
 		return
+	@warning_ignore("untyped_declaration")
 	var multiplayer_peer = _multiplayer_peer()
 	if multiplayer_peer == null:
+		@warning_ignore("unsafe_method_access")
 		connection.close()
 		return
 	var entry := _MeshPeer.new()
@@ -362,9 +386,11 @@ func _open_peer(uuid: String, initiate: bool) -> void:
 	entry.connection = connection
 	entry.initiate = initiate
 	entry.generation = _plan.generation if _plan != null else ""
+	@warning_ignore("unsafe_method_access")
 	error = multiplayer_peer.add_peer(connection, entry.peer_id)
 	if error != OK:
 		SFLogScript.error("mesh: add_peer refused (%d)" % error)
+		@warning_ignore("unsafe_method_access")
 		connection.close()
 		return
 	# The callables are kept on the entry so `_drop_peer` can disconnect
@@ -373,28 +399,38 @@ func _open_peer(uuid: String, initiate: bool) -> void:
 	# leaks every rebuilt peer (issue #86).
 	entry.session_cb = func(type: String, sdp: String) -> void:
 		_on_peer_session_description(entry, type, sdp)
+	@warning_ignore("unsafe_method_access")
 	connection.session_description_created.connect(entry.session_cb)
 	entry.ice_cb = func(media: String, index: int, candidate: String) -> void:
 		_on_peer_ice_candidate(entry, media, index, candidate)
+	@warning_ignore("unsafe_method_access")
 	connection.ice_candidate_created.connect(entry.ice_cb)
 	_peers[uuid] = entry
 	if initiate:
+		@warning_ignore("unsafe_method_access")
 		connection.create_offer()
 
 
 func _drop_peer(uuid: String) -> void:
+	@warning_ignore("untyped_declaration")
 	var entry = _peers.get(uuid)
 	if entry == null:
 		return
 	_peers.erase(uuid)
 	if _mp_peer != null:
+		@warning_ignore("unsafe_method_access")
 		_mp_peer.remove_peer(entry.peer_id)
+	@warning_ignore("unsafe_method_access")
 	if entry.session_cb.is_valid():
+		@warning_ignore("unsafe_method_access")
 		entry.connection.session_description_created.disconnect(entry.session_cb)
+	@warning_ignore("unsafe_method_access")
 	if entry.ice_cb.is_valid():
+		@warning_ignore("unsafe_method_access")
 		entry.connection.ice_candidate_created.disconnect(entry.ice_cb)
 	entry.session_cb = Callable()
 	entry.ice_cb = Callable()
+	@warning_ignore("unsafe_method_access")
 	entry.connection.close()
 
 
@@ -404,6 +440,7 @@ func _reset_mesh() -> void:
 	for uuid: String in _peers.keys():
 		_drop_peer(uuid)
 	if _mp_peer != null:
+		@warning_ignore("unsafe_method_access")
 		_mp_peer.close()
 	_mp_peer = null
 	# Teardown resolves the reported state silently: boundary reports are for
@@ -450,14 +487,17 @@ func _update_transport_status() -> void:
 func _count_connected_peers() -> int:
 	var connected := 0
 	for uuid: String in _peers:
+		@warning_ignore("unsafe_method_access")
 		if _peers[uuid].connection.get_connection_state() == WebRTCPeerConnection.STATE_CONNECTED:
 			connected += 1
 	return connected
 
 
+@warning_ignore("untyped_declaration")
 func _on_peer_session_description(entry, type: String, sdp: String) -> void:
 	if _peers.get(entry.uuid) != entry:
 		return
+	@warning_ignore("unsafe_method_access")
 	entry.connection.set_local_description(type, sdp)
 	var payload: Dictionary = {}
 	if type == "offer":
@@ -466,18 +506,22 @@ func _on_peer_session_description(entry, type: String, sdp: String) -> void:
 		payload["Answer"] = sdp
 	else:
 		return
+	@warning_ignore("unsafe_call_argument")
 	_send_signal_to(entry, payload)
 
 
+@warning_ignore("untyped_declaration")
 func _on_peer_ice_candidate(entry, _media: String, _index: int, candidate: String) -> void:
 	if _peers.get(entry.uuid) != entry:
 		return
 	if candidate.is_empty():
 		# End-of-candidates marker: nothing to relay or apply.
 		return
+	@warning_ignore("unsafe_call_argument")
 	_send_signal_to(entry, {"IceCandidate": candidate})
 
 
+@warning_ignore("untyped_declaration")
 func _send_signal_to(entry, payload: Dictionary) -> void:
 	if not _client_connected():
 		return
@@ -486,29 +530,39 @@ func _send_signal_to(entry, payload: Dictionary) -> void:
 	# The freshest payload per peer doubles as the rate-limit healing
 	# candidate: a server-refused relay re-queues exactly this payload.
 	entry.last_relayed = payload
+	@warning_ignore("unsafe_method_access")
 	if not entry.pending_signals.is_empty():
+		@warning_ignore("unsafe_call_argument")
 		# Order matters (an Offer must precede its candidates at the remote),
 		# and hammering a backpressured link would spam protocol_error: queue
 		# behind the pending head and let the throttled drain deliver it.
 		_enqueue_relay(entry, payload)
 		return
+	@warning_ignore("unsafe_call_argument")
 	_dispatch_relay(entry, payload)
 
 
+@warning_ignore("untyped_declaration")
 func _dispatch_relay(entry, payload: Dictionary) -> void:
+	@warning_ignore("unsafe_call_argument")
 	if _client.send_signal(entry.uuid, entry.generation, payload) == OK:
 		return
 	# The initial refusal consumes budget like any retry (issue #127).
 	entry.relay_attempts += 1
+	@warning_ignore("unsafe_call_argument")
 	_enqueue_relay(entry, payload)
 
 
+@warning_ignore("untyped_declaration")
 func _enqueue_relay(entry, payload: Dictionary) -> void:
+	@warning_ignore("unsafe_method_access")
 	entry.pending_signals.append(payload)
+	@warning_ignore("unsafe_method_access")
 	if entry.pending_signals.size() == 1:
 		entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
 
 
+@warning_ignore("untyped_declaration")
 # Issue #127: a refused relay must reach the peer or the mesh stalls in
 # negotiation. The queue redelivers in order; each refused attempt waits
 # out one interval (the issue-#102 throttle) while a recovered link
@@ -518,12 +572,15 @@ func _drain_relay(entry) -> void:
 	if _peers.get(entry.uuid) != entry:
 		# Orphaned by a re-entrant drop during this poll's callbacks.
 		return
+	@warning_ignore("unsafe_method_access")
 	if entry.pending_signals.is_empty() or not _client_connected():
 		return
 	if entry.relay_due_msec > Time.get_ticks_msec():
 		return
+	@warning_ignore("unsafe_method_access")
 	while not entry.pending_signals.is_empty():
 		var payload: Dictionary = entry.pending_signals[0]
+		@warning_ignore("unsafe_call_argument")
 		if _client.send_signal(entry.uuid, entry.generation, payload) != OK:
 			entry.relay_attempts += 1
 			if entry.relay_attempts >= signal_retry_budget:
@@ -533,6 +590,7 @@ func _drain_relay(entry) -> void:
 						% [entry.uuid, entry.relay_attempts]
 					)
 				)
+				@warning_ignore("unsafe_method_access")
 				entry.pending_signals.clear()
 				entry.relay_attempts = 0
 				entry.relay_due_msec = 0
@@ -540,6 +598,7 @@ func _drain_relay(entry) -> void:
 			else:
 				entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
 			return
+		@warning_ignore("unsafe_method_access")
 		entry.pending_signals.pop_front()
 		entry.relay_attempts = 0
 
@@ -556,11 +615,14 @@ func _on_client_server_error(_message: String, error_code: int) -> void:
 	if not _client_connected():
 		return
 	for uuid: String in _peers:
+		@warning_ignore("untyped_declaration")
 		var entry = _peers[uuid]
 		if entry.relay_dropped or entry.last_relayed == null:
 			continue
+		@warning_ignore("unsafe_method_access")
 		if entry.pending_signals.has(entry.last_relayed):
 			continue
+		@warning_ignore("unsafe_method_access")
 		# Front of the queue: this payload predates anything still pending.
 		entry.pending_signals.push_front(entry.last_relayed)
 		entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
@@ -572,25 +634,30 @@ func _client_connected() -> bool:
 	return _client != null and _client.is_connected_to_server()
 
 
+@warning_ignore("untyped_declaration")
 func _make_peer_connection():
 	if peer_connection_factory.is_valid():
 		return peer_connection_factory.call()
 	return WebRTCPeerConnection.new()
 
 
+@warning_ignore("untyped_declaration")
 func _make_multiplayer_peer():
 	if multiplayer_peer_factory.is_valid():
 		return multiplayer_peer_factory.call()
 	return WebRTCMultiplayerPeer.new()
 
 
+@warning_ignore("untyped_declaration")
 func _multiplayer_peer():
 	if _mp_peer == null:
 		_mp_peer = _make_multiplayer_peer()
 		var my_id := uuid_to_peer_id(_client.get_player_id() if _client != null else "")
+		@warning_ignore("unsafe_method_access")
 		var error: Error = _mp_peer.create_mesh(my_id)
 		if error != OK:
 			SFLogScript.error("mesh: create_mesh refused (%d)" % error)
+			@warning_ignore("unsafe_method_access")
 			_mp_peer.close()
 			_mp_peer = null
 	return _mp_peer
@@ -600,10 +667,14 @@ func _multiplayer_peer():
 ## Credentials are values only: they are never logged.
 func _rtc_configuration() -> Dictionary:
 	var ice_servers: Array = []
+	@warning_ignore("untyped_declaration")
 	for server in _ice_servers:
+		@warning_ignore("unsafe_call_argument")
 		var entry: Dictionary = {"urls": Array(server.urls)}
+		@warning_ignore("unsafe_method_access")
 		if not server.username.is_empty():
 			entry["username"] = server.username
+		@warning_ignore("unsafe_method_access")
 		if not server.credential.is_empty():
 			entry["credential"] = server.credential
 		ice_servers.append(entry)
@@ -614,7 +685,8 @@ class _MeshPeer:
 	extends RefCounted
 	var uuid: String = ""
 	var peer_id: int = 0
-	var connection = null
+	# Holds WebRTCPeerConnection or a test-injected double (the factory seam).
+	@warning_ignore("untyped_declaration") var connection = null
 	var initiate: bool = false
 	var generation: String = ""
 	var session_cb: Callable = Callable()

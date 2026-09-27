@@ -56,6 +56,10 @@ handshakes in both directions, and refused-dial failure.
 
 ## Type strictness
 
-All GDScript in the addon is fully explicitly typed. The project promotes
-`untyped_declaration` and the `unsafe_*` Variant-access checks to errors,
-so untyped declarations or unsafe property and method access fail CI.
+The project promotes `untyped_declaration` and the `unsafe_*` Variant-access
+checks to errors, and applies them to the addon as well: the engine default
+`exclude_addons` is explicitly disabled, so untyped declarations or unsafe
+property and method access fail CI anywhere in the repo. The small set of
+statements that are not yet fully typed carry an explicit
+`@warning_ignore` marker naming exactly what they trigger: grep for
+`@warning_ignore` in `addons/` for the live list.

@@ -45,8 +45,10 @@ static func downgrade_reason(config_format: String, supported_formats: Array) ->
 	for value: Variant in supported_formats:
 		match typeof(value):
 			TYPE_INT:
+				@warning_ignore("unsafe_call_argument")
 				labels.append(SFTypesScript.game_data_encoding_to_string(int(value)))
 			TYPE_STRING:
+				@warning_ignore("unsafe_call_argument")
 				labels.append(String(value))
 			_:
 				labels.append(str(value))

@@ -15,8 +15,10 @@ max-public-methods: 31
 # client gained the PLAN §4.7 heartbeat and its suites, to 1400 when every
 # test gained the issue-#104 completion sentinel, to 1450 when the client
 # gained the issue-#147 authority-flag cache and accessor) without inviting
-# unbounded growth.
-max-file-lines: 1450
+# unbounded growth. 1450 -> 1550: the addon joined the error-level warning
+# net (exclude_addons=false, issue #170) and carries per-statement
+# @warning_ignore markers; the client alone holds 58 of them.
+max-file-lines: 1550
 
 # max-returns: the headless smoke runner sequences async waits with
 # early-return guards so a timed-out step skips every dependent step; the

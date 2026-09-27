@@ -41,6 +41,7 @@ static func is_invalid_message(envelope: Dictionary) -> bool:
 
 
 static func invalid_message_error(envelope: Dictionary) -> String:
+	@warning_ignore("unsafe_call_argument")
 	return String(envelope.get(INVALID_MESSAGE_ERROR_KEY, ""))
 
 
@@ -103,6 +104,7 @@ static func _stringify_value(value: Variant, depth: int) -> String:
 		TYPE_INT:
 			return str(value)
 		TYPE_FLOAT:
+			@warning_ignore("unsafe_call_argument")
 			return _stringify_float(value)
 		TYPE_NIL:
 			return "null"
@@ -163,6 +165,7 @@ static func decode_text(text: String) -> Dictionary:
 	var parsed: Variant = json.data
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return {"ok": false, "error": "message must be a JSON object", "envelope": {}}
+	@warning_ignore("unsafe_call_argument")
 	return decode_envelope(parsed)
 
 
@@ -171,6 +174,7 @@ static func decode_envelope(envelope: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "message is missing type", "envelope": envelope}
 	if typeof(envelope.get("type")) != TYPE_STRING:
 		return {"ok": false, "error": "message type must be a string", "envelope": envelope}
+	@warning_ignore("unsafe_call_argument")
 	if String(envelope["type"]).is_empty():
 		return {"ok": false, "error": "message type must not be empty", "envelope": envelope}
 	if (

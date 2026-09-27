@@ -206,6 +206,7 @@ static func peer_signal(
 			return _invalid_message(
 				"Signal", "generation must be a lowercase hyphenated UUID string", data
 			)
+		@warning_ignore("unsafe_call_argument")
 		var generation_value := String(generation)
 		if not generation_value.is_empty():
 			if not SFTypeUtils.is_canonical_uuid_text(generation_value):
@@ -246,6 +247,7 @@ static func _add_optional_string(data: Dictionary, key: String, value: Variant) 
 		return ""
 	if typeof(value) != TYPE_STRING and typeof(value) != TYPE_STRING_NAME:
 		return "%s must be a string" % key
+	@warning_ignore("unsafe_call_argument")
 	var string_value := String(value)
 	if string_value.is_empty():
 		return ""
@@ -259,6 +261,7 @@ static func _add_optional_game_data_encoding(
 	if value == null:
 		return ""
 	if typeof(value) == TYPE_INT:
+		@warning_ignore("unsafe_call_argument")
 		var encoded := SFTypesScript.game_data_encoding_to_string(int(value))
 		if encoded == "unknown":
 			return "%s is unknown" % key
@@ -266,6 +269,7 @@ static func _add_optional_game_data_encoding(
 		return ""
 	if typeof(value) != TYPE_STRING and typeof(value) != TYPE_STRING_NAME:
 		return "%s must be a string or enum value" % key
+	@warning_ignore("unsafe_call_argument")
 	var string_value := String(value)
 	if string_value.is_empty():
 		return "%s must not be empty" % key
@@ -282,6 +286,7 @@ static func _add_optional_relay_transport(data: Dictionary, key: String, value: 
 	if value == null:
 		return ""
 	if typeof(value) == TYPE_INT:
+		@warning_ignore("unsafe_call_argument")
 		var encoded := SFTypesScript.relay_transport_to_string(int(value))
 		if encoded == "unknown":
 			return "%s is unknown" % key
@@ -289,6 +294,7 @@ static func _add_optional_relay_transport(data: Dictionary, key: String, value: 
 		return ""
 	if typeof(value) != TYPE_STRING and typeof(value) != TYPE_STRING_NAME:
 		return "%s must be a string or enum value" % key
+	@warning_ignore("unsafe_call_argument")
 	var string_value := String(value)
 	if string_value.is_empty():
 		return "%s must not be empty" % key
@@ -309,6 +315,7 @@ static func _add_optional_u8(
 	# post-collapse.
 	if not SFTypeUtils.is_i64_integer(value):
 		return "%s must be an integer" % key
+	@warning_ignore("unsafe_call_argument")
 	var int_value := int(value)
 	if int_value < min_value or int_value > SFTypesScript.U8_MAX:
 		return "%s must be in range %d..%d" % [key, min_value, SFTypesScript.U8_MAX]
@@ -323,6 +330,7 @@ static func _add_optional_u16(data: Dictionary, key: String, value: Variant) -> 
 	# "unset" omit below must only apply to values read verbatim.
 	if not SFTypeUtils.is_i64_integer(value):
 		return "%s must be an integer" % key
+	@warning_ignore("unsafe_call_argument")
 	var int_value := int(value)
 	if int_value < 0 or int_value > SFTypesScript.U16_MAX:
 		return "%s must be in range 0..%d" % [key, SFTypesScript.U16_MAX]
@@ -362,6 +370,7 @@ static func _add_optional_string_list(data: Dictionary, key: String, values: Var
 	for value: Variant in values:
 		if typeof(value) != TYPE_STRING and typeof(value) != TYPE_STRING_NAME:
 			return "%s must contain strings" % key
+		@warning_ignore("unsafe_call_argument")
 		var token := String(value)
 		if token.is_empty():
 			return "%s must not contain empty strings" % key
@@ -377,11 +386,13 @@ static func _enum_token(value: Variant, from_string: Dictionary) -> String:
 		if not SFTypeUtils.is_integral_number(value):
 			return ""
 		for token: String in from_string:
+			@warning_ignore("unsafe_call_argument")
 			if int(from_string[token]) == int(value):
 				return token
 		return ""
 	if typeof(value) != TYPE_STRING and typeof(value) != TYPE_STRING_NAME:
 		return ""
+	@warning_ignore("unsafe_call_argument")
 	var token := String(value)
 	return token if from_string.has(token) else ""
 
@@ -429,6 +440,7 @@ static func _is_json_value_depth(value: Variant, depth: int, allow_null: bool) -
 		TYPE_BOOL, TYPE_INT, TYPE_STRING:
 			return true
 		TYPE_FLOAT:
+			@warning_ignore("unsafe_call_argument")
 			return is_finite(value)
 		_:
 			return false

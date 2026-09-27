@@ -198,6 +198,7 @@ func _fail_current_session(
 ) -> void:
 	if _failed_emitted or _closed_emitted:
 		return
+	@warning_ignore("untyped_declaration")
 	var peer = _peer
 	_peer = null
 	_failed_emitted = true
