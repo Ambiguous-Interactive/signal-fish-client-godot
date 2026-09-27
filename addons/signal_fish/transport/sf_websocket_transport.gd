@@ -135,10 +135,6 @@ func _handle_polled_state(state: int) -> void:
 		_drain_queued_then_close()
 
 
-## Shared issue-#70 drain sequence: drain queued frames, then emit `closed`
-## only when nothing remains and this session is still the one draining (a
-## packet handler may redial synchronously mid-drain; the fresh dial must not
-## be closed in the old session's name).
 func _drain_queued_then_close() -> void:
 	var drained_peer: SFWebSocketPeerAdapterScript = _peer
 	if not _drain_packets():

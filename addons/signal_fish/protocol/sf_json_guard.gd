@@ -1,9 +1,8 @@
 class_name SFJsonGuard
 extends RefCounted
 
-## Rejects duplicate JSON object keys before Godot's last-wins parser runs.
-## Keys are compared after escape decoding. NUL keys are also rejected because
-## Godot strips NUL and could merge distinct keys (issue #92).
+# Godot's parser is last-wins and strips NUL; reject duplicate or NUL keys first
+# (issue #92).
 
 const _MAX_REPORTED_KEY_BYTES := 32
 

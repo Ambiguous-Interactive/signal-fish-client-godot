@@ -294,9 +294,6 @@ class ConnectionInfo:
 		_normalize_common_wire_fields(result)
 		return result
 
-	## Open payloads (JSON null, scalars) pass through verbatim; containers
-	## are deep-copied so to_dict() never aliases the caller's wire tree
-	## (issue #73).
 	func _copied_data(value: Variant) -> Variant:
 		if value is Dictionary:
 			var dictionary: Dictionary = value
@@ -1110,10 +1107,6 @@ static func _has_string(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_STRING
 
 
-## A present upstream-UUID identifier (`PlayerId`/`RoomId`) must be canonical
-## lowercase hyphenated UUID text: empty cannot deserialize upstream and
-## collides with the retired negotiated-rkyv "" sender-unknowable sentinel
-## (issue #149), and no other spelling is wire-reachable (issue #151).
 static func _has_id(data: Dictionary, key: String) -> bool:
 	return TypeUtils.is_canonical_uuid_text(data.get(key))
 
@@ -1132,8 +1125,6 @@ static func _has_integer_in_range(
 	return data.has(key) and _is_integer_value_in_range(data[key], min_value, max_value)
 
 
-## Id array (upstream `ready_players: Vec<PlayerId>`, issue #149): every
-## entry must be canonical lowercase hyphenated UUID text (issue #151).
 static func _has_uuid_string_array(data: Dictionary, key: String) -> bool:
 	if not data.has(key) or not _is_string_array_value(data[key]):
 		return false
@@ -1143,16 +1134,12 @@ static func _has_uuid_string_array(data: Dictionary, key: String) -> bool:
 	return true
 
 
-## Absent or JSON-null optional string (upstream `Option`, serde default);
-## a present value must be a string.
 static func _is_optional_string(data: Dictionary, key: String) -> bool:
 	if not data.has(key) or data[key] == null:
 		return true
 	return typeof(data[key]) == TYPE_STRING
 
 
-## Absent or JSON-null `Reconnected.replay` (v3-only `Option<ReplayStatus>`,
-## serde skip_serializing_if); a present value must be a known status token.
 static func _is_optional_replay_status(data: Dictionary) -> bool:
 	if not data.has("replay") or data["replay"] == null:
 		return true
@@ -1163,10 +1150,6 @@ static func _is_optional_replay_status(data: Dictionary) -> bool:
 	return REPLAY_STATUS_FROM_STRING.has(replay)
 
 
-## Absent or JSON-null `Reconnected.sender_watermarks` (v3-only
-## `Vec<SenderWatermark>`); a present value must be an array of watermark
-## objects with a UUID `player_id`, u32 `epoch`, and
-## i64-representable `seq` (issue #149).
 static func _is_optional_watermarks_array(data: Dictionary) -> bool:
 	if not data.has("sender_watermarks") or data["sender_watermarks"] == null:
 		return true
@@ -1185,10 +1168,6 @@ static func _is_optional_watermarks_array(data: Dictionary) -> bool:
 	return true
 
 
-## Wire integers beyond the platform range arrive as floats: require strict
-## i64 representability so a hostile value cannot collapse in int()
-## (issue #73). 2^63 is rejected even though it is the float I64_MAX rounds
-## to — a present-as-float value that large is hostile, never a real cap.
 static func _is_i64_integer(value: Variant) -> bool:
 	if value is int:
 		var integer: int = value

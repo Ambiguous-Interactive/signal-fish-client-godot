@@ -22,8 +22,6 @@ Per-session history: `progress/session-NNN-*.md`.
 - [ ] #167: Pin and check formatters for the remaining script and doc formats.
 - [ ] #168: Move suitable automation to Python and uv while preserving the
       PowerShell harness and the runtime gate behavior.
-- [ ] #169: Remove narration comments across the addon; retain public API
-      docs and non-obvious protocol or lifecycle rationale.
 - [ ] #170: Add useful static analyzers for Python, PowerShell, shell, and
       JavaScript, then verify their findings and warning exceptions.
 

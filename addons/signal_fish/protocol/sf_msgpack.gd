@@ -58,9 +58,6 @@ static func encode(value: Variant) -> Dictionary:
 	return {"ok": true, "bytes": peer.data_array, "error": ""}
 
 
-## [param failure] is a one-element out-slot: a non-empty string marks the
-## decode as failed and every caller stops unwinding. Passing it down keeps
-## decode reentrant with zero per-node allocations.
 static func _decode_value(peer: StreamPeerBuffer, depth: int, failure: Array[String]) -> Variant:
 	if depth > MAX_DEPTH:
 		return _fail(failure, "MessagePack nesting exceeds depth %d" % MAX_DEPTH)
@@ -217,7 +214,6 @@ static func _read_binary(
 	return peer.get_data(length)[1]
 
 
-## Reads a big-endian length of [param width] bytes; -1 means truncated.
 static func _read_length(peer: StreamPeerBuffer, width: int) -> int:
 	if peer.get_available_bytes() < width:
 		return -1
@@ -335,8 +331,6 @@ static func _encode_string(peer: StreamPeerBuffer, value: String) -> void:
 	peer.put_data(encoded)
 
 
-## Emits a str/bin-family length header: [param fix_base] (or -1 when no fix
-## form exists) with [param fix_max], then the 8/16/32-bit markers as needed.
 static func _put_length(
 	peer: StreamPeerBuffer,
 	fix_base: int,
@@ -358,8 +352,6 @@ static func _put_length(
 		peer.put_u32(length)
 
 
-## Emits an array/map-family length header (fix form, then 16/32-bit — these
-## families have no 8-bit marker).
 static func _put_count_length(
 	peer: StreamPeerBuffer, fix_base: int, u16_marker: int, length: int
 ) -> void:

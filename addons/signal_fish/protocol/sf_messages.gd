@@ -6,10 +6,7 @@ const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd"
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 
-## Envelope-relative depth where builder payloads live (e.g. GameData data
-## and the Signal matchbox both sit two levels below the root), so the
-## whitelist refuses at the same depth the encoder would — a payload the
-## builder accepts must always encode.
+# Match the encoder's payload depth so accepted builders always encode.
 const _PAYLOAD_DEPTH := 2
 
 
@@ -406,12 +403,6 @@ static func _is_json_value(value: Variant, allow_null := false) -> bool:
 	return _is_json_value_depth(value, _PAYLOAD_DEPTH, allow_null)
 
 
-## Recursive JSON-shape check so a payload containing engine-only Variants
-## (e.g. a nested Vector2) is refused locally instead of being silently
-## stringified onto the wire by JSON.stringify. Nested JSON `null` is valid
-## upstream JSON, so open payloads opt in via [param allow_null]; the
-## matchbox `Signal` payload keeps refusing it (a null offer/candidate is a
-## consumer bug, and an empty-string sentinel or omission is available).
 static func _is_json_value_depth(value: Variant, depth: int, allow_null: bool) -> bool:
 	if depth > SFTypeUtils.MAX_MESSAGE_DEPTH:
 		return false

@@ -58,9 +58,7 @@ const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 
-## FNV-1a 64-bit constants for the deterministic UUID → peer-id mapping. The
-## offset basis is the signed form of 0xcbf29ce484222325: GDScript clamps an
-## unsigned 64-bit literal to INT64_MAX instead of wrapping.
+# Signed FNV offset: GDScript clamps unsigned 64-bit literals.
 const _FNV1A_OFFSET_BASIS := -3750763034362895579
 const _FNV1A_PRIME := 1099511628211
 
@@ -259,7 +257,6 @@ func _on_client_signal_received(from_player: String, generation: String, payload
 		# Matchbox convention relays the candidate string only; media and
 		# index are not part of the Signal Fish signal payload.
 		entry.connection.call("add_ice_candidate", "", 0, str(message["IceCandidate"]))
-	# Unknown signal shapes may belong to future protocol versions.
 
 
 func _on_client_new_peer(peer_id: String, you_initiate: bool) -> void:
@@ -299,7 +296,6 @@ func _on_client_reconnected(_info: SFTypesScript.RoomJoinedInfo, _missed_events:
 
 func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 	_plan = plan
-	# An empty list clears ICE servers from the previous plan.
 	_ice_servers = plan.ice_servers.duplicate()
 	if plan.transport != SFSessionTypesScript.TransportKind.WEBRTC:
 		# Only a webrtc plan carries peer connections for this mesh. A relay
@@ -466,7 +462,6 @@ func _on_peer_ice_candidate(
 	if _peers.get(entry.uuid) != entry:
 		return
 	if candidate.is_empty():
-		# WebRTC's end-of-candidates marker needs no relay.
 		return
 	_send_signal_to(entry, {"IceCandidate": candidate})
 
@@ -490,7 +485,6 @@ func _send_signal_to(entry: _MeshPeer, payload: Dictionary) -> void:
 func _dispatch_relay(entry: _MeshPeer, payload: Dictionary) -> void:
 	if _client.send_signal(entry.uuid, entry.generation, payload) == OK:
 		return
-	# The first refused send also consumes retry budget.
 	entry.relay_attempts += 1
 	_enqueue_relay(entry, payload)
 
@@ -501,14 +495,8 @@ func _enqueue_relay(entry: _MeshPeer, payload: Dictionary) -> void:
 		entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
 
 
-# Issue #127: a refused relay must reach the peer or the mesh stalls in
-# negotiation. The queue redelivers in order; each refused attempt waits
-# out one interval (the issue-#102 throttle) while a recovered link
-# flushes the backlog, and a head still refused past the budget drops the
-# queue with one loud diagnostic.
 func _drain_relay(entry: _MeshPeer) -> void:
 	if _peers.get(entry.uuid) != entry:
-		# A callback may have dropped this peer earlier in the same poll.
 		return
 	if entry.pending_signals.is_empty() or not _client_connected():
 		return
@@ -537,12 +525,7 @@ func _drain_relay(entry: _MeshPeer) -> void:
 
 
 func _on_client_server_error(_message: String, error_code: int) -> void:
-	# A server-side `SIGNAL_RATE_LIMITED` refused a relay that already
-	# returned OK locally, so no retry is armed. The wire Error carries no
-	# target peer, so each peer's last relayed payload is re-queued (the
-	# freshest probe; re-relaying is idempotent at the signal layer) with
-	# the standard throttle. A queue already dropped by the budget stays
-	# dropped (issue #127).
+	# The error has no target peer, so retry each peer's last relay (issue #127).
 	if error_code != SFErrorCodesScript.Code.SIGNAL_RATE_LIMITED:
 		return
 	if not _client_connected():
@@ -558,8 +541,6 @@ func _on_client_server_error(_message: String, error_code: int) -> void:
 		entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
 
 
-## The mesh may only emit while the client's transport is CONNECTED; CLOSING
-## keeps polling for the close frame, so late peer transitions land here.
 func _client_connected() -> bool:
 	return _client != null and _client.is_connected_to_server()
 
