@@ -51,9 +51,6 @@ extends Node
 ## channels come from [code]WebRTCMultiplayerPeer.create_mesh[/code] defaults
 ## (one reliable ordered channel); relayed ICE candidates carry the candidate
 ## string only, which matches that single default channel.
-##
-## Tests inject [member peer_connection_factory] and
-## [member multiplayer_peer_factory] instead of real engine objects (PLAN §8).
 
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
@@ -111,8 +108,6 @@ var _status_retry_due_msec := 0
 func attach(client: SignalFishClientScript) -> Error:
 	if client == null:
 		return ERR_INVALID_PARAMETER
-	# Resolve a client that vanished since the last attach (freed without a
-	# poll) so a zombie mesh can never be re-attached onto a fresh client.
 	_client_is_live()
 	if _client != null:
 		return ERR_BUSY
@@ -133,8 +128,6 @@ func attach(client: SignalFishClientScript) -> Error:
 
 ## Stops consuming events and tears the mesh down.
 func detach() -> void:
-	# Also resolves a vanished client here so _exit_tree teardown never
-	# depends on a later poll.
 	if not _client_is_live():
 		return
 	_client.room_joined.disconnect(_on_client_room_joined)
@@ -221,14 +214,9 @@ func _notification(what: int) -> void:
 		_reset_mesh()
 
 
-## Drops a client that was freed without a detach (legal: the nodes are
-## independent) instead of keeping a zombie mesh, and reports liveness for
-## the poll paths.
 func _client_is_live() -> bool:
 	if _client == null:
 		if _attached:
-			# The attached client node was freed; Godot reads the typed
-			# reference as null. Tear the mesh down with it.
 			_attached = false
 			_reset_mesh()
 		return false
@@ -242,8 +230,6 @@ func _client_is_live() -> bool:
 
 @warning_ignore("untyped_declaration")
 func _on_client_room_joined(info) -> void:
-	# A fresh room baseline: any stale mesh dies, and the pre-gathered ICE
-	# list seeds connections opened before the first plan arrives.
 	_reset_mesh()
 	@warning_ignore("unsafe_method_access")
 	_ice_servers = info.ice_servers.duplicate()
@@ -285,7 +271,7 @@ func _on_client_signal_received(from_player: String, generation: String, payload
 		# Matchbox convention relays the candidate string only; media and
 		# index are not part of the Signal Fish signal payload.
 		entry.connection.add_ice_candidate("", 0, String(message["IceCandidate"]))
-	# Anything else is opaque and forward-compatible: discard silently.
+	# Unknown signal shapes may belong to future protocol versions.
 
 
 func _on_client_new_peer(peer_id: String, you_initiate: bool) -> void:
@@ -328,8 +314,7 @@ func _on_client_reconnected(_info, _missed_events: Array) -> void:
 func _apply_plan(plan) -> void:
 	_plan = plan
 	@warning_ignore("unsafe_method_access")
-	# Replace, never merge: the plan's list governs connections opened from
-	# here on, and an empty list is an authoritative clear.
+	# An empty list clears ICE servers from the previous plan.
 	_ice_servers = plan.ice_servers.duplicate()
 	if plan.transport != SFSessionTypesScript.TransportKind.WEBRTC:
 		# Only a webrtc plan carries peer connections for this mesh. A relay
@@ -348,8 +333,6 @@ func _apply_plan(plan) -> void:
 		if entry == null:
 			continue
 		if entry.initiate != wanted[uuid].initiate or entry.generation != plan.generation:
-			# A retained connection may have been negotiated under a stale
-			# role or a stale generation: rebuild it.
 			_drop_peer(uuid)
 	for uuid: String in wanted:
 		if not _peers.has(uuid):
@@ -515,7 +498,7 @@ func _on_peer_ice_candidate(entry, _media: String, _index: int, candidate: Strin
 	if _peers.get(entry.uuid) != entry:
 		return
 	if candidate.is_empty():
-		# End-of-candidates marker: nothing to relay or apply.
+		# WebRTC's end-of-candidates marker needs no relay.
 		return
 	@warning_ignore("unsafe_call_argument")
 	_send_signal_to(entry, {"IceCandidate": candidate})
@@ -525,7 +508,6 @@ func _on_peer_ice_candidate(entry, _media: String, _index: int, candidate: Strin
 func _send_signal_to(entry, payload: Dictionary) -> void:
 	if not _client_connected():
 		return
-	# A fresh relay attempt re-arms rate-limit healing for this peer.
 	entry.relay_dropped = false
 	# The freshest payload per peer doubles as the rate-limit healing
 	# candidate: a server-refused relay re-queues exactly this payload.
@@ -547,7 +529,7 @@ func _dispatch_relay(entry, payload: Dictionary) -> void:
 	@warning_ignore("unsafe_call_argument")
 	if _client.send_signal(entry.uuid, entry.generation, payload) == OK:
 		return
-	# The initial refusal consumes budget like any retry (issue #127).
+	# The first refused send also consumes retry budget.
 	entry.relay_attempts += 1
 	@warning_ignore("unsafe_call_argument")
 	_enqueue_relay(entry, payload)
@@ -570,7 +552,7 @@ func _enqueue_relay(entry, payload: Dictionary) -> void:
 # queue with one loud diagnostic.
 func _drain_relay(entry) -> void:
 	if _peers.get(entry.uuid) != entry:
-		# Orphaned by a re-entrant drop during this poll's callbacks.
+		# A callback may have dropped this peer earlier in the same poll.
 		return
 	@warning_ignore("unsafe_method_access")
 	if entry.pending_signals.is_empty() or not _client_connected():
@@ -623,7 +605,7 @@ func _on_client_server_error(_message: String, error_code: int) -> void:
 		if entry.pending_signals.has(entry.last_relayed):
 			continue
 		@warning_ignore("unsafe_method_access")
-		# Front of the queue: this payload predates anything still pending.
+		# The server-refused payload predates the queued local sends.
 		entry.pending_signals.push_front(entry.last_relayed)
 		entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
 
@@ -663,8 +645,6 @@ func _multiplayer_peer():
 	return _mp_peer
 
 
-## [WebRTCPeerConnection] ICE configuration built from the current plan list.
-## Credentials are values only: they are never logged.
 func _rtc_configuration() -> Dictionary:
 	var ice_servers: Array = []
 	@warning_ignore("untyped_declaration")
@@ -685,13 +665,11 @@ class _MeshPeer:
 	extends RefCounted
 	var uuid: String = ""
 	var peer_id: int = 0
-	# Holds WebRTCPeerConnection or a test-injected double (the factory seam).
 	@warning_ignore("untyped_declaration") var connection = null
 	var initiate: bool = false
 	var generation: String = ""
 	var session_cb: Callable = Callable()
 	var ice_cb: Callable = Callable()
-	# Refused/dropped relays awaiting the throttled redelivery (issue #127).
 	var pending_signals: Array = []
 	var relay_due_msec: int = 0
 	var relay_attempts: int = 0

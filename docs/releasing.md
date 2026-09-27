@@ -64,6 +64,9 @@ In **Settings -> Secrets and variables -> Actions**, add:
    - packages the addon zip and publishes the GitHub Release,
    - submits a store edit with the new version and tag.
 
+Both downloads contain only `addons/`. Demo scenes and the full docs remain in
+the source repository.
+
 No secrets configured? The store step skips with a log line and the GitHub
 Release still publishes.
 

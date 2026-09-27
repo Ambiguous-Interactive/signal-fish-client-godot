@@ -198,8 +198,7 @@ func _fail_current_session(
 ) -> void:
 	if _failed_emitted or _closed_emitted:
 		return
-	@warning_ignore("untyped_declaration")
-	var peer = _peer
+	var peer: SFWebSocketPeerAdapterScript = _peer
 	_peer = null
 	_failed_emitted = true
 	if close_peer and peer != null and peer.get_ready_state() != WebSocketPeer.STATE_CLOSED:

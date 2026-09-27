@@ -5,7 +5,7 @@ extends RefCounted
 ## real WebRTC runs in fast gates (PLAN §8). Receives the client runner
 ## instance so connect/auth fakes stay defined in one place.
 
-const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
@@ -356,7 +356,10 @@ func _test_plan_before_room_baseline_is_ignored() -> void:
 	_inject_plan(client, [_peer(PLAYER_B, true)], "40000000-0000-0000-0000-000000000002")
 	_assert_equal(1, _mesh_peers(mesh).size(), "the baseline re-arms the mesh for the next plan")
 	_assert_equal([], errors, "no spurious protocol_error")
+	var mesh_witness: WeakRef = weakref(mesh)
 	mesh.detach()
+	mesh.free()
+	_assert(mesh_witness.get_ref() == null, "the baseline test releases its mesh node")
 	client.free()
 	_done()
 

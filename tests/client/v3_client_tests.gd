@@ -11,7 +11,7 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
-const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
@@ -102,7 +102,7 @@ func _test_v3_config_advertises_capabilities() -> void:
 			["room_operation_ids"]
 		)
 	)
-	_assert_equal([expected], v3_client.transport.sent_text, "v3 authenticate bytes")
+	_assert_equal([expected], v3_fake.sent_text, "v3 authenticate bytes")
 	v3_client.free()
 
 	var v2_client := _connect_new_client(_make_config())
@@ -114,7 +114,7 @@ func _test_v3_config_advertises_capabilities() -> void:
 				SFMessagesScript.authenticate("test-app", "0.1.0", "linux", "json")
 			)
 		],
-		v2_client.transport.sent_text,
+		v2_fake.sent_text,
 		"default config keeps v2 authenticate bytes"
 	)
 	v2_client.free()
@@ -328,7 +328,7 @@ func _test_connect_token_reaches_wire() -> void:
 			"test-app", "0.1.0", "linux", "json", null, null, null, null, "sfct_v1.tenant-secret"
 		)
 	)
-	_assert_equal([expected], credentialed.transport.sent_text, "credential rides connect_token")
+	_assert_equal([expected], credentialed_fake.sent_text, "credential rides connect_token")
 	credentialed.free()
 
 	var anonymous := _connect_new_client(_make_config())
@@ -340,7 +340,7 @@ func _test_connect_token_reaches_wire() -> void:
 				SFMessagesScript.authenticate("test-app", "0.1.0", "linux", "json")
 			)
 		],
-		anonymous.transport.sent_text,
+		anonymous_fake.sent_text,
 		"unset credential keeps authenticate bytes unchanged"
 	)
 	anonymous.free()

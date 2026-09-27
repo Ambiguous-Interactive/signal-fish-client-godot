@@ -37,9 +37,10 @@ addons/signal_fish/
     sf_transport.gd         #   abstract base (signals + method contract)
     sf_websocket_transport.gd  # Godot 4 WebSocketPeer impl
     sf_websocket_peer_adapter.gd  # injectable WebSocketPeer seam
-    sf_fake_transport.gd    #   deterministic in-memory test double
   webrtc/                   # OPTIONAL P2P helper, out of the core path
     sf_webrtc_mesh.gd       #   session_plan + signals -> WebRTCMultiplayerPeer
+tests/transport/
+  sf_fake_transport.gd      #   deterministic in-memory test double
 ```
 
 Never let `protocol/` import transport or Node types; never parse protocol

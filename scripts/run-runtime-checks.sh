@@ -270,6 +270,19 @@ _fail_on_script_errors() {
 	fi
 }
 
+report_godot_output() {
+	local output="$1" failed="$2"
+	if [[ "${failed}" -ne 0 || "${SF_VERBOSE:-0}" == "1" ]]; then
+		cat "${output}"
+	else
+		echo "passed (set SF_VERBOSE=1 for full Godot output)"
+		awk '
+			/^(ERROR|WARNING):/ { if (++count <= 10) print }
+			END { if (count > 10) printf "... %d more diagnostics\n", count - 10 }
+		' "${output}"
+	fi
+}
+
 # One slow pass over the (possibly network-backed) workspace tree; workers
 # extract this local archive instead of each re-reading the tree (7 tar
 # traversals -> 1). Returns 1 outside a git worktree; copy_cold_project
@@ -372,8 +385,8 @@ run_godot_script() {
 	cleanup_paths+=("${output}")
 	failed=0
 	godot --headless --path "${cold_project}" --script "${script_path}" >"${output}" 2>&1 || failed=$?
-	cat "${output}"
 	_fail_on_script_errors "${output}" || failed=1
+	report_godot_output "${output}" "${failed}"
 	return "${failed}"
 }
 
@@ -448,13 +461,13 @@ run_godot() {
 		cleanup_paths+=("${warm_output}")
 		failed=0
 		_godot_command "${commands[0]}" "${repo_root}" >"${warm_output}" 2>&1 || failed=$?
-		cat "${warm_output}"
 		_fail_on_script_errors "${warm_output}" || failed=1
+		report_godot_output "${warm_output}" "${failed}"
 		return "${failed}"
 	fi
 
 	# Suites are independent processes; run them concurrently and report each
-	# suite's output verbatim after all finish (same pattern as run_static).
+	# result after all finish (same pattern as run_static).
 	# Wall clock drops from the sum of engine boots to the slowest suite.
 	# The tree archive and the warm cache snapshot are each built once,
 	# concurrently, so seven workers read local storage instead of seven
@@ -506,11 +519,11 @@ run_godot() {
 		local rc=0
 		wait "${pids[${index}]}" || rc=$?
 		echo "=== ${names[${index}]} ==="
-		cat "${outputs[${index}]}"
+		_fail_on_script_errors "${outputs[${index}]}" || rc=1
+		report_godot_output "${outputs[${index}]}" "${rc}"
 		if [[ "${rc}" -ne 0 ]]; then
 			failed=1
 		fi
-		_fail_on_script_errors "${outputs[${index}]}" || failed=1
 	done
 	return "${failed}"
 }

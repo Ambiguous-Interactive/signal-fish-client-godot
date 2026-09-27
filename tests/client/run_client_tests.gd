@@ -5,7 +5,7 @@ const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
-const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 # No other suite loads the editor plugin; this keeps it under the warning
 # gate on every PR and every CI engine (issue #174).
 const SFPluginScript = preload("res://addons/signal_fish/plugin.gd")
@@ -206,7 +206,7 @@ func _test_auto_authenticate_matches_builder_bytes() -> void:
 	minimal_transport.inject_open()
 	_assert_equal(
 		[SFMessagesScript.encode(SFMessagesScript.authenticate("test-app"))],
-		minimal.transport.sent_text,
+		minimal_transport.sent_text,
 		"unset optionals omitted from authenticate"
 	)
 	minimal.free()
@@ -1005,15 +1005,15 @@ func _test_process_and_exit_tree_paths() -> void:
 	client.transport = transport
 	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
 	client._process(0.016)
-	_assert_equal(1, client.transport.poll_count, "_process drives transport poll")
+	_assert_equal(1, transport.poll_count, "_process drives transport poll")
 	transport.inject_open()
 	client._process(0.016)
-	_assert_equal(2, client.transport.poll_count, "poll continues while connected")
+	_assert_equal(2, transport.poll_count, "poll continues while connected")
 
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	config.auto_poll = false
 	client._process(0.016)
-	_assert_equal(2, client.transport.poll_count, "auto_poll off disables _process polling")
+	_assert_equal(2, transport.poll_count, "auto_poll off disables _process polling")
 
 	client._exit_tree()
 	_assert_equal(
@@ -1380,7 +1380,7 @@ func _room_joined_data(overrides: Dictionary = {}) -> Dictionary:
 
 
 class PollCountingTransport:
-	extends "res://addons/signal_fish/transport/sf_fake_transport.gd"
+	extends "res://tests/transport/sf_fake_transport.gd"
 
 	var poll_count := 0
 
