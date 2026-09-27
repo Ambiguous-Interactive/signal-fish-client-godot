@@ -55,6 +55,7 @@ venv_ok() {
     # Subshell: sourcing activate must never leak a (possibly broken) venv
     # onto this shell's PATH, or the heal below would run inside the very
     # environment it is trying to repair.
+    # shellcheck disable=SC1091
     (
         . .venv-ci/bin/activate &&
             python -c 'import yaml' >/dev/null 2>&1 &&
@@ -69,7 +70,7 @@ if ! python3 -c 'import yaml' >/dev/null 2>&1; then
     else
         echo "WARN: python3 cannot import PyYAML; GitHub config validation fails until it is installed" \
             "(python3 -m pip install --user -r requirements-automation.txt)." >&2
-        if [ -f /usr/lib/python3*/EXTERNALLY-MANAGED ] 2>/dev/null; then
+        if compgen -G '/usr/lib/python3*/EXTERNALLY-MANAGED' >/dev/null; then
             echo "WARN: this interpreter enforces PEP 668 (EXTERNALLY-MANAGED); install with" \
                 "'python3 -m pip install --user --break-system-packages -r requirements-automation.txt' or fix PATH." >&2
         fi
@@ -85,8 +86,11 @@ if [ ! -f ".venv-ci/bin/activate" ] || ! venv_ok; then
     # image's Python moved) makes `venv` die with Errno 2 on the old
     # bin/python3.
     if rm -rf .venv-ci && python3 -m venv .venv-ci &&
-        (. .venv-ci/bin/activate &&
-            python -m pip install -r "${REPO_ROOT}/requirements-python-quality.txt" -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1) &&
+        (
+            # shellcheck disable=SC1091
+            . .venv-ci/bin/activate &&
+                python -m pip install -r "${REPO_ROOT}/requirements-python-quality.txt" -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1
+        ) &&
         venv_ok; then
         echo "==> .venv-ci ready with runtime and automation dependencies"
     else

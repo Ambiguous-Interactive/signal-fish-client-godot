@@ -155,13 +155,16 @@ bash scripts/run-runtime-checks.sh smoke  # opt-in: real WebSocketPeer round-tri
 Requires Godot 4.3+ and Python 3 with `requirements-python-quality.txt`. AI/agent
 context lives in [.llm/context.md](.llm/context.md).
 
-Source formatting uses pinned Prettier, shfmt, and PSScriptAnalyzer:
+Source formatting and analysis use pinned Prettier, shfmt, ShellCheck,
+PSScriptAnalyzer, and ESLint:
 
 ```bash
 npm ci --ignore-scripts
 pwsh -NoProfile -Command 'Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -AcceptLicense'
 bash scripts/install-shfmt.sh /tmp/sf-shfmt
+bash scripts/install-shellcheck.sh /tmp/sf-shellcheck
 SHFMT_BIN=/tmp/sf-shfmt bash scripts/check-source-format.sh check
+SHELLCHECK_BIN=/tmp/sf-shellcheck bash scripts/check-source-quality.sh
 ```
 
 Use `write` in place of `check` to format the tracked files.

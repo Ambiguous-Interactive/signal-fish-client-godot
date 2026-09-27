@@ -409,7 +409,6 @@ function Test-LlmDeletableArtifact {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$RepoRoot,
         # Repo-relative path (`/` separators). Empty/whitespace returns $false.
         [Parameter(Mandatory)][AllowEmptyString()][string]$RelativePath,
         # Tracked-file lookup set. Keys are repo-relative `/`-separated paths.

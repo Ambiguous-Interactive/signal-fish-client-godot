@@ -460,6 +460,7 @@ _godot_worker() {
 	# path is expanded into the trap text at registration time: after a
 	# set -e abort the function frame (and its locals) is gone before the
 	# EXIT trap runs, so a quoted variable reference would clean nothing.
+	# shellcheck disable=SC2064
 	trap "rm -rf '${cold_parent}'" EXIT
 	cold_project="$(copy_cold_project "${cold_parent}")"
 	_godot_command "${command_path}" "${cold_project}"

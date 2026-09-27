@@ -170,6 +170,7 @@ refresh_installed_versions() {
         [ -n "$name" ] || continue
         installed_versions["$name"]="$version"
     done < <(
+        # shellcheck disable=SC2016
         node -e '
             let raw = "";
             process.stdin.on("data", (chunk) => { raw += chunk; });
@@ -378,9 +379,9 @@ else
     probe_ok=()
     for index in "${!pids[@]}"; do
         if wait "${pids[$index]}"; then
-            probe_ok[$index]=1
+            probe_ok[index]=1
         else
-            probe_ok[$index]=0
+            probe_ok[index]=0
             echo "agent-tools: WARNING: npm registry probe failed for ${PACKAGES[$index]}" >&2
         fi
     done
