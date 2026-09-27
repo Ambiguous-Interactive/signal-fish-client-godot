@@ -161,8 +161,8 @@ PSScriptAnalyzer, and ESLint:
 ```bash
 npm ci --ignore-scripts
 pwsh -NoProfile -Command 'Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -AcceptLicense'
-bash scripts/install-shfmt.sh /tmp/sf-shfmt
-bash scripts/install-shellcheck.sh /tmp/sf-shellcheck
+python3 scripts/install-source-tool.py shfmt /tmp/sf-shfmt
+python3 scripts/install-source-tool.py shellcheck /tmp/sf-shellcheck
 SHFMT_BIN=/tmp/sf-shfmt python3 scripts/check-source.py format
 SHELLCHECK_BIN=/tmp/sf-shellcheck python3 scripts/check-source.py quality
 ```

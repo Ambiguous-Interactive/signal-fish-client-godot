@@ -34,8 +34,8 @@ jobs:
               run: |
                   npm ci --ignore-scripts
                   pwsh -NoProfile -Command 'Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -AcceptLicense'
-                  bash scripts/install-shfmt.sh "$RUNNER_TEMP/shfmt"
-                  bash scripts/install-shellcheck.sh "$RUNNER_TEMP/shellcheck"
+                  python3 scripts/install-source-tool.py shfmt "$RUNNER_TEMP/shfmt"
+                  python3 scripts/install-source-tool.py shellcheck "$RUNNER_TEMP/shellcheck"
 
             - name: Check source formatting
               env:
