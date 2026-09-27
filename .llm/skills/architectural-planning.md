@@ -69,6 +69,15 @@ shrinking commit).
 - Keep `PLAN.md` around 100 lines or fewer; growth past that is a signal to
   move content to its function-appropriate home, not to restructure.
 
+## Session Cadence
+
+- Choose one reviewable milestone before starting implementation. Aim to
+  complete the session in about one hour.
+- Finish the milestone's PR, checks, review feedback, progress entry, and
+  main sync before ending the session.
+- Leave other milestones in `PLAN.md` for later sessions. Do not start a
+  second milestone after the first one is complete.
+
 ## Decision Gates
 
 Stop and ask before choosing among materially different options for:
