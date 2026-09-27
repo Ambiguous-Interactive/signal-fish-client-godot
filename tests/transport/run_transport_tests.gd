@@ -70,8 +70,8 @@ func _run() -> void:
 func _test_fake_connect_open_send_receive_and_close() -> void:
 	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var opened_count: Array[int] = [0]
-	var closed_events: Array = []
-	var packets: Array = []
+	var closed_events: Array[Array] = []
+	var packets: Array[Dictionary] = []
 	transport.opened.connect(func() -> void: opened_count[0] += 1)
 	transport.closed.connect(
 		func(code: int, reason: String) -> void: closed_events.append([code, reason])
@@ -146,7 +146,7 @@ func _test_fake_fail_on_send_mirrors_real_cascade() -> void:
 func _test_fake_reconnect_resets_terminal_flags() -> void:
 	var transport: SFFakeTransportScript = SFFakeTransportScript.new()
 	var opened_count: Array[int] = [0]
-	var closed_events: Array = []
+	var closed_events: Array[Array] = []
 	var failures: Array[String] = []
 	transport.opened.connect(func() -> void: opened_count[0] += 1)
 	transport.closed.connect(
