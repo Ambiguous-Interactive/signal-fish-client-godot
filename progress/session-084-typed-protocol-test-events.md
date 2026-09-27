@@ -9,5 +9,6 @@ Branch: `codex/session-084-typed-protocol-test-events` from `origin/main` at
 - Kept malformed wire inputs generic so tests still cover invalid values.
 - The changed-files gate passes the protocol and reconnect suites, format,
   lint, and static checks. Main CI was green at `6ad60c4` before the branch.
+- PR #198 is the session deliverable.
 
 #165 remains open for the wider wire, event, and test boundary audit.
