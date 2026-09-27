@@ -69,8 +69,7 @@ static func decode_envelope(bytes: PackedByteArray) -> Dictionary:
 		if not _KNOWN_FIELDS.has(key):
 			result["error"] = "binary game-data envelope contains unknown field %s" % key
 			return result
-		@warning_ignore("inference_on_variant")
-		var value := _read_field(peer, key)
+		var value: Variant = _read_field(peer, key)
 		if value == null:
 			result["error"] = "binary game-data field %s is malformed" % key
 			return result
@@ -114,8 +113,8 @@ static func _validate_fields(fields: Dictionary, result: Dictionary) -> Dictiona
 static func _encoding_token(value: Variant, allow_v3_tokens: bool) -> int:
 	if typeof(value) != TYPE_STRING:
 		return SFTypesScript.GameDataEncoding.UNKNOWN
-	@warning_ignore("unsafe_call_argument")
-	match String(value):
+	var token: String = value
+	match token:
 		"message_pack":
 			return SFTypesScript.GameDataEncoding.MESSAGE_PACK
 		"json":
@@ -146,8 +145,9 @@ static func _read_field(peer: StreamPeerBuffer, key: String) -> Variant:
 			if key == "from_player":
 				if length != _UUID_BYTES:
 					return null
-				@warning_ignore("unsafe_call_argument")
-				return _uuid_string(peer.get_data(length)[1])
+				var uuid_result: Array = peer.get_data(length)
+				var uuid_bytes: PackedByteArray = uuid_result[1]
+				return _uuid_string(uuid_bytes)
 			return peer.get_data(length)[1]
 		"encoding":
 			var token := _read_string_after_marker(peer, marker)

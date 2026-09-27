@@ -6,11 +6,11 @@ static func decode_payload(payload: Variant) -> Dictionary:
 	if typeof(payload) == TYPE_PACKED_BYTE_ARRAY:
 		return {"ok": true, "bytes": payload, "error": ""}
 	if typeof(payload) == TYPE_ARRAY:
-		@warning_ignore("unsafe_call_argument")
-		return _decode_byte_array(payload)
+		var values: Array = payload
+		return _decode_byte_array(values)
 	if typeof(payload) == TYPE_STRING:
-		@warning_ignore("unsafe_call_argument")
-		return _decode_base64(payload)
+		var encoded: String = payload
+		return _decode_base64(encoded)
 	return {
 		"ok": false,
 		"bytes": PackedByteArray(),
@@ -41,10 +41,8 @@ static func _decode_byte_array(values: Array) -> Dictionary:
 				"error":
 				"payload byte array[%d] contains a non-number: %s" % [index, var_to_str(value)]
 			}
-		@warning_ignore("unsafe_call_argument")
-		var int_value := int(value)
-		@warning_ignore("unsafe_call_argument")
-		if float(int_value) != float(value) or int_value < 0 or int_value > 255:
+		var number: float = value
+		if not is_finite(number) or number != floor(number) or number < 0 or number > 255:
 			return {
 				"ok": false,
 				"bytes": PackedByteArray(),
@@ -54,6 +52,7 @@ static func _decode_byte_array(values: Array) -> Dictionary:
 					% [index, var_to_str(value)]
 				)
 			}
+		var int_value := int(number)
 		bytes.append(int_value)
 	return {"ok": true, "bytes": bytes, "error": ""}
 
@@ -64,8 +63,7 @@ static func _decode_base64(value: String) -> Dictionary:
 	var normalized_result := _normalize_base64(value)
 	if not normalized_result["ok"]:
 		return {"ok": false, "bytes": PackedByteArray(), "error": normalized_result["error"]}
-	@warning_ignore("unsafe_call_argument")
-	var normalized := String(normalized_result["value"])
+	var normalized: String = normalized_result["value"]
 	var bytes := Marshalls.base64_to_raw(normalized)
 	if Marshalls.raw_to_base64(bytes) != normalized:
 		return {"ok": false, "bytes": PackedByteArray(), "error": "payload base64 is invalid"}

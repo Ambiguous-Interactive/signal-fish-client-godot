@@ -172,14 +172,13 @@ static func from_string(error_code: Variant) -> int:
 		return Code.NONE
 	if typeof(error_code) != TYPE_STRING:
 		return Code.UNKNOWN
-	@warning_ignore("unsafe_call_argument")
-	var token := String(error_code)
+	var token: String = error_code
 	if token.is_empty():
 		return Code.NONE
 	if token == "UNKNOWN" or token == "NONE" or not Code.has(token):
 		return Code.UNKNOWN
-	@warning_ignore("unsafe_call_argument")
-	return int(Code[token])
+	var code: int = Code[token]
+	return code
 
 
 static func to_wire_string(error_code: int) -> String:
@@ -194,13 +193,12 @@ static func to_wire_string(error_code: int) -> String:
 static func is_known(error_code: Variant) -> bool:
 	if typeof(error_code) != TYPE_STRING:
 		return false
-	@warning_ignore("unsafe_call_argument")
-	var token := String(error_code)
+	var token: String = error_code
 	return Code.has(token) and token != "UNKNOWN" and token != "NONE"
 
 
 static func category(error_code: int) -> String:
 	if error_code == Code.NONE:
 		return "none"
-	@warning_ignore("unsafe_call_argument")
-	return String(_CODE_TO_CATEGORY.get(error_code, "unknown"))
+	var code_category: String = _CODE_TO_CATEGORY.get(error_code, "unknown")
+	return code_category
