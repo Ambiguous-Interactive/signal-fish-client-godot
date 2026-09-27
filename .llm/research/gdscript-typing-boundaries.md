@@ -14,6 +14,10 @@ retain their element type at runtime. Assigning a raw parsed array to
 [Godot 4.3 GDScript reference][gdscript-43]
 and [Godot 4.4 typed dictionaries][dict-44].
 
+On Godot 4.3, adding arrays with `+` produces a raw `Array`. Known byte
+fixtures can restore `Array[int]` with `Array(bytes, TYPE_INT, &"", null)`.
+Keep parsed wire arrays raw until their elements pass validation.
+
 [gdscript-43]: https://docs.godotengine.org/en/4.3/tutorials/scripting/gdscript/gdscript_basics.html
 [dict-44]: https://godotengine.org/article/dev-snapshot-godot-4-4-dev-2/
 [js-bridge-43]: https://docs.godotengine.org/en/4.3/classes/class_javascriptbridge.html

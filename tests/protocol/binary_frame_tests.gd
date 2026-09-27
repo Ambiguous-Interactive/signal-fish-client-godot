@@ -12,7 +12,7 @@ const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
-const PLAYER_B_BYTES: Array = [0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02]
+const PLAYER_B_BYTES: Array[int] = [0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02]
 
 var _failures: Array[String] = []
 var _test_done := false
@@ -307,19 +307,24 @@ func _test_msgpack_round_trip_matrix() -> void:
 
 func _test_v2_envelope_canonical_bytes() -> void:
 	# Hand-pinned canonical v2 envelope (rmp_serde `to_vec_named` shape).
-	var canonical: Array = (
-		[0x83]
-		+ [0xAB]
-		+ _string_codepoints("from_player")
-		+ [0xC4, 0x10]
-		+ PLAYER_B_BYTES
-		+ [0xA8]
-		+ _string_codepoints("encoding")
-		+ [0xAC]
-		+ _string_codepoints("message_pack")
-		+ [0xA7]
-		+ _string_codepoints("payload")
-		+ [0xC4, 0x02, 0xDE, 0xAD]
+	var canonical: Array[int] = Array(
+		(
+			[0x83]
+			+ [0xAB]
+			+ _string_codepoints("from_player")
+			+ [0xC4, 0x10]
+			+ PLAYER_B_BYTES
+			+ [0xA8]
+			+ _string_codepoints("encoding")
+			+ [0xAC]
+			+ _string_codepoints("message_pack")
+			+ [0xA7]
+			+ _string_codepoints("payload")
+			+ [0xC4, 0x02, 0xDE, 0xAD]
+		),
+		TYPE_INT,
+		&"",
+		null
 	)
 	var result: Dictionary = SFBinaryFramesScript.decode_envelope(_packed(canonical))
 	var result_ok: bool = result["ok"]
@@ -366,8 +371,8 @@ func _test_envelope_variant_matrix() -> void:
 
 
 func _test_envelope_hostile_matrix() -> void:
-	var short_uuid: Array = PLAYER_B_BYTES.slice(0, 15)
-	var oversized_uuid: Array = PLAYER_B_BYTES + [0x01]
+	var short_uuid: Array[int] = PLAYER_B_BYTES.slice(0, 15)
+	var oversized_uuid: Array[int] = Array(PLAYER_B_BYTES + [0x01], TYPE_INT, &"", null)
 	var v2_fields := _v2_fields()
 	var cases := [
 		{"label": "not a map", "bytes": _packed([0x01])},
@@ -576,9 +581,12 @@ func _test_v3_envelope_matrix() -> void:
 			"v3 %s encoding" % case["label"]
 		)
 	# A u64 stamp above i64 max wraps negative in Godot but must stay valid (rust reads u64 natively).
-	var huge_stamp: Array = [0xCF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
-	var str8_encoding: Array = (
-		[0xA8] + _string_codepoints("encoding") + [0xD9, 0x0C] + _string_codepoints("message_pack")
+	var huge_stamp: Array[int] = [0xCF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+	var str8_encoding: Array[int] = Array(
+		[0xA8] + _string_codepoints("encoding") + [0xD9, 0x0C] + _string_codepoints("message_pack"),
+		TYPE_INT,
+		&"",
+		null
 	)
 	var bytes := _envelope(
 		[
@@ -603,7 +611,7 @@ func _test_v3_envelope_matrix() -> void:
 ## the field count (unless an explicit header override is provided).
 
 
-func _envelope(fields: Array, header_override: Array = []) -> PackedByteArray:
+func _envelope(fields: Array, header_override: Array[int] = []) -> PackedByteArray:
 	var bytes := PackedByteArray()
 	if header_override.is_empty():
 		bytes.append(0x80 | fields.size())
@@ -615,7 +623,7 @@ func _envelope(fields: Array, header_override: Array = []) -> PackedByteArray:
 
 
 ## Canonical v2 field triple: from_player, encoding, payload.
-func _v2_fields() -> Array:
+func _v2_fields() -> Array[PackedByteArray]:
 	return [_uuid_field(), _encoding_field("message_pack"), _payload_field([0x01])]
 
 
@@ -627,7 +635,7 @@ func _encoding_field(token: String) -> PackedByteArray:
 	return _field("encoding", _string_value(token))
 
 
-func _payload_field(codepoints: Array) -> PackedByteArray:
+func _payload_field(codepoints: Array[int]) -> PackedByteArray:
 	return _field("payload", _bin_value(codepoints))
 
 
@@ -638,7 +646,7 @@ func _field(key: String, value_bytes: PackedByteArray) -> PackedByteArray:
 	return bytes
 
 
-func _bin_value(codepoints: Array) -> PackedByteArray:
+func _bin_value(codepoints: Array[int]) -> PackedByteArray:
 	var bytes := PackedByteArray()
 	bytes.append(0xC4)
 	bytes.append(codepoints.size())
@@ -654,7 +662,7 @@ func _string_value(value: String) -> PackedByteArray:
 	return bytes
 
 
-func _raw(codepoints: Array) -> PackedByteArray:
+func _raw(codepoints: Array[int]) -> PackedByteArray:
 	return _packed(codepoints)
 
 
@@ -666,8 +674,8 @@ func _packed(codepoints: Array) -> PackedByteArray:
 	return packed
 
 
-func _string_codepoints(value: String) -> Array:
-	var array: Array = []
+func _string_codepoints(value: String) -> Array[int]:
+	var array: Array[int] = []
 	for byte: int in value.to_utf8_buffer():
 		array.append(byte)
 	return array
