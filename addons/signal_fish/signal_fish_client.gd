@@ -1153,11 +1153,18 @@ func _clear_room_state() -> void:
 
 
 func _upsert_player(player: SFTypesScript.PlayerInfo) -> void:
-	_upsert_by_id(_players, player, player.id)
+	for index: int in _players.size():
+		if _players[index].id == player.id:
+			_players[index] = player
+			return
+	_players.append(player)
 
 
 func _remove_player(player_id: String) -> void:
-	_remove_by_id(_players, player_id)
+	for index: int in _players.size():
+		if _players[index].id == player_id:
+			_players.remove_at(index)
+			return
 
 
 func _apply_authority_flags(authority_player: String) -> void:
@@ -1172,25 +1179,17 @@ func _apply_authority_flags(authority_player: String) -> void:
 
 
 func _upsert_spectator(spectator: SFTypesScript.SpectatorInfo) -> void:
-	_upsert_by_id(_spectators, spectator, spectator.id)
+	for index: int in _spectators.size():
+		if _spectators[index].id == spectator.id:
+			_spectators[index] = spectator
+			return
+	_spectators.append(spectator)
 
 
 func _remove_spectator(spectator_id: String) -> void:
-	_remove_by_id(_spectators, spectator_id)
-
-
-func _upsert_by_id(roster: Array, entry: Variant, id: String) -> void:
-	for index: int in roster.size():
-		if roster[index].id == id:
-			roster[index] = entry
-			return
-	roster.append(entry)
-
-
-func _remove_by_id(roster: Array, id: String) -> void:
-	for index: int in roster.size():
-		if roster[index].id == id:
-			roster.remove_at(index)
+	for index: int in _spectators.size():
+		if _spectators[index].id == spectator_id:
+			_spectators.remove_at(index)
 			return
 
 

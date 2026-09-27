@@ -931,25 +931,29 @@ static func validate_connection_info(data: Variant, allow_unknown_strings: bool 
 		return "connection_info type must not be empty"
 	match connection_type:
 		"direct":
-			var direct_error := _require_connection_info_fields(dict, "direct", ["host", "port"])
+			var direct_error := _require_connection_info_fields(
+				dict, "direct", PackedStringArray(["host", "port"])
+			)
 			if not direct_error.is_empty():
 				return direct_error
 		"unity_relay":
 			var unity_relay_error := _require_connection_info_fields(
-				dict, "unity_relay", ["allocation_id", "connection_data", "key"]
+				dict, "unity_relay", PackedStringArray(["allocation_id", "connection_data", "key"])
 			)
 			if not unity_relay_error.is_empty():
 				return unity_relay_error
 		"relay":
 			var relay_error := _require_connection_info_fields(
-				dict, "relay", ["host", "port", "allocation_id", "token"]
+				dict, "relay", PackedStringArray(["host", "port", "allocation_id", "token"])
 			)
 			if not relay_error.is_empty():
 				return relay_error
 		"webrtc":
 			if dict.has("sdp") and dict["sdp"] != null and typeof(dict["sdp"]) != TYPE_STRING:
 				return "webrtc connection_info sdp must be a string"
-			var webrtc_error := _require_connection_info_fields(dict, "webrtc", ["ice_candidates"])
+			var webrtc_error := _require_connection_info_fields(
+				dict, "webrtc", PackedStringArray(["ice_candidates"])
+			)
 			if not webrtc_error.is_empty():
 				return webrtc_error
 		"custom":
@@ -1019,7 +1023,7 @@ static func _validate_common_connection_info_fields(
 
 
 static func _require_connection_info_fields(
-	dict: Dictionary, type_name: String, required_keys: Array
+	dict: Dictionary, type_name: String, required_keys: PackedStringArray
 ) -> String:
 	for key: String in required_keys:
 		if not dict.has(key) or dict[key] == null:
