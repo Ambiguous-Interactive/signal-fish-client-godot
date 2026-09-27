@@ -15,6 +15,7 @@ and [Godot 4.4 typed dictionaries][dict-44].
 
 [gdscript-43]: https://docs.godotengine.org/en/4.3/tutorials/scripting/gdscript/gdscript_basics.html
 [dict-44]: https://godotengine.org/article/dev-snapshot-godot-4-4-dev-2/
+[js-bridge-43]: https://docs.godotengine.org/en/4.3/classes/class_javascriptbridge.html
 
 ## Required dynamic values
 
@@ -30,6 +31,13 @@ Keep fixed collections typed after conversion. Do not narrow raw inputs before
 validation or replace heterogeneous public event arguments with a single
 element type. If the engine floor rises above 4.3, recheck typed dictionaries
 separately; they cannot be used in this matrix today.
+
+The [Godot 4.3 JavaScriptBridge reference][js-bridge-43] types
+`get_interface()` as `JavaScriptObject`, but browser
+properties such as `window.isSecureContext` are not declared on that class.
+Typing the local window reference as `JavaScriptObject` raises a property
+warning under the warning-as-error gate. Keep that browser property read at a
+`Variant` boundary.
 
 Many client, protocol, and transport test captures with one known element type
 were typed in sessions 084-086. Mixed test tuples and malformed input fixtures

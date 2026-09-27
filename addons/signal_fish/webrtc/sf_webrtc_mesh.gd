@@ -478,6 +478,7 @@ func _send_signal_to(entry: _MeshPeer, payload: Dictionary) -> void:
 	# The freshest payload per peer doubles as the rate-limit healing
 	# candidate: a server-refused relay re-queues exactly this payload.
 	entry.last_relayed = payload
+	entry.has_last_relayed = true
 	if not entry.pending_signals.is_empty():
 		# Order matters (an Offer must precede its candidates at the remote),
 		# and hammering a backpressured link would spam protocol_error: queue
@@ -537,7 +538,7 @@ func _on_client_server_error(_message: String, error_code: int) -> void:
 		return
 	for uuid: String in _peers:
 		var entry: _MeshPeer = _peers[uuid]
-		if entry.relay_dropped or entry.last_relayed == null:
+		if entry.relay_dropped or not entry.has_last_relayed:
 			continue
 		if entry.pending_signals.has(entry.last_relayed):
 			continue
@@ -599,4 +600,5 @@ class _MeshPeer:
 	var relay_due_msec: int = 0
 	var relay_attempts: int = 0
 	var relay_dropped: bool = false
-	var last_relayed: Variant = null
+	var last_relayed: Dictionary = {}
+	var has_last_relayed: bool = false
