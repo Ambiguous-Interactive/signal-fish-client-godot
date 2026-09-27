@@ -37,7 +37,7 @@ var _run_completed := false
 ## Protocol-error trackers for every client built by `_make_client` /
 ## `_make_reconnect_client`; reconnection flows must stay error-free, so
 ## tests end with `_assert_no_protocol_errors()` checking them all.
-var _error_trackers: Array = []
+var _error_trackers: Array[Array] = []
 
 
 func _done() -> void:
@@ -989,7 +989,7 @@ func _test_handshake_send_failure_resolves_attempt() -> void:
 	# authenticated-but-roomless.
 	var client := _make_reconnect_client(TOKEN_V1, false)
 	var errors := _track_protocol_errors(client)
-	var reconnection_failures: Array = []
+	var reconnection_failures: Array[Array] = []
 	var disconnects: Array[int] = []
 	var dial: SFFakeTransportScript = client.transport
 	client.reconnection_failed.connect(
@@ -1039,7 +1039,7 @@ func _test_handshake_send_failure_killing_link_cascades() -> void:
 	var client := _make_reconnect_client(TOKEN_V1, false)
 	var errors := _track_protocol_errors(client)
 	var connection_failures: Array[String] = []
-	var reconnection_failures: Array = []
+	var reconnection_failures: Array[Array] = []
 	var disconnects: Array[int] = []
 	client.connection_failed.connect(func(error: String) -> void: connection_failures.append(error))
 	client.reconnection_failed.connect(

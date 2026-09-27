@@ -97,7 +97,7 @@ func _test_envelope_receive_paths() -> void:
 	config.game_data_format = "message_pack"
 	var client := _make_in_room_client_with(config)
 	var client_transport: SFFakeTransportScript = client.transport
-	var events: Array = []
+	var events: Array[Array] = []
 	client.game_data_received.connect(
 		func(from_player: String, data: Variant) -> void: events.append(["data", from_player, data])
 	)
@@ -127,7 +127,7 @@ func _test_envelope_receive_paths() -> void:
 	decode_config.decode_msgpack_payloads = true
 	var decode_client := _make_in_room_client_with(decode_config)
 	var decode_transport: SFFakeTransportScript = decode_client.transport
-	var decode_events: Array = []
+	var decode_events: Array[Array] = []
 	decode_client.game_data_received.connect(
 		func(from_player: String, data: Variant) -> void:
 			decode_events.append(["data", from_player, data])
@@ -172,7 +172,7 @@ func _test_rkyv_pass_through() -> void:
 	config.game_data_format = "message_pack"
 	var client := _make_in_room_client_with(config)
 	var transport: SFFakeTransportScript = client.transport
-	var events: Array = []
+	var events: Array[Array] = []
 	client.game_data_binary_received.connect(
 		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
 			events.append(["binary", from_player, encoding, payload])
@@ -192,7 +192,7 @@ func _test_rkyv_pass_through() -> void:
 	decode_config.decode_msgpack_payloads = true
 	var decode_client := _make_in_room_client_with(decode_config)
 	var decode_transport: SFFakeTransportScript = decode_client.transport
-	var decode_events: Array = []
+	var decode_events: Array[Array] = []
 	decode_client.game_data_binary_received.connect(
 		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
 			decode_events.append(["binary", from_player, encoding, payload])
@@ -216,12 +216,12 @@ func _test_server_format_downgrade() -> void:
 	downgrade_config.game_data_format = "message_pack"
 	var downgrade_client := _make_in_room_client_with(downgrade_config)
 	var downgrade_transport: SFFakeTransportScript = downgrade_client.transport
-	var downgrade_events: Array = []
+	var downgrade_events: Array[Array] = []
 	downgrade_client.game_data_binary_received.connect(
 		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
 			downgrade_events.append(["binary", from_player, encoding, payload])
 	)
-	var downgrade_server_errors: Array = []
+	var downgrade_server_errors: Array[Array] = []
 	downgrade_client.server_error.connect(
 		func(message: String, error_code: int) -> void:
 			downgrade_server_errors.append([message, error_code])
@@ -292,7 +292,7 @@ func _test_server_format_downgrade() -> void:
 	# close frame is polled in that window.
 	var closing := _make_in_room_client_with(downgrade_config)
 	var closing_transport: SFFakeTransportScript = closing.transport
-	var closing_events: Array = []
+	var closing_events: Array[Array] = []
 	closing.game_data_binary_received.connect(
 		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
 			closing_events.append(["binary", from_player, encoding, payload])

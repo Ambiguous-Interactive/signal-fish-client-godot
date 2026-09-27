@@ -128,16 +128,16 @@ func _test_v3_events_surface() -> void:
 	client.session_plan.connect(
 		func(plan: SFSessionTypesScript.SessionPlanInfo) -> void: plans.append(plan)
 	)
-	var new_peers: Array = []
+	var new_peers: Array[Array] = []
 	client.new_peer.connect(
 		func(peer_id: String, you_initiate: bool) -> void: new_peers.append([peer_id, you_initiate])
 	)
-	var signals_in: Array = []
+	var signals_in: Array[Array] = []
 	client.signal_received.connect(
 		func(from_player: String, generation: String, payload: Variant) -> void:
 			signals_in.append([from_player, generation, payload])
 	)
-	var statuses: Array = []
+	var statuses: Array[Array] = []
 	client.peer_transport_status.connect(
 		func(peer_id: String, transport: int, connected: bool) -> void:
 			statuses.append([peer_id, transport, connected])

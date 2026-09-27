@@ -243,7 +243,7 @@ func _test_preauth_guards_block_all_sends() -> void:
 func _test_authenticated_args_and_send_surface() -> void:
 	var client := _make_connected_client()
 	var fake: SFFakeTransportScript = client.transport
-	var authenticated_events: Array = []
+	var authenticated_events: Array[Array] = []
 	client.authenticated.connect(
 		func(
 			app_name: String, organization: String, rate_limits: SFTypesScript.RateLimitInfo
@@ -457,7 +457,7 @@ func _test_room_lifecycle_state_machine() -> void:
 	var client := _make_authenticated_client()
 	var fake: SFFakeTransportScript = client.transport
 	var joined_payloads: Array[SFTypesScript.RoomJoinedInfo] = []
-	var lobby_events: Array = []
+	var lobby_events: Array[Array] = []
 	var room_left_count: Array[int] = [0]
 	client.room_joined.connect(
 		func(info: SFTypesScript.RoomJoinedInfo) -> void: joined_payloads.append(info)
@@ -595,7 +595,7 @@ func _test_spectators_keep_lobby_updates_and_rosters_stay_stable() -> void:
 func _test_connected_handler_close_does_not_crash() -> void:
 	var client := SignalFishClientScript.new()
 	var errors := _track_protocol_errors(client)
-	var close_events: Array = []
+	var close_events: Array[Array] = []
 	client.connected.connect(func() -> void: client.close())
 	client.disconnected.connect(
 		func(code: int, reason: String) -> void: close_events.append([code, reason])
@@ -622,7 +622,7 @@ func _test_connected_handler_close_does_not_crash() -> void:
 func _test_presence_and_data_events() -> void:
 	var client := _make_in_room_client()
 	var fake: SFFakeTransportScript = client.transport
-	var events: Array = []
+	var events: Array[Array] = []
 	client.player_joined.connect(
 		func(player: SFTypesScript.PlayerInfo) -> void: events.append(["joined", player.id])
 	)
@@ -789,7 +789,7 @@ func _assert_flags_from(
 func _test_spectator_flow() -> void:
 	var client := _make_authenticated_client()
 	var fake: SFFakeTransportScript = client.transport
-	var spectator_events: Array = []
+	var spectator_events: Array[Array] = []
 	client.spectator_joined.connect(
 		func(info: SFTypesScript.SpectatorJoinedInfo) -> void:
 			spectator_events.append(["joined", info.spectator_id])
@@ -913,8 +913,8 @@ func _test_reconnected_restores_room_state() -> void:
 	# injecting the event into a normal-auth session.
 	var client := _make_reconnect_dial_client()
 	var fake: SFFakeTransportScript = client.transport
-	var restored: Array = []
-	var failures: Array = []
+	var restored: Array[Array] = []
+	var failures: Array[Array] = []
 	client.reconnected.connect(
 		func(info: SFTypesScript.RoomJoinedInfo, missed: Array[SFTypesScript.DecodedEvent]) -> void:
 			restored.append([info, missed])
@@ -979,7 +979,7 @@ func _test_close_surfaces_code_reason_and_cleans_up() -> void:
 	for close_case: Array in [[1000, "bye"], [-1, ""]]:
 		var client := _make_in_room_client()
 		var fake: SFFakeTransportScript = client.transport
-		var close_events: Array = []
+		var close_events: Array[Array] = []
 		client.disconnected.connect(
 			func(code: int, reason: String) -> void: close_events.append([code, reason])
 		)

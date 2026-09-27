@@ -1175,7 +1175,7 @@ class FakePeerConnection:
 	var create_offer_calls := 0
 	var local_description: Array[String] = []
 	var remote_description: Array[String] = []
-	var added_candidates: Array = []
+	var added_candidates: Array[Array] = []
 	var poll_calls := 0
 	var closed := false
 
@@ -1219,7 +1219,7 @@ class FakeMultiplayerPeer:
 
 	var mesh_id := 0
 	var create_mesh_result: Error = OK
-	var added: Array = []
+	var added: Array[Array] = []
 	var removed: Array[int] = []
 	var closed := false
 

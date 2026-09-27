@@ -6,11 +6,12 @@ category: Research
 
 # GDScript Typing Boundaries
 
-Godot 4.3 supports typed arrays. Nested typed arrays are unsupported, and
-`Array[Variant]` is the same as `Array`. Typed dictionaries arrived in Godot
-4.4, above this addon's 4.3 floor. Typed arrays also retain their element
-type at runtime: assigning a raw parsed array to `Array[T]` can fail before
-its elements are validated. Sources: [Godot 4.3 GDScript reference][gdscript-43]
+Godot 4.3 supports typed arrays, but not nested element types such as
+`Array[Array[int]]`. `Array[Variant]` is the same as `Array`. Typed
+dictionaries arrived in Godot 4.4, above this addon's 4.3 floor. Typed arrays
+retain their element type at runtime. Assigning a raw parsed array to
+`Array[T]` can fail before its elements are validated. Sources:
+[Godot 4.3 GDScript reference][gdscript-43]
 and [Godot 4.4 typed dictionaries][dict-44].
 
 [gdscript-43]: https://docs.godotengine.org/en/4.3/tutorials/scripting/gdscript/gdscript_basics.html
@@ -40,5 +41,7 @@ warning under the warning-as-error gate. Keep that browser property read at a
 `Variant` boundary.
 
 Many client, protocol, and transport test captures with one known element type
-were typed in sessions 084-086. Mixed test tuples and malformed input fixtures
-stay dynamic so they continue to exercise invalid values.
+were typed in sessions 084-086. Godot 4.3 accepts `Array[Array]` for lists of
+mixed event rows, so session 092 typed those outer lists. Each row stays
+dynamic because its fields have different types. Malformed wire fixtures stay
+dynamic so tests can exercise invalid values.
