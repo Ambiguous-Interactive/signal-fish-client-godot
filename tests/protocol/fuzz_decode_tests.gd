@@ -53,7 +53,7 @@ const _INT_BOUNDARIES := [
 ## round-trip vectors must survive through both paths.
 static var _float_boundary_values: Array[float] = _float_boundaries()
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 
 
@@ -76,7 +76,7 @@ static func _double_from_bits(bits: int) -> float:
 	return bytes.decode_double(0)
 
 
-static func run() -> Array:
+static func run() -> Array[String]:
 	var tests := new()
 	tests.run_all()
 	return tests._failures

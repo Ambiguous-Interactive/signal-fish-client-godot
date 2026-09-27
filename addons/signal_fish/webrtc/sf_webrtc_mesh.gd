@@ -93,7 +93,7 @@ var _client: SignalFishClientScript = null
 # so the vanished-client case must be detected by the flag, not the reference.
 var _attached := false
 var _plan: SFSessionTypesScript.SessionPlanInfo = null
-var _ice_servers: Array = []
+var _ice_servers: Array[SFSessionTypesScript.IceServerInfo] = []
 var _peers: Dictionary = {}
 var _mp_peer: Object = null
 var _reported_connected := false
@@ -175,8 +175,11 @@ func get_peer_count() -> int:
 	return _peers.size()
 
 
-func get_peer_ids() -> Array:
-	return _peers.keys()
+func get_peer_ids() -> Array[String]:
+	var ids: Array[String] = []
+	for uuid: String in _peers.keys():
+		ids.append(uuid)
+	return ids
 
 
 ## Deterministic, platform-stable player UUID → [MultiplayerAPI] peer id
@@ -287,7 +290,9 @@ func _on_client_connection_failed(_error: String) -> void:
 	_reset_mesh()
 
 
-func _on_client_reconnected(_info: SFTypesScript.RoomJoinedInfo, _missed_events: Array) -> void:
+func _on_client_reconnected(
+	_info: SFTypesScript.RoomJoinedInfo, _missed_events: Array[SFTypesScript.DecodedEvent]
+) -> void:
 	# Replay delivers the missed events through this signal only, so the old
 	# mesh cannot be revived by a replayed plan. No peer reopens until the
 	# next plan arrives, and that plan's ICE list governs new connections.

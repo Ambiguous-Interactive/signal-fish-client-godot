@@ -15,7 +15,7 @@ const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFJsonGuardScript = preload("res://addons/signal_fish/protocol/sf_json_guard.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 
 
@@ -23,7 +23,7 @@ func _done() -> void:
 	_test_done = true
 
 
-static func run() -> Array:
+static func run() -> Array[String]:
 	var tests := new()
 	tests.run_all()
 	return tests._failures

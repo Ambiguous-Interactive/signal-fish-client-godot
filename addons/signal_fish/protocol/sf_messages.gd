@@ -338,7 +338,7 @@ static func _add_optional_token_list(
 		return ""
 	if typeof(values) != TYPE_ARRAY and not (values is PackedStringArray):
 		return "%s must be an array" % key
-	var tokens: Array = []
+	var tokens: Array[String] = []
 	for value: Variant in values:
 		var token := _enum_token(value, from_string)
 		if token.is_empty():
@@ -355,7 +355,7 @@ static func _add_optional_string_list(data: Dictionary, key: String, values: Var
 		return ""
 	if typeof(values) != TYPE_ARRAY and not (values is PackedStringArray):
 		return "%s must be an array" % key
-	var tokens: Array = []
+	var tokens: Array[String] = []
 	for value: Variant in values:
 		if typeof(value) != TYPE_STRING and typeof(value) != TYPE_STRING_NAME:
 			return "%s must contain strings" % key

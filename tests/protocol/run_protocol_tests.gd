@@ -21,7 +21,7 @@ const CLIENT_FIXTURE := "res://tests/fixtures/v2_client_messages.jsonl"
 const SERVER_FIXTURE := "res://tests/fixtures/v2_server_messages.jsonl"
 const MALFORMED_FIXTURE := "res://tests/fixtures/malformed.jsonl"
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 # Completion sentinel: an abort inside _run() skips quit() and would
 # otherwise hang CI instead of reporting a red result.

@@ -14,7 +14,7 @@ const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_con
 const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 var _runner: Object = null
 
@@ -23,7 +23,7 @@ func _done() -> void:
 	_test_done = true
 
 
-static func run(runner: Variant) -> Array:
+static func run(runner: Object) -> Array[String]:
 	var tests := new()
 	tests._runner = runner
 	tests.run_all()
@@ -54,7 +54,7 @@ func _make_authenticated_client() -> SignalFishClientScript:
 	return _runner.call("_make_authenticated_client")
 
 
-func _track_protocol_errors(client: SignalFishClientScript) -> Array:
+func _track_protocol_errors(client: SignalFishClientScript) -> Array[String]:
 	return _runner.call("_track_protocol_errors", client)
 
 
@@ -364,7 +364,7 @@ func _test_connect_token_reaches_wire() -> void:
 func _test_encode_boundary_refuses_unserializable_payload() -> void:
 	var client := _make_authenticated_client()
 	var fake: SFFakeTransportScript = client.transport
-	var errors: Array = _track_protocol_errors(client)
+	var errors: Array[String] = _track_protocol_errors(client)
 	var info: SFTypesScript.ConnectionInfo = SFTypesScript.ConnectionInfo.new(
 		{"type": "custom", "data": {"deep": Vector2(1, 2)}}
 	)

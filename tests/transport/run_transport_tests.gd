@@ -9,7 +9,7 @@ const TestWebSocketPeerAdapterScript = preload(
 )
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 # Completion sentinel: a runtime abort inside _run() would otherwise leave
 # the process hanging until CI kills it.
@@ -621,7 +621,7 @@ func _test_websocket_closed_state_delivers_queued_packets() -> void:
 		case_peer.close_code = 1000
 		case_peer.close_reason = "gone"
 		var queued: Array = case[1]
-		case_peer.packets = queued.duplicate()
+		case_peer.packets.append_array(queued)
 		case_transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
 		_assert_equal(case[3], case_packets.size(), "%s: packets after poll 1" % case[0])
 		_assert_equal(case[4], case_events, "%s: events after poll 1" % case[0])
@@ -727,7 +727,7 @@ func _test_close_at_closed_drains_queued_packets() -> void:
 		peer.close_code = 1000
 		peer.close_reason = "gone"
 		var queued: Array = case[1]
-		peer.packets = queued.duplicate()
+		peer.packets.append_array(queued)
 		transport.close(1000, "consumer")
 		_assert_equal(case[3], packets.size(), "%s: packets after close" % case[0])
 		_assert_equal(case[4], events, "%s: events after close" % case[0])

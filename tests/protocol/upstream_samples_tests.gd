@@ -57,7 +57,7 @@ const EXPECTED_SERVER_SIGNALS: Array[String] = [
 	"server_error",
 ]
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 
 
@@ -65,7 +65,7 @@ func _done() -> void:
 	_test_done = true
 
 
-static func run() -> Array:
+static func run() -> Array[String]:
 	var tests := new()
 	tests.run_all()
 	return tests._failures

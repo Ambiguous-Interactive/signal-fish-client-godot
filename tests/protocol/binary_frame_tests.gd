@@ -14,7 +14,7 @@ const CompletionGuard = preload("res://tests/completion_guard.gd")
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const PLAYER_B_BYTES: Array = [0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02]
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 
 
@@ -22,7 +22,7 @@ func _done() -> void:
 	_test_done = true
 
 
-static func run() -> Array:
+static func run() -> Array[String]:
 	var tests := new()
 	tests.run_all()
 	return tests._failures

@@ -18,8 +18,8 @@ static func decode_payload(payload: Variant) -> Dictionary:
 	}
 
 
-static func encode_payload_as_array(bytes: PackedByteArray) -> Array:
-	var result: Array = []
+static func encode_payload_as_array(bytes: PackedByteArray) -> Array[int]:
+	var result: Array[int] = []
 	for byte_value: int in bytes:
 		result.append(byte_value)
 	return result

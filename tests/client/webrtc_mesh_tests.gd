@@ -26,7 +26,7 @@ const PLAYER_B_PEER_ID := 1186411174
 const STUN := {"urls": ["stun:stun.example:3478"]}
 const TURN := {"urls": ["turn:turn.example:3478"], "username": "alice", "credential": "turn-secret"}
 
-var _failures: Array = []
+var _failures: Array[String] = []
 var _test_done := false
 var _runner: Object = null
 
@@ -35,7 +35,7 @@ func _done() -> void:
 	_test_done = true
 
 
-static func run(runner: Variant) -> Array:
+static func run(runner: Object) -> Array[String]:
 	var tests := new()
 	tests._runner = runner
 	tests.run_all()
@@ -138,7 +138,7 @@ func _make_reconnect_dial_client() -> SignalFishClientScript:
 	return client
 
 
-func _track_protocol_errors(client: SignalFishClientScript) -> Array:
+func _track_protocol_errors(client: SignalFishClientScript) -> Array[String]:
 	return _runner.call("_track_protocol_errors", client)
 
 
@@ -1166,8 +1166,8 @@ class FakePeerConnection:
 	var initialize_config: Variant = null
 	var initialize_result: Error = OK
 	var create_offer_calls := 0
-	var local_description: Array = []
-	var remote_description: Array = []
+	var local_description: Array[String] = []
+	var remote_description: Array[String] = []
 	var added_candidates: Array = []
 	var poll_calls := 0
 	var closed := false
@@ -1213,7 +1213,7 @@ class FakeMultiplayerPeer:
 	var mesh_id := 0
 	var create_mesh_result: Error = OK
 	var added: Array = []
-	var removed: Array = []
+	var removed: Array[int] = []
 	var closed := false
 
 	func create_mesh(unique_id: int) -> Error:

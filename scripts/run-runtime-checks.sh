@@ -44,6 +44,20 @@ python_bin="${PYTHON:-python3}"
 target="${1:-all}"
 GD_DIRS=(addons/signal_fish tests demo scripts)
 
+check_gdscript_roots() {
+	local file failed=0
+	while IFS= read -r -d '' file; do
+		case "${file}" in
+			addons/signal_fish/*.gd | tests/*.gd | demo/*.gd | scripts/*.gd) ;;
+			*)
+				echo "GDScript outside checked roots: ${file}" >&2
+				failed=1
+				;;
+		esac
+	done < <(git ls-files -z --cached --others --exclude-standard -- '*.gd')
+	[[ "${failed}" -eq 0 ]]
+}
+
 gdtoolkit_version() {
 	# importlib.metadata reads the dist-info without importing the gdtoolkit
 	# parser: ~0.15 s vs ~0.7 s for `gdformat --version` (a full import).
@@ -241,6 +255,7 @@ run_python_types() {
 }
 
 run_gdscript_static() {
+	check_gdscript_roots || return 1
 	local tmp_dir
 	tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-static.XXXXXX")"
 	# One temp dir owned by a subshell trap: if `set -e` aborts a check early,
