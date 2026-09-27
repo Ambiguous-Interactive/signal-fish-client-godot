@@ -1069,11 +1069,11 @@ func _test_reconnected_missed_events_nonfatal() -> void:
 	_assert_equal(
 		"reconnected", String(future_missed_event.signal_name), "future missed event reconnect"
 	)
-	var missed_events: Array = future_missed_event.args[1]
+	var missed_events: Array[SFTypesScript.DecodedEvent] = future_missed_event.args[1]
 	_assert_equal(3, missed_events.size(), "future missed event count")
 	_assert_equal("protocol_error", str(missed_events[0].signal_name), "future missed event entry")
 	_assert_equal("pong", str(missed_events[1].signal_name), "known missed event")
-	var non_object_entry: RefCounted = missed_events[2]
+	var non_object_entry: SFTypesScript.DecodedEvent = missed_events[2]
 	_assert_protocol_error_contains(non_object_entry, "missed_events[2]", "non-object missed event")
 	_done()
 
@@ -1106,13 +1106,15 @@ func _test_reconnected_missed_events_depth_hardening() -> void:
 		{"type": "Reconnected", "data": oversized_data}
 	)
 	_assert_equal("reconnected", String(oversized.signal_name), "oversized missed events outer")
-	var oversized_entries: Array = oversized.args[1]
+	var oversized_entries: Array[SFTypesScript.DecodedEvent] = oversized.args[1]
 	_assert_equal(
 		SFEventsScript.MAX_MISSED_EVENTS + 1,
 		oversized_entries.size(),
 		"oversized missed events decoded entries"
 	)
-	var truncated_entry: RefCounted = oversized_entries[SFEventsScript.MAX_MISSED_EVENTS]
+	var truncated_entry: SFTypesScript.DecodedEvent = oversized_entries[
+		SFEventsScript.MAX_MISSED_EVENTS
+	]
 	_assert_protocol_error_contains(
 		truncated_entry,
 		"exceeds %d entries" % SFEventsScript.MAX_MISSED_EVENTS,

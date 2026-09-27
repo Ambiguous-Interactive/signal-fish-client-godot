@@ -82,8 +82,8 @@ func run_all() -> void:
 	CompletionGuard.check_registration(self, cases, _failures)
 
 
-func _decode_all_server_samples() -> Array:
-	var events: Array = []
+func _decode_all_server_samples() -> Array[SFTypesScript.DecodedEvent]:
+	var events: Array[SFTypesScript.DecodedEvent] = []
 	for line: String in _read_sample_lines(SERVER_SAMPLES):
 		var decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(line)
 		if decoded == null or decoded.signal_name == &"protocol_error":
@@ -95,7 +95,7 @@ func _decode_all_server_samples() -> Array:
 	return events
 
 
-func _check_all_expected_signals_present(server_events: Array) -> void:
+func _check_all_expected_signals_present(server_events: Array[SFTypesScript.DecodedEvent]) -> void:
 	var seen := {}
 	for decoded: SFTypesScript.DecodedEvent in server_events:
 		var signal_text := String(decoded.signal_name)
@@ -106,7 +106,7 @@ func _check_all_expected_signals_present(server_events: Array) -> void:
 	_assert_equal(24, server_events.size(), "sample decode count")
 
 
-func _check_published_shape_pins(server_events: Array) -> void:
+func _check_published_shape_pins(server_events: Array[SFTypesScript.DecodedEvent]) -> void:
 	var room_joined := _first_event(server_events, "room_joined")
 	if room_joined != null:
 		var info: SFTypesScript.RoomJoinedInfo = room_joined.args[0]
@@ -131,13 +131,13 @@ func _check_published_shape_pins(server_events: Array) -> void:
 
 	var game_starting := _first_event(server_events, "game_starting")
 	if game_starting != null:
-		var peers: Array = game_starting.args[0]
+		var peers: Array[SFTypesScript.PeerConnectionInfo] = game_starting.args[0]
 		_assert_equal(2, peers.size(), "upstream game starting peer count")
 		_assert_equal(null, peers[1].connection_info, "upstream peer without connection")
 
 	var reconnected := _first_event(server_events, "reconnected")
 	if reconnected != null:
-		var missed_events: Array = reconnected.args[1]
+		var missed_events: Array[SFTypesScript.DecodedEvent] = reconnected.args[1]
 		_assert_equal(0, missed_events.size(), "upstream reconnected missed events")
 
 	var lobby_state_changed := _first_event(server_events, "lobby_state_changed")
@@ -187,13 +187,17 @@ func _test_all_client_samples_are_client_messages() -> void:
 	_done()
 
 
-func _first_event(events: Array, signal_text: String) -> SFTypesScript.DecodedEvent:
+func _first_event(
+	events: Array[SFTypesScript.DecodedEvent], signal_text: String
+) -> SFTypesScript.DecodedEvent:
 	var matches := _events(events, signal_text)
 	return matches[0] if not matches.is_empty() else null
 
 
-func _events(events: Array, signal_text: String) -> Array:
-	var matches: Array = []
+func _events(
+	events: Array[SFTypesScript.DecodedEvent], signal_text: String
+) -> Array[SFTypesScript.DecodedEvent]:
+	var matches: Array[SFTypesScript.DecodedEvent] = []
 	for decoded: SFTypesScript.DecodedEvent in events:
 		if decoded.signal_name == StringName(signal_text):
 			matches.append(decoded)

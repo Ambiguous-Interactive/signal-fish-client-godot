@@ -83,7 +83,7 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 	if not _assert_fixture_count(9, lines, V3_SERVER_FIXTURE):
 		_done()
 		return
-	var expected_signals := [
+	var expected_signals: Array[String] = [
 		"session_plan",
 		"session_plan",
 		"session_plan",
@@ -94,11 +94,11 @@ func _test_v3_server_decoders_match_fixtures() -> void:
 		"room_joined",
 		"protocol_info",
 	]
-	var expected_arg_counts := [1, 1, 1, 1, 2, 3, 3, 1, 1]
+	var expected_arg_counts: Array[int] = [1, 1, 1, 1, 2, 3, 3, 1, 1]
 	if not _assert_equal(lines.size(), expected_signals.size(), "v3 expected signal count"):
 		_done()
 		return
-	var decoded_events: Array = []
+	var decoded_events: Array[SFTypesScript.DecodedEvent] = []
 	var failures_before_fixture_shape_checks := _failures.size()
 	for index: int in lines.size():
 		var decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(lines[index])
@@ -771,7 +771,7 @@ func _test_truncated_missed_events_keep_the_newest() -> void:
 	if not _assert_decoded_signal("reconnected", reconnected, "truncated replay decodes"):
 		_done()
 		return
-	var kept: Array = reconnected.args[1]
+	var kept: Array[SFTypesScript.DecodedEvent] = reconnected.args[1]
 	var cap := SFEventsScript.MAX_MISSED_EVENTS
 	_assert_equal(cap + 1, kept.size(), "the cap keeps its entries plus the sentinel")
 	var first: SFTypesScript.DecodedEvent = kept[0]
