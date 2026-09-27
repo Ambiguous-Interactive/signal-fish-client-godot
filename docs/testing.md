@@ -57,8 +57,10 @@ handshakes in both directions, and refused-dial failure.
 ## Type strictness
 
 Every GDScript warning class the engine matrix registers is pinned to error
-level in `project.godot`, except two style exclusions: type inference via
-`:=` and discarded return values. The checks apply to the addon as well:
+level in `project.godot` except three: `:=` type inference and discarded
+return values stay ignorable by style, and the 4.7-only `missing_await`
+stays unpinned because a marker naming it is a parse error on engines that
+lack the class. The checks apply to the addon as well:
 the engine default `exclude_addons` is explicitly disabled, so a warning
 regression fails CI anywhere in the repo. The small set of statements that
 are not yet fully typed carry an explicit `@warning_ignore` marker naming

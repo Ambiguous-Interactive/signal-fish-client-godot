@@ -18,8 +18,8 @@ Per-session history: `progress/session-NNN-*.md`.
 - [ ] Delete `@warning_ignore` markers by typing the code under them
       (298 typed-debt markers plus 4 deliberate interface markers in
       `sf_transport.gd`; live list: `grep -rn "@warning_ignore" addons/`).
-      Every GDScript warning class already sits at error level except the
-      two style exclusions documented in `project.godot`.
+      46 of the 49 GDScript warning classes the matrix registers sit at
+      error level; the exceptions are documented in `project.godot`.
 
 ### Asset Library bootstrap (P6 remainder)
 - [ ] One-time human submission + moderation, then repo secrets
