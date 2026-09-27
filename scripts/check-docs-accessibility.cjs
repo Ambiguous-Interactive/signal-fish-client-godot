@@ -296,6 +296,25 @@ const hasValidSearchFocus = (state) =>
     state.focusInViewport &&
     !state.focusInert;
 
+const waitForSearchModalFocus = async (page) => {
+    // The site's focus move runs on an animation frame that can outlast a
+    // fixed sleep on loaded runners.
+    let state;
+    for (let attempt = 0; attempt < 100; attempt++) {
+        state = await searchFocusState(page);
+        if (
+            state.checked &&
+            state.modal === "true" &&
+            !state.inert &&
+            hasValidSearchFocus(state)
+        ) {
+            return state;
+        }
+        await page.waitForTimeout(50);
+    }
+    return state;
+};
+
 const checkClosedBoundaries = async (page) => {
     const cases = [
         [719, true, true],
@@ -476,8 +495,7 @@ const checkSearchResize = async (page) => {
     await page.goto(origin, { waitUntil: "networkidle" });
     await page.locator('label.md-header__button[for="__search"]').focus();
     await page.keyboard.press("Enter");
-    await settleShell(page);
-    let state = await searchFocusState(page);
+    let state = await waitForSearchModalFocus(page);
     expectState(
         state.checked &&
             state.modal === "true" &&
@@ -514,8 +532,7 @@ const checkSearchResize = async (page) => {
     );
 
     await page.setViewportSize({ width: 959, height: 800 });
-    await settleShell(page);
-    state = await searchFocusState(page);
+    state = await waitForSearchModalFocus(page);
     expectState(
         state.checked &&
             state.modal === "true" &&
