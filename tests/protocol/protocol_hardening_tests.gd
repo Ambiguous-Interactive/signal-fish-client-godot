@@ -79,6 +79,30 @@ func _test_wire_payload_fidelity() -> void:
 			_assert_string_contains(
 				wire, '"score":%s' % vector["wire"], "fidelity %s wire text" % label
 			)
+	# Float wire text is memoized (issue #161): the memo is a pure cache, so an
+	# encode must be byte-identical across cache states — repeats included —
+	# and memo eviction (bounded, clear-on-full like the uuid cache) must stay
+	# invisible on the wire.
+	var memo_envelope := SFMessagesScript.game_data({"v": 1.5, "w": 1.5, "x": 2.25})
+	var base_wire := SFMessagesScript.encode(memo_envelope)
+	var repeat_wire := SFMessagesScript.encode(memo_envelope)
+	_assert(not base_wire.is_empty(), "memo base encode emits")
+	_assert_equal(base_wire, repeat_wire, "memo repeat encode is byte-identical")
+	var churn: Dictionary = {}
+	for index: int in SFEnvelopeScript._FLOAT_MEMO_LIMIT + 64:
+		churn["k_%d" % index] = index * 0.125 + 0.5
+	var churn_wire := SFMessagesScript.encode(SFMessagesScript.game_data(churn))
+	var churn_back: Variant = JSON.parse_string(churn_wire)
+	if _assert(typeof(churn_back) == TYPE_DICTIONARY, "memo churn wire parses"):
+		var churn_dict: Dictionary = churn_back["data"]["data"]
+		var spot_check: bool = (
+			churn_dict.size() == SFEnvelopeScript._FLOAT_MEMO_LIMIT + 64
+			and churn_dict["k_0"] == 0.5
+			and churn_dict["k_319"] == 319 * 0.125 + 0.5
+		)
+		_assert(spot_check, "memo churn values survive eviction")
+	var post_churn_wire := SFMessagesScript.encode(memo_envelope)
+	_assert_equal(base_wire, post_churn_wire, "memo recomputes identically after eviction")
 	var null_envelope := SFMessagesScript.game_data(null)
 	_assert_valid_message(null_envelope, "top-level null game data stays valid")
 	_assert_equal(
