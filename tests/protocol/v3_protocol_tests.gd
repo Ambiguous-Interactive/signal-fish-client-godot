@@ -729,7 +729,7 @@ func _test_truncated_missed_events_keep_the_newest() -> void:
 	# suffix, so a decode cap that overflows must drop the OLDEST entries and
 	# keep the ones closest to now.
 	var total := 260
-	var missed: Array = []
+	var missed: Array[Dictionary] = []
 	for index: int in total:
 		missed.append(
 			{

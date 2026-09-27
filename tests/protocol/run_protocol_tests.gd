@@ -1176,7 +1176,7 @@ func _minimal_spectator_data() -> Dictionary:
 	return {"id": "30000000-0000-0000-0000-000000000001", "name": "Watcher", "connected_at": "now"}
 
 
-func _game_starting_envelope(peer_connections: Array) -> Dictionary:
+func _game_starting_envelope(peer_connections: Array[Dictionary]) -> Dictionary:
 	return {"type": "GameStarting", "data": {"peer_connections": peer_connections}}
 
 
