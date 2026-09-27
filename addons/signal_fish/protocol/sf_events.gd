@@ -452,7 +452,7 @@ static func _decode_authenticated(
 static func _decode_room_joined(
 	type_name: String, data: Dictionary, envelope: Dictionary
 ) -> SFTypesScript.DecodedEvent:
-	var required := [
+	var required: PackedStringArray = [
 		"room_id",
 		"room_code",
 		"player_id",
@@ -657,7 +657,7 @@ static func _is_reconnected_envelope(envelope: Dictionary) -> bool:
 static func _decode_spectator_joined(
 	type_name: String, data: Dictionary, envelope: Dictionary
 ) -> SFTypesScript.DecodedEvent:
-	var required := [
+	var required: PackedStringArray = [
 		"room_id",
 		"room_code",
 		"spectator_id",
