@@ -552,7 +552,7 @@ func _test_v3_envelope_matrix() -> void:
 	for case: Dictionary in cases:
 		var case_encoding: String = case["encoding"]
 		var case_seq: PackedByteArray = case["seq"]
-		var bytes := _envelope(
+		var case_bytes := _envelope(
 			[
 				_uuid_field(),
 				_encoding_field(case_encoding),
@@ -562,17 +562,17 @@ func _test_v3_envelope_matrix() -> void:
 			],
 			[0x85]
 		)
-		var result: Dictionary = SFBinaryFramesScript.decode_envelope(bytes)
-		var result_ok: bool = result["ok"]
-		if not _assert(result_ok, true, "v3 %s decodes" % case["label"]):
+		var case_result: Dictionary = SFBinaryFramesScript.decode_envelope(case_bytes)
+		var case_result_ok: bool = case_result["ok"]
+		if not _assert(case_result_ok, true, "v3 %s decodes" % case["label"]):
 			continue
-		_assert_equal(3, result["version"], "v3 %s version" % case["label"])
+		_assert_equal(3, case_result["version"], "v3 %s version" % case["label"])
 		_assert_equal(
-			PackedByteArray([0x0B, 0x0C]), result["payload"], "v3 %s payload" % case["label"]
+			PackedByteArray([0x0B, 0x0C]), case_result["payload"], "v3 %s payload" % case["label"]
 		)
 		_assert_equal(
 			SFTypesScript.game_data_encoding_from_string(case["encoding"]),
-			result["encoding"],
+			case_result["encoding"],
 			"v3 %s encoding" % case["label"]
 		)
 	# A u64 stamp above i64 max wraps negative in Godot but must stay valid (rust reads u64 natively).

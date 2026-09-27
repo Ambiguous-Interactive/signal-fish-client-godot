@@ -562,12 +562,12 @@ func send_signal(to_peer: String, generation: String, signal_payload) -> Error:
 
 ## Report the current data-path transport state (protocol v3; informational).
 ## [param transport_kind] takes a [enum SFSessionTypes.TransportKind] value.
-func send_transport_status(transport_kind: int, connected: bool) -> Error:
+func send_transport_status(transport_kind: int, is_up: bool) -> Error:
 	var guard := _guard_session_send("send_transport_status")
 	if guard != OK:
 		return guard
 	return _send_envelope(
-		SFMessagesScript.transport_status(transport_kind, connected), "send_transport_status"
+		SFMessagesScript.transport_status(transport_kind, is_up), "send_transport_status"
 	)
 
 
@@ -792,12 +792,15 @@ func _fail_reconnect_handshake() -> void:
 
 
 func _send_authenticate() -> Error:
+	var protocol_version: Variant = null
+	if _config.protocol_version > 0:
+		protocol_version = _config.protocol_version
 	var envelope := SFMessagesScript.authenticate(
 		_config.app_id,
 		_optional_string(_config.sdk_version),
 		_optional_string(_config.platform),
 		_optional_string(_config.game_data_format),
-		_config.protocol_version if _config.protocol_version > 0 else null,
+		protocol_version,
 		_string_list_or_null(_config.supported_transports),
 		_string_list_or_null(_config.supported_topologies),
 		_string_list_or_null(_config.requested_capabilities),
@@ -807,7 +810,9 @@ func _send_authenticate() -> Error:
 
 
 func _string_list_or_null(values: PackedStringArray) -> Variant:
-	return null if values.is_empty() else Array(values)
+	if values.is_empty():
+		return null
+	return Array(values)
 
 
 func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:

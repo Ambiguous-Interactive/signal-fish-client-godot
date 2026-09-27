@@ -8,6 +8,9 @@ CI, tests, and internal tooling are not listed.
 
 ### Changed
 
+- `SignalFishClient.send_transport_status()` renames its `connected`
+  parameter to `is_up` (positional calls unaffected).
+
 - Documentation is now ASCII-only; wording is unchanged where possible.
 - Encoding envelopes whose floats repeat (positions, timers) is faster: the
   round-trip-verified wire text for each value is memoized, so repeated

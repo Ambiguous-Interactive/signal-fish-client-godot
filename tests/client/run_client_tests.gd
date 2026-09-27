@@ -6,6 +6,9 @@ const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFFakeTransportScript = preload("res://addons/signal_fish/transport/sf_fake_transport.gd")
+# No other suite loads the editor plugin; this keeps it under the warning
+# gate on every PR and every CI engine (issue #174).
+const SFPluginScript = preload("res://addons/signal_fish/plugin.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const HeartbeatTestsScript = preload("res://tests/client/heartbeat_tests.gd")
@@ -54,6 +57,9 @@ func _helper_suites_are_loadable() -> bool:
 		return false
 	if not (WebrtcMeshTestsScript as Script).has_method("run"):
 		push_error("helper suite failed to load: webrtc_mesh_tests")
+		return false
+	if not (SFPluginScript as Script).can_instantiate():
+		push_error("addon script failed to load: plugin")
 		return false
 	return true
 
@@ -797,7 +803,7 @@ func _test_spectator_flow() -> void:
 			spectator_events.append(["gone", spectator_id, current_spectators.size(), reason])
 	)
 	client.spectator_left.connect(
-		func(room_id: String, room_code: String, reason: int, current_spectators: Array) -> void:
+		func(_room_id: String, room_code: String, reason: int, current_spectators: Array) -> void:
 			spectator_events.append(["left", room_code, reason, current_spectators.size()])
 	)
 	client.spectator_join_failed.connect(
@@ -897,8 +903,8 @@ func _test_reconnected_restores_room_state() -> void:
 	var restored: Array = []
 	var failures: Array = []
 	client.reconnected.connect(
-		func(info: SFTypesScript.RoomJoinedInfo, missed_events: Array) -> void:
-			restored.append([info, missed_events])
+		func(info: SFTypesScript.RoomJoinedInfo, missed: Array) -> void:
+			restored.append([info, missed])
 	)
 	client.reconnection_failed.connect(
 		func(reason: String, error_code: int) -> void: failures.append([reason, error_code])

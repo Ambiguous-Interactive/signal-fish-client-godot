@@ -8,7 +8,7 @@ extends SceneTree
 const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
-const SFJsonGuard = preload("res://addons/signal_fish/protocol/sf_json_guard.gd")
+const SFJsonGuardScript = preload("res://addons/signal_fish/protocol/sf_json_guard.gd")
 const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
 
 const _RUNS := 7
@@ -54,12 +54,12 @@ func _init() -> void:
 	_bench("text_control_decode", 20000, func() -> void: SFEventsScript.decode_text(_control_text))
 	_bench("text_game_decode", 20000, func() -> void: SFEventsScript.decode_text(_game_text))
 	_bench(
-		"json_guard_control", 20000, func() -> void: SFJsonGuard.duplicate_key_error(_control_text)
+		"json_guard_control", 20000, func() -> void: SFJsonGuardScript.duplicate_key_error(_control_text)
 	)
 	_bench(
 		"json_guard_object_dense",
 		2,
-		func() -> void: SFJsonGuard.duplicate_key_error(_object_dense_text)
+		func() -> void: SFJsonGuardScript.duplicate_key_error(_object_dense_text)
 	)
 	_bench("utf8_copy_control", 20000, func() -> void: _control_text.to_utf8_buffer())
 	# encode_floats measures the memo steady state (issue #161: repeated game

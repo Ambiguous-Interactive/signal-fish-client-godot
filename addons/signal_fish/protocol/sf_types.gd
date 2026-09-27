@@ -338,19 +338,19 @@ class ConnectionInfo:
 		return value
 
 	func _normalize_common_wire_fields(result: Dictionary) -> void:
-		for key: String in CONNECTION_INFO_OUTBOUND_NULL_FIELDS:
-			if result.has(key) and result[key] == null:
-				result.erase(key)
+		for field: String in CONNECTION_INFO_OUTBOUND_NULL_FIELDS:
+			if result.has(field) and result[field] == null:
+				result.erase(field)
 		if result.has("transport"):
 			var transport_value := TypeUtils.enum_value(
 				RELAY_TRANSPORT_FROM_STRING, result["transport"], RelayTransport.UNKNOWN
 			)
 			if transport_value == RelayTransport.UNKNOWN:
 				result.erase("transport")
-		for key: String in ["port", "client_id"]:
-			if result.has(key) and TypeUtils.is_integral_number(result[key]):
+		for field: String in ["port", "client_id"]:
+			if result.has(field) and TypeUtils.is_integral_number(result[field]):
 				@warning_ignore("unsafe_call_argument")
-				result[key] = int(result[key])
+				result[field] = int(result[field])
 
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:

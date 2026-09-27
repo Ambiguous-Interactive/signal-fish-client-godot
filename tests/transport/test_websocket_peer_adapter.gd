@@ -64,7 +64,7 @@ func get_packet() -> PackedByteArray:
 		_last_packet_error = OK
 	else:
 		var packet_error: int = packet_errors.pop_front()
-		_last_packet_error = packet_error
+		_last_packet_error = packet_error as Error
 	if packet_is_text.is_empty():
 		_last_was_string = false
 	else:

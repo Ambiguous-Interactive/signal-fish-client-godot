@@ -6,19 +6,76 @@ run/main_scene="res://demo/main.tscn"
 config/features=PackedStringArray("4.3")
 config/icon="res://demo/icon.svg"
 
-; GDScript warnings: missing static types and unsafe Variant access are
-; errors, so untyped or unsafely-typed code fails CI (issues #35, #42, #170).
-; exclude_addons=false is load-bearing: the engine default exempts
-; res://addons from every warning, which silenced these errors for the
-; entire addon. Statements that still carry untyped/unsafe debt carry an
-; explicit @warning_ignore marker (per statement: portable across the
-; CI engine matrix); deleting one requires typing that statement.
+; GDScript warnings: every warning class the engine matrix registers is
+; pinned below, error level unless noted, so untyped code, unsafe Variant
+; access, or a warning regression fails CI (issues #35, #42, #170). Keys a
+; given engine does not know are ignored by that engine; the 4.4+/4.7-only
+; keys guard those CI shards. exclude_addons=false is load-bearing: the
+; engine default exempts res://addons from every warning, which silenced
+; these errors for the entire addon. Statements that still carry
+; untyped/unsafe debt carry an explicit @warning_ignore marker (per
+; statement: portable across the CI engine matrix); deleting one requires
+; typing that statement.
+; Two classes stay ignorable by style: inferred_declaration (`:=` is the
+; house style) and return_value_discarded (assert helpers and engine calls
+; discard returns on purpose; flagging them would add ~1,200 markers). The
+; 4.7-only missing_await stays unpinned: the smoke test's deliberate
+; fire-and-forget kickoff trips it, and a marker naming that class is a
+; parse error on engines that lack it, so it cannot be expressed portably.
 [debug]
 gdscript/warnings/enable=true
 gdscript/warnings/exclude_addons=false
+gdscript/warnings/assert_always_false=2
+gdscript/warnings/assert_always_true=2
+gdscript/warnings/confusable_capture_reassignment=2
+gdscript/warnings/confusable_identifier=2
+gdscript/warnings/confusable_local_declaration=2
+gdscript/warnings/confusable_local_usage=2
+gdscript/warnings/confusable_temporary_modification=2
+gdscript/warnings/constant_used_as_function=2
+gdscript/warnings/deprecated_keyword=2
+gdscript/warnings/empty_file=2
+gdscript/warnings/enum_variable_without_default=2
+gdscript/warnings/function_used_as_property=2
+gdscript/warnings/get_node_default_without_onready=2
+gdscript/warnings/incompatible_ternary=2
+gdscript/warnings/inference_on_variant=2
+gdscript/warnings/inferred_declaration=0
+gdscript/warnings/int_as_enum_without_cast=2
+gdscript/warnings/int_as_enum_without_match=2
+gdscript/warnings/integer_division=2
+gdscript/warnings/missing_tool=2
+gdscript/warnings/narrowing_conversion=2
+gdscript/warnings/native_method_override=2
+gdscript/warnings/onready_with_export=2
+gdscript/warnings/property_used_as_function=2
+gdscript/warnings/redundant_await=2
+gdscript/warnings/redundant_static_unload=2
+gdscript/warnings/return_value_discarded=0
+gdscript/warnings/shadowed_global_identifier=2
+gdscript/warnings/shadowed_variable=2
+gdscript/warnings/shadowed_variable_base_class=2
+gdscript/warnings/standalone_expression=2
+gdscript/warnings/standalone_ternary=2
+gdscript/warnings/static_called_on_instance=2
+gdscript/warnings/unassigned_variable=2
+gdscript/warnings/unassigned_variable_op_assign=2
+gdscript/warnings/unreachable_code=2
+gdscript/warnings/unreachable_pattern=2
 gdscript/warnings/untyped_declaration=2
-gdscript/warnings/unsafe_property_access=2
-gdscript/warnings/unsafe_method_access=2
 gdscript/warnings/unsafe_call_argument=2
 gdscript/warnings/unsafe_cast=2
+gdscript/warnings/unsafe_method_access=2
+gdscript/warnings/unsafe_property_access=2
+gdscript/warnings/unsafe_void_return=2
+gdscript/warnings/unused_local_constant=2
+gdscript/warnings/unused_parameter=2
+gdscript/warnings/unused_private_class_variable=2
+gdscript/warnings/unused_signal=2
+gdscript/warnings/unused_variable=2
+
+; Enabled plugins boot in every editor session (web-export smoke imports and
+; exports the demo), so plugin.gd stays compiled and instantiated in CI (#174).
+[editor_plugins]
+enabled=PackedStringArray("res://addons/signal_fish/plugin.cfg")
 
