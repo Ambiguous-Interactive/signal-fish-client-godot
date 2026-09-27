@@ -223,7 +223,7 @@ func _test_server_decoders_match_fixtures() -> void:
 	if not _assert_fixture_count(24, lines, SERVER_FIXTURE):
 		_done()
 		return
-	var expected_signals := [
+	var expected_signals: Array[String] = [
 		"authenticated",
 		"protocol_info",
 		"authentication_error",
@@ -249,7 +249,7 @@ func _test_server_decoders_match_fixtures() -> void:
 		"spectator_disconnected",
 		"server_error",
 	]
-	var expected_arg_counts := [
+	var expected_arg_counts: Array[int] = [
 		3, 1, 2, 1, 2, 0, 1, 1, 2, 3, 2, 3, 3, 1, 0, 2, 2, 1, 1, 2, 4, 3, 3, 2
 	]
 	if not _assert_equal(lines.size(), expected_signals.size(), "server expected signal count"):
@@ -258,7 +258,7 @@ func _test_server_decoders_match_fixtures() -> void:
 	if not _assert_equal(lines.size(), expected_arg_counts.size(), "server expected arg count"):
 		_done()
 		return
-	var decoded_events: Array = []
+	var decoded_events: Array[SFTypesScript.DecodedEvent] = []
 	var failures_before_fixture_shape_checks := _failures.size()
 	for index: int in lines.size():
 		var decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(lines[index])
@@ -339,17 +339,17 @@ func _test_server_decoders_match_fixtures() -> void:
 		room_joined.args[0].reconnection_token,
 		"room join issues the reconnection token"
 	)
-	var room_joined_players: Array = room_joined.args[0].current_players
+	var room_joined_players: Array[SFTypesScript.PlayerInfo] = room_joined.args[0].current_players
 	_assert_equal(1, room_joined_players.size(), "room_joined players")
-	_assert_equal("Alice", room_joined.args[0].current_players[0].name, "room player name")
-	_assert_equal(true, room_joined.args[0].current_players[0].is_authority, "room player auth")
-	_assert_equal(
-		"direct", room_joined.args[0].current_players[0].connection_info.type, "room conn type"
+	_assert_equal("Alice", room_joined_players[0].name, "room player name")
+	_assert_equal(true, room_joined_players[0].is_authority, "room player auth")
+	_assert_equal("direct", room_joined_players[0].connection_info.type, "room conn type")
+	_assert_equal(7777, room_joined_players[0].connection_info.port, "room port")
+	var room_joined_spectators: Array[SFTypesScript.SpectatorInfo] = (
+		room_joined.args[0].current_spectators
 	)
-	_assert_equal(7777, room_joined.args[0].current_players[0].connection_info.port, "room port")
-	var room_joined_spectators: Array = room_joined.args[0].current_spectators
 	_assert_equal(1, room_joined_spectators.size(), "room spectators")
-	_assert_equal("Observer", room_joined.args[0].current_spectators[0].name, "room spectator")
+	_assert_equal("Observer", room_joined_spectators[0].name, "room spectator")
 
 	var room_join_failed: SFTypesScript.DecodedEvent = decoded_events[4]
 	_assert_equal("room is full", room_join_failed.args[0], "room join failed reason")
@@ -420,20 +420,17 @@ func _test_server_decoders_match_fixtures() -> void:
 	_assert_equal(false, lobby_state_changed.args[2], "lobby all ready")
 
 	var game_starting: SFTypesScript.DecodedEvent = decoded_events[13]
-	var game_starting_peers: Array = game_starting.args[0]
+	var game_starting_peers: Array[SFTypesScript.PeerConnectionInfo] = game_starting.args[0]
 	_assert_equal(2, game_starting_peers.size(), "game starting peers")
+	var first_peer: SFTypesScript.PeerConnectionInfo = game_starting_peers[0]
+	_assert_equal("10000000-0000-0000-0000-000000000001", first_peer.player_id, "game starting p1")
+	_assert_equal("Alice", game_starting_peers[0].player_name, "game starting p1 name")
+	_assert_equal(true, game_starting_peers[0].is_authority, "game starting p1 authority")
+	_assert_equal("websocket", game_starting_peers[0].relay_type, "game starting relay")
+	_assert_equal("direct", game_starting_peers[0].connection_info.type, "game starting conn")
+	_assert_equal("custom", game_starting_peers[1].connection_info.type, "game starting custom")
 	_assert_equal(
-		"10000000-0000-0000-0000-000000000001",
-		game_starting.args[0][0].player_id,
-		"game starting p1"
-	)
-	_assert_equal("Alice", game_starting.args[0][0].player_name, "game starting p1 name")
-	_assert_equal(true, game_starting.args[0][0].is_authority, "game starting p1 authority")
-	_assert_equal("websocket", game_starting.args[0][0].relay_type, "game starting relay")
-	_assert_equal("direct", game_starting.args[0][0].connection_info.type, "game starting conn")
-	_assert_equal("custom", game_starting.args[0][1].connection_info.type, "game starting custom")
-	_assert_equal(
-		{"transport": "fixture"}, game_starting.args[0][1].connection_info.data, "custom data"
+		{"transport": "fixture"}, game_starting_peers[1].connection_info.data, "custom data"
 	)
 
 	var pong: SFTypesScript.DecodedEvent = decoded_events[14]
@@ -447,10 +444,10 @@ func _test_server_decoders_match_fixtures() -> void:
 		reconnected.args[0].ready_players,
 		"re ready players"
 	)
-	var reconnected_missed_events: Array = reconnected.args[1]
+	var reconnected_missed_events: Array[SFTypesScript.DecodedEvent] = reconnected.args[1]
 	_assert_equal(2, reconnected_missed_events.size(), "reconnected missed event count")
-	_assert_equal("pong", str(reconnected.args[1][0].signal_name), "reconnected missed pong")
-	_assert_equal("player_left", str(reconnected.args[1][1].signal_name), "re missed left")
+	_assert_equal("pong", str(reconnected_missed_events[0].signal_name), "reconnected missed pong")
+	_assert_equal("player_left", str(reconnected_missed_events[1].signal_name), "re missed left")
 	_assert_equal(
 		"test-reconnect-token-rotated-not-secret",
 		reconnected.args[0].reconnection_token,
@@ -483,10 +480,14 @@ func _test_server_decoders_match_fixtures() -> void:
 		spectator_joined.args[0].spectator_id,
 		"spectator joined id"
 	)
-	var spectator_joined_players: Array = spectator_joined.args[0].current_players
+	var spectator_joined_players: Array[SFTypesScript.PlayerInfo] = (
+		spectator_joined.args[0].current_players
+	)
 	_assert_equal(1, spectator_joined_players.size(), "spectator joined players")
-	_assert_equal("Alice", spectator_joined.args[0].current_players[0].name, "spectator player")
-	var spectator_joined_spectators: Array = spectator_joined.args[0].current_spectators
+	_assert_equal("Alice", spectator_joined_players[0].name, "spectator player")
+	var spectator_joined_spectators: Array[SFTypesScript.SpectatorInfo] = (
+		spectator_joined.args[0].current_spectators
+	)
 	_assert_equal(1, spectator_joined_spectators.size(), "spectator joined spectators")
 	_assert_equal(
 		SFTypesScript.LobbyState.WAITING, spectator_joined.args[0].lobby_state, "spectator lobby"
@@ -509,13 +510,13 @@ func _test_server_decoders_match_fixtures() -> void:
 	_assert_equal(
 		SFTypesScript.SpectatorReason.VOLUNTARY_LEAVE, spectator_left.args[2], "sl reason"
 	)
-	var spectator_left_spectators: Array = spectator_left.args[3]
+	var spectator_left_spectators: Array[SFTypesScript.SpectatorInfo] = spectator_left.args[3]
 	_assert_equal(0, spectator_left_spectators.size(), "sl current spectators")
 
 	var new_spectator: SFTypesScript.DecodedEvent = decoded_events[21]
 	_assert_equal("30000000-0000-0000-0000-000000000002", new_spectator.args[0].id, "ns id")
 	_assert_equal("Watcher", new_spectator.args[0].name, "ns name")
-	var new_spectator_spectators: Array = new_spectator.args[1]
+	var new_spectator_spectators: Array[SFTypesScript.SpectatorInfo] = new_spectator.args[1]
 	_assert_equal(1, new_spectator_spectators.size(), "ns current spectators")
 	_assert_equal(SFTypesScript.SpectatorReason.JOINED, new_spectator.args[2], "ns reason")
 
@@ -524,7 +525,9 @@ func _test_server_decoders_match_fixtures() -> void:
 	_assert_equal(
 		SFTypesScript.SpectatorReason.DISCONNECTED, spectator_disconnected.args[1], "sd reason"
 	)
-	var spectator_disconnected_spectators: Array = spectator_disconnected.args[2]
+	var spectator_disconnected_spectators: Array[SFTypesScript.SpectatorInfo] = (
+		spectator_disconnected.args[2]
+	)
 	_assert_equal(0, spectator_disconnected_spectators.size(), "sd current spectators")
 
 	var server_error: SFTypesScript.DecodedEvent = decoded_events[23]
@@ -666,10 +669,14 @@ func _test_upstream_optional_fields_decode() -> void:
 		_game_starting_envelope([_peer_connection({})])
 	)
 	_assert_equal("game_starting", String(game_starting.signal_name), "optional peer connection")
-	var optional_game_starting_peers: Array = game_starting.args[0]
+	var optional_game_starting_peers: Array[SFTypesScript.PeerConnectionInfo] = (
+		game_starting.args[0]
+	)
 	_assert_equal(1, optional_game_starting_peers.size(), "optional peer count")
-	_assert_equal(null, game_starting.args[0][0].connection_info, "peer connection info optional")
-	_assert_equal("regional-relay", game_starting.args[0][0].relay_type, "peer relay label")
+	_assert_equal(
+		null, optional_game_starting_peers[0].connection_info, "peer connection info optional"
+	)
+	_assert_equal("regional-relay", optional_game_starting_peers[0].relay_type, "peer relay label")
 
 	var relay_without_transport: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
 		_game_starting_envelope([_peer_connection({"connection_info": _relay_connection_info({})})])
@@ -739,7 +746,9 @@ func _test_upstream_optional_fields_decode() -> void:
 	_assert_equal("spectator_left", String(spectator_left.signal_name), "minimal spectator left")
 	_assert_equal("", spectator_left.args[0], "minimal spectator left room")
 	_assert_equal(SFTypesScript.SpectatorReason.UNKNOWN, spectator_left.args[2], "minimal reason")
-	var minimal_spectator_left_spectators: Array = spectator_left.args[3]
+	var minimal_spectator_left_spectators: Array[SFTypesScript.SpectatorInfo] = (
+		spectator_left.args[3]
+	)
 	_assert_equal(0, minimal_spectator_left_spectators.size(), "minimal spectator list")
 
 	var spectator_left_null_reason: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
@@ -971,9 +980,9 @@ func _test_protocol_error_diagnostics() -> void:
 		{"type": "Reconnected", "data": bad_missed_event_data}
 	)
 	_assert_equal("reconnected", String(bad_missed_event.signal_name), "missed event diagnostics")
-	var bad_missed_events: Array = bad_missed_event.args[1]
+	var bad_missed_events: Array[SFTypesScript.DecodedEvent] = bad_missed_event.args[1]
 	_assert_equal(1, bad_missed_events.size(), "bad missed event count")
-	var bad_missed_event_decoded: RefCounted = bad_missed_events[0]
+	var bad_missed_event_decoded: SFTypesScript.DecodedEvent = bad_missed_events[0]
 	_assert_protocol_error_contains(
 		bad_missed_event_decoded, "missed_events[0]", "missed event index"
 	)

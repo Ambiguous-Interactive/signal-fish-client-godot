@@ -104,7 +104,7 @@ func _test_passthrough_payload_guard() -> void:
 		{"type": "Reconnected", "data": replay_data}
 	)
 	_assert_equal("reconnected", String(replayed.signal_name), "replay hostile outer decodes")
-	var replayed_entries: Array = replayed.args[1]
+	var replayed_entries: Array[SFTypesScript.DecodedEvent] = replayed.args[1]
 	_assert_equal(1, replayed_entries.size(), "replay hostile entry decoded")
 	var replayed_entry: SFTypesScript.DecodedEvent = replayed_entries[0]
 	var replay_detail: String = replayed_entry.args[0]

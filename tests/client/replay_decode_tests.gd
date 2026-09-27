@@ -65,7 +65,7 @@ func _test_tokens_decode_from_baselines() -> void:
 		{"reconnection_token": TOKEN_V1, "missed_events": [{"type": "Pong"}]},
 	)
 	_assert_equal(TOKEN_V1, event.args[0].reconnection_token, "Reconnected carries token")
-	var missed: Array = event.args[1]
+	var missed: Array[SFTypesScript.DecodedEvent] = event.args[1]
 	_assert_equal(1, missed.size(), "missed_events decoded")
 	_done()
 
