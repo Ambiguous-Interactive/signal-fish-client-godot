@@ -19,11 +19,12 @@ Per-session history: `progress/session-NNN-*.md`.
       at wire, event, and test boundaries. Narrow fixed-shape values after
       checking public API compatibility. Four unused interface-signal ignores
       remain under the warning-as-error Godot load gate.
-- [ ] #167: Pin and check formatters for the remaining script and doc formats.
+- [ ] #167: Pin and check formatters for PowerShell, shell, JavaScript, config,
+      and docs files. Python and GDScript format checks are in the runtime gate.
 - [ ] #168: Move suitable automation to Python and uv while preserving the
       PowerShell harness and the runtime gate behavior.
-- [ ] #170: Add useful static analyzers for Python, PowerShell, shell, and
-      JavaScript, then verify their findings and warning exceptions.
+- [ ] #170: Extend static analyzers and warning checks for PowerShell, shell,
+      and JavaScript. Review Python Ruff rule coverage and exceptions.
 
 ### Asset Library bootstrap (P6 remainder)
 - [ ] One-time human submission + moderation, then repo secrets

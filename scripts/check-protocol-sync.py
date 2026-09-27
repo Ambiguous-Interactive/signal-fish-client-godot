@@ -54,9 +54,7 @@ def extract_unique(pattern: re.Pattern[str], text: str, source: str) -> str:
         raise RuntimeError(f"no protocol pin found in {source}")
     unique = sorted(set(matches))
     if len(unique) != 1:
-        raise RuntimeError(
-            f"conflicting protocol pins in {source}: {', '.join(unique)}"
-        )
+        raise RuntimeError(f"conflicting protocol pins in {source}: {', '.join(unique)}")
     value = unique[0]
     if not isinstance(value, str):
         raise RuntimeError(f"protocol pin in {source} is not text")
@@ -147,9 +145,7 @@ def self_test() -> int:
         raise AssertionError("conflicting pins must be rejected")
 
     doc = "- `signal-fish-server`: `24a5d10b9e1700cdbef24f05dfe7fe1f0719ac3d`\n"
-    assert extract_unique(DOC_PIN_RE, doc, "doc.md") == (
-        "24a5d10b9e1700cdbef24f05dfe7fe1f0719ac3d"
-    )
+    assert extract_unique(DOC_PIN_RE, doc, "doc.md") == ("24a5d10b9e1700cdbef24f05dfe7fe1f0719ac3d")
 
     for empty in ("", "# no pins here"):
         try:

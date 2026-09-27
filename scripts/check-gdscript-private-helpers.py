@@ -28,9 +28,10 @@ import os
 import re
 import sys
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, cast
+from typing import cast
 
 try:
     from gdtoolkit.parser import parser as gd_parser  # type: ignore[import-untyped]
@@ -45,9 +46,7 @@ except ImportError as exc:  # pragma: no cover - exercised by humans without too
 
 DEFAULT_PATHS = ("addons/signal_fish", "tests")
 EXCLUDED_PARTS = {".git", ".godot", ".import", "__pycache__", "gdUnit4", "gut"}
-ALLOW_COMMENT = re.compile(
-    r"#\s*gdscript-private-helper:\s*allow\s+([A-Za-z_][A-Za-z0-9_]*)"
-)
+ALLOW_COMMENT = re.compile(r"#\s*gdscript-private-helper:\s*allow\s+([A-Za-z_][A-Za-z0-9_]*)")
 
 GODOT_PRIVATE_ROOTS = {
     "_apply_changes",
@@ -195,7 +194,7 @@ class Scope:
     name: str
     node: Tree[Token]
     functions: dict[str, FunctionDef] = field(default_factory=dict)
-    children: list["Scope"] = field(default_factory=list)
+    children: list[Scope] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -401,9 +400,7 @@ def add_function(scope: Scope, func_node: Tree[Token]) -> None:
     )
 
 
-def analyze_scope(
-    scope: Scope, path: str, allowlisted: dict[int, set[str]]
-) -> list[Problem]:
+def analyze_scope(scope: Scope, path: str, allowlisted: dict[int, set[str]]) -> list[Problem]:
     problems: list[Problem] = []
     names = set(scope.functions)
     private_names = {name for name in names if name.startswith("_")}
@@ -429,11 +426,7 @@ def analyze_scope(
 
 
 def is_reachability_root(name: str) -> bool:
-    return (
-        not name.startswith("_")
-        or name in GODOT_PRIVATE_ROOTS
-        or name.startswith("_on_")
-    )
+    return not name.startswith("_") or name in GODOT_PRIVATE_ROOTS or name.startswith("_on_")
 
 
 def is_allowlisted(function: FunctionDef, allowlisted: dict[int, set[str]]) -> bool:
@@ -619,11 +612,7 @@ def callable_argument_references(call: Tree[Token], names: set[str]) -> set[str]
     for child in call_arguments(call):
         if is_name_token(child) and str(child) in names:
             references.add(str(child))
-        elif (
-            isinstance(child, Tree)
-            and child.data == "getattr"
-            and is_direct_self_getattr(child)
-        ):
+        elif isinstance(child, Tree) and child.data == "getattr" and is_direct_self_getattr(child):
             attribute = last_token_value(child)
             if attribute in names:
                 references.add(attribute)
@@ -782,44 +771,39 @@ def run_self_tests() -> None:
         ),
         (
             "dynamic call edge",
-            "func _ready():\n\tcall(\"_late\")\n\nfunc _late():\n\tpass\n",
+            'func _ready():\n\tcall("_late")\n\nfunc _late():\n\tpass\n',
             set(),
         ),
         (
             "string name dynamic call edge",
-            "func _ready():\n\tcall(&\"_late\")\n\nfunc _late():\n\tpass\n",
+            'func _ready():\n\tcall(&"_late")\n\nfunc _late():\n\tpass\n',
             set(),
         ),
         (
             "constructed string name dynamic call edge",
-            (
-                "func _ready():\n"
-                "\tcall(StringName(\"_late\"))\n\n"
-                "func _late():\n"
-                "\tpass\n"
-            ),
+            ('func _ready():\n\tcall(StringName("_late"))\n\nfunc _late():\n\tpass\n'),
             set(),
         ),
         (
             "callv dynamic call edge",
-            "func _ready():\n\tcallv(\"_late\", [])\n\nfunc _late():\n\tpass\n",
+            'func _ready():\n\tcallv("_late", [])\n\nfunc _late():\n\tpass\n',
             set(),
         ),
         (
             "callv string name dynamic call edge",
-            "func _ready():\n\tcallv(&\"_late\", [])\n\nfunc _late():\n\tpass\n",
+            'func _ready():\n\tcallv(&"_late", [])\n\nfunc _late():\n\tpass\n',
             set(),
         ),
         (
             "call group method argument is not local",
-            "func _ready():\n\tcall_group(\"group\", \"_late\")\n\nfunc _late():\n\tpass\n",
+            'func _ready():\n\tcall_group("group", "_late")\n\nfunc _late():\n\tpass\n',
             {"_late"},
         ),
         (
             "call group name is not a method edge",
             (
                 "func public():\n"
-                "\tcall_group(\"_dead\", \"_handler\")\n\n"
+                '\tcall_group("_dead", "_handler")\n\n'
                 "func _handler():\n"
                 "\tpass\n"
                 "func _dead():\n"
@@ -829,24 +813,24 @@ def run_self_tests() -> None:
         ),
         (
             "other call string is not local",
-            "func public(other):\n\tother.call(\"_dead\")\n\nfunc _dead():\n\tpass\n",
+            'func public(other):\n\tother.call("_dead")\n\nfunc _dead():\n\tpass\n',
             {"_dead"},
         ),
         (
             "self call string is local",
-            "func public():\n\tself.call(\"_helper\")\n\nfunc _helper():\n\tpass\n",
+            'func public():\n\tself.call("_helper")\n\nfunc _helper():\n\tpass\n',
             set(),
         ),
         (
             "callable target must be self",
-            "func public(other):\n\tCallable(other, \"_dead\")\n\nfunc _dead():\n\tpass\n",
+            'func public(other):\n\tCallable(other, "_dead")\n\nfunc _dead():\n\tpass\n',
             {"_dead"},
         ),
         (
             "rpc payload is not a method edge",
             (
                 "func public():\n"
-                "\trpc(\"_handler\", \"_dead\")\n\n"
+                '\trpc("_handler", "_dead")\n\n'
                 "func _handler():\n"
                 "\tpass\n"
                 "func _dead():\n"
@@ -856,7 +840,7 @@ def run_self_tests() -> None:
         ),
         (
             "rpc receiver must be self",
-            "func public(other):\n\tother.rpc(\"_dead\")\n\nfunc _dead():\n\tpass\n",
+            'func public(other):\n\tother.rpc("_dead")\n\nfunc _dead():\n\tpass\n',
             {"_dead"},
         ),
         (
@@ -878,7 +862,7 @@ def run_self_tests() -> None:
             "other receiver can connect self target",
             (
                 "func _ready(other):\n"
-                "\tother.connect(\"pressed\", self, \"_pressed\")\n\n"
+                '\tother.connect("pressed", self, "_pressed")\n\n'
                 "func _pressed():\n"
                 "\tpass\n"
             ),
@@ -888,7 +872,7 @@ def run_self_tests() -> None:
             "other receiver connect needs self target",
             (
                 "func public(other):\n"
-                "\tother.connect(\"pressed\", other, \"_dead\")\n\n"
+                '\tother.connect("pressed", other, "_dead")\n\n'
                 "func _dead():\n"
                 "\tpass\n"
             ),
@@ -898,7 +882,7 @@ def run_self_tests() -> None:
             "legacy connect target edge",
             (
                 "func _ready():\n"
-                "\tconnect(\"pressed\", self, \"_pressed\")\n\n"
+                '\tconnect("pressed", self, "_pressed")\n\n'
                 "func _pressed():\n"
                 "\tpass\n"
             ),
@@ -908,7 +892,7 @@ def run_self_tests() -> None:
             "legacy connect string name target edge",
             (
                 "func _ready():\n"
-                "\tconnect(&\"pressed\", self, &\"_pressed\")\n\n"
+                '\tconnect(&"pressed", self, &"_pressed")\n\n'
                 "func _pressed():\n"
                 "\tpass\n"
             ),
@@ -918,7 +902,7 @@ def run_self_tests() -> None:
             "legacy connect constructed string name target edge",
             (
                 "func _ready():\n"
-                "\tconnect(StringName(\"pressed\"), self, StringName(\"_pressed\"))\n\n"
+                '\tconnect(StringName("pressed"), self, StringName("_pressed"))\n\n'
                 "func _pressed():\n"
                 "\tpass\n"
             ),
@@ -926,19 +910,14 @@ def run_self_tests() -> None:
         ),
         (
             "string name callable target edge",
-            (
-                "func _ready():\n"
-                "\tCallable(self, &\"_pressed\")\n\n"
-                "func _pressed():\n"
-                "\tpass\n"
-            ),
+            ('func _ready():\n\tCallable(self, &"_pressed")\n\nfunc _pressed():\n\tpass\n'),
             set(),
         ),
         (
             "constructed string name callable target edge",
             (
                 "func _ready():\n"
-                "\tCallable(self, StringName(\"_pressed\"))\n\n"
+                '\tCallable(self, StringName("_pressed"))\n\n'
                 "func _pressed():\n"
                 "\tpass\n"
             ),
@@ -948,7 +927,7 @@ def run_self_tests() -> None:
             "legacy connect signal name is not a method edge",
             (
                 "func public():\n"
-                "\tconnect(\"_dead\", self, \"_handler\")\n\n"
+                '\tconnect("_dead", self, "_handler")\n\n'
                 "func _handler():\n"
                 "\tpass\n"
                 "func _dead():\n"
@@ -978,23 +957,17 @@ def run_self_tests() -> None:
         ),
         (
             "lambda parameter is not a call edge",
-            (
-                "func public():\n"
-                "\tvar lam := func(_dead: int): pass\n"
-                "\n"
-                "func _dead():\n"
-                "\tpass\n"
-            ),
+            ("func public():\n\tvar lam := func(_dead: int): pass\n\nfunc _dead():\n\tpass\n"),
             {"_dead"},
         ),
         (
             "dictionary key string is not a call edge",
-            "func public(data):\n\tdata.get(\"_dead\")\n\nfunc _dead():\n\tpass\n",
+            'func public(data):\n\tdata.get("_dead")\n\nfunc _dead():\n\tpass\n',
             {"_dead"},
         ),
         (
             "signal name string is not a call edge",
-            "func public():\n\temit_signal(\"_dead\")\n\nfunc _dead():\n\tpass\n",
+            'func public():\n\temit_signal("_dead")\n\nfunc _dead():\n\tpass\n',
             {"_dead"},
         ),
         (
@@ -1053,8 +1026,8 @@ def run_self_tests() -> None:
         actual = {problem.name for problem in problems}
         if actual != expected or len(problems) != expected_count:
             raise SystemExit(
-                "self-test failed: %s: expected %s (%d problems), got %s (%d problems)"
-                % (name, sorted(expected), expected_count, sorted(actual), len(problems))
+                f"self-test failed: {name}: expected {sorted(expected)} "
+                f"({expected_count} problems), got {sorted(actual)} ({len(problems)} problems)"
             )
 
     parse_problems = analyze_source("func ok():\n\tpass\nfunc broken(\n", "<self-test parse>")
@@ -1062,13 +1035,13 @@ def run_self_tests() -> None:
         raise SystemExit("self-test failed: parse error must be reported as one parse problem")
     if parse_problems[0].line != 3:
         raise SystemExit(
-            "self-test failed: parse error line should be 3, got %d" % parse_problems[0].line
+            f"self-test failed: parse error line should be 3, got {parse_problems[0].line}"
         )
 
     self_class_problems = analyze_source(
         (
             "class_name LocalScript\n"
-            "const OtherScript = preload(\"res://other.gd\")\n"
+            'const OtherScript = preload("res://other.gd")\n'
             "func public():\n"
             "\tLocalScript.make_value()\n"
             "\tOtherScript.make_value()\n"

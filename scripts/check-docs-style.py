@@ -26,8 +26,12 @@ ALLOW_MARKER = "<!-- sf-allow:non-ascii -->"
 
 # Name -> pattern. Case-insensitive; each hit is one finding.
 PATTERNS = {
-    "contrast 'not X, but Y'": re.compile(r"\bnot [^.;?!\n]{1,60}, but (?:rather |simply |just )?\b", re.I),
-    "contrast 'it's not X, it's Y'": re.compile(r"\bit'?s not [^.;?!\n]{1,60}, (?:but )?it'?s\b", re.I),
+    "contrast 'not X, but Y'": re.compile(
+        r"\bnot [^.;?!\n]{1,60}, but (?:rather |simply |just )?\b", re.I
+    ),
+    "contrast 'it's not X, it's Y'": re.compile(
+        r"\bit'?s not [^.;?!\n]{1,60}, (?:but )?it'?s\b", re.I
+    ),
     "filler 'not just'": re.compile(r"\b(?:not|isn't|aren't|wasn't|weren't) just\b", re.I),
     "filler 'it's worth noting'": re.compile(r"\bit'?s worth noting (that )?\b", re.I),
 }
@@ -38,9 +42,11 @@ EXTRA_FILES = ("llms.txt",)
 
 
 def git_toplevel() -> str:
-    return subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], capture_output=True, check=True
-    ).stdout.decode("utf-8").strip()
+    return (
+        subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, check=True)
+        .stdout.decode("utf-8")
+        .strip()
+    )
 
 
 def is_scoped_doc(root_relative: str) -> bool:
@@ -74,9 +80,7 @@ def tracked_doc_files() -> list[str]:
         check=True,
         cwd=top,
     )
-    return sorted(
-        f"{top}/{p.decode('utf-8')}" for p in result.stdout.split(b"\0") if p
-    )
+    return sorted(f"{top}/{p.decode('utf-8')}" for p in result.stdout.split(b"\0") if p)
 
 
 def dirty_doc_files() -> list[str]:
@@ -118,7 +122,8 @@ def run_check(paths: Sequence[str], skip_missing: bool = False) -> tuple[list[Fi
     files = paths if paths else tracked_doc_files()
     for path in files:
         try:
-            text = open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as source:
+                text = source.read()
         except FileNotFoundError:
             # A deleted doc is a legitimate edit (the caller filters those
             # out up front); an explicitly named missing path is a typo and
@@ -162,7 +167,9 @@ def self_test() -> int:
     expect("isn't just", "isn't just fast.\n", 1)
     expect("worth noting", "It's worth noting that it works.\n", 1)
     expect("plain ascii passes", "a - b -> c, 100% done.\n", 0)
-    expect("sentence without the shape is fine", "The file is not found; nothing else happens.\n", 0)
+    expect(
+        "sentence without the shape is fine", "The file is not found; nothing else happens.\n", 0
+    )
     expect("patterns skip fenced code", "```gdscript\nnot fast, but strict\n```\n", 0)
     expect("fence state tracks toggles", "```\nx\n```\nnot slow, but sure.\n", 1)
     expect("non-ASCII inside a fence still counts", "```\na \u2014 b\n```\n", 1)
@@ -222,7 +229,7 @@ def main() -> int:
     if not args.paths:
         top = git_toplevel()
     for path, line, col, message in findings:
-        shown = path[len(top) + 1:] if top and path.startswith(top + "/") else path
+        shown = path[len(top) + 1 :] if top and path.startswith(top + "/") else path
         print(f"::error file={shown},line={line},col={col}::{message}")
     if findings:
         print(

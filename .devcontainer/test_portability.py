@@ -1,13 +1,14 @@
 """Regression checks: python .devcontainer/test_portability.py."""
+
 import json
-from pathlib import Path
-import re
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from typing import TypedDict
 
 
@@ -15,13 +16,15 @@ class DevcontainerConfig(TypedDict):
     initializeCommand: list[str]
     features: dict[str, object]
 
+
 ROOT = Path(__file__).resolve().parent
 
 
 def config() -> DevcontainerConfig:
     text = (ROOT / "devcontainer.json").read_text(encoding="utf-8")
-    text = re.sub(r'"(?:\\.|[^"\\])*"|//[^\n]*',
-                  lambda m: "" if m[0].startswith("//") else m[0], text)
+    text = re.sub(
+        r'"(?:\\.|[^"\\])*"|//[^\n]*', lambda m: "" if m[0].startswith("//") else m[0], text
+    )
     parsed: object = json.loads(text)
     if not isinstance(parsed, dict):
         raise ValueError("devcontainer config must be an object")
@@ -51,8 +54,12 @@ class Portability(unittest.TestCase):
     def test_agents_installed_in_image(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("bash /usr/local/share/devcontainer/install-agent-tools.sh", dockerfile)
-        for package in ("@openai/codex", "@opencode/cli",
-                        "@nanocollective/nanocoder", "@anthropic-ai/claude-code"):
+        for package in (
+            "@openai/codex",
+            "@opencode/cli",
+            "@nanocollective/nanocoder",
+            "@anthropic-ai/claude-code",
+        ):
             self.assertIn(f"https://registry.npmjs.org/{package}/latest", dockerfile)
         self.assertNotIn("ghcr.io/devcontainers/features/node:2", config()["features"])
 
@@ -60,7 +67,7 @@ class Portability(unittest.TestCase):
         script = (ROOT / "post-start.sh").read_text(encoding="utf-8")
         guard = script.index('"${SF_DEVCONTAINER_MAINTENANCE:-0}" != "1"')
         self.assertLess(guard, script.index('install-agent-tools.sh" --update'))
-        self.assertIn("exit 0", script[guard:script.index('install-agent-tools.sh" --update')])
+        self.assertIn("exit 0", script[guard : script.index('install-agent-tools.sh" --update')])
 
     def test_env_guard_chown_is_best_effort(self) -> None:
         # Some bind mounts reject ownership changes; create must survive
@@ -69,7 +76,7 @@ class Portability(unittest.TestCase):
         # keep the file readable and warn on the degraded path.
         script = (ROOT / "initialize.sh").read_text(encoding="utf-8")
         chown = script.index("chown --reference=")
-        window = script[chown:script.index("Created .env.local", chown)]
+        window = script[chown : script.index("Created .env.local", chown)]
         self.assertIn("chmod a+r", window)
         self.assertIn("WARN", window)
 
@@ -83,8 +90,10 @@ class DockerBehavior(unittest.TestCase):
             scripts.mkdir()
             for name in ("initialize.sh", "post-start.sh"):
                 shutil.copyfile(ROOT / name, scripts / name)
-            command = [arg.replace("${localWorkspaceFolder}", folder)
-                       for arg in config()["initializeCommand"]]
+            command = [
+                arg.replace("${localWorkspaceFolder}", folder)
+                for arg in config()["initializeCommand"]
+            ]
             missing = subprocess.run(command, capture_output=True, text=True, timeout=60)
             self.assertNotEqual(missing.returncode, 0)
             self.assertFalse((workspace / ".env.local").exists())
@@ -113,15 +122,22 @@ class DockerBehavior(unittest.TestCase):
             shutil.copyfile(ROOT / "initialize.sh", scripts / "initialize.sh")
             example = b"SF_TEST=placeholder\n"
             (workspace / ".env.example").write_bytes(example)
-            command = [arg.replace("${localWorkspaceFolder}", folder)
-                       for arg in config()["initializeCommand"]]
-            image = next(i for i, arg in enumerate(command)
-                         if arg.startswith("mcr.microsoft.com/devcontainers/"))
-            shim = ('mkdir -p /tmp/shim && printf "#!/bin/sh\\nexit 1\\n" > /tmp/shim/chown '
-                    '&& chmod +x /tmp/shim/chown '
-                    '&& PATH="/tmp/shim:$PATH" bash .devcontainer/initialize.sh '
-                    '&& cat .env.local')
-            shimmed = command[:image + 1] + ["bash", "-c", shim]
+            command = [
+                arg.replace("${localWorkspaceFolder}", folder)
+                for arg in config()["initializeCommand"]
+            ]
+            image = next(
+                i
+                for i, arg in enumerate(command)
+                if arg.startswith("mcr.microsoft.com/devcontainers/")
+            )
+            shim = (
+                'mkdir -p /tmp/shim && printf "#!/bin/sh\\nexit 1\\n" > /tmp/shim/chown '
+                "&& chmod +x /tmp/shim/chown "
+                '&& PATH="/tmp/shim:$PATH" bash .devcontainer/initialize.sh '
+                "&& cat .env.local"
+            )
+            shimmed = [*command[: image + 1], "bash", "-c", shim]
             result = subprocess.run(shimmed, capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("SF_TEST=placeholder", result.stdout)
