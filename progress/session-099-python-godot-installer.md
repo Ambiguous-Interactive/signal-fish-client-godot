@@ -14,4 +14,4 @@ Branch: `codex/session-099-python-godot-installer` from `origin/main` at
   full LLM harness pass locally.
 
 #168 stays open for the remaining automation migration.
-PR for this session: pending.
+PR #213 is the session deliverable.
