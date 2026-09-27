@@ -240,7 +240,7 @@ run_python_types() {
 	[[ "${#files[@]}" -eq 0 ]] || mypy --strict --disallow-any-explicit --show-error-codes -- "${files[@]}"
 }
 
-run_static() {
+run_gdscript_static() {
 	local tmp_dir
 	tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-static.XXXXXX")"
 	# One temp dir owned by a subshell trap: if `set -e` aborts a check early,
@@ -255,8 +255,6 @@ run_static() {
 		local format_pid=$!
 		run_lint >"${tmp_dir}/lint.out" 2>&1 &
 		local lint_pid=$!
-		run_python_types >"${tmp_dir}/python.out" 2>&1 &
-		local python_pid=$!
 		local failed=0 rc
 		rc=0
 		wait "${helper_pid}" || rc=$?
@@ -270,13 +268,25 @@ run_static() {
 		wait "${lint_pid}" || rc=$?
 		cat "${tmp_dir}/lint.out"
 		[[ "${rc}" -eq 0 ]] || failed=1
-		rc=0
-		wait "${python_pid}" || rc=$?
-		cat "${tmp_dir}/python.out"
-		[[ "${rc}" -eq 0 ]] || failed=1
 		[[ "${failed}" -eq 0 ]] || exit 1
 	)
 }
+
+run_static() (
+	local gdscript_output python_output gdscript_rc=0 python_rc=0
+	gdscript_output="$(mktemp)"
+	python_output="$(mktemp)"
+	trap 'rm -f "${gdscript_output}" "${python_output}"' EXIT
+	run_gdscript_static >"${gdscript_output}" 2>&1 &
+	local gdscript_pid=$!
+	run_python_types >"${python_output}" 2>&1 &
+	local python_pid=$!
+	wait "${gdscript_pid}" || gdscript_rc=$?
+	cat "${gdscript_output}"
+	wait "${python_pid}" || python_rc=$?
+	cat "${python_output}"
+	[[ "${gdscript_rc}" -eq 0 && "${python_rc}" -eq 0 ]]
+)
 
 # Any SCRIPT ERROR line is a runtime abort inside a test function: GDScript
 # only unwinds that function, so a green suite would still have silently
@@ -745,6 +755,12 @@ case "${target}" in
 	static)
 		run_static
 		;;
+	gdscript-static)
+		run_gdscript_static
+		;;
+	python-types)
+		run_python_types
+		;;
 	private-helpers)
 		run_private_helpers
 		;;
@@ -765,7 +781,7 @@ case "${target}" in
 		run_smoke
 		;;
 	*)
-		echo "usage: $0 [all|static|private-helpers|format|lint|godot [suite...]|changed|smoke]" >&2
+		echo "usage: $0 [all|static|gdscript-static|python-types|private-helpers|format|lint|godot [suite...]|changed|smoke]" >&2
 		echo "  godot suites: protocol transport client binary reconnect demo_boot p2p_boot" >&2
 		echo "  a single godot suite runs warm in-tree; SF_COLD=1 forces the cold copy" >&2
 		echo "  changed checks only what the dirty tree can affect (agent fast loop)" >&2
