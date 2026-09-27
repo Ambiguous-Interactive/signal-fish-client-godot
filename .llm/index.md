@@ -37,6 +37,7 @@ Generated Markdown inventory by `scripts/generate-llm-index.ps1`; do not edit by
 
 - [GDScript Client Shape](code-samples/gdscript-client-shape.md) - Map of the shipped GDScript-facing Signal Fish client API (mirrors the runtime addon).
 - [LLM Context Organization](README.md) - Organization guide for repo-specific AI context files.
+- [GDScript Typing Boundaries](research/gdscript-typing-boundaries.md) - Why Signal Fish wire and event boundaries retain dynamic GDScript values on Godot 4.3.
 - [Godot Networking And Web Notes](research/godot-networking-web.md) - Source-backed notes for Godot WebSocket, WebRTC, browser export, and cross-platform networking decisions.
 - [Godot Target Notes](research/godot-targets.md) - Compatibility notes for targeting major Godot versions from a GDScript Signal Fish addon.
 - [GStack Adaptation Notes](research/gstack-adaptations.md) - Practical gstack practices adapted for this repo's lightweight LLM harness.
