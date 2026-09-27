@@ -8,6 +8,18 @@ const INVALID_MESSAGE_ERROR_KEY := "_signal_fish_invalid_message_error"
 const INVALID_MESSAGE_ORIGINAL_TYPE_KEY := "_signal_fish_original_message_type"
 const INVALID_MESSAGE_TYPE := "__InvalidSignalFishMessage"
 
+## Float wire text memo: `_stringify_float` is a pure value→text function
+## whose dominant cost is the JSON parse-back proof (16-float bench envelope:
+## 96 us uncached vs 71 us warm, issue #161 audit). Game data resends values
+## (positions, timers) heavily, so each verified text is cached under its
+## float. Zeros bypass the memo — float keys cannot distinguish -0.0 from
+## 0.0, and only for zeros does the sign live in the wire text — so their
+## text is recomputed exactly as before. Cleared when full (same
+## hostile-churn bound as the binary decoder's uuid cache); a cached text is
+## byte-identical to what the uncached path produces, so hits cannot drift.
+const _FLOAT_MEMO_LIMIT := 256
+static var _float_memo: Dictionary = {}
+
 
 static func message(type_name: String, data: Variant = null) -> Dictionary:
 	var envelope: Dictionary = {}
@@ -101,13 +113,21 @@ static func _stringify_value(value: Variant, depth: int) -> String:
 static func _stringify_float(value: float) -> String:
 	if not is_finite(value):
 		return ""
+	var is_zero := value == 0.0
+	if not is_zero:
+		var cached: Variant = _float_memo.get(value)
+		if cached != null:
+			return cached
 	var text := _normalized_float(String.num(value, 17))
-	if _round_trips(text, value):
-		return text
-	text = _normalized_float(JSON.stringify(value, "", false, true))
-	if _round_trips(text, value):
-		return text
-	return ""
+	if not _round_trips(text, value):
+		text = _normalized_float(JSON.stringify(value, "", false, true))
+		if not _round_trips(text, value):
+			return ""
+	if not is_zero:
+		if _float_memo.size() >= _FLOAT_MEMO_LIMIT:
+			_float_memo.clear()
+		_float_memo[value] = text
+	return text
 
 
 static func _round_trips(text: String, value: float) -> bool:

@@ -44,7 +44,14 @@ const _INT_BOUNDARIES := [
 	-2147483648,
 	2147483647
 ]
-const _FLOAT_BOUNDARIES := [0.0, -0.0, 1.5, -2.25, 1e300, 5e-324, 3.141592653589793]
+## Extreme doubles for the round-trip and truncation vectors, built from bit
+## patterns at runtime: GDScript folds subnormal decimal literals (5e-324 ->
+## +0.0) at parse time, so no literal can carry the denormal boundary. The
+## JSON envelope path additionally refuses subnormals and the min normal
+## (the engine formatter renders them "0"), while the MessagePack codec
+## round-trips them bit-exactly -- the extremes here are the ones the
+## round-trip vectors must survive through both paths.
+static var _float_boundary_values: Array[float] = _float_boundaries()
 
 var _failures: Array = []
 var _test_done := false
@@ -52,6 +59,21 @@ var _test_done := false
 
 func _done() -> void:
 	_test_done = true
+
+
+static func _float_boundaries() -> Array[float]:
+	var values: Array[float] = [0.0, 1.5, -2.25, 1e300, 3.141592653589793]
+	values.append(_double_from_bits(-0x8000000000000000))
+	values.append(_double_from_bits(0x7FEFFFFFFFFFFFFF))
+	return values
+
+
+static func _double_from_bits(bits: int) -> float:
+	var bytes := PackedByteArray()
+	bytes.resize(8)
+	for offset: int in 8:
+		bytes[offset] = (bits >> (offset * 8)) & 0xFF
+	return bytes.decode_double(0)
 
 
 static func run() -> Array:
@@ -110,7 +132,7 @@ func _test_msgpack_truncation_sweep_fail_closed() -> void:
 		["deep arrays", deep],
 		["multibyte string", "é漢🦈"],
 		["int boundaries", _INT_BOUNDARIES],
-		["float boundaries", _FLOAT_BOUNDARIES],
+		["float boundaries", _float_boundary_values],
 	]
 	for entry: Array in payloads:
 		var encoded: Dictionary = SFMsgpackScript.encode(entry[1])
@@ -552,7 +574,7 @@ func _random_value(rng: RandomNumberGenerator, depth: int) -> Variant:
 		3:
 			value = rng.randi_range(-1000, 1000)
 		4:
-			value = _FLOAT_BOUNDARIES[rng.randi_range(0, _FLOAT_BOUNDARIES.size() - 1)]
+			value = _float_boundary_values[rng.randi_range(0, _float_boundary_values.size() - 1)]
 		5:
 			value = rng.randf_range(-1e9, 1e9)
 		6, 7:

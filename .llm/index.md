@@ -40,5 +40,6 @@ Generated Markdown inventory by `scripts/generate-llm-index.ps1`; do not edit by
 - [Godot Networking And Web Notes](research/godot-networking-web.md) - Source-backed notes for Godot WebSocket, WebRTC, browser export, and cross-platform networking decisions.
 - [Godot Target Notes](research/godot-targets.md) - Compatibility notes for targeting major Godot versions from a GDScript Signal Fish addon.
 - [GStack Adaptation Notes](research/gstack-adaptations.md) - Practical gstack practices adapted for this repo's lightweight LLM harness.
+- [Hot-Path Audit Verdicts (issue #161)](research/hot-path-audit.md) - Measured verdicts for issue #161 hot-path audit ideas (allocations, value-typed cursor decoders, float wire-text memo) so no session repeats them without new engine capabilities.
 - [Signal Fish Protocol Fixtures](research/protocol-fixtures.md) - Pinned upstream sources used to build Signal Fish v2 protocol fixtures for the Godot client.
 - [Signal Fish Upstream References](research/protocol-links.md) - Curated upstream references for Signal Fish protocol and client compatibility work.

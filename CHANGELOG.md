@@ -9,6 +9,9 @@ CI, tests, and internal tooling are not listed.
 ### Changed
 
 - Documentation is now ASCII-only; wording is unchanged where possible.
+- Encoding envelopes whose floats repeat (positions, timers) is faster: the
+  round-trip-verified wire text for each value is memoized, so repeated
+  floats skip the verification parse-back. Wire bytes are unchanged.
 - A truncated replay (`missed_events` over the 256-entry decode cap) now
   keeps the newest entries and drops the oldest: `replay: truncated` means
   the wire array is the most-recent suffix, and the events closest to now
