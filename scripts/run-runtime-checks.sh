@@ -624,7 +624,9 @@ run_changed() {
 	local runtime_changed="" gd_suites=() md_only=1 dirty_docs=0 file
 	local python_changed=0
 	local python_only=1
+	local tool_pins_changed=0
 	while IFS= read -r file; do
+		[[ "${file}" == requirements-ci.txt ]] && tool_pins_changed=1
 		case "${file}" in
 			*.py | ruff.toml | requirements-python-quality.txt) python_changed=1 ;;
 		esac
@@ -674,12 +676,16 @@ run_changed() {
 	fi
 
 	if [[ "${runtime_changed}" == "full" ]]; then
-		echo "=== changed: production-side edit -> all suites, static scoped to the edit ==="
+		if [[ "${tool_pins_changed}" -eq 1 ]]; then
+			echo "=== changed: tooling edit -> all suites and full static checks ==="
+		else
+			echo "=== changed: production-side edit -> all suites, static scoped to the edit ==="
+		fi
 		local static_output godot_rc=0 static_rc=0
 		static_output="$(mktemp)"
 		cleanup_paths+=("${static_output}")
 		local python_output="" python_pid="" python_rc=0
-		if [[ "${python_changed}" -eq 1 ]]; then
+		if [[ "${python_changed}" -eq 1 && "${tool_pins_changed}" -eq 0 ]]; then
 			python_output="$(mktemp)"
 			cleanup_paths+=("${python_output}")
 			run_python_types >"${python_output}" 2>&1 &
@@ -703,7 +709,11 @@ run_changed() {
 					;;
 			esac
 		done <<<"${files}"
-		run_static_on ${static_files[@]+"${static_files[@]}"} >"${static_output}" 2>&1 &
+		if [[ "${tool_pins_changed}" -eq 1 ]]; then
+			run_static >"${static_output}" 2>&1 &
+		else
+			run_static_on ${static_files[@]+"${static_files[@]}"} >"${static_output}" 2>&1 &
+		fi
 		local static_pid=$!
 		run_godot || godot_rc=$?
 		wait "${static_pid}" || static_rc=$?
