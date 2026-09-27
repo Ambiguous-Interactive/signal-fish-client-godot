@@ -193,6 +193,7 @@ func _emit_closed_once() -> void:
 	closed.emit(close_code, close_reason)
 
 
+@warning_ignore("untyped_declaration")
 func _fail_current_session(
 	error: String, close_peer := true, close_code := 1000, close_reason := ""
 ) -> void:

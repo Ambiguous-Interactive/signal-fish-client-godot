@@ -7,9 +7,14 @@ config/features=PackedStringArray("4.3")
 config/icon="res://demo/icon.svg"
 
 ; GDScript warnings: missing static types and unsafe Variant access are
-; errors, so untyped or unsafely-typed code fails CI (issues #35, #42).
+; errors, so untyped or unsafely-typed code fails CI (issues #35, #42, #170).
+; exclude_addons=false is load-bearing: the engine default exempts
+; res://addons from every warning, which silenced these errors for the
+; entire addon. Functions that still carry untyped/unsafe debt carry an
+; explicit @warning_ignore marker; deleting one requires typing the code.
 [debug]
 gdscript/warnings/enable=true
+gdscript/warnings/exclude_addons=false
 gdscript/warnings/untyped_declaration=2
 gdscript/warnings/unsafe_property_access=2
 gdscript/warnings/unsafe_method_access=2

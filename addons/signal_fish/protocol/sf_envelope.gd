@@ -40,6 +40,7 @@ static func is_invalid_message(envelope: Dictionary) -> bool:
 	return envelope.has(INVALID_MESSAGE_ERROR_KEY)
 
 
+@warning_ignore("unsafe_call_argument")
 static func invalid_message_error(envelope: Dictionary) -> String:
 	return String(envelope.get(INVALID_MESSAGE_ERROR_KEY, ""))
 
@@ -74,6 +75,7 @@ static func encode(envelope: Dictionary, report_error: bool = true) -> String:
 ## hostile integers (issue #73). Depth is bounded like the decoder so a
 ## hostile structure cannot overflow the script stack. An empty return means
 ## "refuse": containers always render at least "{}"/"[]".
+@warning_ignore("unsafe_call_argument")
 static func _stringify_value(value: Variant, depth: int) -> String:
 	if depth > SFTypeUtils.MAX_MESSAGE_DEPTH:
 		return ""
@@ -141,6 +143,7 @@ static func _normalized_float(text: String) -> String:
 	return text
 
 
+@warning_ignore("unsafe_call_argument")
 static func decode_text(text: String) -> Dictionary:
 	# Issue #92: the engine parser is last-wins on duplicate keys while
 	# upstream rejects such frames, so the strict pre-scan fails closed
@@ -166,6 +169,7 @@ static func decode_text(text: String) -> Dictionary:
 	return decode_envelope(parsed)
 
 
+@warning_ignore("unsafe_call_argument")
 static func decode_envelope(envelope: Dictionary) -> Dictionary:
 	if not envelope.has("type"):
 		return {"ok": false, "error": "message is missing type", "envelope": envelope}

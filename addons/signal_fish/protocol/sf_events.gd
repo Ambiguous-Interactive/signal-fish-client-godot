@@ -22,7 +22,7 @@ const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd"
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 
-
+@warning_ignore("unsafe_call_argument")
 static func decode_text(text: String) -> RefCounted:
 	var decoded := SFEnvelopeScript.decode_text(text)
 	if not decoded["ok"]:
@@ -30,6 +30,7 @@ static func decode_text(text: String) -> RefCounted:
 	return decode_envelope(decoded["envelope"])
 
 
+@warning_ignore("unsafe_call_argument")
 static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 	if depth > MAX_MESSAGE_DEPTH:
 		return _protocol_error("message nesting exceeds depth %d" % MAX_MESSAGE_DEPTH, envelope)
@@ -392,6 +393,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> RefCounted:
 			return _protocol_error("unknown message type: %s" % type_name, envelope)
 
 
+@warning_ignore("unsafe_call_argument")
 static func _decode_authenticated(
 	type_name: String, data: Dictionary, envelope: Dictionary
 ) -> RefCounted:
@@ -445,6 +447,7 @@ static func _decode_room_joined(
 	return _event(type_name, &"room_joined", [SFTypesScript.make_room_joined_info(data)], envelope)
 
 
+@warning_ignore("unsafe_call_argument")
 static func _decode_game_data_binary(
 	type_name: String, data: Dictionary, envelope: Dictionary
 ) -> RefCounted:
@@ -486,6 +489,7 @@ static func _decode_game_data_binary(
 ## consumers must null-check [code]args[2][/code] before indexing.
 ## [code]generation[/code] is "" when the sender's
 ## legacy Server 0.4 plan had none.
+@warning_ignore("unsafe_call_argument")
 static func _decode_signal(type_name: String, data: Dictionary, envelope: Dictionary) -> RefCounted:
 	if not _has_string(data, "from") or not data.has("signal"):
 		return _protocol_error("Signal requires from and signal", envelope)
@@ -514,6 +518,7 @@ static func _decode_signal(type_name: String, data: Dictionary, envelope: Dictio
 	)
 
 
+@warning_ignore("unsafe_call_argument")
 static func _decode_lobby_state_changed(
 	type_name: String, data: Dictionary, envelope: Dictionary
 ) -> RefCounted:
@@ -550,6 +555,7 @@ static func _decode_lobby_state_changed(
 	)
 
 
+@warning_ignore("unsafe_call_argument", "unsafe_method_access", "unsafe_property_access")
 static func _decode_reconnected(
 	type_name: String, data: Dictionary, envelope: Dictionary, depth := 0
 ) -> RefCounted:
@@ -614,6 +620,7 @@ static func _decode_reconnected(
 	)
 
 
+@warning_ignore("unsafe_call_argument")
 static func _is_reconnected_envelope(envelope: Dictionary) -> bool:
 	var type_value: Variant = envelope.get("type", null)
 	return typeof(type_value) == TYPE_STRING and String(type_value) == "Reconnected"
@@ -667,6 +674,7 @@ static func _has_dict(data: Dictionary, key: String) -> bool:
 	return data.has(key) and typeof(data[key]) == TYPE_DICTIONARY
 
 
+@warning_ignore("unsafe_call_argument")
 static func _validate_required_error_code(data: Dictionary, event_name: String) -> String:
 	if not data.has("error_code") or typeof(data["error_code"]) != TYPE_STRING:
 		return "%s requires string error_code" % event_name
@@ -675,6 +683,7 @@ static func _validate_required_error_code(data: Dictionary, event_name: String) 
 	return ""
 
 
+@warning_ignore("unsafe_call_argument")
 static func _validate_optional_error_code(data: Dictionary, event_name: String) -> String:
 	if not data.has("error_code") or data["error_code"] == null:
 		return ""
@@ -685,6 +694,7 @@ static func _validate_optional_error_code(data: Dictionary, event_name: String) 
 	return ""
 
 
+@warning_ignore("unsafe_call_argument")
 static func _strings_from_array(values: Array) -> PackedStringArray:
 	var result := PackedStringArray()
 	for value: Variant in values:
@@ -692,6 +702,7 @@ static func _strings_from_array(values: Array) -> PackedStringArray:
 	return result
 
 
+@warning_ignore("unsafe_call_argument")
 static func _string_or_empty(value: Variant) -> String:
 	if value == null:
 		return ""

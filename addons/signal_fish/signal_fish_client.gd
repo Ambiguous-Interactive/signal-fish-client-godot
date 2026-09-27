@@ -14,16 +14,17 @@ signal protocol_error(error: String)
 ## Server accepted the app authentication. Not emitted on reconnect dials:
 ## those re-authenticate internally and the consumer observes
 ## [signal reconnected] (or [signal reconnection_failed]) instead.
+@warning_ignore("untyped_declaration")
 signal authenticated(app_name: String, organization: String, rate_limits)
-signal protocol_info(info)
+@warning_ignore("untyped_declaration") signal protocol_info(info)
 signal authentication_error(error: String, error_code: int)
-signal room_joined(info)
+@warning_ignore("untyped_declaration") signal room_joined(info)
 signal room_join_failed(reason: String, error_code: int)
 signal room_left
-signal player_joined(player)
+@warning_ignore("untyped_declaration") signal player_joined(player)
 signal player_left(player_id: String)
 signal player_reconnected(player_id: String)
-signal game_data_received(from_player: String, data)
+@warning_ignore("untyped_declaration") signal game_data_received(from_player: String, data)
 signal game_data_binary_received(from_player: String, encoding: int, payload: PackedByteArray)
 signal authority_changed(authority_player: String, you_are_authority: bool)
 signal authority_response(granted: bool, reason: String, error_code: int)
@@ -33,13 +34,14 @@ signal pong
 ## [param missed_events] carries decoded [code]DecodedEvent[/code]s; malformed
 ## entries decode to [code]signal_name == &"protocol_error"[/code] sentinels —
 ## check them when replaying (see SFEvents).
-signal reconnected(info, missed_events: Array)
+@warning_ignore("untyped_declaration") signal reconnected(info, missed_events: Array)
 ## [param error_code] is the server's error code, or [code]Code.NONE[/code]
 ## for a local failure (e.g. a handshake send that never reached the wire).
 signal reconnection_failed(reason: String, error_code: int)
-signal spectator_joined(info)
+@warning_ignore("untyped_declaration") signal spectator_joined(info)
 signal spectator_join_failed(reason: String, error_code: int)
 signal spectator_left(room_id: String, room_code: String, reason: int, current_spectators: Array)
+@warning_ignore("untyped_declaration")
 signal new_spectator_joined(spectator, current_spectators: Array, reason: int)
 signal spectator_disconnected(spectator_id: String, reason: int, current_spectators: Array)
 signal server_error(message: String, error_code: int)
@@ -49,9 +51,10 @@ signal server_error(message: String, error_code: int)
 # signal_received.payload is the server-forwarded value verbatim (matchbox
 # convention: {"Offer"|"Answer"|"IceCandidate": ...}); generation is "" on the
 # legacy Server 0.4 shape.
+@warning_ignore("untyped_declaration")
 signal signal_received(from_player: String, generation: String, signal_payload)
 signal new_peer(peer_id: String, you_initiate: bool)
-signal session_plan(plan)
+@warning_ignore("untyped_declaration") signal session_plan(plan)
 signal peer_transport_status(peer_id: String, transport: int, connected: bool)
 
 enum ConnectionState {
@@ -110,7 +113,7 @@ const _PLAYER_ROOM_STATES: Array[SessionState] = [
 ## Active transport adapter. Tests may inject an [code]SFFakeTransport[/code]
 ## before [method connect_to_server]; production code leaves this null and the
 ## client builds a [code]SFWebSocketTransport[/code].
-var transport = null
+@warning_ignore("untyped_declaration") var transport = null
 
 var _config: SignalFishConfigScript = null
 var _connection_state: ConnectionState = ConnectionState.DISCONNECTED
@@ -295,12 +298,14 @@ func set_auto_reconnect(enabled: bool) -> void:
 
 ## Drives the transport. Called from [code]_process[/code] when
 ## [member SignalFishConfig.auto_poll] is on; call manually otherwise.
+@warning_ignore("unsafe_method_access")
 func poll() -> void:
 	if transport == null:
 		return
 	transport.poll()
 
 
+@warning_ignore("unsafe_method_access")
 func close(code := 1000, reason := "") -> Error:
 	# A deliberate close stops any pending auto-reconnect, marks the resulting
 	# transport close as clean, and drops the retained reconnection identity:
@@ -380,6 +385,7 @@ func get_authority_player() -> String:
 	return ""
 
 
+@warning_ignore("unsafe_method_access")
 func get_buffered_amount() -> int:
 	if transport == null:
 		return 0
@@ -414,6 +420,7 @@ func leave_room() -> Error:
 	return _send_envelope(SFMessagesScript.leave_room(), "leave_room")
 
 
+@warning_ignore("untyped_declaration")
 func send_game_data(data) -> Error:
 	var guard := _guard_session_send("send_game_data")
 	if guard != OK:
@@ -430,6 +437,7 @@ func send_game_data(data) -> Error:
 ## [/code]; raw bytes ride the same frame). If the server
 ## downgraded the requested format (see [signal protocol_info]), the
 ## effective negotiation rules.
+@warning_ignore("unsafe_method_access")
 func send_game_data_binary(bytes: PackedByteArray) -> Error:
 	var guard := _guard_session_send("send_game_data_binary")
 	if guard != OK:
@@ -537,6 +545,7 @@ func leave_spectator() -> Error:
 ## [param generation] is the latest [signal session_plan] generation. "" omits
 ## the field for legacy Server 0.4 plans only — the pinned server (v0.9.1+)
 ## requires it. [param signal_payload] is forwarded verbatim.
+@warning_ignore("untyped_declaration")
 func send_signal(to_peer: String, generation: String, signal_payload) -> Error:
 	var guard := _guard_session_send("send_signal")
 	if guard != OK:
@@ -672,6 +681,7 @@ static func insecure_scheme_error(url: String, is_web_platform: bool, secure_pag
 	return ""
 
 
+@warning_ignore("unsafe_method_access")
 func _open_transport(target: String) -> Error:
 	var scheme_error := insecure_scheme_error(target, _is_web_platform(), _is_secure_page())
 	if not scheme_error.is_empty():
@@ -709,10 +719,12 @@ func _open_transport(target: String) -> Error:
 	return OK
 
 
+@warning_ignore("untyped_declaration")
 func _make_transport():
 	return SFWebSocketTransportScript.new()
 
 
+@warning_ignore("unsafe_method_access")
 func _wire_transport_signals() -> void:
 	transport.opened.connect(_on_transport_opened)
 	transport.packet_received.connect(_on_transport_packet)
@@ -790,6 +802,7 @@ func _string_list_or_null(values: PackedStringArray) -> Variant:
 	return null if values.is_empty() else Array(values)
 
 
+@warning_ignore("unsafe_call_argument")
 func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
 	if payload.size() > _config.max_inbound_frame_bytes:
 		_emit_protocol_error(
@@ -816,6 +829,7 @@ func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
 ## (`BinaryFallbackV2`); json senders cannot originate binary frames because
 ## the server drops them, so binary on a json connection is hostile or
 ## buggy, never lost game data.
+@warning_ignore("unsafe_call_argument")
 func _handle_binary_frame(payload: PackedByteArray) -> void:
 	if _connection_state != ConnectionState.CONNECTED:
 		# Mirror the text path: while CLOSING the client only polls for the
@@ -917,6 +931,7 @@ func _on_transport_failed(error: String) -> void:
 		_schedule_auto_reconnect()
 
 
+@warning_ignore("unsafe_call_argument")
 func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 	if _connection_state != ConnectionState.CONNECTED:
 		# While CLOSING the client keeps polling to read the close frame, so
@@ -1125,6 +1140,7 @@ func _guard_session_send(action: String) -> Error:
 	return OK
 
 
+@warning_ignore("unsafe_method_access")
 func _send_envelope(envelope: Dictionary, action: String) -> Error:
 	if not SFMessagesScript.is_valid_message(envelope):
 		_emit_protocol_error("%s: %s" % [action, SFMessagesScript.validation_error(envelope)])
@@ -1158,6 +1174,7 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 	return error
 
 
+@warning_ignore("unsafe_call_argument", "unsafe_method_access", "untyped_declaration")
 func _apply_room_info(info) -> void:
 	_room_id = info.room_id
 	_room_code = info.room_code
@@ -1173,6 +1190,7 @@ func _apply_room_info(info) -> void:
 	_capture_reconnect_context(info.player_id, info.room_id, info.reconnection_token)
 
 
+@warning_ignore("unsafe_method_access", "untyped_declaration")
 func _apply_spectator_info(info) -> void:
 	_room_id = info.room_id
 	_room_code = info.room_code
@@ -1192,6 +1210,7 @@ func _clear_room_state() -> void:
 	_spectators = []
 
 
+@warning_ignore("unsafe_call_argument", "untyped_declaration")
 func _upsert_player(player) -> void:
 	_upsert_by_id(_players, player, player.id)
 
@@ -1217,6 +1236,7 @@ func _apply_authority_flags(authority_player: String) -> void:
 		_players[index] = SFTypesScript.PlayerInfo.new(raw)
 
 
+@warning_ignore("unsafe_call_argument", "untyped_declaration")
 func _upsert_spectator(spectator) -> void:
 	_upsert_by_id(_spectators, spectator, spectator.id)
 
@@ -1225,6 +1245,7 @@ func _remove_spectator(spectator_id: String) -> void:
 	_remove_by_id(_spectators, spectator_id)
 
 
+@warning_ignore("untyped_declaration")
 func _upsert_by_id(roster: Array, entry, id: String) -> void:
 	for index: int in roster.size():
 		if roster[index].id == id:
@@ -1394,6 +1415,7 @@ func _remember_secret(secret: String) -> void:
 ## RefCounted peer is reclaimed; the engine force-closes the underlying TCP
 ## socket on free, which is functionally fine. Revisit (poll-to-flush) only
 ## if a server-side half-open is ever observed in practice.
+@warning_ignore("unsafe_method_access")
 func _teardown_transport() -> void:
 	if transport != null:
 		transport.opened.disconnect(_on_transport_opened)
@@ -1422,6 +1444,7 @@ func _is_web_platform() -> bool:
 	return OS.has_feature("web")
 
 
+@warning_ignore("unsafe_call_argument")
 func _is_secure_page() -> bool:
 	if not OS.has_feature("web"):
 		return false

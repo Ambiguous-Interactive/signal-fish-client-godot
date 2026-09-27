@@ -36,11 +36,11 @@ const _REQUIRED_FIELDS := ["from_player", "encoding", "payload"]
 const _UUID_CACHE_LIMIT := 256
 static var _uuid_cache: Dictionary = {}
 
-
 ## Decodes one binary game-data envelope. Returns
 ## [code]{ok: bool, from_player: String, encoding: int, payload: PackedByteArray,
 ## version: int, error: String}[/code]. [code]from_player[/code] is the
 ## canonical lowercase UUID string.
+@warning_ignore("inference_on_variant")
 static func decode_envelope(bytes: PackedByteArray) -> Dictionary:
 	var result := {
 		"ok": false,
@@ -110,6 +110,7 @@ static func _validate_fields(fields: Dictionary, result: Dictionary) -> Dictiona
 	return result
 
 
+@warning_ignore("unsafe_call_argument")
 static func _encoding_token(value: Variant, allow_v3_tokens: bool) -> int:
 	if typeof(value) != TYPE_STRING:
 		return SFTypesScript.GameDataEncoding.UNKNOWN
@@ -137,6 +138,7 @@ static func _encoding_token(value: Variant, allow_v3_tokens: bool) -> int:
 ## [code]payload[/code] are binary (16 bytes for the UUID), [code]encoding[/code]
 ## is a string, and [code]seq[/code]/[code]epoch[/code] accept any unsigned
 ## integer marker width (rust parity).
+@warning_ignore("unsafe_call_argument")
 static func _read_field(peer: StreamPeerBuffer, key: String) -> Variant:
 	if peer.get_available_bytes() < 1:
 		return null

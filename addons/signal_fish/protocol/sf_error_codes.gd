@@ -166,7 +166,7 @@ const _CODE_TO_CATEGORY: Dictionary = {
 	Code.SERVER_DRAINING: "server",
 }
 
-
+@warning_ignore("unsafe_call_argument")
 static func from_string(error_code: Variant) -> int:
 	if error_code == null:
 		return Code.NONE
@@ -189,6 +189,7 @@ static func to_wire_string(error_code: int) -> String:
 	return "UNKNOWN"
 
 
+@warning_ignore("unsafe_call_argument")
 static func is_known(error_code: Variant) -> bool:
 	if typeof(error_code) != TYPE_STRING:
 		return false
@@ -196,6 +197,7 @@ static func is_known(error_code: Variant) -> bool:
 	return Code.has(token) and token != "UNKNOWN" and token != "NONE"
 
 
+@warning_ignore("unsafe_call_argument")
 static func category(error_code: int) -> String:
 	if error_code == Code.NONE:
 		return "none"

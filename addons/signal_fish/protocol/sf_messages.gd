@@ -194,6 +194,7 @@ static func start_game() -> Dictionary:
 ## symmetric with the decode gate (issue #151). JSON-shape check: nulls
 ## inside nested arrays/objects are refused locally (send an empty-string
 ## sentinel or omit the entry) even though upstream forwards them.
+@warning_ignore("unsafe_call_argument")
 static func peer_signal(
 	to: String, generation: Variant = null, signal_payload: Variant = null
 ) -> Dictionary:
@@ -241,6 +242,7 @@ static func validation_error(envelope: Dictionary) -> String:
 	return SFEnvelopeScript.invalid_message_error(envelope)
 
 
+@warning_ignore("unsafe_call_argument")
 static func _add_optional_string(data: Dictionary, key: String, value: Variant) -> String:
 	if value == null:
 		return ""
@@ -253,6 +255,7 @@ static func _add_optional_string(data: Dictionary, key: String, value: Variant) 
 	return ""
 
 
+@warning_ignore("unsafe_call_argument")
 static func _add_optional_game_data_encoding(
 	data: Dictionary, key: String, value: Variant
 ) -> String:
@@ -278,6 +281,7 @@ static func _add_optional_game_data_encoding(
 	return ""
 
 
+@warning_ignore("unsafe_call_argument")
 static func _add_optional_relay_transport(data: Dictionary, key: String, value: Variant) -> String:
 	if value == null:
 		return ""
@@ -301,6 +305,7 @@ static func _add_optional_relay_transport(data: Dictionary, key: String, value: 
 	return ""
 
 
+@warning_ignore("unsafe_call_argument")
 static func _add_optional_u8(
 	data: Dictionary, key: String, value: Variant, min_value: int = 0
 ) -> String:
@@ -316,6 +321,7 @@ static func _add_optional_u8(
 	return ""
 
 
+@warning_ignore("unsafe_call_argument")
 static func _add_optional_u16(data: Dictionary, key: String, value: Variant) -> String:
 	if value == null:
 		return ""
@@ -353,6 +359,7 @@ static func _add_optional_token_list(
 	return ""
 
 
+@warning_ignore("unsafe_call_argument")
 static func _add_optional_string_list(data: Dictionary, key: String, values: Variant) -> String:
 	if values == null:
 		return ""
@@ -372,6 +379,7 @@ static func _add_optional_string_list(data: Dictionary, key: String, values: Var
 	return ""
 
 
+@warning_ignore("unsafe_call_argument")
 static func _enum_token(value: Variant, from_string: Dictionary) -> String:
 	if typeof(value) == TYPE_INT or typeof(value) == TYPE_FLOAT:
 		if not SFTypeUtils.is_integral_number(value):
@@ -400,6 +408,7 @@ static func _is_json_value(value: Variant, allow_null := false) -> bool:
 ## upstream JSON, so open payloads opt in via [param allow_null]; the
 ## matchbox `Signal` payload keeps refusing it (a null offer/candidate is a
 ## consumer bug, and an empty-string sentinel or omission is available).
+@warning_ignore("unsafe_call_argument")
 static func _is_json_value_depth(value: Variant, depth: int, allow_null: bool) -> bool:
 	if depth > SFTypeUtils.MAX_MESSAGE_DEPTH:
 		return false

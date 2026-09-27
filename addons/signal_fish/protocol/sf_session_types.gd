@@ -61,6 +61,7 @@ class IceServerInfo:
 	func _to_string() -> String:
 		return "IceServerInfo(%s)" % [", ".join(urls)]
 
+	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
@@ -88,6 +89,7 @@ class SessionPeerInfo:
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
+	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
@@ -103,6 +105,7 @@ class DirectEndpointInfo:
 	var port: int = 0
 	var raw: Dictionary = {}
 
+	@warning_ignore("unsafe_call_argument")
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
 		host = _string_or_empty(data.get("host"))
@@ -115,6 +118,7 @@ class DirectEndpointInfo:
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
+	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
@@ -140,6 +144,7 @@ class SessionPlanInfo:
 	var fallback: int = TransportKind.UNKNOWN
 	var raw: Dictionary = {}
 
+	@warning_ignore("unsafe_call_argument")
 	func _init(data: Dictionary = {}) -> void:
 		raw = data
 		generation = _string_or_empty(data.get("generation"))
@@ -155,6 +160,7 @@ class SessionPlanInfo:
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
+	@warning_ignore("unsafe_call_argument", "untyped_declaration")
 	func _to_string() -> String:
 		# Inner classes cannot call the outer script's static functions, so
 		# the wire labels are looked up through the shared constant tables.
@@ -171,6 +177,7 @@ class SessionPlanInfo:
 			]
 		)
 
+	@warning_ignore("unsafe_method_access")
 	func _coerce_objects(values: Variant, object_type: Variant) -> Array:
 		var result: Array = []
 		if typeof(values) != TYPE_ARRAY:
@@ -180,16 +187,19 @@ class SessionPlanInfo:
 				result.append(object_type.new(value))
 		return result
 
+	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
 		return String(value)
 
+	@warning_ignore("unsafe_call_argument")
 	func _transport_kind_token(value: Variant) -> int:
 		if typeof(value) != TYPE_STRING:
 			return TransportKind.UNKNOWN
 		return int(TRANSPORT_KIND_FROM_STRING.get(String(value), TransportKind.UNKNOWN))
 
+	@warning_ignore("unsafe_call_argument")
 	func _topology_token(value: Variant) -> int:
 		if typeof(value) != TYPE_STRING:
 			return Topology.UNKNOWN
@@ -214,6 +224,7 @@ class NewPeerInfo:
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
+	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
@@ -239,33 +250,39 @@ class PeerTransportStatusInfo:
 	func to_dict() -> Dictionary:
 		return raw.duplicate(true)
 
+	@warning_ignore("unsafe_call_argument")
 	func _transport_kind_token(value: Variant) -> int:
 		if typeof(value) != TYPE_STRING:
 			return TransportKind.UNKNOWN
 		return int(TRANSPORT_KIND_FROM_STRING.get(String(value), TransportKind.UNKNOWN))
 
+	@warning_ignore("unsafe_call_argument")
 	func _string_or_empty(value: Variant) -> String:
 		if typeof(value) != TYPE_STRING:
 			return ""
 		return String(value)
 
 
+@warning_ignore("unsafe_call_argument")
 static func topology_from_string(value: Variant) -> int:
 	if typeof(value) != TYPE_STRING:
 		return Topology.UNKNOWN
 	return int(TOPOLOGY_FROM_STRING.get(String(value), Topology.UNKNOWN))
 
 
+@warning_ignore("unsafe_call_argument")
 static func topology_to_string(value: int) -> String:
 	return String(TOPOLOGY_TO_STRING.get(value, "unknown"))
 
 
+@warning_ignore("unsafe_call_argument")
 static func transport_kind_from_string(value: Variant) -> int:
 	if typeof(value) != TYPE_STRING:
 		return TransportKind.UNKNOWN
 	return int(TRANSPORT_KIND_FROM_STRING.get(String(value), TransportKind.UNKNOWN))
 
 
+@warning_ignore("unsafe_call_argument")
 static func transport_kind_to_string(value: int) -> String:
 	return String(TRANSPORT_KIND_TO_STRING.get(value, "unknown"))
 
@@ -281,6 +298,7 @@ static func validate_ice_servers_array(values: Variant) -> String:
 	return ""
 
 
+@warning_ignore("unsafe_cast")
 static func validate_session_plan_info(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "SessionPlanInfo must be an object"
@@ -344,6 +362,7 @@ static func make_session_plan_info(data: Dictionary) -> SessionPlanInfo:
 	return SessionPlanInfo.new(data)
 
 
+@warning_ignore("unsafe_cast")
 static func _validate_ice_server(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "IceServer must be an object"
@@ -400,6 +419,7 @@ static func _has_string_array(data: Dictionary, key: String) -> bool:
 	return true
 
 
+@warning_ignore("unsafe_call_argument")
 static func _has_known_enum_token(data: Dictionary, key: String, table: Dictionary) -> bool:
 	return _has_string(data, key) and table.has(String(data[key]))
 
@@ -413,6 +433,7 @@ static func _has_dict_array(data: Dictionary, key: String) -> bool:
 	return true
 
 
+@warning_ignore("unsafe_call_argument")
 static func _is_integer_value_in_range(value: Variant, min_value: int, max_value: int) -> bool:
 	if not SFTypeUtils.is_integral_number(value):
 		return false

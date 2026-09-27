@@ -31,6 +31,7 @@ static func label(encoding: int) -> String:
 ## stand. An empty statement means "no server opinion": keep the preference.
 ## Formats are rendered as wire tokens, not coerced enum ints, so the
 ## diagnostic stays readable (unknown tokens surface as "unknown").
+@warning_ignore("unsafe_call_argument")
 static func downgrade_reason(config_format: String, supported_formats: Array) -> String:
 	if supported_formats.is_empty():
 		return ""

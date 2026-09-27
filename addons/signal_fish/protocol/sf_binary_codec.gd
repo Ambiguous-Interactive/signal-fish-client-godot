@@ -1,7 +1,7 @@
 class_name SFBinaryCodec
 extends RefCounted
 
-
+@warning_ignore("unsafe_call_argument")
 static func decode_payload(payload: Variant) -> Dictionary:
 	if typeof(payload) == TYPE_PACKED_BYTE_ARRAY:
 		return {"ok": true, "bytes": payload, "error": ""}
@@ -27,6 +27,7 @@ static func encode_payload_as_base64(bytes: PackedByteArray) -> String:
 	return Marshalls.raw_to_base64(bytes)
 
 
+@warning_ignore("unsafe_call_argument")
 static func _decode_byte_array(values: Array) -> Dictionary:
 	var bytes := PackedByteArray()
 	for index: int in values.size():
@@ -54,6 +55,7 @@ static func _decode_byte_array(values: Array) -> Dictionary:
 	return {"ok": true, "bytes": bytes, "error": ""}
 
 
+@warning_ignore("unsafe_call_argument")
 static func _decode_base64(value: String) -> Dictionary:
 	if value.is_empty():
 		return {"ok": true, "bytes": PackedByteArray(), "error": ""}

@@ -247,6 +247,7 @@ static func _read_uint(peer: StreamPeerBuffer, width: int, failure: Array[String
 	return value
 
 
+@warning_ignore("unsafe_call_argument", "unsafe_method_access")
 static func _encode_value(peer: StreamPeerBuffer, value: Variant, depth: int) -> String:
 	if depth > MAX_DEPTH:
 		return "MessagePack nesting exceeds depth %d" % MAX_DEPTH
