@@ -30,10 +30,10 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, cast
 
 try:
-    from gdtoolkit.parser import parser as gd_parser
+    from gdtoolkit.parser import parser as gd_parser  # type: ignore[import-untyped]
     from lark import Token, Tree
 except ImportError as exc:  # pragma: no cover - exercised by humans without tooling.
     print(
@@ -186,14 +186,14 @@ NON_ROOT_SELF_TEST_NAMES = {
 @dataclass
 class FunctionDef:
     name: str
-    node: Tree
+    node: Tree[Token]
     line: int
 
 
 @dataclass
 class Scope:
     name: str
-    node: Tree
+    node: Tree[Token]
     functions: dict[str, FunctionDef] = field(default_factory=dict)
     children: list["Scope"] = field(default_factory=list)
 
@@ -309,7 +309,10 @@ def analyze_file(path: Path) -> list[Problem]:
 
 def analyze_source(source: str, path: str) -> list[Problem]:
     try:
-        tree = gd_parser.parse(source, gather_metadata=True)
+        parsed: object = gd_parser.parse(source, gather_metadata=True)
+        if not isinstance(parsed, Tree):
+            raise TypeError("gdtoolkit parser did not return a tree")
+        tree = cast(Tree[Token], parsed)
     except Exception as exc:  # pragma: no cover - depends on parser internals.
         return [Problem(path, parse_error_line(exc), "<parse>", f"parse failed: {exc}")]
 
@@ -334,7 +337,7 @@ def collect_allowlisted_lines(source: str) -> dict[int, set[str]]:
     return names_by_line
 
 
-def self_class_reference_problems(tree: Tree, path: str) -> list[Problem]:
+def self_class_reference_problems(tree: Tree[Token], path: str) -> list[Problem]:
     class_name = script_class_name(tree)
     if not class_name:
         return []
@@ -357,14 +360,14 @@ def self_class_reference_problems(tree: Tree, path: str) -> list[Problem]:
     return problems
 
 
-def script_class_name(tree: Tree) -> str:
+def script_class_name(tree: Tree[Token]) -> str:
     for child in tree_children(tree):
         if child.data == "classname_stmt":
             return first_token_value(child)
     return ""
 
 
-def walk_tree_nodes(node: Tree | Token) -> Iterable[Tree]:
+def walk_tree_nodes(node: Tree[Token] | Token) -> Iterable[Tree[Token]]:
     if isinstance(node, Token):
         return
     yield node
@@ -372,7 +375,7 @@ def walk_tree_nodes(node: Tree | Token) -> Iterable[Tree]:
         yield from walk_tree_nodes(child)
 
 
-def build_scope(name: str, node: Tree) -> Scope:
+def build_scope(name: str, node: Tree[Token]) -> Scope:
     scope = Scope(name=name, node=node)
     for child in tree_children(node):
         if child.data == "class_def":
@@ -387,7 +390,7 @@ def build_scope(name: str, node: Tree) -> Scope:
     return scope
 
 
-def add_function(scope: Scope, func_node: Tree) -> None:
+def add_function(scope: Scope, func_node: Tree[Token]) -> None:
     name = function_name(func_node)
     if not name:
         return
@@ -438,7 +441,7 @@ def is_allowlisted(function: FunctionDef, allowlisted: dict[int, set[str]]) -> b
     return any(function.name in allowlisted.get(line, set()) for line in lines)
 
 
-def class_body_references(node: Tree, names: set[str]) -> set[str]:
+def class_body_references(node: Tree[Token], names: set[str]) -> set[str]:
     references: set[str] = set()
     for child in tree_children(node):
         if child.data in CLASS_BODY_SKIP:
@@ -447,7 +450,7 @@ def class_body_references(node: Tree, names: set[str]) -> set[str]:
     return references
 
 
-def call_references_in_function(func_node: Tree, names: set[str]) -> set[str]:
+def call_references_in_function(func_node: Tree[Token], names: set[str]) -> set[str]:
     references: set[str] = set()
     for child in tree_children(func_node):
         if child.data == "func_header":
@@ -456,7 +459,7 @@ def call_references_in_function(func_node: Tree, names: set[str]) -> set[str]:
     return references
 
 
-def call_references(node: Tree | Token, names: set[str]) -> set[str]:
+def call_references(node: Tree[Token] | Token, names: set[str]) -> set[str]:
     references: set[str] = set()
     for call in walk_call_nodes(node):
         call_name = called_name(call)
@@ -476,7 +479,7 @@ def call_references(node: Tree | Token, names: set[str]) -> set[str]:
 # about this script — except explicit `self._method`, which is a local
 # member reference. Definition names never reach this scan: function bodies
 # exclude the func_header and class-body scans skip func definitions.
-def bare_name_references(node: Tree | Token, names: set[str]) -> set[str]:
+def bare_name_references(node: Tree[Token] | Token, names: set[str]) -> set[str]:
     references: set[str] = set()
     for name in walk_bare_names(node):
         if name in names:
@@ -496,7 +499,7 @@ BINDING_FIRST_NAME_TREES = {
 }
 
 
-def walk_bare_names(node: Tree | Token) -> Iterable[str]:
+def walk_bare_names(node: Tree[Token] | Token) -> Iterable[str]:
     if is_name_token(node):
         yield str(node)
         return
@@ -522,7 +525,7 @@ def walk_bare_names(node: Tree | Token) -> Iterable[str]:
             yield from walk_bare_names(child)
 
 
-def walk_call_nodes(node: Tree | Token) -> Iterable[Tree]:
+def walk_call_nodes(node: Tree[Token] | Token) -> Iterable[Tree[Token]]:
     if isinstance(node, Token):
         return
     if node.data in {"standalone_call", "getattr_call"}:
@@ -533,7 +536,7 @@ def walk_call_nodes(node: Tree | Token) -> Iterable[Tree]:
         yield from walk_call_nodes(child)
 
 
-def called_name(call: Tree) -> str:
+def called_name(call: Tree[Token]) -> str:
     if call.data == "standalone_call":
         return first_token_value(call)
     if call.data == "getattr_call":
@@ -543,7 +546,7 @@ def called_name(call: Tree) -> str:
     return ""
 
 
-def api_call_name(call: Tree) -> str:
+def api_call_name(call: Tree[Token]) -> str:
     if call.data == "standalone_call":
         return first_token_value(call)
     if call.data == "getattr_call":
@@ -553,12 +556,12 @@ def api_call_name(call: Tree) -> str:
     return ""
 
 
-def is_direct_self_getattr(getattr_node: Tree) -> bool:
+def is_direct_self_getattr(getattr_node: Tree[Token]) -> bool:
     names = [str(child) for child in getattr_node.children if is_name_token(child)]
     return len(names) == 2 and names[0] == "self"
 
 
-def dynamic_method_string_references(call: Tree, names: set[str]) -> set[str]:
+def dynamic_method_string_references(call: Tree[Token], names: set[str]) -> set[str]:
     call_name = api_call_name(call)
     references: set[str] = set()
     arguments = call_arguments(call)
@@ -575,7 +578,7 @@ def dynamic_method_string_references(call: Tree, names: set[str]) -> set[str]:
 
 def add_method_string_reference(
     references: set[str],
-    arguments: list[Tree | Token],
+    arguments: list[Tree[Token] | Token],
     argument_index: int,
     names: set[str],
 ) -> None:
@@ -586,7 +589,7 @@ def add_method_string_reference(
         references.add(value)
 
 
-def is_self_or_standalone_call(call: Tree) -> bool:
+def is_self_or_standalone_call(call: Tree[Token]) -> bool:
     if call.data == "standalone_call":
         return True
     if call.data == "getattr_call":
@@ -595,7 +598,7 @@ def is_self_or_standalone_call(call: Tree) -> bool:
     return False
 
 
-def argument_is_self(argument: Tree | Token) -> bool:
+def argument_is_self(argument: Tree[Token] | Token) -> bool:
     return is_name_token(argument) and str(argument) == "self"
 
 
@@ -611,7 +614,7 @@ def traverse_reachable(roots: set[str], graph: dict[str, set[str]]) -> set[str]:
     return reachable
 
 
-def callable_argument_references(call: Tree, names: set[str]) -> set[str]:
+def callable_argument_references(call: Tree[Token], names: set[str]) -> set[str]:
     references: set[str] = set()
     for child in call_arguments(call):
         if is_name_token(child) and str(child) in names:
@@ -627,7 +630,7 @@ def callable_argument_references(call: Tree, names: set[str]) -> set[str]:
     return references
 
 
-def call_arguments(call: Tree) -> list[Tree | Token]:
+def call_arguments(call: Tree[Token]) -> list[Tree[Token] | Token]:
     if call.data == "standalone_call":
         return list(call.children[1:])
     if call.data == "getattr_call":
@@ -635,7 +638,7 @@ def call_arguments(call: Tree) -> list[Tree | Token]:
     return []
 
 
-def string_literal_value(node: Tree | Token) -> str:
+def string_literal_value(node: Tree[Token] | Token) -> str:
     if isinstance(node, Tree) and node.data == "string":
         for child in node.children:
             if isinstance(child, Token) and child.type.endswith("STRING"):
@@ -662,43 +665,43 @@ def parse_string_token(value: str) -> str:
     return parsed if isinstance(parsed, str) else ""
 
 
-def function_name(func_node: Tree) -> str:
+def function_name(func_node: Tree[Token]) -> str:
     header = first_child_tree(func_node, "func_header")
     if header is None:
         return ""
     return first_token_value(header)
 
 
-def first_token_value(node: Tree) -> str:
+def first_token_value(node: Tree[Token]) -> str:
     for child in node.children:
         if isinstance(child, Token):
             return str(child)
     return ""
 
 
-def last_token_value(node: Tree) -> str:
+def last_token_value(node: Tree[Token]) -> str:
     for child in reversed(node.children):
         if isinstance(child, Token):
             return str(child)
     return ""
 
 
-def is_name_token(node: Tree | Token) -> bool:
+def is_name_token(node: Tree[Token] | Token) -> bool:
     return isinstance(node, Token) and node.type == "NAME"
 
 
-def first_child_tree(node: Tree, data: str) -> Tree | None:
+def first_child_tree(node: Tree[Token], data: str) -> Tree[Token] | None:
     for child in tree_children(node):
         if child.data == data:
             return child
     return None
 
 
-def tree_children(node: Tree) -> list[Tree]:
+def tree_children(node: Tree[Token]) -> list[Tree[Token]]:
     return [child for child in node.children if isinstance(child, Tree)]
 
 
-def walk_tokens(node: Tree | Token) -> Iterable[Token]:
+def walk_tokens(node: Tree[Token] | Token) -> Iterable[Token]:
     if isinstance(node, Token):
         yield node
         return
@@ -716,7 +719,7 @@ def run_self_tests() -> None:
     if accidental_roots:
         raise SystemExit(f"self-test failed: helper names became roots: {accidental_roots}")
 
-    cases = [
+    cases: list[tuple[str, str, set[str]] | tuple[str, str, set[str], int]] = [
         (
             "public reaches private",
             "func public():\n\t_helper()\n\nfunc _helper():\n\tpass\n",
@@ -1044,7 +1047,7 @@ def run_self_tests() -> None:
     ]
 
     for case in cases:
-        name, source, expected = case[:3]
+        name, source, expected = case[0], case[1], case[2]
         expected_count = case[3] if len(case) > 3 else len(expected)
         problems = analyze_source(source, f"<self-test {name}>")
         actual = {problem.name for problem in problems}

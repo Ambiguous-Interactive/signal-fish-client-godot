@@ -9,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
 
 try:
     import yaml
@@ -78,14 +77,14 @@ for key, resolvers in list(UniqueKeyLoader.yaml_implicit_resolvers.items()):
     ]
 
 
-def _construct_mapping(loader: UniqueKeyLoader, node: yaml.Node, deep: bool = False) -> dict[Any, Any]:
-    mapping: dict[Any, Any] = {}
+def _construct_mapping(loader: UniqueKeyLoader, node: yaml.Node, deep: bool = False) -> dict[object, object]:
+    mapping: dict[object, object] = {}
     for key_node, value_node in node.value:
-        key = loader.construct_object(key_node, deep=deep)
+        key = loader.construct_object(key_node, deep=deep)  # type: ignore[no-untyped-call]
         if key in mapping:
             line = key_node.start_mark.line + 1
             raise ConfigError(f"duplicate YAML key {key!r} at line {line}")
-        mapping[key] = loader.construct_object(value_node, deep=deep)
+        mapping[key] = loader.construct_object(value_node, deep=deep)  # type: ignore[no-untyped-call]
     return mapping
 
 
@@ -103,7 +102,7 @@ class Reporter:
         self.errors.append(message)
 
 
-def load_yaml(path: Path) -> Any:
+def load_yaml(path: Path) -> object:
     try:
         text = path.read_text(encoding="utf-8")
         return load_yaml_text(text, str(path))
@@ -111,20 +110,21 @@ def load_yaml(path: Path) -> Any:
         raise ConfigError(f"{path}: YAML parse failed: {exc}") from exc
 
 
-def load_yaml_text(text: str, name: str = "<memory>") -> Any:
+def load_yaml_text(text: str, name: str = "<memory>") -> object:
     try:
-        return yaml.load(text, Loader=UniqueKeyLoader)
+        parsed: object = yaml.load(text, Loader=UniqueKeyLoader)
+        return parsed
     except ConfigError:
         raise
     except yaml.YAMLError as exc:
         raise ConfigError(f"{name}: YAML parse failed: {exc}") from exc
 
 
-def as_dict(value: Any) -> dict[str, Any]:
+def as_dict(value: object) -> dict[object, object]:
     return value if isinstance(value, dict) else {}
 
 
-def as_list(value: Any) -> list[Any]:
+def as_list(value: object) -> list[object]:
     return value if isinstance(value, list) else []
 
 
@@ -133,7 +133,7 @@ def workflow_files(repo_root: Path) -> list[Path]:
     return sorted(list(workflow_dir.glob("*.yml")) + list(workflow_dir.glob("*.yaml")))
 
 
-def iter_workflow_runs(data: Any) -> list[str]:
+def iter_workflow_runs(data: object) -> list[str]:
     runs: list[str] = []
     for job in as_dict(as_dict(data).get("jobs")).values():
         for step in as_list(as_dict(job).get("steps")):
@@ -143,7 +143,7 @@ def iter_workflow_runs(data: Any) -> list[str]:
     return runs
 
 
-def iter_workflow_uses(data: Any) -> list[str]:
+def iter_workflow_uses(data: object) -> list[str]:
     uses: list[str] = []
     for job in as_dict(as_dict(data).get("jobs")).values():
         for step in as_list(as_dict(job).get("steps")):
@@ -199,7 +199,7 @@ def shebang_lf_error(path: Path, *, require_shebang: bool = False) -> str | None
     return None
 
 
-def has_trigger(data: Any, trigger_name: str) -> bool:
+def has_trigger(data: object, trigger_name: str) -> bool:
     on_value = as_dict(data).get("on")
     if isinstance(on_value, str):
         return on_value == trigger_name
@@ -211,22 +211,22 @@ def has_trigger(data: Any, trigger_name: str) -> bool:
 PR_TRIGGERS = ("pull_request", "pull_request_target")
 
 
-def write_permission_scopes(permissions: Any) -> list[str]:
+def write_permission_scopes(permissions: object) -> list[str]:
     if not isinstance(permissions, dict):
         return []
     return sorted(str(scope) for scope, level in permissions.items() if str(level) == "write")
 
 
-def pr_permission_errors(source: str, data: Any) -> list[str]:
+def pr_permission_errors(source: str, data: object) -> list[str]:
     if not any(has_trigger(data, trigger) for trigger in PR_TRIGGERS):
         return []
     errors: list[str] = []
-    for scope in write_permission_scopes(data.get("permissions")):
+    for scope in write_permission_scopes(as_dict(data).get("permissions")):
         errors.append(
             f"{source}: pull_request workflows must stay read-only; "
             f"top-level permissions grants write to {scope}"
         )
-    for job_name, job in as_dict(data.get("jobs")).items():
+    for job_name, job in as_dict(as_dict(data).get("jobs")).items():
         for scope in write_permission_scopes(as_dict(job).get("permissions")):
             errors.append(
                 f"{source}: pull_request workflows must stay read-only; "
@@ -239,8 +239,8 @@ def split_required_workflows(value: str) -> list[str]:
     return [item.strip() for item in value.split("|") if item.strip()]
 
 
-def validate_workflows(repo_root: Path, reporter: Reporter) -> dict[str, tuple[Path, dict[str, Any]]]:
-    workflows: dict[str, tuple[Path, dict[str, Any]]] = {}
+def validate_workflows(repo_root: Path, reporter: Reporter) -> dict[str, tuple[Path, dict[object, object]]]:
+    workflows: dict[str, tuple[Path, dict[object, object]]] = {}
     for path in workflow_files(repo_root):
         try:
             data = load_yaml(path)
@@ -250,6 +250,7 @@ def validate_workflows(repo_root: Path, reporter: Reporter) -> dict[str, tuple[P
         if not isinstance(data, dict):
             reporter.error(f"{path}: workflow must be a YAML mapping")
             continue
+        data = as_dict(data)
 
         name = data.get("name")
         if not isinstance(name, str) or not name.strip():
@@ -297,7 +298,7 @@ def validate_workflows(repo_root: Path, reporter: Reporter) -> dict[str, tuple[P
     return workflows
 
 
-def validate_auto_merge(repo_root: Path, workflows: dict[str, tuple[Path, dict[str, Any]]], reporter: Reporter) -> None:
+def validate_auto_merge(repo_root: Path, workflows: dict[str, tuple[Path, dict[object, object]]], reporter: Reporter) -> None:
     path = repo_root / ".github" / "workflows" / "dependabot-auto-merge.yml"
     script_path = repo_root / "scripts" / "dependabot-auto-merge.sh"
     if not path.is_file():
@@ -308,7 +309,7 @@ def validate_auto_merge(repo_root: Path, workflows: dict[str, tuple[Path, dict[s
         return
 
     try:
-        data = load_yaml(path)
+        data = as_dict(load_yaml(path))
     except ConfigError as exc:
         reporter.error(str(exc))
         return
@@ -394,7 +395,7 @@ def bash_syntax_check(script_path: Path) -> tuple[bool, str]:
     return result.returncode == 0, result.stderr.strip()
 
 
-def find_keys(value: Any, keys: set[str], path: str = "") -> list[str]:
+def find_keys(value: object, keys: set[str], path: str = "") -> list[str]:
     found: list[str] = []
     if isinstance(value, dict):
         for key, child in value.items():
@@ -408,10 +409,11 @@ def find_keys(value: Any, keys: set[str], path: str = "") -> list[str]:
     return found
 
 
-def validate_dependabot_data(data: Any, source: str, reporter: Reporter) -> None:
+def validate_dependabot_data(data: object, source: str, reporter: Reporter) -> None:
     if not isinstance(data, dict):
         reporter.error(f"{source}: Dependabot config must be a YAML mapping")
         return
+    data = as_dict(data)
     if data.get("version") != 2:
         reporter.error(f"{source}: Dependabot version must be 2")
 
@@ -461,7 +463,8 @@ def validate_dependabot_data(data: Any, source: str, reporter: Reporter) -> None
         if not commit_message.get("prefix") or commit_message.get("include") != "scope":
             reporter.error(f"{label}: commit-message must set prefix and include: scope")
         cooldown = as_dict(update.get("cooldown"))
-        if not isinstance(cooldown.get("default-days"), int) or cooldown["default-days"] < 1:
+        default_days = cooldown.get("default-days")
+        if not isinstance(default_days, int) or default_days < 1:
             reporter.error(f"{label}: cooldown.default-days must be a positive integer")
 
         if ecosystem == "devcontainers":
@@ -528,7 +531,7 @@ def ci_matrix_error(ci_text: str, version: str) -> str:
         data = load_yaml_text(ci_text)
     except ConfigError:
         return f"Godot version pin drift: .github/workflows/ci.yml does not parse as YAML"
-    node: Any = data
+    node: object = data
     for key in ("jobs", "test", "strategy", "matrix", "godot"):
         node = node.get(key) if isinstance(node, dict) else None
     legs = [str(item) for item in node] if isinstance(node, list) else []
@@ -596,7 +599,7 @@ def run_self_test() -> int:
 
     try:
         parsed = load_yaml_text("on:\n  pull_request:\n", "on.yml")
-        if "on" not in parsed:
+        if "on" not in as_dict(parsed):
             reporter.error("self-test: YAML loader did not preserve the 'on' key")
     except ConfigError as exc:
         reporter.error(f"self-test: failed to parse on.yml: {exc}")

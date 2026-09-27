@@ -49,12 +49,45 @@ jobs:
                   python3 -m uv pip install --python .venv-ci/bin/python -r requirements-ci.txt
 
             - name: Check GDScript (helpers, format, lint)
-              run: bash scripts/run-runtime-checks.sh static
+              run: bash scripts/run-runtime-checks.sh gdscript-static
 
             - name: Asset Library archive allow-list
               run: |
                   python3 scripts/check-asset-archive.py --self-test
                   python3 scripts/check-asset-archive.py --repo-root .
+
+    python-types:
+        name: Python types
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Set up Python (with pip cache)
+              id: setup-python
+              uses: actions/setup-python@v7
+              with:
+                  python-version: "3.x"
+                  cache: pip
+                  cache-dependency-path: requirements-ci.txt
+
+            - name: Cache Python tooling venv
+              id: venv-cache
+              uses: actions/cache@v6
+              with:
+                  path: .venv-ci
+                  key: venv-ci-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-ci.txt') }}
+
+            - name: Install Python tooling
+              if: steps.venv-cache.outputs.cache-hit != 'true'
+              run: |
+                  python3 -m pip install uv
+                  python3 -m uv venv .venv-ci
+                  python3 -m uv pip install --python .venv-ci/bin/python -r requirements-ci.txt
+
+            - name: Check Python types
+              run: bash scripts/run-runtime-checks.sh python-types
 
     test:
         name: Godot ${{ matrix.godot }} tests

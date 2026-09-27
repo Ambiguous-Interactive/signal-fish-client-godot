@@ -57,7 +57,10 @@ def extract_unique(pattern: re.Pattern[str], text: str, source: str) -> str:
         raise RuntimeError(
             f"conflicting protocol pins in {source}: {', '.join(unique)}"
         )
-    return unique[0]
+    value = unique[0]
+    if not isinstance(value, str):
+        raise RuntimeError(f"protocol pin in {source} is not text")
+    return value
 
 
 def local_pins(repo_root: Path) -> dict[str, str]:

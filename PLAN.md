@@ -18,7 +18,6 @@ Per-session history: `progress/session-NNN-*.md`.
 - [ ] #165: Audit generic `Array`, `Dictionary`, and `Variant` uses and narrow
       those that have a fixed shape. All 49 tracked GDScript files now load
       under warning errors; four unused interface-signal ignores remain.
-- [ ] #166: Enforce strict typing across the seven tracked Python files.
 - [ ] #167: Pin and check formatters for the remaining script and doc formats.
 - [ ] #168: Move suitable automation to Python and uv while preserving the
       PowerShell harness and the runtime gate behavior.

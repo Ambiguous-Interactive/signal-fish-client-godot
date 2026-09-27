@@ -232,7 +232,15 @@ run_lint() {
 	run_sharded_tool gdlint
 }
 
-run_static() {
+run_python_types() {
+	local files=()
+	while IFS= read -r -d '' file; do
+		[[ -f "${file}" ]] && files+=("${file}")
+	done < <(git ls-files -z --cached --others --exclude-standard -- '*.py')
+	[[ "${#files[@]}" -eq 0 ]] || mypy --strict --disallow-any-explicit --show-error-codes -- "${files[@]}"
+}
+
+run_gdscript_static() {
 	local tmp_dir
 	tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-static.XXXXXX")"
 	# One temp dir owned by a subshell trap: if `set -e` aborts a check early,
@@ -263,6 +271,22 @@ run_static() {
 		[[ "${failed}" -eq 0 ]] || exit 1
 	)
 }
+
+run_static() (
+	local gdscript_output python_output gdscript_rc=0 python_rc=0
+	gdscript_output="$(mktemp)"
+	python_output="$(mktemp)"
+	trap 'rm -f "${gdscript_output}" "${python_output}"' EXIT
+	run_gdscript_static >"${gdscript_output}" 2>&1 &
+	local gdscript_pid=$!
+	run_python_types >"${python_output}" 2>&1 &
+	local python_pid=$!
+	wait "${gdscript_pid}" || gdscript_rc=$?
+	cat "${gdscript_output}"
+	wait "${python_pid}" || python_rc=$?
+	cat "${python_output}"
+	[[ "${gdscript_rc}" -eq 0 && "${python_rc}" -eq 0 ]]
+)
 
 # Any SCRIPT ERROR line is a runtime abort inside a test function: GDScript
 # only unwinds that function, so a green suite would still have silently
@@ -578,7 +602,14 @@ run_changed() {
 		return 0
 	fi
 	local runtime_changed="" gd_suites=() md_only=1 dirty_docs=0 file
+	local python_changed=0
+	local python_only=1
 	while IFS= read -r file; do
+		[[ "${file}" == *.py ]] && python_changed=1
+		case "${file}" in
+			*.py | *.md | llms.txt | .markdownlint* | LICENSE) ;;
+			*) python_only=0 ;;
+		esac
 		case "${file}" in
 			# Docs-ish edits only decide WHEN the style gate runs; WHAT it
 			# scans is the checker's own scope (--changed), so this list
@@ -611,12 +642,27 @@ run_changed() {
 	if [[ "${dirty_docs}" -eq 1 ]]; then
 		"${bootstrap_python}" scripts/check-docs-style.py --changed
 	fi
+	if [[ "${python_changed}" -eq 1 && "${python_only}" -eq 1 && "${runtime_changed}" != "full" ]]; then
+		echo "=== changed: Python-only edit -> strict typing ==="
+		run_python_types
+		return
+	fi
+	if [[ "${python_changed}" -eq 1 && "${runtime_changed}" != "full" ]]; then
+		run_python_types
+	fi
 
 	if [[ "${runtime_changed}" == "full" ]]; then
 		echo "=== changed: production-side edit -> all suites, static scoped to the edit ==="
 		local static_output godot_rc=0 static_rc=0
 		static_output="$(mktemp)"
 		cleanup_paths+=("${static_output}")
+		local python_output="" python_pid="" python_rc=0
+		if [[ "${python_changed}" -eq 1 ]]; then
+			python_output="$(mktemp)"
+			cleanup_paths+=("${python_output}")
+			run_python_types >"${python_output}" 2>&1 &
+			python_pid=$!
+		fi
 		# Format/lint/private-helper checks are per-file, so scoping them to
 		# the edited files cannot miss an effect of the edit; the analyzer
 		# self-test and whole-tree sweep stay the `all`/CI/pre-push contract.
@@ -640,7 +686,11 @@ run_changed() {
 		run_godot || godot_rc=$?
 		wait "${static_pid}" || static_rc=$?
 		cat "${static_output}"
-		[[ "${static_rc}" -eq 0 && "${godot_rc}" -eq 0 ]]
+		if [[ -n "${python_pid}" ]]; then
+			wait "${python_pid}" || python_rc=$?
+			cat "${python_output}"
+		fi
+		[[ "${static_rc}" -eq 0 && "${godot_rc}" -eq 0 && "${python_rc}" -eq 0 ]]
 		return
 	fi
 
@@ -705,6 +755,12 @@ case "${target}" in
 	static)
 		run_static
 		;;
+	gdscript-static)
+		run_gdscript_static
+		;;
+	python-types)
+		run_python_types
+		;;
 	private-helpers)
 		run_private_helpers
 		;;
@@ -725,7 +781,7 @@ case "${target}" in
 		run_smoke
 		;;
 	*)
-		echo "usage: $0 [all|static|private-helpers|format|lint|godot [suite...]|changed|smoke]" >&2
+		echo "usage: $0 [all|static|gdscript-static|python-types|private-helpers|format|lint|godot [suite...]|changed|smoke]" >&2
 		echo "  godot suites: protocol transport client binary reconnect demo_boot p2p_boot" >&2
 		echo "  a single godot suite runs warm in-tree; SF_COLD=1 forces the cold copy" >&2
 		echo "  changed checks only what the dirty tree can affect (agent fast loop)" >&2

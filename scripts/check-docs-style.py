@@ -17,6 +17,10 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
+from collections.abc import Iterable, Iterator, Sequence
+
+Finding = tuple[str, int, int, str]
+Violation = tuple[int, int, str]
 
 ALLOW_MARKER = "<!-- sf-allow:non-ascii -->"
 
@@ -33,24 +37,24 @@ FENCE = re.compile(r"^\s*(?:```|~~~)")
 EXTRA_FILES = ("llms.txt",)
 
 
-def git_toplevel():
+def git_toplevel() -> str:
     return subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, check=True
     ).stdout.decode("utf-8").strip()
 
 
-def is_scoped_doc(root_relative):
+def is_scoped_doc(root_relative: str) -> bool:
     return root_relative.endswith(".md") or root_relative in EXTRA_FILES
 
 
-def scoped_existing_docs(entries, top):
+def scoped_existing_docs(entries: Iterable[str], top: str) -> list[str]:
     """Filter raw root-relative paths to this checker's scope, existing only.
 
     Single source of truth for "which files does the policy cover": callers
     that re-encode the scope themselves drift from CI (the llms.txt and
     markdownlint-config misses this file fixed both came from that drift).
     """
-    out = []
+    out: list[str] = []
     for rel in sorted({e for e in entries if e}):
         if not is_scoped_doc(rel):
             continue
@@ -60,7 +64,7 @@ def scoped_existing_docs(entries, top):
     return out
 
 
-def tracked_doc_files():
+def tracked_doc_files() -> list[str]:
     top = git_toplevel()
     # --full-name + cwd=top: paths come back root-relative no matter where
     # the checker was invoked from.
@@ -75,9 +79,9 @@ def tracked_doc_files():
     )
 
 
-def dirty_doc_files():
+def dirty_doc_files() -> list[str]:
     top = git_toplevel()
-    entries = []
+    entries: list[str] = []
     for args in (
         ["diff", "--name-only", "-z", "HEAD"],
         ["ls-files", "-z", "--others", "--exclude-standard"],
@@ -87,7 +91,7 @@ def dirty_doc_files():
     return scoped_existing_docs(entries, top)
 
 
-def find_violations(text):
+def find_violations(text: str) -> Iterator[Violation]:
     """Yield (line_number, column, message) for one file's text."""
     in_fence = False
     for index, line in enumerate(text.splitlines(), 1):
@@ -108,8 +112,8 @@ def find_violations(text):
                 yield index, match.start() + 1, name
 
 
-def run_check(paths, skip_missing=False):
-    findings = []
+def run_check(paths: Sequence[str], skip_missing: bool = False) -> tuple[list[Finding], int]:
+    findings: list[Finding] = []
     scanned = 0
     files = paths if paths else tracked_doc_files()
     for path in files:
@@ -131,15 +135,15 @@ def run_check(paths, skip_missing=False):
     return findings, scanned
 
 
-def self_test():
-    failures = []
+def self_test() -> int:
+    failures: list[str] = []
 
-    def expect(message, text, count):
+    def expect(message: str, text: str, count: int) -> None:
         got = len(list(find_violations(text)))
         if got != count:
             failures.append(f"{message}: expected {count} violations, got {got}")
 
-    def allow(message, text, needle):
+    def allow(message: str, text: str, needle: str) -> None:
         got = [v for v in find_violations(text) if needle in v[2]]
         if got:
             failures.append(f"{message}: marker did not suppress {got}")
@@ -196,7 +200,7 @@ def self_test():
     return 0
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", help="files to check (default: all tracked docs)")
     parser.add_argument(
