@@ -14,6 +14,10 @@ Per-session history: `progress/session-NNN-*.md`.
 
 ## Next work
 
+Next session: choose one item below as the sole milestone and finish its PR
+and checks within about one hour. Session cadence:
+`.llm/skills/architectural-planning.md`.
+
 ### Static quality issues (#165-#170)
 - [ ] #165: Audit remaining generic `Array`, `Dictionary`, and `Variant` uses
       at wire, event, and test boundaries. Narrow fixed-shape values after
