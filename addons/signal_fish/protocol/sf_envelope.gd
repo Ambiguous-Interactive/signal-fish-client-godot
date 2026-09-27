@@ -9,8 +9,8 @@ const INVALID_MESSAGE_ORIGINAL_TYPE_KEY := "_signal_fish_original_message_type"
 const INVALID_MESSAGE_TYPE := "__InvalidSignalFishMessage"
 
 ## Float wire text memo: `_stringify_float` is a pure value→text function
-## whose dominant cost is the JSON parse-back proof (~31 us per 16 floats
-## uncached vs ~15 us warm, issue #161 audit). Game data resends values
+## whose dominant cost is the JSON parse-back proof (16-float bench envelope:
+## 96 us uncached vs 71 us warm, issue #161 audit). Game data resends values
 ## (positions, timers) heavily, so each verified text is cached under its
 ## float. Zeros bypass the memo — float keys cannot distinguish -0.0 from
 ## 0.0, and only for zeros does the sign live in the wire text — so their

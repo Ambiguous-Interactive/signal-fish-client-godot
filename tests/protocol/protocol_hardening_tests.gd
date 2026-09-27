@@ -105,12 +105,18 @@ func _test_wire_payload_fidelity() -> void:
 	_assert_equal(base_wire, post_churn_wire, "memo recomputes identically after eviction")
 	# Zeros bypass the memo (float keys cannot distinguish -0.0 from 0.0), so
 	# their wire text must stay stable across memo states and the negative
-	# zero must keep its sign on the wire.
-	var zero_envelope := SFMessagesScript.game_data({"z": 0.0, "nz": -0.0})
+	# zero must keep its sign on the wire. Both zeros are built from bit
+	# patterns: GDScript's ±0.0 literal folding is per-script and unreliable
+	# (a literal dict has been observed folding both entries to -0.0), which
+	# would make these pins flake on a different engine build.
+	var zero_envelope := SFMessagesScript.game_data(
+		{"z": _float_from_bits(0), "nz": _float_from_bits(-0x8000000000000000)}
+	)
 	var zero_wire := SFMessagesScript.encode(zero_envelope)
 	var zero_again_wire := SFMessagesScript.encode(zero_envelope)
 	_assert(not zero_wire.is_empty(), "zero encode emits")
 	_assert_equal(zero_wire, zero_again_wire, "zero encode is byte-identical across memo states")
+	_assert_string_contains(zero_wire, '"z":0.0', "positive zero wire text")
 	_assert_string_contains(zero_wire, '"nz":-0.0', "negative zero keeps its sign on the wire")
 	var zero_post_churn_wire := SFMessagesScript.encode(zero_envelope)
 	_assert_equal(zero_wire, zero_post_churn_wire, "zero encode unchanged after eviction")
@@ -184,6 +190,14 @@ func _test_wire_payload_fidelity() -> void:
 		over_bound, "must be JSON data", "over-deep game data refused at the builder"
 	)
 	_done()
+
+
+static func _float_from_bits(bits: int) -> float:
+	var bytes := PackedByteArray()
+	bytes.resize(8)
+	for offset: int in 8:
+		bytes[offset] = (bits >> (offset * 8)) & 0xFF
+	return bytes.decode_double(0)
 
 
 ## The encode boundary is the last-resort net for payloads that skip the

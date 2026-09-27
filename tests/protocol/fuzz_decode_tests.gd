@@ -45,10 +45,12 @@ const _INT_BOUNDARIES := [
 	2147483647
 ]
 ## Extreme doubles for the round-trip and truncation vectors, built from bit
-## patterns at runtime: GDScript folds subnormal literals (5e-324 -> 0.0) in
-## const context, and the engine formatter cannot render subnormals or the
-## min normal at all (String.num gives "0"), so those floats refuse at encode
-## by design — the boundaries here are the extremes that must survive.
+## patterns at runtime: GDScript folds subnormal decimal literals (5e-324 ->
+## +0.0) at parse time, so no literal can carry the denormal boundary. The
+## JSON envelope path additionally refuses subnormals and the min normal
+## (the engine formatter renders them "0"), while the MessagePack codec
+## round-trips them bit-exactly -- the extremes here are the ones the
+## round-trip vectors must survive through both paths.
 static var _float_boundary_values: Array[float] = _float_boundaries()
 
 var _failures: Array = []
