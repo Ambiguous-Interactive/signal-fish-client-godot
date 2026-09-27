@@ -62,9 +62,10 @@ func _init() -> void:
 		func() -> void: SFJsonGuard.duplicate_key_error(_object_dense_text)
 	)
 	_bench("utf8_copy_control", 20000, func() -> void: _control_text.to_utf8_buffer())
-	# encode_floats measures the memo steady state (session-062: repeated game
-	# floats hit the float wire-text memo); encode_floats_cold pins the
-	# uncached cost that shape measured before the memo existed.
+	# encode_floats measures the memo steady state (issue #161: repeated game
+	# floats hit the float wire-text memo); encode_floats_cold is an upper
+	# bound of the uncached cost that shape measured before the memo existed
+	# (miss path plus memo maintenance).
 	_bench("encode_floats", 10000, func() -> void: _encode_floats())
 	_bench("encode_floats_cold", 5000, func() -> void: _encode_floats_cold())
 	_bench("msgpack_roundtrip", 20000, func() -> void: _msgpack_roundtrip())

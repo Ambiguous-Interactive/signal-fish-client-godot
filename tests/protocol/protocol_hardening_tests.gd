@@ -103,6 +103,17 @@ func _test_wire_payload_fidelity() -> void:
 		_assert(spot_check, "memo churn values survive eviction")
 	var post_churn_wire := SFMessagesScript.encode(memo_envelope)
 	_assert_equal(base_wire, post_churn_wire, "memo recomputes identically after eviction")
+	# Zeros bypass the memo (float keys cannot distinguish -0.0 from 0.0), so
+	# their wire text must stay stable across memo states and the negative
+	# zero must keep its sign on the wire.
+	var zero_envelope := SFMessagesScript.game_data({"z": 0.0, "nz": -0.0})
+	var zero_wire := SFMessagesScript.encode(zero_envelope)
+	var zero_again_wire := SFMessagesScript.encode(zero_envelope)
+	_assert(not zero_wire.is_empty(), "zero encode emits")
+	_assert_equal(zero_wire, zero_again_wire, "zero encode is byte-identical across memo states")
+	_assert_string_contains(zero_wire, '"nz":-0.0', "negative zero keeps its sign on the wire")
+	var zero_post_churn_wire := SFMessagesScript.encode(zero_envelope)
+	_assert_equal(zero_wire, zero_post_churn_wire, "zero encode unchanged after eviction")
 	var null_envelope := SFMessagesScript.game_data(null)
 	_assert_valid_message(null_envelope, "top-level null game data stays valid")
 	_assert_equal(
