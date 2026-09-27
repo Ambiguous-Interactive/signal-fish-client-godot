@@ -99,7 +99,7 @@ func _test_watermarks_decode_and_round_trip() -> void:
 		return
 	var info: SFTypesScript.RoomJoinedInfo = event.args[0]
 	_assert_equal(SFTypesScript.ReplayStatus.COMPLETE, info.replay_status, "watermarks: status")
-	var decoded: Array = info.sender_watermarks
+	var decoded: Array[SFTypesScript.SenderWatermark] = info.sender_watermarks
 	var first: SFTypesScript.SenderWatermark = decoded[0]
 	_assert_equal(2, decoded.size(), "watermarks decode")
 	_assert_equal(_player_a(), first.player_id, "watermark player")

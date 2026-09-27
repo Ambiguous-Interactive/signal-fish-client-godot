@@ -45,7 +45,7 @@ func _test_roomless_lobby_state_change_is_inert() -> void:
 	}
 	var pre_auth := _connected_client()
 	var pre_auth_fake: SFFakeTransportScript = pre_auth.transport
-	var pre_auth_events: Array = []
+	var pre_auth_events: Array[int] = []
 	pre_auth.lobby_state_changed.connect(
 		func(state: int, _players: PackedStringArray, _all_ready: bool) -> void:
 			pre_auth_events.append(state)
@@ -94,7 +94,7 @@ func _test_cross_flow_left_events_are_inert() -> void:
 	}
 	var in_room := _in_room_client()
 	var in_room_fake: SFFakeTransportScript = in_room.transport
-	var in_room_left_events: Array = []
+	var in_room_left_events: Array[int] = []
 	in_room.spectator_left.connect(
 		func(_room_id: String, _room_code: String, _reason: int, _current: Array) -> void:
 			in_room_left_events.append(1)
@@ -116,7 +116,7 @@ func _test_cross_flow_left_events_are_inert() -> void:
 	var room_left_frame := {"type": "RoomLeft"}
 	var spectating := _spectating_client()
 	var spectating_fake: SFFakeTransportScript = spectating.transport
-	var spectator_left_events: Array = []
+	var spectator_left_events: Array[int] = []
 	spectating.room_left.connect(func() -> void: spectator_left_events.append(1))
 	spectating_fake.inject_server_message(room_left_frame)
 	_assert_equal([1], spectator_left_events, "cross-flow frame still emitted")

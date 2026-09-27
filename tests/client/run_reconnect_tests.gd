@@ -159,7 +159,7 @@ func _test_manual_reconnect_guards_and_wire_bytes() -> void:
 
 	# Upstream parity: every dial re-authenticates; dials stay silent so join-on-auth cannot race.
 	var reconnector := _make_reconnect_client(TOKEN_V1)
-	var auth_events: Array = []
+	var auth_events: Array[int] = []
 	reconnector.authenticated.connect(
 		func(_app: String, _org: String, _limits: SFTypesScript.RateLimitInfo) -> void:
 			auth_events.append(1)
@@ -191,8 +191,8 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	client.set_auto_reconnect(true)
-	var reconnected_count := [0]
-	var missed_count := [0]
+	var reconnected_count: Array[int] = [0]
+	var missed_count: Array[int] = [0]
 	# Issue #114: the reconnected signal surfaces the typed v3 replay fields.
 	# Lambdas capture locals by value; mutations must go through the Array.
 	var replay_fields: Array = []
@@ -534,9 +534,8 @@ func _test_auto_reconnect_backoff_growth_bounds() -> void:
 	for attempt: int in [1, 2, 3, 4, 5, 6]:
 		var transport: SFFakeTransportScript = client.transport
 		transport.inject_close(4999, "dropped")
-		var bounds: Array = DELAY_BOUNDS[attempt]
-		var minimum: float = bounds[0]
-		var maximum: float = bounds[1]
+		var minimum: float = DELAY_BOUNDS[attempt][0]
+		var maximum: float = DELAY_BOUNDS[attempt][1]
 		if not _assert_between(
 			client._reconnect_delay_remaining, minimum, maximum, "attempt %d delay" % attempt
 		):
@@ -568,7 +567,7 @@ func _test_auto_reconnect_stops_on_terminal_codes() -> void:
 		transport = client.transport
 		_step(client, 30.0)
 		_assert_equal(OK, _wait_open(client), "%s: dial" % case[0])
-		var disconnects: Array = []
+		var disconnects: Array[int] = []
 		client.disconnected.connect(
 			func(code: int, _reason: String) -> void: disconnects.append(code)
 		)
@@ -671,7 +670,7 @@ func _test_kicked_close_code_ends_the_episode() -> void:
 	]
 	for case: Array in cases:
 		var client := _make_client(true, "token")
-		var codes: Array = []
+		var codes: Array[int] = []
 		client.disconnected.connect(func(code: int, _reason: String) -> void: codes.append(code))
 		var transport: SFFakeTransportScript = client.transport
 		var close_code: int = case[1]
@@ -712,7 +711,7 @@ func _test_kick_then_handler_redial_keeps_fresh_identity() -> void:
 func _test_handler_redial_failure_burns_one_attempt() -> void:
 	# A sync-failing handler redial schedules inside the handler; no second attempt may arm.
 	var client := _make_client(true, "token")
-	var failures: Array = []
+	var failures: Array[String] = []
 	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
 	client.disconnected.connect(
 		func(_code: int, _reason: String) -> void:
@@ -815,7 +814,7 @@ func _test_duplicate_authenticated_sends_handshake_once() -> void:
 	reconnected_transport.inject_server_message(
 		{"type": "Authenticated", "data": _authenticated_data()}
 	)
-	var auth_events: Array = []
+	var auth_events: Array[int] = []
 	reconnected_client.authenticated.connect(
 		func(_app: String, _org: String, _limits: SFTypesScript.RateLimitInfo) -> void:
 			auth_events.append(1)
@@ -845,7 +844,7 @@ func _test_duplicate_reconnected_is_fully_silent() -> void:
 	var client := _make_reconnect_client(TOKEN_V1)
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
-	var emissions := [0]
+	var emissions: Array[int] = [0]
 	client.reconnected.connect(
 		func(_info: SFTypesScript.RoomJoinedInfo, _missed: Array) -> void: emissions[0] += 1
 	)
@@ -875,7 +874,7 @@ func _test_unsolicited_reconnected_is_loud() -> void:
 	var errors := _track_protocol_errors(client)
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
-	var emissions := [0]
+	var emissions: Array[int] = [0]
 	client.reconnected.connect(
 		func(_info: SFTypesScript.RoomJoinedInfo, _missed: Array) -> void: emissions[0] += 1
 	)
@@ -908,9 +907,9 @@ func _test_dial_contract_survives_authentication_error() -> void:
 	var client := _make_reconnect_client(TOKEN_V1, false)
 	var errors := _track_protocol_errors(client)
 	var transport: SFFakeTransportScript = client.transport
-	var auth_events: Array = []
-	var auth_error_events: Array = []
-	var reconnected_events: Array = []
+	var auth_events: Array[int] = []
+	var auth_error_events: Array[int] = []
+	var reconnected_events: Array[int] = []
 	client.authenticated.connect(
 		func(_app: String, _org: String, _limits: SFTypesScript.RateLimitInfo) -> void:
 			auth_events.append(1)
@@ -965,7 +964,7 @@ func _test_duplicate_protocol_info_is_fully_silent() -> void:
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_open()
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
-	var emissions: Array = []
+	var emissions: Array[int] = []
 	client.protocol_info.connect(
 		func(_info: SFTypesScript.ProtocolInfo) -> void: emissions.append(1)
 	)
@@ -983,7 +982,7 @@ func _test_handshake_send_failure_resolves_attempt() -> void:
 	var client := _make_reconnect_client(TOKEN_V1, false)
 	var errors := _track_protocol_errors(client)
 	var reconnection_failures: Array = []
-	var disconnects: Array = []
+	var disconnects: Array[int] = []
 	var dial: SFFakeTransportScript = client.transport
 	client.reconnection_failed.connect(
 		func(reason: String, code: SFErrorCodesScript.Code) -> void:
@@ -1033,7 +1032,7 @@ func _test_handshake_send_failure_killing_link_cascades() -> void:
 	var errors := _track_protocol_errors(client)
 	var connection_failures: Array[String] = []
 	var reconnection_failures: Array = []
-	var disconnects: Array = []
+	var disconnects: Array[int] = []
 	client.connection_failed.connect(func(error: String) -> void: connection_failures.append(error))
 	client.reconnection_failed.connect(
 		func(reason: String, code: SFErrorCodesScript.Code) -> void:
@@ -1110,7 +1109,7 @@ func _test_refused_authenticate_resolves_the_dial() -> void:
 func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:
 	var client := _make_client(true, "token")
 	client._config.reconnect_max_attempts = 2
-	var failures: Array = []
+	var failures: Array[String] = []
 	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
 	var transport: SFFakeTransportScript = client.transport
 	for attempt: int in [1, 2]:
@@ -1145,8 +1144,8 @@ func _test_auto_reconnect_exhaustion_emits_connection_failed() -> void:
 func _test_redial_from_exhaustion_handler_keeps_the_fresh_identity() -> void:
 	var client := _make_client(true, "token")
 	client._config.reconnect_max_attempts = 1
-	var failures: Array = []
-	var redial_ok := [false]
+	var failures: Array[String] = []
+	var redial_ok: Array[bool] = [false]
 	client.connection_failed.connect(
 		func(error: String) -> void:
 			failures.append(error)
@@ -1352,7 +1351,7 @@ func _wait_open(client: SignalFishClientScript) -> Error:
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_open()
 	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
-	var sent: Array = transport.sent_text
+	var sent: Array[String] = transport.sent_text
 	if sent.size() < 2:
 		_failures.append(
 			"expected Authenticate + handshake after open, got %d message(s)" % sent.size()

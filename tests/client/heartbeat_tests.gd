@@ -73,7 +73,7 @@ func _test_interval_pong_cycle_and_dead_link() -> void:
 	_assert_equal(2, _sent_type_count(transport, "Ping"), "pong re-arms the cycle")
 	client._process(4.9)
 	_assert_connected(client, true, "a fresh pong window stays up")
-	var failures: Array = []
+	var failures: Array[String] = []
 	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
 	client._process(0.1)
 	if _assert_equal(1, failures.size(), "silent link past the pong window fails"):
@@ -99,7 +99,7 @@ func _test_backpressured_beats_retry_quietly() -> void:
 	var client := _authenticated_client(config)
 	var transport: SFFakeTransportScript = client.transport
 	transport.buffered_amount = config.max_buffered_bytes + 1
-	var errors: Array = []
+	var errors: Array[String] = []
 	client.protocol_error.connect(func(error: String) -> void: errors.append(error))
 	client._process(1.0)
 	client._process(1.0)
@@ -152,7 +152,7 @@ func _test_backpressured_dead_link_fails_and_reconnects() -> void:
 	)
 	client.set_auto_reconnect(true)
 	transport.buffered_amount = config.max_buffered_bytes + 1
-	var failures: Array = []
+	var failures: Array[String] = []
 	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
 	client._process(5.0)
 	_assert_equal(0, _sent_type_count(transport, "Ping"), "the refused beat sends nothing")
@@ -219,7 +219,7 @@ func _test_auth_window_silence_is_a_dead_link() -> void:
 	var client: SignalFishClientScript = _runner.call("_connect_new_client", config)
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_open()
-	var failures: Array = []
+	var failures: Array[String] = []
 	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
 	client._process(4.9)
 	_assert_equal(0, _sent_type_count(transport, "Ping"), "protocol Ping is not sent pre-auth")
@@ -245,9 +245,9 @@ func _test_closing_silence_is_a_dead_link() -> void:
 	var client := _authenticated_client(config)
 	var transport: SFFakeTransportScript = client.transport
 	transport.hold_close = true
-	var failures: Array = []
+	var failures: Array[String] = []
 	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
-	var disconnects: Array = []
+	var disconnects: Array[String] = []
 	client.disconnected.connect(
 		func(_code: int, _reason: String) -> void: disconnects.append("disconnected")
 	)
@@ -278,7 +278,7 @@ func _test_closing_silence_is_a_dead_link() -> void:
 	# A completing close still ends cleanly: hold off, close again, tick.
 	client = _authenticated_client(config)
 	transport = client.transport
-	var clean_disconnects: Array = []
+	var clean_disconnects: Array[String] = []
 	client.disconnected.connect(
 		func(_code: int, _reason: String) -> void: clean_disconnects.append("disconnected")
 	)

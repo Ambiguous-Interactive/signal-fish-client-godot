@@ -92,7 +92,7 @@ func _test_engine_api_parity() -> void:
 
 func _make_mesh() -> SFWebRTCMeshScript:
 	var mesh := SFWebRTCMeshScript.new()
-	var created: Array = []
+	var created: Array[FakePeerConnection] = []
 	mesh.peer_connection_factory = func() -> Variant:
 		var pc := FakePeerConnection.new()
 		created.append(pc)
@@ -104,7 +104,7 @@ func _make_mesh() -> SFWebRTCMeshScript:
 	return mesh
 
 
-func _mesh_peers(mesh: SFWebRTCMeshScript) -> Array:
+func _mesh_peers(mesh: SFWebRTCMeshScript) -> Array[FakePeerConnection]:
 	return mesh.get_meta("created")
 
 
@@ -753,7 +753,7 @@ func _test_refused_relays_recover() -> void:
 	# and redelivers in order once the link drains.
 	var recovered := _relay_mesh(0)
 	var client: SignalFishClientScript = recovered[0]
-	var errors: Array = recovered[1]
+	var errors: Array[String] = recovered[1]
 	var mesh: SFWebRTCMeshScript = recovered[2]
 	var pc: FakePeerConnection = recovered[3]
 	var fake_transport: SFFakeTransportScript = client.transport
@@ -782,7 +782,7 @@ func _test_refused_relays_recover() -> void:
 	# erroring per poll.
 	var throttled := _relay_mesh(60000)
 	var throttled_client: SignalFishClientScript = throttled[0]
-	var throttled_errors: Array = throttled[1]
+	var throttled_errors: Array[String] = throttled[1]
 	var throttled_mesh: SFWebRTCMeshScript = throttled[2]
 	var throttled_pc: FakePeerConnection = throttled[3]
 	var throttled_transport: SFFakeTransportScript = throttled_client.transport
@@ -805,7 +805,7 @@ func _test_refused_relays_recover() -> void:
 	# error, and a fresh relay re-arms healing.
 	var exhausted := _relay_mesh(0)
 	var exhausted_client: SignalFishClientScript = exhausted[0]
-	var exhausted_errors: Array = exhausted[1]
+	var exhausted_errors: Array[String] = exhausted[1]
 	var exhausted_mesh: SFWebRTCMeshScript = exhausted[2]
 	var exhausted_pc: FakePeerConnection = exhausted[3]
 	var exhausted_transport: SFFakeTransportScript = exhausted_client.transport
@@ -892,7 +892,7 @@ func _test_refused_relays_recover() -> void:
 	pair_mesh.signal_retry_msec = 0
 	_attach(pair_mesh, pair_client)
 	_inject_plan(pair_client, [_peer(PLAYER_B, true), _peer(PLAYER_C, false)])
-	var pair_pcs: Array = _mesh_peers(pair_mesh)
+	var pair_pcs: Array[FakePeerConnection] = _mesh_peers(pair_mesh)
 	var pair_pc_b: FakePeerConnection = pair_pcs[0]
 	var pair_pc_c: FakePeerConnection = pair_pcs[1]
 	var pair_transport: SFFakeTransportScript = pair_client.transport
@@ -1039,7 +1039,7 @@ func _test_dropped_peer_connections_are_freed() -> void:
 	var client := _make_in_room_client()
 	_attach(mesh, client)
 	_inject_plan(client, [_peer(PLAYER_B, true)])
-	var created: Array = _mesh_peers(mesh)
+	var created: Array[FakePeerConnection] = _mesh_peers(mesh)
 	_assert_equal(1, created.size(), "the leak check opens one peer")
 	var connection: FakePeerConnection = created[0]
 	var witness: WeakRef = weakref(connection)
@@ -1068,7 +1068,7 @@ func _test_out_of_tree_free_does_not_leak() -> void:
 	var client := _make_in_room_client()
 	_attach(mesh, client)
 	_inject_plan(client, [_peer(PLAYER_B, true)])
-	var created: Array = _mesh_peers(mesh)
+	var created: Array[FakePeerConnection] = _mesh_peers(mesh)
 	_assert_equal(1, created.size(), "the discard check opens one peer")
 	var connection: FakePeerConnection = created[0]
 	var witness: WeakRef = weakref(connection)
