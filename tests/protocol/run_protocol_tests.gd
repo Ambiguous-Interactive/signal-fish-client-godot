@@ -69,7 +69,44 @@ func _helper_suites_are_loadable() -> bool:
 		if not suite_script.has_method("run"):
 			push_error("helper suite failed to load: %s" % suite[0])
 			loadable = false
+	var script_count := 0
+	for directory_path: String in [
+		"res://addons/signal_fish", "res://tests", "res://demo", "res://scripts"
+	]:
+		var loaded := _load_scripts_in(directory_path)
+		if loaded < 0:
+			loadable = false
+		else:
+			script_count += loaded
+	print("GDScript load check: %d files" % script_count)
 	return loadable
+
+
+func _load_scripts_in(directory_path: String) -> int:
+	var directory := DirAccess.open(directory_path)
+	if directory == null:
+		push_error("cannot inspect GDScript directory: %s" % directory_path)
+		return -1
+	directory.list_dir_begin()
+	var count := 0
+	var entry := directory.get_next()
+	while not entry.is_empty():
+		if entry != "." and entry != "..":
+			var path := directory_path.path_join(entry)
+			if directory.current_is_dir():
+				var child_count := _load_scripts_in(path)
+				if child_count < 0:
+					return -1
+				count += child_count
+			elif entry.ends_with(".gd"):
+				var script: Resource = load(path)
+				if not script is Script or not (script as Script).can_instantiate():
+					push_error("GDScript failed to load: %s" % path)
+					return -1
+				count += 1
+		entry = directory.get_next()
+	directory.list_dir_end()
+	return count
 
 
 func _run() -> void:
