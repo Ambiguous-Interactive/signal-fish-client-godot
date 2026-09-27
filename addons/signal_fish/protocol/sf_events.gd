@@ -598,7 +598,7 @@ static func _decode_reconnected(
 	var room_event := _decode_room_joined(type_name, data, envelope)
 	if room_event.signal_name == &"protocol_error":
 		return room_event
-	var missed_events: Array = []
+	var missed_events: Array[SFTypesScript.DecodedEvent] = []
 	# `replay: truncated` means missed_events is the most-recent suffix
 	# (sf_types ReplayStatus): when the wire array exceeds the decode cap,
 	# drop the OLDEST entries and keep the ones closest to now (issue #129).

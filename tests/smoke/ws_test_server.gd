@@ -14,9 +14,9 @@ const OP_PING := 0x9
 const OP_PONG := 0xA
 const WS_GUID := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-var received_text: Array = []
-var received_binary: Array = []
-var client_close_codes: Array = []
+var received_text: Array[String] = []
+var received_binary: Array[PackedByteArray] = []
+var client_close_codes: Array[int] = []
 
 var _server: TCPServer = null
 var _connection: StreamPeerTCP = null

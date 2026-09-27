@@ -589,7 +589,7 @@ func _multiplayer_peer() -> Object:
 
 
 func _rtc_configuration() -> Dictionary:
-	var ice_servers: Array = []
+	var ice_servers: Array[Dictionary] = []
 	for server: SFSessionTypesScript.IceServerInfo in _ice_servers:
 		var entry: Dictionary = {"urls": Array(server.urls)}
 		if not server.username.is_empty():
@@ -609,7 +609,7 @@ class _MeshPeer:
 	var generation: String = ""
 	var session_cb: Callable = Callable()
 	var ice_cb: Callable = Callable()
-	var pending_signals: Array = []
+	var pending_signals: Array[Dictionary] = []
 	var relay_due_msec: int = 0
 	var relay_attempts: int = 0
 	var relay_dropped: bool = false
