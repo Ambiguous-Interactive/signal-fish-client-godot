@@ -10,4 +10,4 @@ Branch: `codex/session-096-python-dependabot-automerge` from `origin/main` at
 - Local runtime, source, Python, GitHub config, and full LLM harness checks pass.
 
 #168 stays open for the remaining automation migration.
-PR for this session: pending.
+PR #210 is the session deliverable.
