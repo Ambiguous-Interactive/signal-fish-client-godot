@@ -35,10 +35,11 @@ produce deterministic results:
 bash scripts/run-runtime-checks.sh all
 ```
 
-`all` runs the private-helper guard, format checks, lint, and the Godot
-suites. Subcommands for targeted runs:
+`all` runs the private-helper guard, GDScript and Python format/lint checks,
+strict Python typing, and the Godot suites. Subcommands for targeted runs:
 
-- `static`: private-helper guard, format, and lint. No Godot install.
+- `static`: private-helper guard, format/lint, and Python types. No Godot install.
+- `python-types`: Python format, lint, and strict types.
 - `private-helpers`: the private-helper static guard.
 - `format`: gdformat checks.
 - `lint`: gdlint.

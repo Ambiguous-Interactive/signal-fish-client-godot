@@ -57,8 +57,7 @@ class ArchiveError(Exception):
 def run_git(repo_root: Path, *args: str, env: dict[str, str] | None = None) -> bytes:
     result = subprocess.run(
         ["git", "-C", str(repo_root), *args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env=env,
     )
     if result.returncode != 0:
@@ -139,7 +138,9 @@ def check_archive(
                 "fix or remove its export-ignore rule in .gitattributes"
             )
     for entry in sorted(set(files) - expected_files):
-        errors.append(f"'{entry}' ships in the Asset Library archive but is not in the file manifest")
+        errors.append(
+            f"'{entry}' ships in the Asset Library archive but is not in the file manifest"
+        )
     for entry in sorted(expected_files - set(files)):
         errors.append(f"required asset file '{entry}' is missing from the archive")
     return errors
@@ -230,7 +231,11 @@ def self_test() -> int:
         dup.mkdir()
         write_self_test_repo(dup, ASSET_FILES, GOOD_ATTRIBUTES + "/addons !export-ignore\n")
         errors = check_archive(dup, expected)
-        expect("duplicate", any("repeats the pattern" in error for error in errors), f"errors: {errors}")
+        expect(
+            "duplicate",
+            any("repeats the pattern" in error for error in errors),
+            f"errors: {errors}",
+        )
 
         # Missing contract: no .gitattributes at all must fail with a clean,
         # actionable message instead of a traceback or a mangled warning.
@@ -250,13 +255,19 @@ def self_test() -> int:
         nested.mkdir()
         write_self_test_repo(
             nested,
-            {**ASSET_FILES, "addons/signal_fish/transport/sf_fake_transport.gd": "class_name Fake\n"},
+            {
+                **ASSET_FILES,
+                "addons/signal_fish/transport/sf_fake_transport.gd": "class_name Fake\n",
+            },
             GOOD_ATTRIBUTES,
         )
         errors = check_archive(nested, expected)
         expect(
             "nested fixture",
-            any("'addons/signal_fish/transport/sf_fake_transport.gd' ships" in error for error in errors),
+            any(
+                "'addons/signal_fish/transport/sf_fake_transport.gd' ships" in error
+                for error in errors
+            ),
             f"errors: {errors}",
         )
 
@@ -273,7 +284,9 @@ def main() -> int:
     parser.add_argument("--repo-root", default=".", help="repository root to check (default: .)")
     parser.add_argument("--self-test", action="store_true", help="run the self-test and exit")
     parser.add_argument(
-        "--worktree", action="store_true", help="check current files using an isolated temporary index"
+        "--worktree",
+        action="store_true",
+        help="check current files using an isolated temporary index",
     )
     args = parser.parse_args()
     if args.self_test:

@@ -14,8 +14,7 @@ try:
     import yaml
 except ImportError as exc:
     print(
-        "PyYAML is required. Install it with: "
-        "python -m pip install -r requirements-automation.txt",
+        "PyYAML is required. Install it with: python -m pip install -r requirements-automation.txt",
         file=sys.stderr,
     )
     raise SystemExit(2) from exc
@@ -71,13 +70,13 @@ UniqueKeyLoader.yaml_implicit_resolvers = {
 }
 for key, resolvers in list(UniqueKeyLoader.yaml_implicit_resolvers.items()):
     UniqueKeyLoader.yaml_implicit_resolvers[key] = [
-        (tag, regexp)
-        for tag, regexp in resolvers
-        if tag != "tag:yaml.org,2002:bool"
+        (tag, regexp) for tag, regexp in resolvers if tag != "tag:yaml.org,2002:bool"
     ]
 
 
-def _construct_mapping(loader: UniqueKeyLoader, node: yaml.Node, deep: bool = False) -> dict[object, object]:
+def _construct_mapping(
+    loader: UniqueKeyLoader, node: yaml.Node, deep: bool = False
+) -> dict[object, object]:
     mapping: dict[object, object] = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)  # type: ignore[no-untyped-call]
@@ -192,10 +191,7 @@ def shebang_lf_error(path: Path, *, require_shebang: bool = False) -> str | None
     if newline_index > 0 and data[newline_index - 1] == 13:
         first_line = data[: newline_index + 1]
         hex_bytes = " ".join(f"{byte:02x}" for byte in first_line[:80])
-        return (
-            f"{path}: shebang line must use LF, not CRLF; "
-            f"first-line bytes: {hex_bytes}"
-        )
+        return f"{path}: shebang line must use LF, not CRLF; first-line bytes: {hex_bytes}"
     return None
 
 
@@ -239,7 +235,9 @@ def split_required_workflows(value: str) -> list[str]:
     return [item.strip() for item in value.split("|") if item.strip()]
 
 
-def validate_workflows(repo_root: Path, reporter: Reporter) -> dict[str, tuple[Path, dict[object, object]]]:
+def validate_workflows(
+    repo_root: Path, reporter: Reporter
+) -> dict[str, tuple[Path, dict[object, object]]]:
     workflows: dict[str, tuple[Path, dict[object, object]]] = {}
     for path in workflow_files(repo_root):
         try:
@@ -298,7 +296,9 @@ def validate_workflows(repo_root: Path, reporter: Reporter) -> dict[str, tuple[P
     return workflows
 
 
-def validate_auto_merge(repo_root: Path, workflows: dict[str, tuple[Path, dict[object, object]]], reporter: Reporter) -> None:
+def validate_auto_merge(
+    repo_root: Path, workflows: dict[str, tuple[Path, dict[object, object]]], reporter: Reporter
+) -> None:
     path = repo_root / ".github" / "workflows" / "dependabot-auto-merge.yml"
     script_path = repo_root / "scripts" / "dependabot-auto-merge.sh"
     if not path.is_file():
@@ -530,7 +530,7 @@ def ci_matrix_error(ci_text: str, version: str) -> str:
     try:
         data = load_yaml_text(ci_text)
     except ConfigError:
-        return f"Godot version pin drift: .github/workflows/ci.yml does not parse as YAML"
+        return "Godot version pin drift: .github/workflows/ci.yml does not parse as YAML"
     node: object = data
     for key in ("jobs", "test", "strategy", "matrix", "godot"):
         node = node.get(key) if isinstance(node, dict) else None
@@ -717,7 +717,9 @@ updates:
     )
     bad_reporter = Reporter()
     validate_dependabot_data(bad_dependabot, "bad-dependabot.yml", bad_reporter)
-    if not any("devcontainers updater must not use group-related keys" in e for e in bad_reporter.errors):
+    if not any(
+        "devcontainers updater must not use group-related keys" in e for e in bad_reporter.errors
+    ):
         reporter.error("self-test: devcontainer groups were not rejected")
 
     bad_multi_ecosystem = load_yaml_text(
@@ -803,9 +805,7 @@ updates:
         if godot_pin_errors(pin_sources):
             reporter.error("self-test: consistent Godot version pins were rejected")
         matrix_missing = dict(pin_sources)
-        matrix_missing[".github/workflows/ci.yml"] = ci_matrix_yaml.replace(
-            '"4.3-stable", ', ""
-        )
+        matrix_missing[".github/workflows/ci.yml"] = ci_matrix_yaml.replace('"4.3-stable", ', "")
         matrix_errors = godot_pin_errors(matrix_missing)
         if not any("4.3-stable" in error for error in matrix_errors):
             reporter.error("self-test: ci.yml matrix missing the pinned Godot was not reported")
@@ -826,9 +826,7 @@ updates:
                     continue
                 token = template.format(version="4.3")
                 if not any(token in error for error in drifted):
-                    reporter.error(
-                        f"self-test: Godot version drift for {token!r} was not reported"
-                    )
+                    reporter.error(f"self-test: Godot version drift for {token!r} was not reported")
         missing_pin = godot_pin_errors({"project.godot": "no pin here\n"})
         if not any("could not read" in error for error in missing_pin):
             reporter.error("self-test: unreadable project.godot pin was not reported")
@@ -846,9 +844,7 @@ updates:
             error = shebang_lf_error(candidate, require_shebang=True)
             if expected_error is None and error is not None:
                 reporter.error(f"self-test: LF shebang was rejected: {error}")
-            elif expected_error is not None and (
-                error is None or expected_error not in error
-            ):
+            elif expected_error is not None and (error is None or expected_error not in error):
                 reporter.error(
                     f"self-test: shebang case {name!r} did not report "
                     f"{expected_error!r}; got {error!r}"

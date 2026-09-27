@@ -70,23 +70,25 @@ jobs:
               with:
                   python-version: "3.x"
                   cache: pip
-                  cache-dependency-path: requirements-ci.txt
+                  cache-dependency-path: |
+                      requirements-ci.txt
+                      requirements-python-quality.txt
 
             - name: Cache Python tooling venv
               id: venv-cache
               uses: actions/cache@v6
               with:
                   path: .venv-ci
-                  key: venv-ci-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-ci.txt') }}
+                  key: venv-python-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-ci.txt', 'requirements-python-quality.txt') }}
 
             - name: Install Python tooling
               if: steps.venv-cache.outputs.cache-hit != 'true'
               run: |
                   python3 -m pip install uv
                   python3 -m uv venv .venv-ci
-                  python3 -m uv pip install --python .venv-ci/bin/python -r requirements-ci.txt
+                  python3 -m uv pip install --python .venv-ci/bin/python -r requirements-python-quality.txt
 
-            - name: Check Python types
+            - name: Check Python types, format, and lint
               run: bash scripts/run-runtime-checks.sh python-types
 
     test:

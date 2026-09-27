@@ -48,8 +48,8 @@ echo "==> Ensuring Python automation dependencies (warn-only)"
 # CI provides these two things; heal them locally so the local gate matches
 # CI. PyYAML must be importable by bare python3 because harness sandbox
 # tests strip .venv-ci, and runner images ship it globally. One local
-# .venv-ci serves both gates: gdtoolkit for run-runtime-checks.sh (ci.yml)
-# and PyYAML for the harness (llm-harness.yml).
+# .venv-ci serves both gates: gdtoolkit and Ruff for run-runtime-checks.sh
+# (ci.yml), and PyYAML for the harness (llm-harness.yml).
 cd "${REPO_ROOT}"
 venv_ok() {
     # Subshell: sourcing activate must never leak a (possibly broken) venv
@@ -58,7 +58,8 @@ venv_ok() {
     (
         . .venv-ci/bin/activate \
             && python -c 'import yaml' >/dev/null 2>&1 \
-            && gdformat --version >/dev/null 2>&1
+            && gdformat --version >/dev/null 2>&1 \
+            && ruff --version >/dev/null 2>&1
     )
 }
 if ! python3 -c 'import yaml' >/dev/null 2>&1; then
@@ -85,7 +86,7 @@ if [ ! -f ".venv-ci/bin/activate" ] || ! venv_ok; then
     # bin/python3.
     if rm -rf .venv-ci && python3 -m venv .venv-ci \
         && ( . .venv-ci/bin/activate \
-            && python -m pip install -r "${REPO_ROOT}/requirements-ci.txt" -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1 ) \
+            && python -m pip install -r "${REPO_ROOT}/requirements-python-quality.txt" -r "${REPO_ROOT}/requirements-automation.txt" >/dev/null 2>&1 ) \
         && venv_ok; then
         echo "==> .venv-ci ready with runtime and automation dependencies"
     else

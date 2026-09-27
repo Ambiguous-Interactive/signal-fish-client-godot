@@ -1,7 +1,7 @@
 """Publish the repository's canonical llms.txt at the documentation root."""
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 from typing import Protocol
 
 

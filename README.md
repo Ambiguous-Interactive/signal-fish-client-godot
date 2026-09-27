@@ -152,5 +152,5 @@ bash scripts/run-runtime-checks.sh all    # private-helper guard, format, lint, 
 bash scripts/run-runtime-checks.sh smoke  # opt-in: real WebSocketPeer round-trip vs a local test server
 ```
 
-Requires Godot 4.3+ and Python 3 with `requirements-ci.txt` (`gdtoolkit`). AI/agent
+Requires Godot 4.3+ and Python 3 with `requirements-python-quality.txt`. AI/agent
 context lives in [.llm/context.md](.llm/context.md).

@@ -251,7 +251,12 @@ run_python_types() {
 	while IFS= read -r -d '' file; do
 		[[ -f "${file}" ]] && files+=("${file}")
 	done < <(git ls-files -z --cached --others --exclude-standard -- '*.py')
-	[[ "${#files[@]}" -eq 0 ]] || mypy --strict --disallow-any-explicit --show-error-codes -- "${files[@]}"
+	if [[ "${#files[@]}" -eq 0 ]]; then
+		return 0
+	fi
+	ruff check --output-format concise -- "${files[@]}"
+	ruff format --check --output-format concise -- "${files[@]}"
+	mypy --strict --disallow-any-explicit --show-error-codes -- "${files[@]}"
 }
 
 run_gdscript_static() {
@@ -620,9 +625,11 @@ run_changed() {
 	local python_changed=0
 	local python_only=1
 	while IFS= read -r file; do
-		[[ "${file}" == *.py ]] && python_changed=1
 		case "${file}" in
-			*.py | *.md | llms.txt | .markdownlint* | LICENSE) ;;
+			*.py | ruff.toml | requirements-python-quality.txt) python_changed=1 ;;
+		esac
+		case "${file}" in
+			*.py | ruff.toml | requirements-python-quality.txt | *.md | llms.txt | .markdownlint* | LICENSE) ;;
 			*) python_only=0 ;;
 		esac
 		case "${file}" in
@@ -637,7 +644,7 @@ run_changed() {
 				;;
 		esac
 		case "${file}" in
-			addons/* | demo/* | scripts/* | project.godot | export_presets.cfg | tests/fixtures/*)
+			addons/* | demo/* | scripts/* | project.godot | export_presets.cfg | requirements-ci.txt | tests/fixtures/*)
 				runtime_changed="full"
 				;;
 			tests/*.gd)
@@ -658,7 +665,7 @@ run_changed() {
 		"${bootstrap_python}" scripts/check-docs-style.py --changed
 	fi
 	if [[ "${python_changed}" -eq 1 && "${python_only}" -eq 1 && "${runtime_changed}" != "full" ]]; then
-		echo "=== changed: Python-only edit -> strict typing ==="
+		echo "=== changed: Python-only edit -> types, lint, format ==="
 		run_python_types
 		return
 	fi
