@@ -10,5 +10,6 @@ Branch: `codex/session-086-typed-client-test-signals` from `origin/main` at
   `Array[float]`.
 - The full local runtime gate passes. Main CI was green at `3d0a240` before
   the branch.
+- PR #200 is the session deliverable.
 
 #165 remains open for the remaining wire, event, and mixed test boundaries.
