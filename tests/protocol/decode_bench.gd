@@ -26,6 +26,14 @@ var _game_text := (
 	+ '"data":{"x":1.5,"y":-2.25,"hp":99,"state":"running","seq":42}}}'
 )
 
+## Object-dense shape at the 256 KiB frame cap: ~31200 tiny objects, the
+## guard's documented cap-bound case (issue #161 round 3). _init refuses to
+## run when the frame drifts over the 262144-byte default cap.
+var _object_dense_text := (
+	'{"type":"GameData","data":{"from_player":"10000000-0000-0000-0000-000000000001",'
+	+ '"data":[%s]}}' % ",".join(_tiny_objects())
+)
+
 ## Prebuilt-frame cache: construction must not pollute decode timings.
 var _frame_cache: Dictionary = {}
 var _fresh_frames: Array[PackedByteArray] = []
@@ -35,6 +43,10 @@ var _float_envelope_data := {}
 
 
 func _init() -> void:
+	if _object_dense_text.to_utf8_buffer().size() > 262144:
+		push_error("object-dense bench frame exceeds the 256 KiB default cap")
+		quit(1)
+		return
 	_bench("binary_v2_decode", 20000, func() -> void: _decode_envelope_or_fail(_v2_cached(64)))
 	_bench("binary_v3_decode", 20000, func() -> void: _decode_envelope_or_fail(_v3_cached(512)))
 	_bench("binary_v2_fresh_uuid", 400, func() -> void: _decode_fresh_frames())
@@ -43,6 +55,11 @@ func _init() -> void:
 	_bench("text_game_decode", 20000, func() -> void: SFEventsScript.decode_text(_game_text))
 	_bench(
 		"json_guard_control", 20000, func() -> void: SFJsonGuard.duplicate_key_error(_control_text)
+	)
+	_bench(
+		"json_guard_object_dense",
+		2,
+		func() -> void: SFJsonGuard.duplicate_key_error(_object_dense_text)
 	)
 	_bench("utf8_copy_control", 20000, func() -> void: _control_text.to_utf8_buffer())
 	_bench("encode_floats", 10000, func() -> void: _encode_floats())
@@ -59,6 +76,14 @@ func _bench(label: String, iterations: int, operation: Callable) -> void:
 	samples.sort()
 	var best_us := samples[0]
 	print("%s %d %.3f" % [label, iterations, best_us / float(iterations)])
+
+
+static func _tiny_objects() -> PackedStringArray:
+	var objects := PackedStringArray()
+	objects.resize(31200)
+	for index: int in objects.size():
+		objects[index] = '{"a":%d}' % (index & 0x0F)
+	return objects
 
 
 func _timed(iterations: int, operation: Callable) -> int:

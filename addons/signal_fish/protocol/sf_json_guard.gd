@@ -29,11 +29,14 @@ extends RefCounted
 ## Cost (issue #92 decision gate, Godot 4.3 headless): the guard adds
 ## ~0.02 ms to a small control frame and ~0.5 ms at the 256 KiB frame-cap
 ## bound when the frame is string-dense (string content is skipped
-## natively). Legal object-dense frames are the expensive shape — 256 KiB of
-## ~32700 tiny objects costs ~100 ms, dominated by the per-object key sets,
-## which are Dictionary-backed to keep a single-object flood of distinct
-## keys linear. Bounded and linear in frame size; typical control frames sit
-## orders of magnitude below the cap.
+## natively). Legal object-dense frames are the expensive shape — a 256 KiB
+## frame of ~31200 tiny objects costs ~80 ms, dominated by the interpreted
+## per-byte structural scan (~0.3 us per byte), not by key-set allocations:
+## pooled key sets and pre-sized key buffers measured neutral (issue #161
+## round 3). Key sets stay Dictionary-backed to keep a single-object flood
+## of distinct keys linear. Bounded and linear in frame size; typical
+## control frames sit orders of magnitude below the cap. Measure with
+## [code]tests/protocol/decode_bench.gd[/code] ([code]json_guard_object_dense[/code]).
 
 const _MAX_REPORTED_KEY_BYTES := 32
 
