@@ -108,8 +108,7 @@ Switch color themes with the `Preferences: Color Theme` command.
 
 - [`devcontainer.json`](./devcontainer.json) - features, extensions, settings
 - [`Dockerfile`](./Dockerfile) - base image, Godot install, MCP binaries
-- [`install-godot.sh`](./install-godot.sh) - deterministic Godot download (cache-mounted)
-- [`install-godot-templates.sh`](./install-godot-templates.sh) - web export templates (cache-mounted download, web-only extraction)
+- [`install-godot.py`](./install-godot.py) - deterministic Godot editor and web template installs (cache-mounted)
 - [`install-agent-tools.sh`](./install-agent-tools.sh) - agent CLI install/refresh
 - [`install-mcp-servers.sh`](./install-mcp-servers.sh) - npm MCP server install/refresh
 - [`seed-mcp-config.sh`](./seed-mcp-config.sh) - Codex managed block + MCP doctor
@@ -289,7 +288,7 @@ local one is what the shared file ships).
   and rebuild; the server refuses to start without a token rather than
   running unauthenticated.
 - **Godot export says templates are missing:** rebuild the container so
-  `install-godot-templates.sh` runs for the current `GODOT_VERSION`;
+  `install-godot.py templates` runs for the current `GODOT_VERSION`;
   templates land in `~/.local/share/godot/export_templates/<version>/` and
   the directory name is derived from the installed editor itself.
 - **`seed-mcp-config.sh` reports a conflict in `~/.codex/config.toml`:**

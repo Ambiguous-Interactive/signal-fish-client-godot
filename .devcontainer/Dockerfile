@@ -96,13 +96,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 #
 # COPY paths are relative to the build context (`.devcontainer/`), set by
 # devcontainer.json (`"context": "."` with this Dockerfile alongside).
-COPY install-godot.sh /usr/local/bin/install-godot.sh
+COPY install-godot.py /usr/local/bin/install-godot.py
 # The editor zip (~60 MB) is downloaded through a BuildKit cache mount so
 # rebuilds - including `--no-cache` - do not re-fetch it.
 RUN --mount=type=cache,target=/var/cache/godot-editor,sharing=locked \
-    chmod +x /usr/local/bin/install-godot.sh \
-    && /usr/local/bin/install-godot.sh "${GODOT_VERSION}" /var/cache/godot-editor \
-    && rm /usr/local/bin/install-godot.sh
+    python3 /usr/local/bin/install-godot.py editor "${GODOT_VERSION}" /var/cache/godot-editor
 
 # Ubuntu's Python enforces PEP 668 (EXTERNALLY-MANAGED), which blocks the
 # user-site installs that post-start.sh uses to heal the local automation
@@ -172,18 +170,15 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 # export_presets.cfg and web-export-smoke.yml). The archive is downloaded
 # through a BuildKit cache mount so rebuilds do not re-fetch ~900 MB, and
 # only the web templates are extracted into the image. Must run after
-# install-godot.sh: the templates directory is named after the installed
+# install-godot.py: the templates directory is named after the installed
 # editor's own version string.
-COPY install-godot-templates.sh /usr/local/bin/install-godot-templates.sh
 # The templates script runs as root and creates the ~/.local parent chain;
 # hand the whole subtree back to the container user or every later
 # user-level write under ~/.local fails with EACCES.
 RUN --mount=type=cache,target=/var/cache/godot-templates,sharing=locked \
-    chmod +x /usr/local/bin/install-godot-templates.sh \
-    && /usr/local/bin/install-godot-templates.sh "${GODOT_VERSION}" \
+    python3 /usr/local/bin/install-godot.py templates "${GODOT_VERSION}" \
         /var/cache/godot-templates \
         /home/vscode/.local/share/godot/export_templates \
-    && rm /usr/local/bin/install-godot-templates.sh \
     && chown -R vscode:vscode /home/vscode/.local
 
 # Persist bash history via mounted volume (`/commandhistory`, declared in

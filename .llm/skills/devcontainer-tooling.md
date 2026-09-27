@@ -182,7 +182,7 @@ Q&A), `git` (mcp-server-git), `fetch` (mcp-server-fetch), and `playwright`
   bundled playwright CLI, because its Chromium revision is independent of
   the repo's pinned `playwright` package used by the web-export smoke test
   (single pin site: `.github/actions/playwright-chromium`).
-- `.devcontainer/install-godot-templates.sh` installs the web export
+- `.devcontainer/install-godot.py templates` installs the web export
   templates so the repo's only export preset ("Web") works locally. The
   ~900 MB upstream archive is downloaded through a BuildKit cache mount and
   only `templates/web_*` is extracted; the target directory name is derived

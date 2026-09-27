@@ -166,7 +166,7 @@ jobs:
 
             - name: Install Godot
               if: steps.godot-cache.outputs.cache-hit != 'true'
-              run: sudo bash .devcontainer/install-godot.sh "${GODOT_VERSION}"
+              run: sudo python3 .devcontainer/install-godot.py editor "${GODOT_VERSION}"
 
             - name: Verify Godot binary
               run: godot --headless --version
