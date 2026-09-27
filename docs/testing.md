@@ -56,10 +56,13 @@ handshakes in both directions, and refused-dial failure.
 
 ## Type strictness
 
-The project promotes `untyped_declaration` and the `unsafe_*` Variant-access
-checks to errors, and applies them to the addon as well: the engine default
-`exclude_addons` is explicitly disabled, so untyped declarations or unsafe
-property and method access fail CI anywhere in the repo. The small set of
-statements that are not yet fully typed carry an explicit
-`@warning_ignore` marker naming exactly what they trigger: grep for
-`@warning_ignore` in `addons/` for the live list.
+Every GDScript warning class the engine matrix registers is pinned to error
+level in `project.godot` except three: `:=` type inference and discarded
+return values stay ignorable by style, and the 4.7-only `missing_await`
+stays unpinned because a marker naming it is a parse error on engines that
+lack the class. The checks apply to the addon as well:
+the engine default `exclude_addons` is explicitly disabled, so a warning
+regression fails CI anywhere in the repo. The small set of statements that
+are not yet fully typed carry an explicit `@warning_ignore` marker naming
+exactly what they trigger: grep for `@warning_ignore` in `addons/` for the
+live list.

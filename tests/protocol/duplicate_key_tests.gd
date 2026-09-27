@@ -11,8 +11,8 @@ extends RefCounted
 ## of genuinely different keys never false-positive.
 
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
-const SFJsonGuard = preload("res://addons/signal_fish/protocol/sf_json_guard.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFJsonGuardScript = preload("res://addons/signal_fish/protocol/sf_json_guard.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array = []
@@ -121,7 +121,7 @@ func _test_duplicate_key_frames_fail_closed() -> void:
 		)
 	)
 	_assert_protocol_error_contains(nul_merged, "NUL", "NUL-escape merged keys rejected")
-	var nul_guard := SFJsonGuard.duplicate_key_error('{"a\\u0000b":1,"ab":2}')
+	var nul_guard := SFJsonGuardScript.duplicate_key_error('{"a\\u0000b":1,"ab":2}')
 	_assert_string_contains(nul_guard, "NUL", "NUL key guard diagnostic")
 	_done()
 
@@ -181,7 +181,7 @@ func _test_escape_canonicalization() -> void:
 	]
 	for case: Array in duplicates:
 		var text: String = case[1]
-		var error := SFJsonGuard.duplicate_key_error(text)
+		var error := SFJsonGuardScript.duplicate_key_error(text)
 		if not _assert(not error.is_empty(), "%s reported" % case[0]):
 			continue
 		_assert_string_contains(error, "duplicate", "%s message" % case[0])
@@ -196,11 +196,11 @@ func _test_escape_canonicalization() -> void:
 	]
 	for case: Array in clean:
 		var text: String = case[1]
-		_assert_equal("", SFJsonGuard.duplicate_key_error(text), "%s accepted" % case[0])
-	var unterminated := SFJsonGuard.duplicate_key_error('{"k":"open')
+		_assert_equal("", SFJsonGuardScript.duplicate_key_error(text), "%s accepted" % case[0])
+	var unterminated := SFJsonGuardScript.duplicate_key_error('{"k":"open')
 	_assert_string_contains(unterminated, "unterminated", "unterminated string fails closed")
 	var oversized := '{"%s":1,"%s":2}' % ["k".repeat(64), "k".repeat(64)]
-	var truncated := SFJsonGuard.duplicate_key_error(oversized)
+	var truncated := SFJsonGuardScript.duplicate_key_error(oversized)
 	_assert_string_contains(truncated, "duplicate", "oversized key still reported")
 	_assert(not truncated.contains("k".repeat(64)), "oversized key truncated in diagnostic")
 	_done()

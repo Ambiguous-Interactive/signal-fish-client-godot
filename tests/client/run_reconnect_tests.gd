@@ -334,17 +334,17 @@ func _test_auto_reconnect_requires_context_and_not_user_close() -> void:
 	for case: Array in cases:
 		var auto_reconnect: bool = case[1]
 		var baseline_mode: String = case[2]
-		var client := _make_client(auto_reconnect, baseline_mode)
-		var transport: SFFakeTransportScript = client.transport
-		transport.inject_close(-1, "")
-		client.transport = SFFakeTransportScript.new()
-		_step(client, 30.0)
+		var case_client := _make_client(auto_reconnect, baseline_mode)
+		var case_transport: SFFakeTransportScript = case_client.transport
+		case_transport.inject_close(-1, "")
+		case_client.transport = SFFakeTransportScript.new()
+		_step(case_client, 30.0)
 		_assert_equal(
 			SignalFishClientScript.ConnectionState.CLOSED,
-			client.get_connection_state(),
+			case_client.get_connection_state(),
 			"%s: no dial" % case[0]
 		)
-		client.free()
+		case_client.free()
 
 	var client := _make_client(true, "token")
 	var transport: SFFakeTransportScript = client.transport

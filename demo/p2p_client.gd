@@ -26,14 +26,14 @@ func _ready() -> void:
 	_client.connected.connect(func() -> void: _log_line("connected"))
 	_client.disconnected.connect(_on_disconnected)
 	_client.connection_failed.connect(
-		func(error: String) -> void: _log_line("connection failed: " + error)
+		func(message: String) -> void: _log_line("connection failed: " + message)
 	)
 	_client.protocol_error.connect(
-		func(error: String) -> void: _log_line("protocol error: " + error)
+		func(message: String) -> void: _log_line("protocol error: " + message)
 	)
 	_client.authenticated.connect(_on_authenticated)
 	_client.authentication_error.connect(
-		func(error: String, _error_code: int) -> void: _log_line("auth failed: " + error)
+		func(message: String, _error_code: int) -> void: _log_line("auth failed: " + message)
 	)
 	_client.room_joined.connect(_on_room_joined)
 	_client.room_join_failed.connect(

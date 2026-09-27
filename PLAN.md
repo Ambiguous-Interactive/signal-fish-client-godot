@@ -16,9 +16,10 @@ Per-session history: `progress/session-NNN-*.md`.
 
 ### Addon warning-net burn-down (#170)
 - [ ] Delete `@warning_ignore` markers by typing the code under them
-      (298 markers; live list: `grep -rn "@warning_ignore" addons/`).
-      Then raise the remaining GDScript warning classes to error level
-      (the tree already compiles clean on the default warn classes).
+      (298 typed-debt markers plus 4 deliberate interface markers in
+      `sf_transport.gd`; live list: `grep -rn "@warning_ignore" addons/`).
+      46 of the 49 GDScript warning classes the matrix registers sit at
+      error level; the exceptions are documented in `project.godot`.
 
 ### Asset Library bootstrap (P6 remainder)
 - [ ] One-time human submission + moderation, then repo secrets

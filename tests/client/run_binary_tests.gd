@@ -102,8 +102,8 @@ func _test_envelope_receive_paths() -> void:
 		func(from_player: String, data: Variant) -> void: events.append(["data", from_player, data])
 	)
 	client.game_data_binary_received.connect(
-		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
-			events.append(["binary", from_player, encoding, payload])
+		func(from_player: String, encoding: int, body: PackedByteArray) -> void:
+			events.append(["binary", from_player, encoding, body])
 	)
 	var errors := _track_protocol_errors(client)
 	var payload := PackedByteArray([0x81, 0xA1, 0x68, 0x2A])
@@ -133,8 +133,8 @@ func _test_envelope_receive_paths() -> void:
 			decode_events.append(["data", from_player, data])
 	)
 	decode_client.game_data_binary_received.connect(
-		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
-			decode_events.append(["binary", from_player, encoding, payload])
+		func(from_player: String, encoding: int, body: PackedByteArray) -> void:
+			decode_events.append(["binary", from_player, encoding, body])
 	)
 	var decode_errors := _track_protocol_errors(decode_client)
 	decode_transport.inject_binary(_binary_frame(PLAYER_B, "message_pack", payload))

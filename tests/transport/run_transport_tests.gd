@@ -600,35 +600,35 @@ func _test_websocket_closed_state_delivers_queued_packets() -> void:
 		],
 	]
 	for case: Array in cases:
-		var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
-		var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
-		transport._peer = peer
-		transport.max_packets_per_poll = case[2]
-		var events: Array = []
-		var packets: Array = []
-		transport.opened.connect(func() -> void: events.append("opened"))
-		transport.failed.connect(func(_error: String) -> void: events.append("failed"))
-		transport.closed.connect(
-			func(code: int, reason: String) -> void: events.append(["closed", code, reason])
+		var case_transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+		var case_peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+		case_transport._peer = case_peer
+		case_transport.max_packets_per_poll = case[2]
+		var case_events: Array = []
+		var case_packets: Array = []
+		case_transport.opened.connect(func() -> void: case_events.append("opened"))
+		case_transport.failed.connect(func(_error: String) -> void: case_events.append("failed"))
+		case_transport.closed.connect(
+			func(code: int, reason: String) -> void: case_events.append(["closed", code, reason])
 		)
-		transport.packet_received.connect(
-			func(_payload: PackedByteArray, _is_text: bool) -> void: packets.append("packet")
+		case_transport.packet_received.connect(
+			func(_payload: PackedByteArray, _is_text: bool) -> void: case_packets.append("packet")
 		)
 
-		peer.ready_state = WebSocketPeer.STATE_OPEN
-		transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
-		peer.ready_state = WebSocketPeer.STATE_CLOSED
-		peer.close_code = 1000
-		peer.close_reason = "gone"
+		case_peer.ready_state = WebSocketPeer.STATE_OPEN
+		case_transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
+		case_peer.ready_state = WebSocketPeer.STATE_CLOSED
+		case_peer.close_code = 1000
+		case_peer.close_reason = "gone"
 		var queued: Array = case[1]
-		peer.packets = queued.duplicate()
-		transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
-		_assert_equal(case[3], packets.size(), "%s: packets after poll 1" % case[0])
-		_assert_equal(case[4], events, "%s: events after poll 1" % case[0])
+		case_peer.packets = queued.duplicate()
+		case_transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+		_assert_equal(case[3], case_packets.size(), "%s: packets after poll 1" % case[0])
+		_assert_equal(case[4], case_events, "%s: events after poll 1" % case[0])
 		if case[5] != null:
-			transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
-			_assert_equal(case[5], packets.size(), "%s: packets after poll 2" % case[0])
-			_assert_equal(case[6], events, "%s: events after poll 2" % case[0])
+			case_transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+			_assert_equal(case[5], case_packets.size(), "%s: packets after poll 2" % case[0])
+			_assert_equal(case[6], case_events, "%s: events after poll 2" % case[0])
 	# A read error on a packet queued at CLOSED fails the session instead of
 	# emitting `closed` — the failure wins, mirroring the OPEN-state path.
 	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()

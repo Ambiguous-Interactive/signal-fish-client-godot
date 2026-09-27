@@ -1,9 +1,14 @@
 class_name SFTransport
 extends RefCounted
 
+## Adapter contract: adapters emit these signals; the base class never does.
+@warning_ignore("unused_signal")
 signal opened
+@warning_ignore("unused_signal")
 signal packet_received(payload: PackedByteArray, is_text: bool)
+@warning_ignore("unused_signal")
 signal closed(code: int, reason: String)
+@warning_ignore("unused_signal")
 signal failed(error: String)
 
 

@@ -54,6 +54,23 @@ addons/signal_fish/
 - Keep transport adapters byte-oriented; public client code should not reach
   directly into `WebSocketPeer` unless the adapter is the public surface.
 
+## Warning Gate Rules
+
+- Every GDScript warning class the CI engine matrix registers is pinned in
+  `project.godot` (`[debug]`); keep new engine classes pinned when raising
+  the engine floor. Two style exclusions are deliberate (`:=` inference,
+  discarded returns) and documented there.
+- Do not delete a preload const in favor of the script's global
+  `class_name`: bare global class identifiers do not resolve in cache-less
+  script-only boots on Godot 4.4+, though they do on 4.3. Keep the
+  `XScript = preload(...)` const form.
+- `@warning_ignore` markers must name classes that exist on every matrix
+  engine: a marker naming a class an engine lacks is a parse error there
+  (e.g. `missing_await` is 4.7-only).
+- Every addon file must be reachable from a CI boot: enable `plugin.cfg`
+  in `project.godot` so editor boots compile `plugin.gd`, and keep the
+  client-suite preload of `plugin.gd` as per-PR coverage.
+
 ## Review Checklist
 
 - Does the code run without C#?
