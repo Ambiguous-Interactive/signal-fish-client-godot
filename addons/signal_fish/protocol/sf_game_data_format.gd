@@ -45,11 +45,11 @@ static func downgrade_reason(config_format: String, supported_formats: Array) ->
 	for value: Variant in supported_formats:
 		match typeof(value):
 			TYPE_INT:
-				@warning_ignore("unsafe_call_argument")
-				labels.append(SFTypesScript.game_data_encoding_to_string(int(value)))
+				var encoding: int = value
+				labels.append(SFTypesScript.game_data_encoding_to_string(encoding))
 			TYPE_STRING:
-				@warning_ignore("unsafe_call_argument")
-				labels.append(String(value))
+				var token: String = value
+				labels.append(token)
 			_:
 				labels.append(str(value))
 	return "server game_data_formats [%s] does not include the requested format" % ", ".join(labels)

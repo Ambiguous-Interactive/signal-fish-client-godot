@@ -256,42 +256,40 @@ static func _encode_value(peer: StreamPeerBuffer, value: Variant, depth: int) ->
 		TYPE_BOOL:
 			peer.put_u8(0xC3 if value else 0xC2)
 		TYPE_INT:
-			@warning_ignore("unsafe_call_argument")
-			_encode_integer(peer, value)
+			var integer: int = value
+			_encode_integer(peer, integer)
 		TYPE_FLOAT:
-			@warning_ignore("unsafe_call_argument")
 			# Upstream game data is JSON-compatible: the server-side JSON
 			# decode collapses non-finite doubles, so refuse them instead of
 			# putting altered values on the wire (issue #83, #76 precedent).
-			if not is_finite(value):
+			var number: float = value
+			if not is_finite(number):
 				return "non-finite float is not JSON-representable"
 			peer.put_u8(0xCB)
-			@warning_ignore("unsafe_call_argument")
-			peer.put_double(value)
+			peer.put_double(number)
 		TYPE_STRING:
-			@warning_ignore("unsafe_call_argument")
-			_encode_string(peer, value)
+			var text: String = value
+			_encode_string(peer, text)
 		TYPE_PACKED_BYTE_ARRAY:
-			@warning_ignore("unsafe_call_argument", "unsafe_method_access")
-			_put_length(peer, -1, 0xC4, 0xC5, value.size(), -1)
-			@warning_ignore("unsafe_call_argument")
-			peer.put_data(value)
+			var bytes: PackedByteArray = value
+			_put_length(peer, -1, 0xC4, 0xC5, bytes.size(), -1)
+			peer.put_data(bytes)
 		TYPE_ARRAY:
-			@warning_ignore("unsafe_call_argument", "unsafe_method_access")
-			_put_count_length(peer, 0x90, 0xDC, value.size())
-			for entry: Variant in value:
+			var array: Array = value
+			_put_count_length(peer, 0x90, 0xDC, array.size())
+			for entry: Variant in array:
 				var problem := _encode_value(peer, entry, depth + 1)
 				if not problem.is_empty():
 					return problem
 		TYPE_DICTIONARY:
-			@warning_ignore("unsafe_call_argument", "unsafe_method_access")
-			_put_count_length(peer, 0x80, 0xDE, value.size())
-			for key: Variant in value:
+			var dictionary: Dictionary = value
+			_put_count_length(peer, 0x80, 0xDE, dictionary.size())
+			for key: Variant in dictionary:
 				if typeof(key) != TYPE_STRING:
 					return "MessagePack map keys must be strings"
-				@warning_ignore("unsafe_call_argument")
-				_encode_string(peer, key)
-				var problem := _encode_value(peer, value[key], depth + 1)
+				var text_key: String = key
+				_encode_string(peer, text_key)
+				var problem := _encode_value(peer, dictionary[key], depth + 1)
 				if not problem.is_empty():
 					return problem
 		_:
