@@ -2262,7 +2262,7 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
 Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $installer = Join-Path $repoRoot '.devcontainer/install-mcp-servers.py'
-    $seeder = Join-Path $repoRoot '.devcontainer/seed-mcp-config.sh'
+    $seeder = Join-Path $repoRoot '.devcontainer/seed-mcp-config.py'
     $godotInstaller = Join-Path $repoRoot '.devcontainer/install-godot.py'
     $shim = Join-Path $repoRoot '.devcontainer/mcp-shims/sf-github-mcp.sh'
     $dockerfile = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/Dockerfile') -Raw
@@ -2274,18 +2274,18 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
         if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
             throw "Missing devcontainer MCP tooling script: $script"
         }
-        if ($script -ne $installer) { Assert-ScriptParsesWithBash -Path $script -Name (Split-Path -Leaf $script) }
+        if ($script -ne $installer -and $script -ne $seeder) { Assert-ScriptParsesWithBash -Path $script -Name (Split-Path -Leaf $script) }
     }
 
     # Single source of truth for the server set: the seeder's SERVERS array.
     $seedContent = Get-Content -LiteralPath $seeder -Raw
-    $serversMatch = [regex]::Match($seedContent, 'SERVERS=\(([^)]+)\)')
+    $serversMatch = [regex]::Match($seedContent, 'SERVERS = \(([^)]+)\)')
     if (-not $serversMatch.Success) {
-        throw 'seed-mcp-config.sh must declare the managed server set as SERVERS=(...).'
+        throw 'seed-mcp-config.py must declare the managed server set as SERVERS = (...).'
     }
-    $servers = $serversMatch.Groups[1].Value -split ' '
+    $servers = @([regex]::Matches($serversMatch.Groups[1].Value, '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
     if ($servers.Count -lt 5) {
-        throw "seed-mcp-config.sh SERVERS must list every managed server; found $($servers.Count)."
+        throw "seed-mcp-config.py SERVERS must list every managed server; found $($servers.Count)."
     }
 
     # Every committed config surface must declare exactly the managed set.
@@ -2431,12 +2431,12 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     # The seeder guards its managed block and reports only variable names.
     foreach ($requirement in @(
             [pscustomobject]@{
-                Pattern     = 'CODEX_MARKER_BEGIN="[^"]+"'
+                Pattern     = 'CODEX_MARKER_BEGIN = "[^"]+"'
                 Requirement = 'delimit the codex managed block with named markers'
                 Diagnostic  = 'CODEX_MARKER_BEGIN|signal-fish-mcp'
             },
             [pscustomobject]@{
-                Pattern     = 'codex_has_unmanaged_conflict'
+                Pattern     = 'table\.split\('
                 Requirement = 'refuse to create duplicate codex server tables outside the managed block'
                 Diagnostic  = 'unmanaged|conflict'
             },
@@ -2446,13 +2446,13 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
                 Diagnostic  = 'never|values|doctor'
             },
             [pscustomobject]@{
-                Pattern     = 'GITHUB_MCP_PAT CONTEXT7_API_KEY GITHUB_READ_ONLY'
+                Pattern     = '(?s)for name in .*GITHUB_MCP_PAT.*CONTEXT7_API_KEY.*GITHUB_READ_ONLY'
                 Requirement = 'report the MCP environment variables by name in the doctor'
                 Diagnostic  = 'GITHUB_MCP_PAT|CONTEXT7_API_KEY|GITHUB_READ_ONLY'
             }
         )) {
         Assert-TextMatches `
-            -Subject '.devcontainer/seed-mcp-config.sh' `
+            -Subject '.devcontainer/seed-mcp-config.py' `
             -Content $seedContent `
             -Pattern $requirement.Pattern `
             -Requirement $requirement.Requirement `
@@ -2575,9 +2575,9 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     }
     foreach ($pair in @(
             [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'python3.*install-mcp-servers\.py'; Requirement = 'install npm MCP servers strictly at post-create' },
-            [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'seed-mcp-config\.sh'; Requirement = 'seed agent MCP configurations at post-create' },
+            [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'python3.*seed-mcp-config\.py'; Requirement = 'seed agent MCP configurations at post-create' },
             [pscustomobject]@{ Subject = '.devcontainer/post-start.sh'; Content = $postStart; Pattern = 'python3.*install-mcp-servers\.py" --update'; Requirement = 'refresh npm MCP servers warn-only at post-start' },
-            [pscustomobject]@{ Subject = '.devcontainer/post-start.sh'; Content = $postStart; Pattern = 'seed-mcp-config\.sh" --update'; Requirement = 're-seed agent MCP configurations warn-only at post-start' }
+            [pscustomobject]@{ Subject = '.devcontainer/post-start.sh'; Content = $postStart; Pattern = 'python3.*seed-mcp-config\.py" --update'; Requirement = 're-seed agent MCP configurations warn-only at post-start' }
         )) {
         Assert-TextMatches `
             -Subject $pair.Subject `
@@ -2603,14 +2603,14 @@ Assert-Test 'Godot Python installer verifies archives and extracts web templates
     }
 } -Behavioral
 
-Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user config, and never leaks secrets' {
+Assert-Test 'devcontainer seed-mcp-config.py is idempotent, preserves user config, and never leaks secrets' {
     $repoRoot = Split-Path -Parent $ScriptsDir
-    $seeder = Join-Path $repoRoot '.devcontainer/seed-mcp-config.sh'
+    $seeder = Join-Path $repoRoot '.devcontainer/seed-mcp-config.py'
     $seedContent = Get-Content -LiteralPath $seeder -Raw
-    $begin = [regex]::Match($seedContent, 'CODEX_MARKER_BEGIN="([^"]+)"').Groups[1].Value
-    $end = [regex]::Match($seedContent, 'CODEX_MARKER_END="([^"]+)"').Groups[1].Value
+    $begin = [regex]::Match($seedContent, 'CODEX_MARKER_BEGIN = "([^"]+)"').Groups[1].Value
+    $end = [regex]::Match($seedContent, 'CODEX_MARKER_END = "([^"]+)"').Groups[1].Value
     if (-not $begin -or -not $end) {
-        throw 'Could not extract the codex managed-block markers from seed-mcp-config.sh.'
+        throw 'Could not extract the codex managed-block markers from seed-mcp-config.py.'
     }
 
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-mcp-seed-$([Guid]::NewGuid())")
@@ -2640,13 +2640,13 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
             param([string]$Mode)
             if (Test-BashIsWsl) {
                 $modeSuffix = if ($Mode) { ' ' + $Mode } else { '' }
-                $out = & bash -c ("HOME='{0}' exec bash '{1}'{2}" -f $env:HOME, (ConvertTo-BashPath $seeder), $modeSuffix) 2>&1
+                $out = & bash -c ("HOME='{0}' exec python3 '{1}'{2}" -f $env:HOME, (ConvertTo-BashPath $seeder), $modeSuffix) 2>&1
             }
             elseif ($Mode) {
-                $out = & bash (ConvertTo-BashPath $seeder) $Mode 2>&1
+                $out = & bash -c 'python3 "$@"' bash (ConvertTo-BashPath $seeder) $Mode 2>&1
             }
             else {
-                $out = & bash (ConvertTo-BashPath $seeder) 2>&1
+                $out = & bash -c 'python3 "$@"' bash (ConvertTo-BashPath $seeder) 2>&1
             }
             $allOutputs.Add(($out | Out-String))
             return [pscustomobject]@{ Exit = $LASTEXITCODE; Output = ($out | Out-String) }
@@ -2751,11 +2751,11 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
         # doctor prints names only.
         foreach ($captured in $allOutputs) {
             if ($captured -match [regex]::Escape($canary1) -or $captured -match [regex]::Escape($canary2)) {
-                throw 'seed-mcp-config.sh leaked a secret value into its output.'
+                throw 'seed-mcp-config.py leaked a secret value into its output.'
             }
         }
         $leaks = & bash -c "grep -rl -F -e '$($canary1)' -e '$($canary2)' '$(ConvertTo-BashPath $tempRoot)' 2>/dev/null || true"
-        if ($leaks) { throw "seed-mcp-config.sh wrote a secret value to: $($leaks -join ', ')" }
+        if ($leaks) { throw "seed-mcp-config.py wrote a secret value to: $($leaks -join ', ')" }
     }
     finally {
         foreach ($snapshot in $snapshots) { Restore-EnvVar $snapshot }
@@ -2990,7 +2990,7 @@ Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
         '.devcontainer/install-agent-tools.sh',
         '.devcontainer/install-godot.py',
         '.devcontainer/install-mcp-servers.py',
-        '.devcontainer/seed-mcp-config.sh',
+        '.devcontainer/seed-mcp-config.py',
         '.devcontainer/mcp-shims/sf-github-mcp.sh',
         '.devcontainer/post-create.sh',
         '.devcontainer/post-start.sh'

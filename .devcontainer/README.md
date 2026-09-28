@@ -111,7 +111,7 @@ Switch color themes with the `Preferences: Color Theme` command.
 - [`install-godot.py`](./install-godot.py) - deterministic Godot editor and web template installs (cache-mounted)
 - [`install-agent-tools.sh`](./install-agent-tools.sh) - agent CLI install/refresh
 - [`install-mcp-servers.py`](./install-mcp-servers.py) - npm MCP server install/refresh
-- [`seed-mcp-config.sh`](./seed-mcp-config.sh) - Codex managed block + MCP doctor
+- [`seed-mcp-config.py`](./seed-mcp-config.py) - Codex managed block + MCP doctor
 - [`mcp-shims/sf-github-mcp.sh`](./mcp-shims/sf-github-mcp.sh) - GitHub MCP launcher shim
 - [`initialize.sh`](./initialize.sh) - create the local env file through Docker
 - [`post-create.sh`](./post-create.sh) - git hooks, tool checks, MCP config, Python dependencies
@@ -206,7 +206,7 @@ nanocoder, codex, and the VS Code agent host):
 - **`opencode.json`** (repo root, committed) - OpenCode v2 schema
   (`mcp.servers.<name>`; note this is not the v1 `mcp.<name>` shape).
 - **`~/.codex/config.toml`** - Codex has no env-expanding config format, so
-  `seed-mcp-config.sh` writes a marker-delimited managed block there
+  `seed-mcp-config.py` writes a marker-delimited managed block there
   (user-level, so no project-trust prompt); secret-consuming entries use
   `env_vars` allow-lists since Codex forwards a sanitized environment. The
   block is regenerated idempotently on every create/start; content outside
@@ -237,7 +237,7 @@ Secret values never appear in any configuration file or script output:
    host, and codex (allow-list); Claude Code substitutes only the mapped
    variables, so it always uses the read-only default. Grant the PAT
    only the scopes you need.
-4. `seed-mcp-config.sh`'s doctor prints variable names and set/unset state
+4. `seed-mcp-config.py`'s doctor prints variable names and set/unset state
    only - never values. The harness self-tests enforce this with canary
    secrets.
 
@@ -245,7 +245,7 @@ Secret values never appear in any configuration file or script output:
 
 - **Build** installs the npm servers and Chromium.
 - **post-create** checks the npm servers and seeds the configurations
-  (`seed-mcp-config.sh`); failures fail setup.
+  (`seed-mcp-config.py`); failures fail setup.
 - **Manual maintenance** refreshes both warn-only (`--update`).
   The npm installer's specs are pinned concrete versions
   (overridable via `GODOT_MCP_NPM_SPEC` / `PLAYWRIGHT_MCP_NPM_SPEC` /
@@ -291,10 +291,10 @@ local one is what the shared file ships).
   `install-godot.py templates` runs for the current `GODOT_VERSION`;
   templates land in `~/.local/share/godot/export_templates/<version>/` and
   the directory name is derived from the installed editor itself.
-- **`seed-mcp-config.sh` reports a conflict in `~/.codex/config.toml`:**
+- **`seed-mcp-config.py` reports a conflict in `~/.codex/config.toml`:**
   either remove your own `[mcp_servers.<name>]` tables that collide with the
   managed set or delete the managed block; then rerun
-  `bash .devcontainer/seed-mcp-config.sh`.
+  `python3 .devcontainer/seed-mcp-config.py`.
 - **Git hooks fail with `pwsh: not found`:** rebuild the container; the
   PowerShell feature install may have been skipped.
 - **Godot LSP not connecting:** confirm port 6005 is forwarded and that

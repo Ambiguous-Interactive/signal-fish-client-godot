@@ -152,7 +152,7 @@ Q&A), `git` (mcp-server-git), `fetch` (mcp-server-fetch), and `playwright`
 - OpenCode v2 reads `opencode.json` with the v2 schema (`mcp.servers.<name>`,
   `environment`, `disabled`) - not the v1 `mcp.<name>` shape.
 - Codex has no env-expanding config format, so
-  `.devcontainer/seed-mcp-config.sh` writes a marker-delimited managed block
+  `.devcontainer/seed-mcp-config.py` writes a marker-delimited managed block
   into `~/.codex/config.toml` (user-level: no project-trust prompt). Codex
   forwards a sanitized environment by default, so the block's
   secret-consuming entries declare `env_vars` allow-lists. The block is

@@ -36,7 +36,7 @@ if [ "${SF_DEVCONTAINER_SKIP_TOOL_UPDATES:-0}" != "1" ]; then
     fi
 
     echo "==> Seeding agent MCP configurations (best-effort)"
-    if bash "${REPO_ROOT}/.devcontainer/seed-mcp-config.sh" --update; then
+    if python3 "${REPO_ROOT}/.devcontainer/seed-mcp-config.py" --update; then
         echo "==> MCP configuration seeding attempted"
     else
         echo "WARN: MCP configuration seeding failed; using existing configurations." >&2
