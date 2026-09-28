@@ -7,6 +7,8 @@ Branch: `fix/dependabot-main-ci` from `origin/main` at `e78a254`.
 - Pinned each dispatch to the merge commit and kept main runs from canceling
   each other. Docs Deploy now accepts a validated main dispatch.
 - Added merger behavior tests and GitHub workflow config checks.
+- Folded the Playwright 1.63.0 update from PR #229 into the shared browser
+  action pin so the dependency update can pass CI.
 
 Local checks: Dependabot merger tests, GitHub config validation, Python types,
-LLM harness, and runtime checks. Live auto-merge evidence: pending.
+LLM harness, source checks, and runtime checks. Live auto-merge evidence: pending.
