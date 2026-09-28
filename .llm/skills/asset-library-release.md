@@ -22,23 +22,25 @@ How a `vMAJOR.MINOR.PATCH` tag updates the existing Godot Asset Library entry.
 The submit step skips with a log line when credentials or the asset ID are not
 configured.
 
-## Existing entry and first release update
+## Existing entry
 
 The live [entry #5489](https://godotengine.org/asset-library/asset/5489)
-already points to this repository. It lists version `0.0.0`. The
-[`v0.1.0` GitHub Release](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases/tag/v0.1.0)
-points to `b4441936057628a71b730c3338f0183b4cdc03e2`. Update entry #5489;
-do not create another entry.
+points to this repository. The `v0.1.0` update was submitted as edit #24434
+on September 28, 2026. Moderation must complete before the new listing is
+live. Do not create another entry.
 
-1. Add repo secrets + var (Settings -> Secrets and variables -> Actions):
-   - secret `GODOT_ASSET_LIBRARY_USERNAME`
-   - secret `GODOT_ASSET_LIBRARY_PASSWORD`
-   - var `GODOT_ASSET_LIBRARY_ASSET_ID` = `5489`
-2. Rerun only the **Submit Asset Library edit** job in the
-   [`v0.1.0` release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36364292644).
-3. Wait for moderation. Verify the live entry lists version `0.1.0`,
-   category Scripts, Godot 4.3, and download commit
-   `b4441936057628a71b730c3338f0183b4cdc03e2`.
+After moderation, verify the live entry lists version `0.1.0`, category
+Scripts, Godot 4.3, and download commit
+`b4441936057628a71b730c3338f0183b4cdc03e2`. Check that its download
+contains only `addons/`.
+
+The [release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36364292644)
+records the submission. Keep these Settings -> Secrets and variables ->
+Actions values for later releases:
+
+- secret `GODOT_ASSET_LIBRARY_USERNAME`
+- secret `GODOT_ASSET_LIBRARY_PASSWORD`
+- variable `GODOT_ASSET_LIBRARY_ASSET_ID` = `5489`
 
 Use an Asset Library password without quotes, backslashes, or control
 characters: the action logs its render env, and GitHub's secret masking only
