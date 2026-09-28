@@ -9,3 +9,5 @@ Branch: `codex/session-113-uv-llm-harness` from `origin/main` at `02920b9`.
   and the LLM harness fast check.
 
 #168 remains open for other automation work.
+
+PR #233 delivers this milestone.
