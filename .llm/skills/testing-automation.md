@@ -141,8 +141,8 @@ actions are pinned to commit SHAs; `actions/*` may stay on major tags. The
 release flow is dispatch-only and documented in
 `.llm/skills/asset-library-release.md`.
 
-`scripts/run-runtime-checks.sh` is the shared local/CI entry point. It sets a
-writable deterministic `HOME`, activates `.venv-ci` when present, and exposes
+`scripts/run-runtime-checks.sh` prepares `HOME` and `.venv-ci`, then delegates
+to `scripts/run-runtime-checks.py` for local/CI check selection. It exposes
 `private-helpers`, `format`, `lint`, `godot`, `all`, `changed`, and `smoke`
 subcommands so CI can keep separate step names without drifting from local
 reproduction commands. The `all` subcommand runs the static checks and the

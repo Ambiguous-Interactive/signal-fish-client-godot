@@ -151,8 +151,8 @@ Definition of done for the first usable client:
   for unreachable private GDScript helper chains and cold-cache-fragile
   self-`class_name` references; runtime CI runs it with `--self-test` before
   protocol fixtures.
-- `scripts/run-runtime-checks.sh`: shared runtime validation entry point used
-  by CI and local checks. It sets a deterministic writable `HOME` for
+- `scripts/run-runtime-checks.sh`: shell bootstrap for the Python runtime
+  dispatcher used by CI and local checks. It sets a writable `HOME` for
   tool caches, activates `.venv-ci` when present, and runs Godot through Python from fresh
   per-suite project copies; locally each copy clones a warm `.godot` import
   cache so boots skip the cold reimport (`SF_COLD=1` forces the
