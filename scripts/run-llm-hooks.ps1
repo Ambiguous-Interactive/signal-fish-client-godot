@@ -705,7 +705,7 @@ function Test-InstallGitHooksUndefinedVariables {
 function Invoke-FastStructuralGuards {
     $runner = [System.IO.File]::ReadAllText((Join-Path $ScriptsDir 'run-llm-hooks.ps1'))
     $linter = [System.IO.File]::ReadAllText((Join-Path $ScriptsDir 'lint-llm.ps1'))
-    $postCreate = [System.IO.File]::ReadAllText((Join-Path $RepoRoot '.devcontainer/post-create.sh'))
+    $postCreate = [System.IO.File]::ReadAllText((Join-Path $RepoRoot '.devcontainer/post-create.py'))
 
     if (-not (Test-InstallGitHooksUndefinedVariables)) { exit 1 }
     if ($linter -notmatch 'Invoke-LlmLint' -or $linter -match '&\s+pwsh' -or $linter -match 'generate-llm-index\.ps1') {
@@ -716,7 +716,7 @@ function Invoke-FastStructuralGuards {
         Write-HookLine 'Fast guard failed: run-llm-hooks.ps1 must call generator/linter shared functions in-process.' 'Red'
         exit 1
     }
-    if ($postCreate -notmatch 'install-git-hooks\.ps1\s+-Force' -or $postCreate -match 'pre-commit\s+install') {
+    if ($postCreate -notmatch 'install-git-hooks\.ps1' -or $postCreate -notmatch '"-Force"' -or $postCreate -match 'pre-commit\s+install') {
         Write-HookLine 'Fast guard failed: devcontainer must install the direct git shim, not the pre-commit framework hook.' 'Red'
         exit 1
     }
