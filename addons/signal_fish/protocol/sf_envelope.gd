@@ -94,10 +94,9 @@ static func _stringify_float(value: float) -> String:
 	if not is_finite(value):
 		return ""
 	var is_zero := value == 0.0
-	if not is_zero:
-		var cached: Variant = _float_memo.get(value)
-		if cached != null:
-			return cached
+	if not is_zero and _float_memo.has(value):
+		var cached: String = _float_memo[value]
+		return cached
 	# Godot's full_precision only covers top-level floats. Prove each nested
 	# value survives JSON parsing before it reaches the wire (issue #73).
 	var text := _normalized_float(String.num(value, 17))

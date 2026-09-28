@@ -167,7 +167,7 @@ func poll() -> void:
 ## The mesh multiplayer peer, ready for [code]MultiplayerAPI.multiplayer_peer
 ## [/code]; null until the mesh holds at least one plan peer (and after
 ## teardown).
-func get_multiplayer_peer() -> Variant:
+func get_multiplayer_peer() -> Object:
 	return _mp_peer
 
 

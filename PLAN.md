@@ -18,12 +18,8 @@ Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:
 `.llm/skills/architectural-planning.md`.
 
-### Static quality issues (#165-#170)
+### Automation (#168)
 
-- [ ] #165: Audit remaining generic `Array`, `Dictionary`, and `Variant` uses
-      at wire, event, and test boundaries. Narrow fixed-shape values after
-      checking public API compatibility. Four unused interface-signal ignores
-      remain under the warning-as-error Godot load gate.
 - [ ] #168: Move suitable automation to Python and uv while preserving the
       PowerShell harness and the runtime gate behavior.
 
