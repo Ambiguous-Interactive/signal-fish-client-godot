@@ -1,12 +1,12 @@
 ---
-description: "Runbook for publishing the addon to the Godot Asset Library: one-time first submission, secrets setup, and every release after that."
+description: "Runbook for updating the existing Godot Asset Library entry and publishing later releases."
 ---
 
 # Release Operations (Godot Asset Library)
 
-This runbook takes the addon from "not on the store" to "every tag auto-submits
-a store update". The Asset Library is moderated by humans, so one step is
-manual. Everything after that is automated by CI.
+The addon already has [Asset Library entry #5489](https://godotengine.org/asset-library/asset/5489).
+Configure the repository settings once to submit edits from release tags.
+Each store edit waits for moderation.
 
 ## What you need
 
@@ -15,36 +15,38 @@ manual. Everything after that is automated by CI.
 - Admin access to this repository (to add secrets and run workflows).
 - A merged `vMAJOR.MINOR.PATCH` section in [`CHANGELOG.md`](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/main/CHANGELOG.md).
 
-## One-time: first submission (manual)
+## One-time: update the existing entry
 
-The first store entry must be submitted by hand. Moderators review it before
-it goes live. Later updates are submitted automatically, but each one also
-waits in the moderation queue (see _After release_ below).
+Entry #5489 points to this repository. It lists version `0.0.0` and predates
+the `v0.1.0` release. Update that entry; do not create a second listing.
 
-Publish the first GitHub Release by pushing a version tag on `main` or running
-the workflow below. The manual workflow creates the tag.
-Use the full commit SHA behind that tag for the Asset Library download field.
-The store step skips until the first asset ID and credentials are configured.
+The [`v0.1.0` GitHub Release](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases/tag/v0.1.0)
+is published. Its tag points to
+`b4441936057628a71b730c3338f0183b4cdc03e2`. The store step skipped
+because the repository settings were missing.
 
-1. Log in and open the
-   [Asset Library submission form](https://godotengine.org/asset-library/asset/submit).
-2. Fill in the form with these values (they mirror the automated template):
+1. Add the repository settings below.
+2. Rerun only the **Submit Asset Library edit** job in the
+   [`v0.1.0` release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36364292644).
+3. Check the job result, then wait for moderation. Verify the live entry has
+   these values:
 
    | Field             | Value                                                                                                            |
    | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
    | Title             | `Signal Fish Client`                                                                                             |
    | Category          | Scripts                                                                                                          |
    | Godot version     | `4.3`                                                                                                            |
-   | Version           | the release tag without the leading `v` (e.g. `0.1.0`)                                                           |
+   | Version           | `0.1.0`                                                                                                          |
    | License           | MIT                                                                                                              |
    | Download provider | GitHub                                                                                                           |
    | Repository URL    | `https://github.com/Ambiguous-Interactive/signal-fish-client-godot`                                              |
    | Issues URL        | repository URL + `/issues`                                                                                       |
    | Icon URL          | `https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/docs/assets/icon-256.png` |
-   | Download commit   | full commit SHA for the release tag (`git rev-list -n 1 v0.1.0`)                                                 |
+   | Download commit   | `b4441936057628a71b730c3338f0183b4cdc03e2`                                                                   |
 
-3. Submit, then wait for moderation.
-4. When the entry is live, note its numeric **asset ID** from the entry URL.
+If the job cannot be rerun, log in and edit
+[entry #5489](https://godotengine.org/asset-library/asset/5489) with these
+values. Wait for moderation before treating the update as live.
 
 ## One-time: configure repository secrets
 
@@ -53,7 +55,7 @@ In **Settings -> Secrets and variables -> Actions**, add:
 - Secret `GODOT_ASSET_LIBRARY_USERNAME` - your Asset Library username.
 - Secret `GODOT_ASSET_LIBRARY_PASSWORD` - your Asset Library password.
   Use a password without quotes, backslashes, or control characters.
-- Variable `GODOT_ASSET_LIBRARY_ASSET_ID` - the numeric asset ID from above.
+- Variable `GODOT_ASSET_LIBRARY_ASSET_ID` - `5489`.
 
 ## Every release (automated)
 
@@ -88,6 +90,6 @@ release.
   the names above - they must match exactly.
 - **Submission failed.** The action logs its render env, so a leaked password
   is possible with exotic characters; see the password rule above.
-- **Manual fallback.** Submit the edit by hand with the form values from the
-  first-submission table, or use the curl flow documented in
+- **Manual fallback.** Edit entry #5489 by hand with the field values above,
+  or use the curl flow documented in
   `.llm/skills/asset-library-release.md`.
