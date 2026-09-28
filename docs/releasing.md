@@ -15,42 +15,38 @@ Each store edit waits for moderation.
 - Admin access to this repository (to add secrets and run workflows).
 - A merged `vMAJOR.MINOR.PATCH` section in [`CHANGELOG.md`](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/main/CHANGELOG.md).
 
-## One-time: update the existing entry
+## `v0.1.0` store edit
 
-Entry #5489 points to this repository. It lists version `0.0.0` and predates
-the `v0.1.0` release. Update that entry; do not create a second listing.
+Entry #5489 points to this repository. The `v0.1.0` edit was submitted as
+edit #24434 on September 28, 2026. Wait for moderation before treating it
+as live. Do not create a second listing.
 
 The [`v0.1.0` GitHub Release](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases/tag/v0.1.0)
 is published. Its tag points to
-`b4441936057628a71b730c3338f0183b4cdc03e2`. The store step skipped
-because the repository settings were missing.
+`b4441936057628a71b730c3338f0183b4cdc03e2`.
 
-1. Add the repository settings below.
-2. Rerun only the **Submit Asset Library edit** job in the
-   [`v0.1.0` release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36364292644).
-3. Check the job result, then wait for moderation. Verify the live entry has
-   these values:
+After moderation, verify the live entry has these values:
 
-   | Field             | Value                                                                                                            |
-   | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
-   | Title             | `Signal Fish Client`                                                                                             |
-   | Category          | Scripts                                                                                                          |
-   | Godot version     | `4.3`                                                                                                            |
-   | Version           | `0.1.0`                                                                                                          |
-   | License           | MIT                                                                                                              |
-   | Download provider | GitHub                                                                                                           |
-   | Repository URL    | `https://github.com/Ambiguous-Interactive/signal-fish-client-godot`                                              |
-   | Issues URL        | repository URL + `/issues`                                                                                       |
-   | Icon URL          | `https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/docs/assets/icon-256.png` |
-   | Download commit   | `b4441936057628a71b730c3338f0183b4cdc03e2`                                                                       |
+| Field             | Value                                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Title             | `Signal Fish Client`                                                                                             |
+| Category          | Scripts                                                                                                          |
+| Godot version     | `4.3`                                                                                                            |
+| Version           | `0.1.0`                                                                                                          |
+| License           | MIT                                                                                                              |
+| Download provider | GitHub                                                                                                           |
+| Repository URL    | `https://github.com/Ambiguous-Interactive/signal-fish-client-godot`                                              |
+| Issues URL        | repository URL + `/issues`                                                                                       |
+| Icon URL          | `https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/docs/assets/icon-256.png` |
+| Download commit   | `b4441936057628a71b730c3338f0183b4cdc03e2`                                                                       |
 
-If the job cannot be rerun, log in and edit
-[entry #5489](https://godotengine.org/asset-library/asset/5489) with these
-values. Wait for moderation before treating the update as live.
+If moderation rejects the edit, correct the fields and resubmit the existing
+entry. The [release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36364292644)
+contains the submission job and its logs.
 
-## One-time: configure repository secrets
+## Repository settings
 
-In **Settings -> Secrets and variables -> Actions**, add:
+In **Settings -> Secrets and variables -> Actions**, keep:
 
 - Secret `GODOT_ASSET_LIBRARY_USERNAME` - your Asset Library username.
 - Secret `GODOT_ASSET_LIBRARY_PASSWORD` - your Asset Library password.
