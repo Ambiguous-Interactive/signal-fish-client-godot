@@ -11,6 +11,9 @@ Branch: `codex/session-112-python-runtime-selection` from `origin/main` at
   stay out of file-based static checks.
 - Added CI self-tests for classification, transitive selection, and Git paths.
 - Local checks: selector self-tests, Ruff, mypy, shellcheck, shfmt, GitHub
-  config validation, LLM harness fast check, and full runtime gate passed.
+  config validation, LLM harness fast check, full runtime gate, and a live
+  single-suite fast-loop check passed.
+- PR #227 delivers this milestone. The independent review found and fixed
+  unsafe path matching for spaces, apostrophes, and escaped characters.
 
 #168 stays open for more automation work.
