@@ -71,19 +71,18 @@ jobs:
               uses: actions/cache@v6
               with:
                   path: .venv-docs
-                  key: venv-docs-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-docs.txt') }}
+                  key: venv-docs-uv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-docs.txt') }}
 
-            - name: Install MkDocs dependencies
+            - name: Install MkDocs dependencies with uv
               if: steps.docs-venv-cache.outputs.cache-hit != 'true'
               run: |
-                  python3 -m venv .venv-docs
-                  . .venv-docs/bin/activate
-                  python -m pip install -r requirements-docs.txt
+                  python3 -m pip install uv
+                  python3 -m uv venv .venv-docs
+                  python3 -m uv pip install --python .venv-docs/bin/python -r requirements-docs.txt
 
             - name: Build MkDocs site strictly
               run: |
-                  . .venv-docs/bin/activate
-                  mkdocs build --strict
+                  .venv-docs/bin/mkdocs build --strict
                   test -f site/llms.txt
 
             - name: Verify every nav page rendered
