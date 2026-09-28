@@ -109,7 +109,8 @@ Switch color themes with the `Preferences: Color Theme` command.
 - [`devcontainer.json`](./devcontainer.json) - features, extensions, settings
 - [`Dockerfile`](./Dockerfile) - base image, Godot install, MCP binaries
 - [`install-godot.py`](./install-godot.py) - deterministic Godot editor and web template installs (cache-mounted)
-- [`install-agent-tools.sh`](./install-agent-tools.sh) - agent CLI install/refresh
+- [`install-agent-tools.py`](./install-agent-tools.py) - agent CLI install/refresh
+- [`install-agent-tools.sh`](./install-agent-tools.sh) - shell entry point
 - [`install-mcp-servers.py`](./install-mcp-servers.py) - npm MCP server install/refresh
 - [`seed-mcp-config.py`](./seed-mcp-config.py) - Codex managed block + MCP doctor
 - [`mcp-shims/sf-github-mcp.sh`](./mcp-shims/sf-github-mcp.sh) - GitHub MCP launcher shim
@@ -137,7 +138,7 @@ tracks the project's target version (`config/features` in
 ## Agent CLIs (codex, opencode, nanocoder, claude)
 
 The four terminal agent CLIs are installed by
-[`install-agent-tools.sh`](./install-agent-tools.sh) through their official
+[`install-agent-tools.py`](./install-agent-tools.py) through their official
 npm packages at `@latest`. OpenCode v2 uses `@opencode/cli`; the installer
 stages it in an isolated npm prefix and verifies the candidate binary reports
 major version 2 before replacing the package-managed v1 `opencode-ai`. If

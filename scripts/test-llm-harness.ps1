@@ -1677,138 +1677,36 @@ Assert-Test 'generated executable test fixtures normalize shebang newlines' {
 
 Assert-Test 'devcontainer agent CLI installer is complete, parseable, and validated' {
     $repoRoot = Split-Path -Parent $ScriptsDir
-    $installer = Join-Path $repoRoot '.devcontainer/install-agent-tools.sh'
-    if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
-        throw 'Missing .devcontainer/install-agent-tools.sh'
+    $wrapper = Join-Path $repoRoot '.devcontainer/install-agent-tools.sh'
+    $installer = Join-Path $repoRoot '.devcontainer/install-agent-tools.py'
+    if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+        throw 'Missing agent CLI installer or its shell entry point.'
     }
+    Assert-ScriptParsesWithBash -Path $wrapper -Name 'install-agent-tools.sh'
+    $wrapperContent = Get-Content -LiteralPath $wrapper -Raw
     $content = Get-Content -LiteralPath $installer -Raw
-
-    # Data-driven: every agent CLI must be declared as an npm spec default,
-    # paired with its binary name, and verified after provisioning.
-    $agentClis = @(
-        [pscustomobject]@{ Package = '@openai/codex'; Binary = 'codex' },
-        [pscustomobject]@{ Package = '@opencode/cli'; Binary = 'opencode' },
-        [pscustomobject]@{ Package = '@nanocollective/nanocoder'; Binary = 'nanocoder' },
-        [pscustomobject]@{ Package = '@anthropic-ai/claude-code'; Binary = 'claude' }
-    )
-    foreach ($cli in $agentClis) {
-        if ($content -notmatch [regex]::Escape($cli.Package)) {
-            throw "install-agent-tools.sh must install $($cli.Package)."
-        }
-        if ($content -notmatch [regex]::Escape($cli.Binary)) {
-            throw "install-agent-tools.sh must reference the $($cli.Binary) binary."
-        }
-    }
-    if ($content -notmatch 'BINARIES=\(codex opencode nanocoder claude\)') {
-        throw 'install-agent-tools.sh must declare the four agent binaries as BINARIES=(codex opencode nanocoder claude).'
-    }
-    # Loop-invariant: the verification pass must check every binary's presence
-    # and version regardless of which CLIs are declared.
-    if ($content -notmatch 'command -v "\$binary"' -or $content -notmatch '"\$binary" --version') {
-        throw 'install-agent-tools.sh must verify each binary is on PATH and reports a version.'
-    }
-    # Health checks must verdict on exit status, never on merged-stream
-    # non-emptiness: a binary that dies on startup prints an error line, and
-    # treating any output as a version marks broken CLIs as ready.
-    if ($content -match '"\$binary"\s+--version[^\n]*2>&1') {
-        throw 'install-agent-tools.sh must not merge --version stderr into the captured version string; stderr output is a failure diagnostic, not a version.'
-    }
-    foreach ($verifierRequirement in @(
-            [pscustomobject]@{
-                Pattern     = '"\$binary"\s+--version\s*>[^>\n]*\s2>'
-                Requirement = 'capture --version stdout and stderr separately so exit status and stream content stay distinguishable'
-                Diagnostic  = 'version|--version'
-            },
-            [pscustomobject]@{
-                Pattern     = 'version_status'
-                Requirement = 'classify a failing --version by its exit status'
-                Diagnostic  = 'version_status|exited'
-            }
-        )) {
+    Assert-TextMatches `
+        -Subject '.devcontainer/install-agent-tools.sh' `
+        -Content $wrapperContent `
+        -Pattern 'install-agent-tools\.py' `
+        -Requirement 'launch the Python installer' `
+        -DiagnosticPattern 'python|installer'
+    foreach ($package in @('@openai/codex', '@opencode/cli',
+            '@nanocollective/nanocoder', '@anthropic-ai/claude-code')) {
         Assert-TextMatches `
-            -Subject '.devcontainer/install-agent-tools.sh' `
+            -Subject '.devcontainer/install-agent-tools.py' `
             -Content $content `
-            -Pattern $verifierRequirement.Pattern `
-            -Requirement $verifierRequirement.Requirement `
-            -DiagnosticPattern $verifierRequirement.Diagnostic
+            -Pattern ([regex]::Escape($package)) `
+            -Requirement "install $package" `
+            -DiagnosticPattern 'package|codex|opencode|nanocoder|claude'
     }
-
-    foreach ($requirement in @(
-            [pscustomobject]@{
-                Pattern     = '--update\)'
-                Requirement = 'support the warn-only --update refresh mode for post-start'
-                Diagnostic  = '--update|MODE|warn'
-            },
-            [pscustomobject]@{
-                Pattern     = '-lt 22'
-                Requirement = 'refuse to install on Node.js older than 22'
-                Diagnostic  = 'node_major|Node.js 22'
-            },
-            [pscustomobject]@{
-                Pattern     = 'npm config get prefix'
-                Requirement = 'derive the npm global prefix at runtime'
-                Diagnostic  = 'npm_prefix|npm config get prefix'
-            },
-            [pscustomobject]@{
-                Pattern     = 'npm install --global'
-                Requirement = 'install the CLIs with a global npm install'
-                Diagnostic  = 'npm install|install_specs'
-            },
-            [pscustomobject]@{
-                Pattern     = 'npm uninstall --global\s+"\$\{OPENCODE_V1_PACKAGE\}"'
-                Requirement = 'remove package-managed OpenCode v1 only after proving the active binary is v2'
-                Diagnostic  = 'npm uninstall|active binary|v2|opencode-ai|migration'
-            },
-            [pscustomobject]@{
-                Pattern     = 'DANGLING_BINARIES=\("\$\{BINARIES\[@\]\}" opencode2\)'
-                Requirement = 'sweep both OpenCode bin aliases when removing dangling links'
-                Diagnostic  = 'DANGLING_BINARIES|opencode2|dangling'
-            },
-            [pscustomobject]@{
-                Pattern     = 'probe_ok\[\$index\]'
-                Requirement = 'track registry probe results per package'
-                Diagnostic  = 'probe_ok|per-package|registry probe'
-            },
-            [pscustomobject]@{
-                Pattern     = '--allow-scripts="\$ALLOW_SCRIPTS"'
-                Requirement = 'pass the reviewed lifecycle-script allow list to npm install'
-                Diagnostic  = 'allow-scripts|ALLOW_SCRIPTS'
-            },
-            [pscustomobject]@{
-                Pattern     = 'ALLOW_SCRIPTS="@opencode/cli,@nanocollective/nanocoder,@anthropic-ai/claude-code,@openai/codex,@github/keytar,node-pty,opencode-ai"'
-                Requirement = 'keep the reviewed lifecycle-script allow list intact; its postinstalls select platform binaries and build native modules'
-                Diagnostic  = 'ALLOW_SCRIPTS|@opencode/cli'
-            },
-            [pscustomobject]@{
-                Pattern     = '-ge 11'
-                Requirement = 'pass --allow-scripts only on npm 11 or newer, which introduced the lifecycle-script policy'
-                Diagnostic  = 'npm_major|npm 11'
-            },
-            [pscustomobject]@{
-                Pattern     = 'npm view'
-                Requirement = 'probe the registry for the latest versions before installing'
-                Diagnostic  = 'npm view|latest|probe'
-            },
-            [pscustomobject]@{
-                Pattern     = 'AGENT_TOOLS_RETRY_SLEEP_MS:-2000'
-                Requirement = 'make the failed-install retry delay injectable so the hermetic fake-npm matrix does not pay real sleep time'
-                Diagnostic  = 'retry_sleep_ms|AGENT_TOOLS_RETRY_SLEEP_MS'
-            },
-            [pscustomobject]@{
-                Pattern     = '\[\s*"\$major"\s*=\s*2\s*\]'
-                Requirement = 'reject an OpenCode version outside major version 2'
-                Diagnostic  = 'opencode_major|version 2| -ne 2'
-            }
-        )) {
-        Assert-TextMatches `
-            -Subject '.devcontainer/install-agent-tools.sh' `
-            -Content $content `
-            -Pattern $requirement.Pattern `
-            -Requirement $requirement.Requirement `
-            -DiagnosticPattern $requirement.Diagnostic
+    $syntax = @(& python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' $installer 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "install-agent-tools.py has invalid Python syntax: $($syntax -join '; ')"
     }
-
-    Assert-ScriptParsesWithBash -Path $installer -Name 'install-agent-tools.sh'
+    $usage = @(& bash $wrapper --invalid-mode 2>&1)
+    Expect-Equal $LASTEXITCODE 2 "agent CLI installer rejects unknown mode: $($usage -join '; ')"
 }
 
 Assert-Test 'devcontainer OpenCode migration preserves v1 until v2 is proven' {
@@ -3002,6 +2900,7 @@ Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $paths = @(
         '.devcontainer/install-agent-tools.sh',
+        '.devcontainer/install-agent-tools.py',
         '.devcontainer/install-godot.py',
         '.devcontainer/install-mcp-servers.py',
         '.devcontainer/seed-mcp-config.py',

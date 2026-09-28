@@ -106,6 +106,7 @@ class Portability(unittest.TestCase):
 
     def test_agents_installed_in_image(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("COPY install-agent-tools.sh install-agent-tools.py", dockerfile)
         self.assertIn("bash /usr/local/share/devcontainer/install-agent-tools.sh", dockerfile)
         for package in (
             "@openai/codex",
