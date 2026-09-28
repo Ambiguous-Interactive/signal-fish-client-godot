@@ -2244,7 +2244,11 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
     if (-not (Test-Path -LiteralPath $postStart -PathType Leaf)) {
         throw 'Missing .devcontainer/post-start.sh'
     }
-    $content = Get-Content -LiteralPath $postStart -Raw
+    $postStartPython = Join-Path $repoRoot '.devcontainer/post-start.py'
+    if (-not (Test-Path -LiteralPath $postStartPython -PathType Leaf)) {
+        throw 'Missing .devcontainer/post-start.py'
+    }
+    $content = Get-Content -LiteralPath $postStartPython -Raw
 
     foreach ($requirement in @(
             [pscustomobject]@{
@@ -2253,12 +2257,12 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
                 Diagnostic  = 'safe.directory|git config'
             },
             [pscustomobject]@{
-                Pattern     = 'install-agent-tools\.sh" --update'
+                Pattern     = 'install-agent-tools\.sh.*"--update"'
                 Requirement = 'refresh agent CLIs via install-agent-tools.sh --update'
                 Diagnostic  = 'agent-tools|--update|refresh'
             },
             [pscustomobject]@{
-                Pattern     = 'WARN: agent CLI refresh failed'
+                Pattern     = 'agent CLI refresh failed; using installed versions'
                 Requirement = 'warn instead of failing when the registry refresh fails'
                 Diagnostic  = 'WARN|refresh|installed versions'
             },
@@ -2268,12 +2272,12 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
                 Diagnostic  = 'refresh attempted|Agent CLIs checked'
             },
             [pscustomobject]@{
-                Pattern     = 'python3 -m pip install --user -r requirements-automation\.txt'
+                Pattern     = '"pip", "install", "--user", "-r"'
                 Requirement = 'heal a missing PyYAML import on every start so sandbox self-tests and config validation match CI'
                 Diagnostic  = 'PyYAML|import yaml|pip install'
             },
             [pscustomobject]@{
-                Pattern     = 'python3 -m venv \.venv-ci'
+                Pattern     = '"venv", str\(VENV\)'
                 Requirement = 'provision .venv-ci with runtime (gdtoolkit) and automation (PyYAML) deps so both local gates match CI'
                 Diagnostic  = 'venv|\.venv-ci|requirements'
             },
@@ -2288,14 +2292,14 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
                 Diagnostic  = 'WARN|venv'
             },
             [pscustomobject]@{
-                Pattern     = '\(\s*\. \.venv-ci/bin/activate'
-                Requirement = 'verify and install inside subshells so a broken venv never leaks onto the healing shell PATH'
-                Diagnostic  = 'subshell|activate|PATH'
+                Pattern     = 'def venv_environment\(\)'
+                Requirement = 'verify and install with an isolated venv environment so a broken venv never leaks onto the parent PATH'
+                Diagnostic  = 'VIRTUAL_ENV|PATH|venv_environment'
             }
 
         )) {
         Assert-TextMatches `
-            -Subject '.devcontainer/post-start.sh' `
+            -Subject '.devcontainer/post-start.py' `
             -Content $content `
             -Pattern $requirement.Pattern `
             -Requirement $requirement.Requirement `
@@ -2310,6 +2314,13 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
         -Requirement 'run post-start.sh as the postStartCommand' `
         -DiagnosticPattern 'postStartCommand|post-start'
 
+    Assert-TextMatches `
+        -Subject '.devcontainer/post-start.sh' `
+        -Content (Get-Content -LiteralPath $postStart -Raw) `
+        -Pattern 'exec python3 .*post-start\.py' `
+        -Requirement 'delegate post-start lifecycle work to Python' `
+        -DiagnosticPattern 'post-start.py|exec python3'
+
     Assert-ScriptParsesWithBash -Path $postStart -Name 'post-start.sh'
 }
 
@@ -2322,7 +2333,7 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     $dockerfile = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/Dockerfile') -Raw
     $devcontainer = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/devcontainer.json') -Raw
     $postCreate = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-create.sh') -Raw
-    $postStart = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-start.sh') -Raw
+    $postStart = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-start.py') -Raw
 
     foreach ($script in @($installer, $seeder, $shim)) {
         if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
@@ -2630,8 +2641,8 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     foreach ($pair in @(
             [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'python3.*install-mcp-servers\.py'; Requirement = 'install npm MCP servers strictly at post-create' },
             [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'python3.*seed-mcp-config\.py'; Requirement = 'seed agent MCP configurations at post-create' },
-            [pscustomobject]@{ Subject = '.devcontainer/post-start.sh'; Content = $postStart; Pattern = 'python3.*install-mcp-servers\.py" --update'; Requirement = 'refresh npm MCP servers warn-only at post-start' },
-            [pscustomobject]@{ Subject = '.devcontainer/post-start.sh'; Content = $postStart; Pattern = 'python3.*seed-mcp-config\.py" --update'; Requirement = 're-seed agent MCP configurations warn-only at post-start' }
+            [pscustomobject]@{ Subject = '.devcontainer/post-start.py'; Content = $postStart; Pattern = 'install-mcp-servers\.py"\), "--update"'; Requirement = 'refresh npm MCP servers warn-only at post-start' },
+            [pscustomobject]@{ Subject = '.devcontainer/post-start.py'; Content = $postStart; Pattern = 'seed-mcp-config\.py"\), "--update"'; Requirement = 're-seed agent MCP configurations warn-only at post-start' }
         )) {
         Assert-TextMatches `
             -Subject $pair.Subject `
@@ -3047,7 +3058,8 @@ Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
         '.devcontainer/seed-mcp-config.py',
         '.devcontainer/mcp-shims/sf-github-mcp.sh',
         '.devcontainer/post-create.sh',
-        '.devcontainer/post-start.sh'
+        '.devcontainer/post-start.sh',
+        '.devcontainer/post-start.py'
     )
     foreach ($rel in $paths) {
         $path = Join-Path $repoRoot $rel

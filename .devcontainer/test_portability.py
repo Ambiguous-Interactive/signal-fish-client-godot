@@ -64,10 +64,98 @@ class Portability(unittest.TestCase):
         self.assertNotIn("ghcr.io/devcontainers/features/node:2", config()["features"])
 
     def test_restart_updates_are_opt_in(self) -> None:
-        script = (ROOT / "post-start.sh").read_text(encoding="utf-8")
-        guard = script.index('"${SF_DEVCONTAINER_MAINTENANCE:-0}" != "1"')
-        self.assertLess(guard, script.index('install-agent-tools.sh" --update'))
-        self.assertIn("exit 0", script[guard : script.index('install-agent-tools.sh" --update')])
+        with tempfile.TemporaryDirectory(prefix="sf post start ") as folder:
+            workspace = Path(folder)
+            scripts = workspace / ".devcontainer"
+            scripts.mkdir()
+            for name in ("post-start.sh", "post-start.py"):
+                shutil.copyfile(ROOT / name, scripts / name)
+            home = workspace / "home"
+            home.mkdir()
+            env = os.environ.copy()
+            env["HOME"] = str(home)
+            env.pop("SF_DEVCONTAINER_MAINTENANCE", None)
+            bash = shutil.which("bash") or "bash"
+            for _ in range(2):
+                result = subprocess.run(
+                    (bash, str(scripts / "post-start.sh")),
+                    cwd=workspace,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.assertIn("Container ready. Rebuild to update tools.", result.stdout)
+                self.assertNotIn("refresh", result.stderr)
+            self.assertFalse((workspace / ".venv-ci").exists())
+            config = (home / ".gitconfig").read_text(encoding="utf-8")
+            self.assertEqual(config.count(str(workspace)), 1)
+
+    def test_broken_venv_is_warn_only(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sf broken venv ") as folder:
+            workspace = Path(folder)
+            scripts = workspace / ".devcontainer"
+            scripts.mkdir()
+            for name in ("post-start.sh", "post-start.py"):
+                shutil.copyfile(ROOT / name, scripts / name)
+            (workspace / ".venv-ci" / "bin").mkdir(parents=True)
+            home = workspace / "home"
+            home.mkdir()
+            env = os.environ.copy()
+            env["HOME"] = str(home)
+            env["SF_DEVCONTAINER_MAINTENANCE"] = "1"
+            env["SF_DEVCONTAINER_SKIP_TOOL_UPDATES"] = "1"
+            result = subprocess.run(
+                (shutil.which("bash") or "bash", str(scripts / "post-start.sh")),
+                cwd=workspace,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+            self.assertIn("could not provision .venv-ci", result.stderr)
+            self.assertIn("Container ready.", result.stdout)
+
+    def test_failed_updates_are_warn_only(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sf failed updates ") as folder:
+            workspace = Path(folder)
+            scripts = workspace / ".devcontainer"
+            scripts.mkdir()
+            for name in ("post-start.sh", "post-start.py"):
+                shutil.copyfile(ROOT / name, scripts / name)
+            (scripts / "install-agent-tools.sh").write_text("exit 1\n", encoding="utf-8")
+            for name in ("install-mcp-servers.py", "seed-mcp-config.py"):
+                (scripts / name).write_text("raise SystemExit(1)\n", encoding="utf-8")
+            venv_bin = workspace / ".venv-ci" / "bin"
+            venv_bin.mkdir(parents=True)
+            (venv_bin / "activate").touch()
+            for name in ("python", "gdformat", "ruff"):
+                tool = venv_bin / name
+                tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                tool.chmod(0o755)
+            home = workspace / "home"
+            home.mkdir()
+            env = os.environ.copy()
+            env["HOME"] = str(home)
+            env["SF_DEVCONTAINER_MAINTENANCE"] = "1"
+            env.pop("SF_DEVCONTAINER_SKIP_TOOL_UPDATES", None)
+            result = subprocess.run(
+                (shutil.which("bash") or "bash", str(scripts / "post-start.sh")),
+                cwd=workspace,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=15,
+            )
+            for message in (
+                "agent CLI refresh failed",
+                "MCP server refresh failed",
+                "MCP configuration seeding failed",
+            ):
+                self.assertIn(message, result.stderr)
+            self.assertIn("Container ready.", result.stdout)
 
     def test_env_guard_chown_is_best_effort(self) -> None:
         # Some bind mounts reject ownership changes; create must survive
@@ -88,7 +176,7 @@ class DockerBehavior(unittest.TestCase):
             workspace = Path(folder)
             scripts = workspace / ".devcontainer"
             scripts.mkdir()
-            for name in ("initialize.sh", "post-start.sh"):
+            for name in ("initialize.sh", "post-start.sh", "post-start.py"):
                 shutil.copyfile(ROOT / name, scripts / name)
             command = [
                 arg.replace("${localWorkspaceFolder}", folder)
