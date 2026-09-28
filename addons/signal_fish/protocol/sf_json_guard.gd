@@ -69,6 +69,9 @@ static func _close_quote_index(bytes: PackedByteArray, start: int) -> int:
 
 
 static func _collect_key(bytes: PackedByteArray, start: int, end: int) -> PackedByteArray:
+	var raw := bytes.slice(start, end)
+	if not raw.has(0x5C):
+		return raw
 	var key := PackedByteArray()
 	var index := start
 	while index < end:
