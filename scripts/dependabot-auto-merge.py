@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from typing import cast
 
 
@@ -44,27 +45,39 @@ def gh_json(*args: str) -> object:
     return cast("object", json.loads(result.stdout))
 
 
-def dispatch_main_checks(repo: str, target: str, merge_sha: str) -> None:
-    for workflow in ("ci.yml", "llm-harness.yml", "docs-validation.yml"):
-        current = field(gh_json("api", f"/repos/{repo}/git/ref/heads/{target}"), "object")
-        if field(current, "sha") != merge_sha:
-            raise RuntimeError(f"{target} moved before CI dispatch for {merge_sha}")
-        result = gh(
-            "workflow",
-            "run",
-            workflow,
-            "--repo",
-            repo,
-            "--ref",
-            target,
+def dispatch_workflow(repo: str, target: str, merge_sha: str, workflow: str, **inputs: str) -> int:
+    current = field(gh_json("api", f"/repos/{repo}/git/ref/heads/{target}"), "object")
+    if field(current, "sha") != merge_sha:
+        raise RuntimeError(f"{target} moved before CI dispatch for {merge_sha}")
+    try:
+        response = gh_json(
+            "api",
+            "--method",
+            "POST",
+            f"/repos/{repo}/actions/workflows/{workflow}/dispatches",
+            "-F",
+            "return_run_details=true",
             "-f",
-            f"expected_sha={merge_sha}",
+            f"ref={target}",
+            "-f",
+            f"inputs[expected_sha]={merge_sha}",
+            *(arg for key, value in inputs.items() for arg in ("-f", f"inputs[{key}]={value}")),
         )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to dispatch {workflow} for {merge_sha}: {result.stderr.strip()}"
-            )
-        print(f"Dispatched {workflow} for {merge_sha}.")
+    except RuntimeError as exc:
+        raise RuntimeError(f"Failed to dispatch {workflow}: {exc}") from exc
+    result = record(response)
+    run_id = result.get("workflow_run_id")
+    if not isinstance(run_id, int) or run_id < 1:
+        raise RuntimeError(f"{workflow} dispatch did not return a run ID for {merge_sha}")
+    print(f"Dispatched {workflow} for {merge_sha}: run {run_id}.")
+    return run_id
+
+
+def dispatch_main_checks(repo: str, target: str, merge_sha: str) -> None:
+    dispatch_workflow(repo, target, merge_sha, "ci.yml")
+    dispatch_workflow(repo, target, merge_sha, "llm-harness.yml")
+    docs_run_id = dispatch_workflow(repo, target, merge_sha, "docs-validation.yml")
+    dispatch_workflow(repo, target, merge_sha, "docs-deploy.yml", validated_run_id=str(docs_run_id))
 
 
 def main() -> int:
@@ -78,12 +91,11 @@ def main() -> int:
 
     repo = os.environ["GITHUB_REPOSITORY"]
     sha = os.environ.get("HEAD_SHA", "")
-    branch = os.environ.get("HEAD_BRANCH", "")
     target = os.environ.get("DEPENDABOT_TARGET_BRANCH", "main")
     login = os.environ.get("DEPENDABOT_LOGIN", "dependabot[bot]")
     workflows = os.environ.get("REQUIRED_WORKFLOWS", "Runtime CI|LLM Harness")
-    if not sha or not branch:
-        print("Missing workflow_run head metadata; skipping.")
+    if not sha:
+        print("Missing check head SHA; skipping.")
         return 0
 
     pulls = required_records(
@@ -153,20 +165,35 @@ def main() -> int:
             print(f"{workflow} concluded {conclusion}; not merging.")
             return 0
 
-    checks_result = gh("pr", "checks", number, "--json", "bucket,name,state,workflow")
-    if checks_result.returncode == 8:
-        print(f"PR #{number} still has pending checks; waiting for another workflow_run event.")
-        return 0
-    if checks_result.returncode != 0:
-        print(f"Unable to read PR checks for #{number}; gh exited {checks_result.returncode}.")
-        return checks_result.returncode
-    checks = required_records(json.loads(checks_result.stdout), "PR checks")
-    failing = [check for check in checks if check.get("bucket") not in ("pass", "skipping")]
-    if failing:
-        print(f"PR #{number} has non-passing checks; not merging:")
-        for check in failing:
-            print(f"{check.get('workflow', '')}\t{check.get('name', '')}\t{check.get('state', '')}")
-        return 0
+    deadline = time.monotonic() + 35 * 60
+    while True:
+        checks_result = gh("pr", "checks", number, "--json", "bucket,name,state,workflow")
+        if checks_result.returncode not in (0, 8):
+            print(f"Unable to read PR checks for #{number}; gh exited {checks_result.returncode}.")
+            return checks_result.returncode
+        checks = required_records(json.loads(checks_result.stdout), "PR checks")
+        failing = [
+            check for check in checks if check.get("bucket") not in ("pass", "skipping", "pending")
+        ]
+        if failing:
+            print(f"PR #{number} has non-passing checks; not merging:")
+            for check in failing:
+                print(
+                    f"{check.get('workflow', '')}\t{check.get('name', '')}\t{check.get('state', '')}"
+                )
+            return 0
+        if checks_result.returncode == 0 and not any(
+            check.get("bucket") == "pending" for check in checks
+        ):
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"PR #{number} checks stayed pending for 35 minutes")
+        print(f"PR #{number} still has pending checks; checking again.")
+        time.sleep(10)
+        current = record(gh_json("pr", "view", number, "--json", "headRefOid,state"))
+        if current.get("state") != "OPEN" or current.get("headRefOid") != sha:
+            print(f"PR #{number} moved or closed while waiting for checks; skipping.")
+            return 0
 
     result = gh("pr", "merge", number, "--squash", "--delete-branch", "--match-head-commit", sha)
     if result.returncode == 0:

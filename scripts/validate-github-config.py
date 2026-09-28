@@ -31,6 +31,7 @@ POST_MERGE_WORKFLOWS = {
     "LLM Harness": ".github/workflows/llm-harness.yml",
     "Docs Validation": ".github/workflows/docs-validation.yml",
 }
+AUTO_MERGE_TRIGGERS = ("Runtime CI", "LLM Harness", "Docs Validation", "Dev Container")
 EXPECTED_DEPENDABOT_UPDATES = {
     ("github-actions", "/"),
     ("pip", "/"),
@@ -323,16 +324,20 @@ def validate_auto_merge(
     workflow_run = as_dict(on_value.get("workflow_run"))
     trigger_workflows = [str(item) for item in as_list(workflow_run.get("workflows"))]
     merge_job = as_dict(as_dict(data.get("jobs")).get("merge"))
+    if "github.event.workflow_run.event == 'pull_request'" not in str(merge_job.get("if", "")):
+        reporter.error(f"{path}: merge job must only handle PR workflow runs")
     env = as_dict(merge_job.get("env"))
     required_workflows = split_required_workflows(str(env.get("REQUIRED_WORKFLOWS", "")))
-    if trigger_workflows != required_workflows:
+    if trigger_workflows != list(AUTO_MERGE_TRIGGERS):
+        reporter.error(f"{path}: workflow_run.workflows must cover all PR workflows")
+    if required_workflows != list(AUTO_MERGE_TRIGGERS[:2]):
         reporter.error(
-            f"{path}: workflow_run.workflows must match REQUIRED_WORKFLOWS "
-            f"({trigger_workflows!r} != {required_workflows!r})"
+            f"{path}: REQUIRED_WORKFLOWS must name Runtime CI and LLM Harness "
+            f"({required_workflows!r})"
         )
-    for workflow in required_workflows:
+    for workflow in trigger_workflows:
         if workflow not in workflows:
-            reporter.error(f"{path}: required workflow {workflow!r} does not exist")
+            reporter.error(f"{path}: trigger workflow {workflow!r} does not exist")
 
     expected_top_permissions = {"contents": "read"}
     expected_job_permissions = {
@@ -345,6 +350,9 @@ def validate_auto_merge(
         reporter.error(f"{path}: top-level permissions must be exactly {expected_top_permissions}")
     if merge_job.get("permissions") != expected_job_permissions:
         reporter.error(f"{path}: merge job permissions must be exactly {expected_job_permissions}")
+    merge_timeout = merge_job.get("timeout-minutes")
+    if not isinstance(merge_timeout, int) or merge_timeout < 40:
+        reporter.error(f"{path}: merge job must outlive the pending-check wait")
 
     run_steps = [run.strip() for run in iter_workflow_runs(data)]
     if "python3 scripts/dependabot-auto-merge.py" not in run_steps:
@@ -365,6 +373,9 @@ def validate_auto_merge(
         'field(pr.get("head"), "sha") == sha',
         'pr.get("headRefOid") != sha',
         "--match-head-commit",
+        "return_run_details=true",
+        '"docs-deploy.yml"',
+        "validated_run_id",
     ]
     for token in required_tokens:
         if token not in script:
@@ -396,10 +407,27 @@ def validate_auto_merge(
         reporter.error(f"{path}: Docs Deploy workflow is missing")
     else:
         deploy_path, deploy_workflow = deploy
+        deploy_inputs = as_dict(
+            as_dict(as_dict(deploy_workflow.get("on")).get("workflow_dispatch")).get("inputs")
+        )
+        if not {"expected_sha", "validated_run_id"}.issubset(deploy_inputs):
+            reporter.error(f"{deploy_path}: dispatch needs the commit and validated run ID")
         build = as_dict(as_dict(deploy_workflow.get("jobs")).get("build"))
         condition = str(build.get("if", ""))
         if "workflow_dispatch" not in condition or "head_branch == 'main'" not in condition:
-            reporter.error(f"{deploy_path}: dispatched main docs must deploy after validation")
+            reporter.error(f"{deploy_path}: main docs deployment trigger is unsafe")
+        steps = {
+            step.get("name"): step
+            for step in (as_dict(item) for item in as_list(build.get("steps")))
+        }
+        wait = as_dict(steps.get("Wait for validated site"))
+        wait_script = str(wait.get("run", ""))
+        for token in ("VALIDATED_RUN_ID", "EXPECTED_SHA", "gh api", "docs-validation.yml"):
+            if token not in wait_script:
+                reporter.error(f"{deploy_path}: validated site check is missing {token!r}")
+        download = as_dict(steps.get("Download validated site"))
+        if "inputs.validated_run_id" not in str(as_dict(download.get("with")).get("run-id", "")):
+            reporter.error(f"{deploy_path}: deploy must download the validated run artifact")
 
     docs = workflows.get("Docs Validation")
     if docs is not None:
