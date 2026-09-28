@@ -385,6 +385,11 @@ def validate_auto_merge(
         verify = as_dict(as_dict(workflow_data.get("jobs")).get("verify-dispatch"))
         if "EXPECTED_SHA" not in str(verify) or "GITHUB_SHA" not in str(verify):
             reporter.error(f"{workflow_path}: verify-dispatch must check the run SHA")
+        concurrency = as_dict(workflow_data.get("concurrency"))
+        group = str(concurrency.get("group", ""))
+        cancel = str(concurrency.get("cancel-in-progress", ""))
+        if "github.sha" not in group or "github.event_name == 'pull_request'" not in cancel:
+            reporter.error(f"{workflow_path}: main checks must be grouped by SHA and not canceled")
 
     deploy = workflows.get("Docs Deploy")
     if deploy is None:
