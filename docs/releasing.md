@@ -42,7 +42,7 @@ because the repository settings were missing.
    | Repository URL    | `https://github.com/Ambiguous-Interactive/signal-fish-client-godot`                                              |
    | Issues URL        | repository URL + `/issues`                                                                                       |
    | Icon URL          | `https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/docs/assets/icon-256.png` |
-   | Download commit   | `b4441936057628a71b730c3338f0183b4cdc03e2`                                                                   |
+   | Download commit   | `b4441936057628a71b730c3338f0183b4cdc03e2`                                                                       |
 
 If the job cannot be rerun, log in and edit
 [entry #5489](https://godotengine.org/asset-library/asset/5489) with these
