@@ -6,7 +6,7 @@ import io
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace, TracebackType
 from unittest.mock import AsyncMock, patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/check-docs-accessibility.py"
@@ -31,12 +31,17 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
         )
 
         class PlaywrightContext:
-            async def __aenter__(inner_self):
+            async def __aenter__(inner_self) -> SimpleNamespace:
                 return SimpleNamespace(
                     chromium=SimpleNamespace(launch=AsyncMock(return_value=self.browser))
                 )
 
-            async def __aexit__(inner_self, _type, _value, _traceback):
+            async def __aexit__(
+                inner_self,
+                _type: type[BaseException] | None,
+                _value: BaseException | None,
+                _traceback: TracebackType | None,
+            ) -> None:
                 self.events.append("playwright.exit")
 
         replacements = {
