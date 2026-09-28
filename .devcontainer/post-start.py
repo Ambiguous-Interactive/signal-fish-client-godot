@@ -99,12 +99,13 @@ def ensure_venv() -> None:
         )
         return
     if (
-        run(sys.executable, "-m", "venv", str(VENV))
+        run("uv", "venv", str(VENV), "--python", sys.executable)
         and run(
-            str(VENV / "bin" / "python"),
-            "-m",
+            "uv",
             "pip",
             "install",
+            "--python",
+            str(VENV / "bin" / "python"),
             "-r",
             str(ROOT / "requirements-python-quality.txt"),
             "-r",

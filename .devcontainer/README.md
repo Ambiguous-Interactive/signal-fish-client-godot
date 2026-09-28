@@ -44,6 +44,7 @@ tooling for manual `.pre-commit-config.yaml` runs.
 | Godot       | `4.3-stable` editor binary (run headless via `--headless`) plus web export templates                       |
 | PowerShell  | 7.x via `ghcr.io/devcontainers/features/powershell`                                                        |
 | Python      | 3.12 via Ubuntu (apt); docs CI pins 3.12, runtime CI tracks 3.x - PEP 668 pre-unlocked via `/etc/pip.conf` |
+| uv          | 0.12.19; provisions the local Python check environment                                                     |
 | Node.js     | LTS from the official multi-platform Node image (>= 22 required)                                           |
 | Agent CLIs  | `codex`, OpenCode v2, `nanocoder`, `claude` at `@latest`; installed during image build                     |
 | MCP servers | `godot`, `github`, `context7`, `deepwiki`, `git`, `fetch`, `playwright` - see "MCP servers" below          |
@@ -160,7 +161,8 @@ matrix sets 0).
   summary reports every version. OpenCode must report major version 2.
 - **post-start** performs local git setup. Run
   `SF_DEVCONTAINER_MAINTENANCE=1 bash .devcontainer/post-start.sh` for an
-  explicit best-effort update and Python dependency repair.
+  explicit best-effort update and Python dependency repair. uv rebuilds
+  `.venv-ci` when needed. pip retains the bare Python user-site PyYAML repair.
 
 Use **Rebuild Container** for current agents. **Rebuild Without Cache** also
 refreshes the system packages and feature-installed tools. Godot and MCP
