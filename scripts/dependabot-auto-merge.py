@@ -44,6 +44,29 @@ def gh_json(*args: str) -> object:
     return cast("object", json.loads(result.stdout))
 
 
+def dispatch_main_checks(repo: str, target: str, merge_sha: str) -> None:
+    for workflow in ("ci.yml", "llm-harness.yml", "docs-validation.yml"):
+        current = field(gh_json("api", f"/repos/{repo}/git/ref/heads/{target}"), "object")
+        if field(current, "sha") != merge_sha:
+            raise RuntimeError(f"{target} moved before CI dispatch for {merge_sha}")
+        result = gh(
+            "workflow",
+            "run",
+            workflow,
+            "--repo",
+            repo,
+            "--ref",
+            target,
+            "-f",
+            f"expected_sha={merge_sha}",
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to dispatch {workflow} for {merge_sha}: {result.stderr.strip()}"
+            )
+        print(f"Dispatched {workflow} for {merge_sha}.")
+
+
 def main() -> int:
     if shutil.which("gh") is None:
         print("::error::Required command 'gh' was not found on PATH.")
@@ -147,6 +170,11 @@ def main() -> int:
 
     result = gh("pr", "merge", number, "--squash", "--delete-branch", "--match-head-commit", sha)
     if result.returncode == 0:
+        merged = record(gh_json("pr", "view", number, "--json", "state,mergeCommit"))
+        merge_sha = field(merged.get("mergeCommit"), "oid")
+        if merged.get("state") != "MERGED" or not isinstance(merge_sha, str) or not merge_sha:
+            raise RuntimeError(f"PR #{number} merged but its merge commit was not available")
+        dispatch_main_checks(repo, target, merge_sha)
         return 0
     recheck = gh("pr", "view", number, "--json", "state,headRefOid")
     state: object = "UNKNOWN"

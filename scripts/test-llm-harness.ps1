@@ -1186,9 +1186,29 @@ JSON
     esac
     exit 0
   fi
+  if [[ "${endpoint}" == *"/git/ref/heads/main" ]]; then
+    ref_sha="merge-abc123"
+    if [[ "${scenario}" == "moved_main" ]]; then ref_sha="new-main"; fi
+    cat <<JSON
+{"object":{"sha":"${ref_sha}"}}
+JSON
+    exit 0
+  fi
 fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
+  if [[ "$*" == *"state,mergeCommit"* ]]; then
+    cat <<'JSON'
+{"state":"MERGED","mergeCommit":{"oid":"merge-abc123"}}
+JSON
+    exit 0
+  fi
+  if [[ "${scenario}" == "racing_merge" && "$*" == *"state,headRefOid"* ]]; then
+    cat <<JSON
+{"state":"MERGED","headRefOid":"${HEAD_SHA}"}
+JSON
+    exit 0
+  fi
   view_sha="${HEAD_SHA}"
   if [[ "${scenario}" == "stale_head" ]]; then view_sha="new-head"; fi
   cat <<JSON
@@ -1209,6 +1229,13 @@ fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "merge" ]]; then
   printf '%s\n' "$*" >> "${log}"
+  if [[ "${scenario}" == "racing_merge" ]]; then exit 1; fi
+  exit 0
+fi
+
+if [[ "${1:-}" == "workflow" && "${2:-}" == "run" ]]; then
+  printf '%s\n' "$*" >> "${log}"
+  if [[ "${scenario}" == "dispatch_failure" ]]; then exit 1; fi
   exit 0
 fi
 
@@ -1261,12 +1288,15 @@ exit 99
         $env:FAKE_GH_LOG = ConvertTo-BashPath $fakeGhLogWin
 
         $cases = @(
-            [pscustomobject]@{ Scenario = 'success'; ExpectMerge = $true; Pattern = '--match-head-commit abc123' },
-            [pscustomobject]@{ Scenario = 'missing_workflow'; ExpectMerge = $false; Pattern = 'LLM Harness is missing' },
-            [pscustomobject]@{ Scenario = 'failed_workflow'; ExpectMerge = $false; Pattern = 'LLM Harness concluded failure' },
-            [pscustomobject]@{ Scenario = 'rerun_failure'; ExpectMerge = $false; Pattern = 'LLM Harness concluded failure' },
-            [pscustomobject]@{ Scenario = 'stale_head'; ExpectMerge = $false; Pattern = 'skipping stale workflow_run' },
-            [pscustomobject]@{ Scenario = 'pending_checks'; ExpectMerge = $false; Pattern = 'pending checks' }
+            [pscustomobject]@{ Scenario = 'success'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 3; Pattern = '--match-head-commit abc123' },
+            [pscustomobject]@{ Scenario = 'missing_workflow'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'LLM Harness is missing' },
+            [pscustomobject]@{ Scenario = 'failed_workflow'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'LLM Harness concluded failure' },
+            [pscustomobject]@{ Scenario = 'rerun_failure'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'LLM Harness concluded failure' },
+            [pscustomobject]@{ Scenario = 'stale_head'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'skipping stale workflow_run' },
+            [pscustomobject]@{ Scenario = 'pending_checks'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'pending checks' },
+            [pscustomobject]@{ Scenario = 'moved_main'; ExpectMerge = $true; ExitCode = 1; DispatchCount = 0; Pattern = 'moved before CI dispatch' },
+            [pscustomobject]@{ Scenario = 'dispatch_failure'; ExpectMerge = $true; ExitCode = 1; DispatchCount = 1; Pattern = 'Failed to dispatch ci.yml' },
+            [pscustomobject]@{ Scenario = 'racing_merge'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 0; Pattern = 'already merged by a racing workflow_run' }
         )
         foreach ($case in $cases) {
             Remove-Item -LiteralPath $fakeGhLogWin -Force -ErrorAction SilentlyContinue
@@ -1282,8 +1312,8 @@ exit 99
                 Pop-Location
             }
             $combined = ($output | Out-String)
-            if ($exitCode -ne 0) {
-                throw "Auto-merge scenario '$($case.Scenario)' should exit 0; got $exitCode. fake gh path: $fakeGh. Output: $combined"
+            if ($exitCode -ne $case.ExitCode) {
+                throw "Auto-merge scenario '$($case.Scenario)' should exit $($case.ExitCode); got $exitCode. fake gh path: $fakeGh. Output: $combined"
             }
             if ($combined -notmatch $case.Pattern -and
                 -not ((Test-Path -LiteralPath $fakeGhLogWin -PathType Leaf) -and
@@ -1293,6 +1323,20 @@ exit 99
             $mergeLogExists = Test-Path -LiteralPath $fakeGhLogWin -PathType Leaf
             if ($case.ExpectMerge -and -not $mergeLogExists) {
                 throw "Auto-merge scenario '$($case.Scenario)' should merge but no merge log was written. Output: $combined"
+            }
+            if ($case.ExpectMerge) {
+                $mergeLog = [System.IO.File]::ReadAllText($fakeGhLogWin)
+                $dispatches = @($mergeLog -split "`n" | Where-Object { $_ -match '^workflow run ' })
+                if ($dispatches.Count -ne $case.DispatchCount) {
+                    throw "Auto-merge scenario '$($case.Scenario)' dispatched $($dispatches.Count) workflows; expected $($case.DispatchCount). Log: $mergeLog"
+                }
+                if ($case.DispatchCount -eq 3) {
+                    foreach ($workflow in @('ci.yml', 'llm-harness.yml', 'docs-validation.yml')) {
+                        if ($mergeLog -notmatch "workflow run $([regex]::Escape($workflow)) --repo owner/repo --ref main -f expected_sha=merge-abc123") {
+                            throw "Auto-merge scenario '$($case.Scenario)' did not dispatch $workflow. Log: $mergeLog"
+                        }
+                    }
+                }
             }
             if (-not $case.ExpectMerge -and $mergeLogExists) {
                 throw "Auto-merge scenario '$($case.Scenario)' should not merge. Log: $([System.IO.File]::ReadAllText($fakeGhLogWin)) Output: $combined"

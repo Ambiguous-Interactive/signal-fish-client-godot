@@ -5,6 +5,12 @@ on:
     push:
         branches:
             - main
+    workflow_dispatch:
+        inputs:
+            expected_sha:
+                description: Commit expected on main
+                required: false
+                type: string
 
 permissions:
     contents: read
@@ -12,10 +18,21 @@ permissions:
 # Superseded PR runs are canceled so pushed-through commits do not queue
 # redundant runs; runs on main are never canceled (merge checks depend on them).
 concurrency:
-    group: ${{ github.workflow }}-${{ github.ref }}
+    group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
     cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+    verify-dispatch:
+        name: Verify dispatched commit
+        if: github.event_name == 'workflow_dispatch' && inputs.expected_sha != ''
+        runs-on: ubuntu-24.04
+        timeout-minutes: 5
+        steps:
+            - name: Check dispatched commit
+              env:
+                  EXPECTED_SHA: ${{ inputs.expected_sha }}
+              run: test "$GITHUB_SHA" = "$EXPECTED_SHA"
+
     source-format:
         name: Source formatting
         runs-on: ubuntu-24.04

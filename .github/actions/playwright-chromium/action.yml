@@ -7,7 +7,7 @@ inputs:
   playwright-version:
     description: Pinned playwright package version
     required: false
-    default: "1.61.0"
+    default: "1.63.0"
 outputs:
   playwright-version:
     description: Pinned version for either Playwright client
