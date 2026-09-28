@@ -43,270 +43,37 @@ fi
 
 python_bin="${PYTHON:-python3}"
 target="${1:-all}"
-GD_DIRS=(addons/signal_fish tests demo scripts)
-
-check_gdscript_roots() {
-	local file failed=0
-	while IFS= read -r -d '' file; do
-		case "${file}" in
-		addons/signal_fish/*.gd | tests/*.gd | demo/*.gd | scripts/*.gd) ;;
-		*)
-			echo "GDScript outside checked roots: ${file}" >&2
-			failed=1
-			;;
-		esac
-	done < <(git ls-files -z --cached --others --exclude-standard -- '*.gd')
-	[[ "${failed}" -eq 0 ]]
-}
-
-gdtoolkit_version() {
-	# importlib.metadata reads the dist-info without importing the gdtoolkit
-	# parser: ~0.15 s vs ~0.7 s for `gdformat --version` (a full import).
-	# Every prepare call in one gate run reuses the first answer.
-	if [[ -z "${_GDTOOLKIT_VERSION:-}" ]]; then
-		_GDTOOLKIT_VERSION="$("${bootstrap_python}" -c 'import importlib.metadata as m; print(m.version("gdtoolkit"))')"
-		export _GDTOOLKIT_VERSION
-	fi
-	printf '%s\n' "${_GDTOOLKIT_VERSION}"
-}
-
-prepare_gdtoolkit_cache() {
-	# gdtoolkit bootstraps its grammar cache ($HOME/.cache/gdtoolkit/<version>)
-	# with a bare `os.makedirs` (parser.py, no exist_ok): concurrent cold
-	# starts race EEXIST and a check fails with "Cannot open file ..." —
-	# CI runners cold-start this home on every run. Pre-create the leaf
-	# sequentially; identical-content pickle writes afterward are benign.
-	mkdir -p "${HOME}/.cache/gdtoolkit/$(gdtoolkit_version)"
-}
-
-# Run a per-file GDScript tool over GD_DIRS as parallel same-tool shards and
-# report each shard's output verbatim once all finish. Sharding cuts the
-# per-invocation interpreter/parse fixed cost that dominates a serial run of
-# the small file set; the checks themselves are unchanged (issue #112).
-run_sharded_tool() {
-	local tool="$1"
-	shift
-	local files=()
-	# `read -d ''` works back to bash 3.2 (macOS stock); `mapfile -d` would
-	# need 4.4 and abort under `set -e` there.
-	while IFS= read -r -d '' file; do
-		files+=("${file}")
-	done < <(find "${GD_DIRS[@]}" -type f -name '*.gd' -print0 | sort -z)
-	if [[ "${#files[@]}" -eq 0 ]]; then
-		return 0
-	fi
-	local tmp_dir
-	tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-shards.XXXXXX")"
-	# The subshell owns the shard outputs: its EXIT trap removes them even
-	# when `set -e` aborts mid-wait, so an early failure cannot leak files.
-	(
-		trap 'rm -rf "'"$tmp_dir"'"' EXIT
-		# CI runs the helper analyzer, formatter, and linter together. Two
-		# shards per parser tool reduce contention on its small runner.
-		local shard_count=4
-		if [[ "${CI:-}" == "true" ]]; then
-			shard_count=2
-		fi
-		local shard_size=$(((${#files[@]} + shard_count - 1) / shard_count))
-		local pids=() outs=() index=0 shard=0
-		while [[ "${index}" -lt "${#files[@]}" ]]; do
-			local batch=() output
-			while
-				[[ "${#batch[@]}" -lt "${shard_size}" && "${index}" -lt "${#files[@]}" ]]
-			do
-				batch+=("${files[${index}]}")
-				index=$((index + 1))
-			done
-			output="${tmp_dir}/shard-${shard}.out"
-			"${tool}" "$@" "${batch[@]}" >"${output}" 2>&1 &
-			pids+=("$!")
-			outs+=("${output}")
-			shard=$((shard + 1))
-		done
-		local failed=0 i rc
-		for i in "${!pids[@]}"; do
-			rc=0
-			wait "${pids[${i}]}" || rc=$?
-			cat "${outs[${i}]}"
-			[[ "${rc}" -eq 0 ]] || failed=1
-		done
-		[[ "${failed}" -eq 0 ]] || exit 1
-	)
+run_static_check() {
+	"${python_bin}" scripts/run-runtime-static.py "$@"
 }
 
 run_private_helpers() {
-	"${python_bin}" scripts/check-gdscript-private-helpers.py --self-test "${GD_DIRS[@]}"
+	run_static_check private-helpers
 }
 
-# Scoped variants for the agent fast loop: same tools, no analyzer self-test,
-# explicit file set. The full self-test + whole-tree sweep stays the CI and
-# pre-push contract; this only widens what the inner loop may skip.
-run_private_helpers_on() {
-	"${python_bin}" scripts/check-gdscript-private-helpers.py "$@"
-}
-
-# Sharded per-file tool run over an explicit file list:
-#   run_sharded_tool_on <tool> [tool args...] -- <files...>
-run_sharded_tool_on() {
-	local tool="$1"
-	shift
-	local tool_args=() files=() past_separator=""
-	while [[ "$#" -gt 0 ]]; do
-		if [[ -z "${past_separator}" && "${1}" == "--" ]]; then
-			past_separator="1"
-		elif [[ -n "${past_separator}" ]]; then
-			files+=("$1")
-		else
-			tool_args+=("$1")
-		fi
-		shift
-	done
-	if [[ "${#files[@]}" -eq 0 ]]; then
-		return 0
-	fi
-	local tmp_dir
-	tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-shards.XXXXXX")"
-	(
-		trap 'rm -rf "'"$tmp_dir"'"' EXIT
-		local shard_count=4
-		local shard_size=$(((${#files[@]} + shard_count - 1) / shard_count))
-		local pids=() outs=() index=0 shard=0
-		while [[ "${index}" -lt "${#files[@]}" ]]; do
-			local batch=() output
-			while
-				[[ "${#batch[@]}" -lt "${shard_size}" && "${index}" -lt "${#files[@]}" ]]
-			do
-				batch+=("${files[${index}]}")
-				index=$((index + 1))
-			done
-			output="${tmp_dir}/shard-${shard}.out"
-			# ${tool_args[@]+...}: the array may be empty (gdlint takes no
-			# args) and bare empty-array expansion aborts under `set -u` on
-			# bash < 4.4 (macOS stock 3.2).
-			"${tool}" ${tool_args[@]+"${tool_args[@]}"} "${batch[@]}" >"${output}" 2>&1 &
-			pids+=("$!")
-			outs+=("${output}")
-			shard=$((shard + 1))
-		done
-		local failed=0 i rc
-		for i in "${!pids[@]}"; do
-			rc=0
-			wait "${pids[${i}]}" || rc=$?
-			cat "${outs[${i}]}"
-			[[ "${rc}" -eq 0 ]] || failed=1
-		done
-		[[ "${failed}" -eq 0 ]] || exit 1
-	)
-}
-
-# Scoped static checks for the agent fast loop: the same three checks over
-# the given files only, skipping the analyzer self-test (a ~2 s guard on the
-# analyzer itself that CI and the full gate still enforce). An empty list is
-# a no-op: the analyzer's own zero-args default would sweep the whole tree.
 run_static_on() {
-	if [[ "$#" -eq 0 ]]; then
-		return 0
-	fi
-	prepare_gdtoolkit_cache
-	local helper_out format_out lint_out failed=0 rc
-	helper_out="$(mktemp)"
-	format_out="$(mktemp)"
-	lint_out="$(mktemp)"
-	# Always invoked backgrounded (subshell), so cleanup_paths would be a
-	# copy and leak; the EXIT trap self-cleans even on a `set -e` abort,
-	# mirroring the cold-copy workers.
-	trap 'rm -rf "'"${helper_out}"'" "'"${format_out}"'" "'"${lint_out}"'"' EXIT
-	run_private_helpers_on "$@" >"${helper_out}" 2>&1 &
-	local helper_pid=$!
-	run_sharded_tool_on gdformat --diff --check -- "$@" >"${format_out}" 2>&1 &
-	local format_pid=$!
-	run_sharded_tool_on gdlint -- "$@" >"${lint_out}" 2>&1 &
-	local lint_pid=$!
-	rc=0
-	wait "${helper_pid}" || failed=1
-	cat "${helper_out}"
-	rc=0
-	wait "${format_pid}" || rc=$?
-	cat "${format_out}"
-	[[ "${rc}" -eq 0 ]] || failed=1
-	rc=0
-	wait "${lint_pid}" || rc=$?
-	cat "${lint_out}"
-	[[ "${rc}" -eq 0 ]] || failed=1
-	return "${failed}"
+	run_static_check scoped "$@"
 }
 
 run_format() {
-	prepare_gdtoolkit_cache
-	run_sharded_tool gdformat --diff --check
+	run_static_check format
 }
 
 run_lint() {
-	prepare_gdtoolkit_cache
-	run_sharded_tool gdlint
+	run_static_check lint
 }
 
 run_python_types() {
-	local files=()
-	while IFS= read -r -d '' file; do
-		[[ -f "${file}" ]] && files+=("${file}")
-	done < <(git ls-files -z --cached --others --exclude-standard -- '*.py')
-	if [[ "${#files[@]}" -eq 0 ]]; then
-		return 0
-	fi
-	ruff check --output-format concise -- "${files[@]}"
-	ruff format --check --output-format concise -- "${files[@]}"
-	mypy --strict --disallow-any-explicit --show-error-codes -- "${files[@]}"
+	run_static_check python-types
 }
 
 run_gdscript_static() {
-	check_gdscript_roots || return 1
-	local tmp_dir
-	tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/signal-fish-static.XXXXXX")"
-	# One temp dir owned by a subshell trap: if `set -e` aborts a check early,
-	# the remaining outputs still get cleaned up instead of leaking.
-	(
-		trap 'rm -rf "'"$tmp_dir"'"' EXIT
-		# run_format/run_lint pre-create the grammar cache themselves before
-		# their shards start, so no separate prepare step is needed here.
-		run_private_helpers >"${tmp_dir}/helper.out" 2>&1 &
-		local helper_pid=$!
-		run_format >"${tmp_dir}/format.out" 2>&1 &
-		local format_pid=$!
-		run_lint >"${tmp_dir}/lint.out" 2>&1 &
-		local lint_pid=$!
-		local failed=0 rc
-		rc=0
-		wait "${helper_pid}" || rc=$?
-		cat "${tmp_dir}/helper.out"
-		[[ "${rc}" -eq 0 ]] || failed=1
-		rc=0
-		wait "${format_pid}" || rc=$?
-		cat "${tmp_dir}/format.out"
-		[[ "${rc}" -eq 0 ]] || failed=1
-		rc=0
-		wait "${lint_pid}" || rc=$?
-		cat "${tmp_dir}/lint.out"
-		[[ "${rc}" -eq 0 ]] || failed=1
-		[[ "${failed}" -eq 0 ]] || exit 1
-	)
+	run_static_check gdscript-static
 }
 
-run_static() (
-	local gdscript_output python_output gdscript_rc=0 python_rc=0
-	gdscript_output="$(mktemp)"
-	python_output="$(mktemp)"
-	trap 'rm -f "${gdscript_output}" "${python_output}"' EXIT
-	run_gdscript_static >"${gdscript_output}" 2>&1 &
-	local gdscript_pid=$!
-	run_python_types >"${python_output}" 2>&1 &
-	local python_pid=$!
-	wait "${gdscript_pid}" || gdscript_rc=$?
-	cat "${gdscript_output}"
-	wait "${python_pid}" || python_rc=$?
-	cat "${python_output}"
-	[[ "${gdscript_rc}" -eq 0 && "${python_rc}" -eq 0 ]]
-)
+run_static() {
+	run_static_check static
+}
 
 # Any SCRIPT ERROR line is a runtime abort inside a test function: GDScript
 # only unwinds that function, so a green suite would still have silently
