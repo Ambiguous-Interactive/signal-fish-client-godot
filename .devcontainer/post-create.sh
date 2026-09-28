@@ -59,7 +59,7 @@ echo "==> Checking npm-based MCP servers"
 SF_MCP_SKIP_PLAYWRIGHT_BROWSER=1 python3 "${DEVCONTAINER_DIR}/install-mcp-servers.py"
 
 echo "==> Seeding agent MCP configurations (doctor prints names and set/unset state, never values)"
-bash "${DEVCONTAINER_DIR}/seed-mcp-config.sh"
+python3 "${DEVCONTAINER_DIR}/seed-mcp-config.py"
 
 echo "==> Installing PowerShell user profile (persists pwsh history)"
 # PowerShell on Linux reads CurrentUserAllHosts from
