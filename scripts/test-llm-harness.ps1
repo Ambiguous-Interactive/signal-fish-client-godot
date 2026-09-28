@@ -2252,11 +2252,6 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
 
     foreach ($requirement in @(
             [pscustomobject]@{
-                Pattern     = 'safe\.directory'
-                Requirement = 'keep the workspace trusted for git on every start'
-                Diagnostic  = 'safe.directory|git config'
-            },
-            [pscustomobject]@{
                 Pattern     = 'install-agent-tools\.sh.*"--update"'
                 Requirement = 'refresh agent CLIs via install-agent-tools.sh --update'
                 Diagnostic  = 'agent-tools|--update|refresh'
@@ -2317,8 +2312,15 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
     Assert-TextMatches `
         -Subject '.devcontainer/post-start.sh' `
         -Content (Get-Content -LiteralPath $postStart -Raw) `
+        -Pattern 'safe\.directory' `
+        -Requirement 'keep the workspace trusted for git on every start' `
+        -DiagnosticPattern 'safe.directory|git config'
+
+    Assert-TextMatches `
+        -Subject '.devcontainer/post-start.sh' `
+        -Content (Get-Content -LiteralPath $postStart -Raw) `
         -Pattern 'exec python3 .*post-start\.py' `
-        -Requirement 'delegate post-start lifecycle work to Python' `
+        -Requirement 'delegate optional maintenance to Python' `
         -DiagnosticPattern 'post-start.py|exec python3'
 
     Assert-ScriptParsesWithBash -Path $postStart -Name 'post-start.sh'

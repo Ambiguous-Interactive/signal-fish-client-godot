@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep devcontainer startup cheap; repair tooling only on request."""
+"""Repair devcontainer tooling during explicit post-start maintenance."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VENV = ROOT / ".venv-ci"
-GIT = shutil.which("git") or "git"
 
 
 def run(*command: str, env: dict[str, str] | None = None, quiet: bool = False) -> bool:
@@ -28,23 +27,6 @@ def run(*command: str, env: dict[str, str] | None = None, quiet: bool = False) -
     except OSError:
         return False
     return result.returncode == 0
-
-
-def safe_directory() -> None:
-    print("==> Configuring git safe.directory")
-    try:
-        result = subprocess.run(  # noqa: S603
-            (GIT, "config", "--global", "--get-all", "safe.directory"),
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        trusted = str(ROOT) in result.stdout.splitlines()
-    except OSError:
-        trusted = False
-    if not trusted:
-        run(GIT, "config", "--global", "--add", "safe.directory", str(ROOT))
 
 
 def try_update(label: str, command: tuple[str, ...], success: str, warning: str) -> None:
@@ -141,10 +123,6 @@ def ensure_venv() -> None:
 
 
 def main() -> int:
-    safe_directory()
-    if os.environ.get("SF_DEVCONTAINER_MAINTENANCE") != "1":
-        print("==> Container ready. Rebuild to update tools.")
-        return 0
     if os.environ.get("SF_DEVCONTAINER_SKIP_TOOL_UPDATES") != "1":
         try_update(
             "Checking agent CLI versions (best-effort refresh)",
