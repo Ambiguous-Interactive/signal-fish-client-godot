@@ -11,10 +11,12 @@ manual bootstrap before that flow works.
 
 ## Flow
 
-1. Run the `Release` workflow (`workflow_dispatch`, input `version`).
+1. Push a `vMAJOR.MINOR.PATCH` tag on `main`, or run the `Release` workflow
+   (`workflow_dispatch`, input `version`).
 2. `release` job: validate the tag, cut notes from `CHANGELOG.md`, check
    `addons/signal_fish/plugin.cfg` `version` matches (tag minus the `v`),
-   package the addon zip, create the tag + GitHub Release.
+   package the addon zip, and publish the GitHub Release. Manual runs create
+   the tag; pushed tags must point to a commit on `main`.
 3. `publish-asset-store` job (needs `release`): submit an Asset Library edit
    via `deep-entertainment/godot-asset-lib-action` (pinned to commit SHA).
 
@@ -23,8 +25,9 @@ configured, so releases stay usable before the one-time bootstrap.
 
 ## One-time manual bootstrap (cannot be automated)
 
-1. Publish the first GitHub Release with the `Release` workflow. It creates
-   the tag. Check the package layout in
+1. Publish the first GitHub Release by pushing its tag or running the
+   `Release` workflow. The manual workflow creates the tag. Check the package
+   layout in
    `addons/signal_fish/plugin.cfg`, `icon.png`, `README.md`, and `LICENSE`.
 2. Log in at <https://godotengine.org/asset-library/asset/submit> (or
    `POST /asset`) and submit the first entry with the same field values as
@@ -45,7 +48,7 @@ After this, every release run submits a store edit automatically.
 
 ## Template contract (`.asset-template.json.hb`)
 
-Handlebars over the workflow-dispatch webhook context plus process env:
+Handlebars over the workflow webhook context plus process env:
 
 | Field                                    | Value                   | Source                                  |
 | ---------------------------------------- | ----------------------- | --------------------------------------- |
@@ -55,7 +58,7 @@ Handlebars over the workflow-dispatch webhook context plus process env:
 | `category_id`                            | `6` (Scripts)           | pinned from `GET /configure?type=addon` |
 | `godot_version`                          | `4.3`                   | minimum supported engine                |
 
-The release workflow tags `GITHUB_SHA`, which is the store's
+The release workflow uses the tag's commit as `GITHUB_SHA`, which is the store's
 `download_commit`: the Asset Library generates the archive from that commit.
 `.gitattributes` keeps only `addons/` in that download;
 the addon-local README and LICENSE travel with the plugin. The GitHub Release
