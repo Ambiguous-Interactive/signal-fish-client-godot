@@ -40,9 +40,9 @@ class SmokeServer {
     this.events = [];
     this.closePromise = null;
     this.process = spawn(
-      process.execPath,
+      process.env.PYTHON || "python3",
       [
-        path.join(REPO_ROOT, "scripts", "web_smoke_server.mjs"),
+        path.join(REPO_ROOT, "scripts", "web_smoke_server.py"),
         "--web-root",
         webRoot,
         "--https-port",
