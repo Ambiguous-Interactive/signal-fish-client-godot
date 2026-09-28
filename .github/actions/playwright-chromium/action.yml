@@ -1,13 +1,17 @@
 name: Set up Playwright Chromium
 description: >-
   Cached pinned Playwright + Chromium with the shared system-deps stamp
-  contract. Single pin site: the default input is the Playwright version both
-  consumers run, so the version cannot drift between workflows (issue #137).
+  contract. The default input sets the browser version for both workflows
+  (issue #137).
 inputs:
   playwright-version:
     description: Pinned playwright package version
     required: false
-    default: "1.61.1"
+    default: "1.61.0"
+outputs:
+  playwright-version:
+    description: Pinned version for either Playwright client
+    value: ${{ inputs.playwright-version }}
 runs:
   using: composite
   steps:

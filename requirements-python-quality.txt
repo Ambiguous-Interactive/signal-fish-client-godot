@@ -1,2 +1,3 @@
 -r requirements-ci.txt
 ruff==0.16.9
+playwright==1.61.0

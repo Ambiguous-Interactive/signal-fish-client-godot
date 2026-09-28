@@ -20,10 +20,7 @@ module.exports = [
     },
   },
   {
-    files: [
-      "scripts/check-docs-accessibility.cjs",
-      "scripts/check-web-export-browser.cjs",
-    ],
+    files: ["scripts/check-docs-accessibility.cjs"],
     languageOptions: { globals: globals.browser },
   },
 ];

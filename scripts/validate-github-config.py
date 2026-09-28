@@ -572,12 +572,38 @@ def validate_godot_pin(repo_root: Path, reporter: Reporter) -> None:
         reporter.error(error)
 
 
+def playwright_pin_error(action_text: str, requirements_text: str) -> str:
+    action = as_dict(load_yaml_text(action_text))
+    action_version = as_dict(as_dict(action.get("inputs")).get("playwright-version")).get("default")
+    requirement = re.search(r"(?m)^playwright==([0-9]+\.[0-9]+\.[0-9]+)$", requirements_text)
+    if not isinstance(action_version, str) or requirement is None:
+        return "Playwright pin must be set in the shared action and Python quality requirements"
+    if action_version != requirement.group(1):
+        return f"Playwright pin drift: action {action_version} != Python {requirement.group(1)}"
+    return ""
+
+
+def validate_playwright_pin(repo_root: Path, reporter: Reporter) -> None:
+    action = repo_root / ".github/actions/playwright-chromium/action.yml"
+    requirements = repo_root / "requirements-python-quality.txt"
+    try:
+        error = playwright_pin_error(
+            action.read_text(encoding="utf-8"), requirements.read_text(encoding="utf-8")
+        )
+    except (OSError, ConfigError) as exc:
+        reporter.error(f"Playwright pin check failed: {exc}")
+        return
+    if error:
+        reporter.error(error)
+
+
 def validate_repo(repo_root: Path) -> Reporter:
     reporter = Reporter()
     workflows = validate_workflows(repo_root, reporter)
     validate_auto_merge(repo_root, workflows, reporter)
     validate_dependabot(repo_root, reporter)
     validate_godot_pin(repo_root, reporter)
+    validate_playwright_pin(repo_root, reporter)
     return reporter
 
 
@@ -823,6 +849,15 @@ updates:
         missing_pin = godot_pin_errors({"project.godot": "no pin here\n"})
         if not any("could not read" in error for error in missing_pin):
             reporter.error("self-test: unreadable project.godot pin was not reported")
+
+        action_pin = "inputs:\n  playwright-version:\n    default: '1.61.0'\n"
+        python_pin = "ruff==0.16.9\nplaywright==1.61.0\n"
+        if playwright_pin_error(action_pin, python_pin):
+            reporter.error("self-test: matching Playwright pins were rejected")
+        if "pin drift" not in playwright_pin_error(
+            action_pin, python_pin.replace("1.61.0", "1.60.0")
+        ):
+            reporter.error("self-test: Playwright pin drift was not rejected")
 
         shebang_cases = [
             ("lf", b"#!/usr/bin/env bash\nexit 0\n", None),
