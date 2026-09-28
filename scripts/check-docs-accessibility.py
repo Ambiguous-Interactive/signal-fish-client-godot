@@ -212,6 +212,17 @@ def valid_drawer_focus(state: DrawerState) -> bool:
     )
 
 
+async def wait_for_drawer_modal_focus(page: Page) -> DrawerState:
+    # The drawer checkbox changes before its animation-frame focus move.
+    state = await drawer_focus_state(page)
+    for _ in range(100):
+        if state["drawerChecked"] and state["modal"] == "true" and valid_drawer_focus(state):
+            return state
+        await page.wait_for_timeout(50)
+        state = await drawer_focus_state(page)
+    raise AssertionError(f"drawer modal focus did not settle: {json.dumps(state)}")
+
+
 async def assert_trapped_drawer_focus(page: Page, keys: list[str], context: str) -> None:
     for key in keys:
         await page.keyboard.press(key)
@@ -294,7 +305,7 @@ async def check_drawer_resize(page: Page, origin: str, direction: str) -> None:
     await page.evaluate("dir => { document.body.dir = dir; }", direction)
     await page.locator('label.md-header__button[for="__drawer"]').focus()
     await page.keyboard.press("Enter")
-    await settle_shell(page)
+    await wait_for_drawer_modal_focus(page)
     await page.locator('.md-sidebar--primary label.md-nav__link[for="__toc"]').focus()
     await page.keyboard.press("Enter")
     await settle_shell(page)
@@ -352,8 +363,7 @@ async def check_drawer_resize(page: Page, origin: str, direction: str) -> None:
         state,
     )
     await page.keyboard.press("Enter")
-    await settle_shell(page)
-    state = await drawer_focus_state(page)
+    state = await wait_for_drawer_modal_focus(page)
     expect_state(
         state["drawerChecked"] and state["modal"] == "true" and valid_drawer_focus(state),
         f"{direction}: drawer did not reopen at 1219px",
