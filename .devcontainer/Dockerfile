@@ -198,7 +198,7 @@ RUN echo 'export PAGER=less' >> /etc/profile.d/sf-defaults.sh \
 COPY --from=node /usr/local/ /usr/local/
 ENV NPM_CONFIG_PREFIX=/home/vscode/.npm-global \
     PATH=/home/vscode/.npm-global/bin:${PATH}
-COPY install-agent-tools.sh install-mcp-servers.py /usr/local/share/devcontainer/
+COPY install-agent-tools.sh install-agent-tools.py install-mcp-servers.py /usr/local/share/devcontainer/
 RUN mkdir -p /home/vscode/.npm-global /home/vscode/.cache \
     && chown -R vscode:vscode /home/vscode/.npm-global /home/vscode/.cache
 
