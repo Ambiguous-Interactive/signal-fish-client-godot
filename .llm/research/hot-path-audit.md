@@ -33,6 +33,21 @@ cross-run absolutes swing more than the within-run 12-15% noise floor
   frame -- noise; keeping the String-based public API.
 - **UUID cache-miss formatting** (~3.9 us/miss): rare (one per new sender)
   and bounded (clear-on-full).
+- **MessagePack array reservation** (`Array.resize(count)` and indexed
+  writes): adjacent Godot 4.3 bench runs moved 256 values from 176.6 to
+  171.7 us and 4096 values from 2800 to 2687 us. Both changes are below
+  the 12-15% measurement floor, so the append loop stays.
+
+## Shipped: unescaped JSON key fast path
+
+`SFJsonGuard._collect_key` used a GDScript append loop even for ordinary
+keys with no backslash. A native byte slice plus native backslash check now
+returns those keys directly; escaped keys keep the canonicalizing loop.
+Adjacent best-of-five Godot 4.3 runs moved the clean control frame's guard
+from 31.3 to 24.1 us. The whole text decode moved from roughly 87 to 77 us
+in the full bench. A cap-bound frame of escaped keys moved from 37.9 to 39.6
+ms, inside the measurement floor. Duplicate-key, escape, and NUL vectors
+remain in the protocol suite.
 
 ## Shipped: float wire-text memo
 
