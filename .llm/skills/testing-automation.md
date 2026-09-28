@@ -172,7 +172,7 @@ consumed in another must be re-validated at the consumption boundary - deletions
 maps deleted helpers to their suites (the runner's stale preload keeps the
 suite honestly red) but drops them from the static file list, and an empty
 static list is a no-op (never fall back to a whole-tree sweep). The same
-class was checked and is already safe elsewhere: `copy_cold_project` filters
+class was checked and is already safe elsewhere: `run-runtime-godot.py` filters
 deleted files out of the tar manifest, the analyzer reports missing paths
 legibly (exit 2), the sh shim and pwsh predicates match names only, and the
 cold-copy tar errors stay loud by design.
@@ -213,20 +213,18 @@ class: every test function ends with the owner's `_done()` and is driven
 through `tests/completion_guard.gd` (`drive` flags a test that never
 completed, `check_registration` flags a `_test_` method missing from the case
 list, and `self_check` pins the mechanism in each SceneTree runner), and the
-shell runner fails any godot output containing `SCRIPT ERROR`, which also
+Godot runner fails any output containing `SCRIPT ERROR`, which also
 covers helper aborts a test could survive. Keep wrong-type assignments and
 dynamic calls on possibly-wrong object types out of test middles; assert the
 object type (`is`) before driving it, and never let a helper construct a real
 engine transport/socket inside a fake-only gate.
 
-Cold copies are one tar stream over a filtered `git ls-files -z` manifest, not
-a per-file copy loop. Shell rules that bit here: `set -e` is suppressed inside
-`var="$(...)"` command substitutions, so a helper whose pipeline fails must
-propagate the status through the function return (and background workers
-report it through `wait`); files deleted in the working tree must be filtered
-out of `ls-files` lists before tarring, because tar warns-and-continues and
-would silently shrink the copy behind a zero exit; gate on exit status, never
-on captured stderr text.
+Cold copies use one archive over a NUL-delimited `git ls-files -z` manifest,
+then extract into separate suite projects. `run-runtime-godot.py` filters
+deleted paths before tarring, because tar can warn and continue after a
+missing file. It trusts an archive or warm cache snapshot only after its
+producer exits successfully; each worker falls back to its own copy when
+archive preparation fails. Gate on exit status, not captured stderr text.
 
 The `smoke` subcommand is opt-in (never part of `all`) and runs
 `tests/smoke/run_websocket_smoke.gd`: a local RFC 6455 server
