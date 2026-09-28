@@ -6,15 +6,31 @@ on:
             - main
     pull_request:
     workflow_dispatch:
+        inputs:
+            expected_sha:
+                description: Commit expected on main
+                required: false
+                type: string
 
 permissions:
     contents: read
 
 concurrency:
-    group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-    cancel-in-progress: true
+    group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+    verify-dispatch:
+        name: Verify dispatched commit
+        if: github.event_name == 'workflow_dispatch' && inputs.expected_sha != ''
+        runs-on: ubuntu-24.04
+        timeout-minutes: 5
+        steps:
+            - name: Check dispatched commit
+              env:
+                  EXPECTED_SHA: ${{ inputs.expected_sha }}
+              run: test "$GITHUB_SHA" = "$EXPECTED_SHA"
+
     markdownlint:
         name: Markdownlint
         runs-on: ubuntu-24.04

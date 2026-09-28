@@ -26,6 +26,11 @@ EXPECTED_WORKFLOWS = {
     "LLM Harness": ".github/workflows/llm-harness.yml",
     "Dependabot Auto Merge": ".github/workflows/dependabot-auto-merge.yml",
 }
+POST_MERGE_WORKFLOWS = {
+    "Runtime CI": ".github/workflows/ci.yml",
+    "LLM Harness": ".github/workflows/llm-harness.yml",
+    "Docs Validation": ".github/workflows/docs-validation.yml",
+}
 EXPECTED_DEPENDABOT_UPDATES = {
     ("github-actions", "/"),
     ("pip", "/"),
@@ -331,7 +336,7 @@ def validate_auto_merge(
 
     expected_top_permissions = {"contents": "read"}
     expected_job_permissions = {
-        "actions": "read",
+        "actions": "write",
         "checks": "read",
         "contents": "write",
         "pull-requests": "write",
@@ -364,6 +369,32 @@ def validate_auto_merge(
     for token in required_tokens:
         if token not in script:
             reporter.error(f"{script_path}: missing auto-merge safety token {token!r}")
+
+    for name, expected_path in POST_MERGE_WORKFLOWS.items():
+        entry = workflows.get(name)
+        if entry is None:
+            reporter.error(f"{path}: post-merge workflow {name!r} is missing")
+            continue
+        workflow_path, workflow_data = entry
+        if not workflow_path.as_posix().endswith(expected_path):
+            reporter.error(f"{workflow_path}: expected path {expected_path}")
+        dispatch = as_dict(as_dict(workflow_data.get("on")).get("workflow_dispatch"))
+        inputs = as_dict(dispatch.get("inputs"))
+        if "expected_sha" not in inputs:
+            reporter.error(f"{workflow_path}: workflow_dispatch needs expected_sha input")
+        verify = as_dict(as_dict(workflow_data.get("jobs")).get("verify-dispatch"))
+        if "EXPECTED_SHA" not in str(verify) or "GITHUB_SHA" not in str(verify):
+            reporter.error(f"{workflow_path}: verify-dispatch must check the run SHA")
+
+    deploy = workflows.get("Docs Deploy")
+    if deploy is None:
+        reporter.error(f"{path}: Docs Deploy workflow is missing")
+    else:
+        deploy_path, deploy_workflow = deploy
+        build = as_dict(as_dict(deploy_workflow.get("jobs")).get("build"))
+        condition = str(build.get("if", ""))
+        if "workflow_dispatch" not in condition or "head_branch == 'main'" not in condition:
+            reporter.error(f"{deploy_path}: dispatched main docs must deploy after validation")
 
     try:
         ast.parse(script, filename=str(script_path))
