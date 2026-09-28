@@ -122,7 +122,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
         pipx install pre-commit
 
 # MCP servers that do not depend on the Node devcontainer feature (which is
-# layered on *after* this image; those live in install-mcp-servers.sh).
+# layered on *after* this image; those live in install-mcp-servers.py).
 # All versions pinned; see .devcontainer/README.md ("MCP servers").
 # GitHub's official server runs as a native binary because the upstream
 # Docker image would require Docker-in-Docker inside this container.
@@ -198,13 +198,13 @@ RUN echo 'export PAGER=less' >> /etc/profile.d/sf-defaults.sh \
 COPY --from=node /usr/local/ /usr/local/
 ENV NPM_CONFIG_PREFIX=/home/vscode/.npm-global \
     PATH=/home/vscode/.npm-global/bin:${PATH}
-COPY install-agent-tools.sh install-mcp-servers.sh /usr/local/share/devcontainer/
+COPY install-agent-tools.sh install-mcp-servers.py /usr/local/share/devcontainer/
 RUN mkdir -p /home/vscode/.npm-global /home/vscode/.cache \
     && chown -R vscode:vscode /home/vscode/.npm-global /home/vscode/.cache
 
 USER vscode
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000 \
-    bash /usr/local/share/devcontainer/install-mcp-servers.sh
+    python3 /usr/local/share/devcontainer/install-mcp-servers.py
 
 # Remote ADD revalidates release metadata even when RUN layers are cached.
 # Keep frequent agent releases after the large editor and browser layers.

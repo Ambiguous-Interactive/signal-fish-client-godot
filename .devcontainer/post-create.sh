@@ -56,7 +56,7 @@ for cli in codex opencode nanocoder claude; do
 done
 
 echo "==> Checking npm-based MCP servers"
-SF_MCP_SKIP_PLAYWRIGHT_BROWSER=1 bash "${DEVCONTAINER_DIR}/install-mcp-servers.sh"
+SF_MCP_SKIP_PLAYWRIGHT_BROWSER=1 python3 "${DEVCONTAINER_DIR}/install-mcp-servers.py"
 
 echo "==> Seeding agent MCP configurations (doctor prints names and set/unset state, never values)"
 bash "${DEVCONTAINER_DIR}/seed-mcp-config.sh"

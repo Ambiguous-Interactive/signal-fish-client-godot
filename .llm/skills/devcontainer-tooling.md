@@ -170,7 +170,7 @@ Q&A), `git` (mcp-server-git), `fetch` (mcp-server-fetch), and `playwright`
 - Install split follows the placement rules above: the Dockerfile installs
   the non-Node servers (github-mcp-server binary, checksum-verified against
   upstream `checksums.txt`; pipx `mcp-server-git` / `mcp-server-fetch`), and
-  `.devcontainer/install-mcp-servers.sh` (post-create strict, post-start
+  `.devcontainer/install-mcp-servers.py` (post-create strict, post-start
   warn-only via `--update`) installs the npm ones with pinned concrete specs
   (`GODOT_MCP_NPM_SPEC`, `PLAYWRIGHT_MCP_NPM_SPEC`,
   `CONTEXT7_MCP_NPM_SPEC`); non-concrete overrides are rejected at startup

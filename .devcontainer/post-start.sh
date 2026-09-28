@@ -29,7 +29,7 @@ if [ "${SF_DEVCONTAINER_SKIP_TOOL_UPDATES:-0}" != "1" ]; then
     fi
 
     echo "==> Checking npm-based MCP servers (best-effort refresh)"
-    if bash "${REPO_ROOT}/.devcontainer/install-mcp-servers.sh" --update; then
+    if python3 "${REPO_ROOT}/.devcontainer/install-mcp-servers.py" --update; then
         echo "==> MCP server refresh attempted"
     else
         echo "WARN: MCP server refresh failed; using installed versions." >&2

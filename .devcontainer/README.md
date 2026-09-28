@@ -110,7 +110,7 @@ Switch color themes with the `Preferences: Color Theme` command.
 - [`Dockerfile`](./Dockerfile) - base image, Godot install, MCP binaries
 - [`install-godot.py`](./install-godot.py) - deterministic Godot editor and web template installs (cache-mounted)
 - [`install-agent-tools.sh`](./install-agent-tools.sh) - agent CLI install/refresh
-- [`install-mcp-servers.sh`](./install-mcp-servers.sh) - npm MCP server install/refresh
+- [`install-mcp-servers.py`](./install-mcp-servers.py) - npm MCP server install/refresh
 - [`seed-mcp-config.sh`](./seed-mcp-config.sh) - Codex managed block + MCP doctor
 - [`mcp-shims/sf-github-mcp.sh`](./mcp-shims/sf-github-mcp.sh) - GitHub MCP launcher shim
 - [`initialize.sh`](./initialize.sh) - create the local env file through Docker
