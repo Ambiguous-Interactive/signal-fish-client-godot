@@ -16,6 +16,7 @@ const SessionGuardTestsScript = preload("res://tests/client/session_guard_tests.
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
 const WebrtcMeshTestsScript = preload("res://tests/client/webrtc_mesh_tests.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
+const FuzzDecodeTestsScript = preload("res://tests/protocol/fuzz_decode_tests.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
@@ -89,6 +90,7 @@ func _run() -> void:
 		_test_failures_clean_up_and_failed_open_surfaces_reason,
 		_test_frame_cap_drops_oversized_and_binary_frames,
 		_test_duplicate_key_frame_fails_closed,
+		_test_near_valid_text_frames_keep_session,
 		_test_mixed_content_guard_is_data_driven,
 		_test_log_redaction_and_level_gate,
 		_test_config_to_string_redacts_credential,
@@ -1187,6 +1189,50 @@ func _test_duplicate_key_frame_fails_closed() -> void:
 		client.get_session_state(),
 		"session state survives the smuggled RoomLeft"
 	)
+	client.free()
+	_done()
+
+
+func _test_near_valid_text_frames_keep_session() -> void:
+	var client := _make_authenticated_client()
+	var fake: SFFakeTransportScript = client.transport
+	fake.inject_server_message(
+		{
+			"type": "RoomJoined",
+			"data": _room_joined_data({"reconnection_token": "retained-test-token"})
+		}
+	)
+	var errors := _track_protocol_errors(client)
+	var pongs: Array[bool] = []
+	client.pong.connect(func() -> void: pongs.append(true))
+	var cases: Array[Dictionary] = FuzzDecodeTestsScript.near_valid_text_cases()
+	for case: Dictionary in cases:
+		var before := errors.size()
+		var text_frame: String = case["text"]
+		fake.inject_text(text_frame)
+		var label: String = case["label"]
+		_assert_equal(
+			before + 1,
+			errors.size(),
+			"%s signals protocol error (%s)" % [label, text_frame.to_utf8_buffer().hex_encode()]
+		)
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.CONNECTED,
+			client.get_connection_state(),
+			"%s keeps link" % label
+		)
+		_assert_equal(
+			SignalFishClientScript.SessionState.IN_ROOM_WAITING,
+			client.get_session_state(),
+			"%s keeps session" % label
+		)
+		_assert_equal(ROOM_ID, client.get_room_id(), "%s keeps room" % label)
+		_assert_equal(PLAYER_A, client.get_player_id(), "%s keeps player" % label)
+		_assert_equal(
+			"retained-test-token", client._context_auth_token, "%s keeps reconnect token" % label
+		)
+	fake.inject_server_message({"type": "Pong"})
+	_assert_equal(1, pongs.size(), "valid text still arrives after hostile corpus")
 	client.free()
 	_done()
 
