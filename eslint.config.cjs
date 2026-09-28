@@ -19,8 +19,4 @@ module.exports = [
       globals: { ...globals.browser, document$: "readonly" },
     },
   },
-  {
-    files: ["scripts/check-docs-accessibility.cjs"],
-    languageOptions: { globals: globals.browser },
-  },
 ];

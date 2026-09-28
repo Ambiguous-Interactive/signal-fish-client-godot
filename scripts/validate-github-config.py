@@ -591,7 +591,7 @@ def playwright_pin_error(action_text: str, quality_text: str, docs_text: str) ->
 def validate_playwright_pin(repo_root: Path, reporter: Reporter) -> None:
     action = repo_root / ".github/actions/playwright-chromium/action.yml"
     quality = repo_root / "requirements-python-quality.txt"
-    docs = repo_root / "requirements-docs.txt"
+    docs = repo_root / "requirements-docs-accessibility.txt"
     try:
         error = playwright_pin_error(
             action.read_text(encoding="utf-8"),
