@@ -8,3 +8,5 @@ Branch: `codex/session-108-uv-docs` from `origin/main` at `5ba80b1`.
 - Verified a fresh uv install and strict MkDocs build locally. GitHub workflow
   config validation and formatting pass.
 - #168 stays open for the remaining automation migration.
+
+PR #223 is the session deliverable.
