@@ -108,18 +108,20 @@ RUN --mount=type=cache,target=/var/cache/godot-editor,sharing=locked \
 # this keeps the local gate on the same install path as CI.
 RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 
-# Optional compatibility tooling: install the pre-commit CLI cleanly outside
-# system Python so users can manually run `.pre-commit-config.yaml` if desired.
+# Optional compatibility CLI (pre-commit) and the Python check environment
+# manager (uv) live outside system Python.
 # The canonical hook is still the direct shim installed by post-create into the
 # path from `git rev-parse --git-path hooks`; the devcontainer must not run `pre-commit install`.
 # (pipx itself and python3-venv come from the apt layer above.)
-# pipx/pip download caches are cache-mounted so rebuilds - including
-# `--no-cache` - reuse already-fetched wheels instead of re-downloading them.
+# pipx/pip download caches are cache-mounted so rebuilds reuse wheels.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     --mount=type=cache,target=/root/.cache/pipx,sharing=locked \
     set -eux; \
     PIPX_HOME=/usr/local/pipx PIPX_BIN_DIR=/usr/local/bin \
-        pipx install pre-commit
+        pipx install pre-commit; \
+    PIPX_HOME=/usr/local/pipx PIPX_BIN_DIR=/usr/local/bin \
+        pipx install uv==0.12.19; \
+    uv --version
 
 # MCP servers that do not depend on the Node devcontainer feature (which is
 # layered on *after* this image; those live in install-mcp-servers.py).

@@ -57,6 +57,7 @@ def toolchain_summary() -> None:
         "git": ("git", "--version"),
         "pwsh": ("pwsh", "-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"),
         "python": (sys.executable, "--version"),
+        "uv": ("uv", "--version"),
         "node": ("node", "--version"),
         "gh": ("gh", "--version"),
         "godot": ("godot", "--version"),

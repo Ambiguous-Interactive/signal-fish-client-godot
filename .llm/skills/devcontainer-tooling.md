@@ -47,8 +47,8 @@ setup.
   CI: PyYAML is installed into user site-packages when bare `python3` cannot
   import it (harness sandbox tests strip `.venv-ci`, and runner images ship
   PyYAML globally), and `.venv-ci` is rebuilt from scratch when missing or
-  broken (`venv` cannot upgrade a venv whose interpreter symlink died, so the
-  old tree is removed first) with the runtime (gdtoolkit, per ci.yml) and
+  broken (the old tree is removed first, then uv creates the venv and installs
+  requirements) with the runtime (gdtoolkit, per ci.yml) and
   automation (PyYAML, per llm-harness.yml) requirements, so
   `scripts/run-runtime-checks.sh` and the harness share one local venv. Both
   heals are warn-only and never block attaching.
