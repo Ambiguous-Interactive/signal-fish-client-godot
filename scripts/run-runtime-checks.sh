@@ -44,35 +44,35 @@ fi
 python_bin="${PYTHON:-python3}"
 target="${1:-all}"
 run_static_check() {
-    "${python_bin}" scripts/run-runtime-static.py "$@"
+	"${python_bin}" scripts/run-runtime-static.py "$@"
 }
 
 run_private_helpers() {
-    run_static_check private-helpers
+	run_static_check private-helpers
 }
 
 run_static_on() {
-    run_static_check scoped "$@"
+	run_static_check scoped "$@"
 }
 
 run_format() {
-    run_static_check format
+	run_static_check format
 }
 
 run_lint() {
-    run_static_check lint
+	run_static_check lint
 }
 
 run_python_types() {
-    run_static_check python-types
+	run_static_check python-types
 }
 
 run_gdscript_static() {
-    run_static_check gdscript-static
+	run_static_check gdscript-static
 }
 
 run_static() {
-    run_static_check static
+	run_static_check static
 }
 
 # Any SCRIPT ERROR line is a runtime abort inside a test function: GDScript
