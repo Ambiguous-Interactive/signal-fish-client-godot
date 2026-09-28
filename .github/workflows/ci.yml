@@ -87,6 +87,9 @@ jobs:
                   python3 scripts/check-asset-archive.py --self-test
                   python3 scripts/check-asset-archive.py --repo-root .
 
+            - name: Release preparation self-test
+              run: python3 scripts/prepare-release.py --self-test
+
     python-types:
         name: Python types
         runs-on: ubuntu-24.04

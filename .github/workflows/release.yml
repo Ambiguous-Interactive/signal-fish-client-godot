@@ -30,16 +30,6 @@ jobs:
               with:
                   fetch-depth: 0
 
-            - name: Validate version
-              env:
-                  VERSION: ${{ inputs.version || github.ref_name }}
-              run: |
-                  if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$VERSION" == *$'\n'* ]]; then
-                      echo "::error::version must be a single vMAJOR.MINOR.PATCH token (e.g. v0.1.0)"
-                      exit 1
-                  fi
-                  echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
             - name: Verify tag commit is on main
               if: github.event_name == 'push'
               run: |
@@ -48,34 +38,13 @@ jobs:
                       exit 1
                   fi
 
-            - name: Cut release notes from CHANGELOG
-              run: |
-                  header="## [$VERSION]"
-                  awk -v header="$header" \
-                      'index($0, header) == 1 {flag = 1; next} /^## /{flag = 0} flag' \
-                      CHANGELOG.md > release-notes.md
-                  if [ ! -s release-notes.md ]; then
-                      echo "::error::no CHANGELOG.md section starting with [$header]; cut the changelog first"
-                      exit 1
-                  fi
-                  cat release-notes.md
-
-            - name: Check addon packaging contract
-              run: |
-                  cfg="addons/signal_fish/plugin.cfg"
-                  if [ ! -f "$cfg" ]; then
-                      echo "::error::$cfg is missing; the Asset Library requires it (PLAN P6)"
-                      exit 1
-                  fi
-                  expected="${VERSION#v}"
-                  actual=$(grep -oP '^\s*version\s*=\s*\K.+' "$cfg" | tr -d '"' | tr -d "'")
-                  if [ "$actual" != "$expected" ]; then
-                      echo "::error::$cfg version '$actual' != release $expected"
-                      exit 1
-                  fi
-
             - name: Check Asset Library download
               run: python3 scripts/check-asset-archive.py --repo-root .
+
+            - name: Prepare release
+              env:
+                  RELEASE_TAG: ${{ inputs.version || github.ref_name }}
+              run: python3 scripts/prepare-release.py --version "$RELEASE_TAG" --github-env "$GITHUB_ENV"
 
             - name: Guard against an existing tag
               if: github.event_name == 'workflow_dispatch'
@@ -93,9 +62,6 @@ jobs:
                       echo "::error::could not query tags (git ls-remote exit $status)"
                       exit 1
                   fi
-
-            - name: Package addon
-              run: git archive --format=zip --output="signal-fish-godot-${VERSION}.zip" HEAD addons
 
             - name: Create tag and release
               env:
