@@ -2263,14 +2263,14 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     $repoRoot = Split-Path -Parent $ScriptsDir
     $installer = Join-Path $repoRoot '.devcontainer/install-mcp-servers.sh'
     $seeder = Join-Path $repoRoot '.devcontainer/seed-mcp-config.sh'
-    $templates = Join-Path $repoRoot '.devcontainer/install-godot-templates.sh'
+    $godotInstaller = Join-Path $repoRoot '.devcontainer/install-godot.py'
     $shim = Join-Path $repoRoot '.devcontainer/mcp-shims/sf-github-mcp.sh'
     $dockerfile = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/Dockerfile') -Raw
     $devcontainer = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/devcontainer.json') -Raw
     $postCreate = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-create.sh') -Raw
     $postStart = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-start.sh') -Raw
 
-    foreach ($script in @($installer, $seeder, $templates, $shim)) {
+    foreach ($script in @($installer, $seeder, $shim)) {
         if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
             throw "Missing devcontainer MCP tooling script: $script"
         }
@@ -2498,42 +2498,8 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
             -DiagnosticPattern $requirement.Diagnostic
     }
 
-    # The templates installer only caches verified archives and names the
-    # templates directory after the installed editor.
-    $templatesContent = Get-Content -LiteralPath $templates -Raw
-    foreach ($requirement in @(
-            [pscustomobject]@{
-                Pattern     = 'unzip -tq "\$\{CACHED_TGZ\}"'
-                Requirement = 'only reuse a cached template archive that still passes an integrity test'
-                Diagnostic  = 'unzip -tq|CACHED_TGZ'
-            },
-            [pscustomobject]@{
-                Pattern     = '-lt 100000000'
-                Requirement = 'reject suspiciously small template downloads before caching them'
-                Diagnostic  = 'file_size|suspiciously small'
-            },
-            [pscustomobject]@{
-                Pattern     = 'godot --version'
-                Requirement = 'derive the templates directory from the installed editor version'
-                Diagnostic  = 'godot --version|VERSION_DIR'
-            },
-            [pscustomobject]@{
-                Pattern     = "'templates/web_\*'"
-                Requirement = 'extract only the web templates'
-                Diagnostic  = 'templates/web_|web_release|web_debug'
-            },
-            [pscustomobject]@{
-                Pattern     = 'found=1'
-                Requirement = 'verify at least one web template was extracted'
-                Diagnostic  = 'found|No web templates'
-            }
-        )) {
-        Assert-TextMatches `
-            -Subject '.devcontainer/install-godot-templates.sh' `
-            -Content $templatesContent `
-            -Pattern $requirement.Pattern `
-            -Requirement $requirement.Requirement `
-            -DiagnosticPattern $requirement.Diagnostic
+    if (-not (Test-Path -LiteralPath $godotInstaller -PathType Leaf)) {
+        throw "Missing Godot installer: $godotInstaller"
     }
 
     # Image wiring: pinned versions, checksum verification, cache mount, and
@@ -2558,6 +2524,16 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
                 Pattern     = 'RUN --mount=type=cache,target=/var/cache/godot-templates'
                 Requirement = 'cache the template archive download across builds'
                 Diagnostic  = 'mount=type=cache|godot-templates'
+            },
+            [pscustomobject]@{
+                Pattern     = 'python3 /usr/local/bin/install-godot\.py editor'
+                Requirement = 'install the editor with the shared Python tool'
+                Diagnostic  = 'install-godot.py|editor'
+            },
+            [pscustomobject]@{
+                Pattern     = 'python3 /usr/local/bin/install-godot\.py templates'
+                Requirement = 'install web templates with the shared Python tool'
+                Diagnostic  = 'install-godot.py|templates'
             },
             [pscustomobject]@{
                 Pattern     = 'COPY mcp-shims/sf-github-mcp\.sh /usr/local/bin/sf-github-mcp'
@@ -2611,6 +2587,21 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
             -DiagnosticPattern 'mcp|seed|install'
     }
 }
+
+Assert-Test 'Godot Python installer verifies archives and extracts web templates' {
+    if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) { return }
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    Push-Location $repoRoot
+    try {
+        $output = & python3 'scripts/test-godot-installer.py' 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Godot installer tests failed: $($output | Out-String)"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+} -Behavioral
 
 Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user config, and never leaks secrets' {
     $repoRoot = Split-Path -Parent $ScriptsDir
@@ -2997,8 +2988,7 @@ Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $paths = @(
         '.devcontainer/install-agent-tools.sh',
-        '.devcontainer/install-godot.sh',
-        '.devcontainer/install-godot-templates.sh',
+        '.devcontainer/install-godot.py',
         '.devcontainer/install-mcp-servers.sh',
         '.devcontainer/seed-mcp-config.sh',
         '.devcontainer/mcp-shims/sf-github-mcp.sh',
