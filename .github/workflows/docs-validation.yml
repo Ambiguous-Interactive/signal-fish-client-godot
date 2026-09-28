@@ -120,7 +120,7 @@ jobs:
               uses: ./.github/actions/playwright-chromium
 
             - name: Test responsive documentation accessibility
-              run: node scripts/check-docs-accessibility.cjs
+              run: .venv-docs/bin/python scripts/check-docs-accessibility.py
 
     required:
         name: Docs Validation Required
