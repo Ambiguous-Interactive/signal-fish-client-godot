@@ -7,6 +7,7 @@ import io
 import os
 import re
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,47 @@ RUNNERS = (
     ("reconnect", "tests/client/run_reconnect_tests.gd"),
 )
 REFERENCE = re.compile(r"\"(res://tests/(?:\\.|[^\"\\])*)\"|'(res://tests/(?:\\.|[^'\\])*)'")
+BOOTSTRAP_MARKER = "SF_RUNTIME_BOOTSTRAPPED"
+
+
+def bootstrap_environment() -> None:
+    if os.environ.pop(BOOTSTRAP_MARKER, None):
+        return
+    venv = ROOT / ".venv-ci"
+    activate = venv / "bin" / "activate"
+    user_site = site.getusersitepackages() if not activate.is_file() else ""
+    home = Path(
+        os.environ.get("GDSCRIPT_TOOL_HOME")
+        or Path(os.environ.get("RUNNER_TEMP") or "/tmp") / "signal-fish-runtime-home"  # noqa: S108
+    )
+    home.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(home)
+    os.environ["GDTOOLKIT_CACHE_DIR"] = os.environ.get("GDTOOLKIT_CACHE_DIR") or str(
+        home / "gdtoolkit-cache"
+    )
+    if activate.is_file():
+        os.environ["VIRTUAL_ENV"] = str(venv)
+        venv_bin = str(venv / "bin")
+        if os.environ.get("PATH", "").split(os.pathsep)[0] != venv_bin:
+            os.environ["PATH"] = f"{venv_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+        os.environ.pop("PYTHONHOME", None)
+        command = os.environ.get("PYTHON") or "python3"
+        os.environ[BOOTSTRAP_MARKER] = "1"
+        try:
+            os.execvpe(command, [command, *sys.argv], os.environ)  # noqa: S606
+        except OSError as exc:
+            print(f"{command}: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+    if venv.is_dir():
+        print(
+            "::warning::.venv-ci is missing bin/activate; using user site-packages", file=sys.stderr
+        )
+    if venv.is_dir() or Path(user_site).is_dir():
+        os.environ["PYTHONPATH"] = (
+            f"{user_site}{os.pathsep}{os.environ['PYTHONPATH']}"
+            if os.environ.get("PYTHONPATH")
+            else user_site
+        )
 
 
 @dataclass(frozen=True)
@@ -127,6 +169,106 @@ def select(paths: list[str], root: Path) -> Selection:
 
 
 class SelectionTests(unittest.TestCase):
+    def test_bootstrap_uses_venv_and_preserves_override(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            activate = root / ".venv-ci/bin/activate"
+            activate.parent.mkdir(parents=True)
+            activate.touch()
+            environment = {
+                "RUNNER_TEMP": folder,
+                "PATH": "/usr/bin",
+                "PYTHON": "/custom/python",
+                "PYTHONHOME": "/old/home",
+                "GDTOOLKIT_CACHE_DIR": "/custom/cache",
+            }
+            with (
+                patch.dict(os.environ, environment, clear=True),
+                patch(f"{__name__}.ROOT", root),
+                patch("os.execvpe", side_effect=RuntimeError("exec intercepted")) as execute,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "exec intercepted"):
+                    bootstrap_environment()
+                command, argv, actual = execute.call_args.args
+                self.assertEqual(command, "/custom/python")
+                self.assertEqual(argv[0], "/custom/python")
+                self.assertEqual(actual["VIRTUAL_ENV"], str(root / ".venv-ci"))
+                self.assertTrue(actual["PATH"].startswith(f"{root / '.venv-ci/bin'}:"))
+                self.assertEqual(actual["HOME"], f"{folder}/signal-fish-runtime-home")
+                self.assertEqual(actual["GDTOOLKIT_CACHE_DIR"], "/custom/cache")
+                self.assertNotIn("PYTHONHOME", actual)
+
+    def test_bootstrap_falls_back_to_original_user_site(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            user_site = root / "original-site"
+            user_site.mkdir()
+            for broken in (False, True):
+                with self.subTest(broken=broken):
+                    if broken:
+                        (root / ".venv-ci").mkdir()
+                    with (
+                        patch.dict(
+                            os.environ,
+                            {
+                                "GDSCRIPT_TOOL_HOME": str(root / "cache"),
+                                "GDTOOLKIT_CACHE_DIR": "",
+                                "PYTHONPATH": "/existing",
+                            },
+                            clear=True,
+                        ),
+                        patch(f"{__name__}.ROOT", root),
+                        patch("site.getusersitepackages", return_value=str(user_site)),
+                        contextlib.redirect_stderr(io.StringIO()) as errors,
+                    ):
+                        bootstrap_environment()
+                        self.assertEqual(os.environ["PYTHONPATH"], f"{user_site}:/existing")
+                        self.assertEqual(os.environ["HOME"], str(root / "cache"))
+                        self.assertEqual(
+                            os.environ["GDTOOLKIT_CACHE_DIR"], str(root / "cache/gdtoolkit-cache")
+                        )
+                        self.assertTrue(Path(os.environ["HOME"]).is_dir())
+                    self.assertEqual("missing bin/activate" in errors.getvalue(), broken)
+
+    def test_shell_starts_with_venv_and_ignores_pythonhome(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            for name in ("run-runtime-checks.sh", "run-runtime-checks.py"):
+                shutil.copy2(ROOT / "scripts" / name, scripts / name)
+            venv_bin = root / ".venv-ci/bin"
+            venv_bin.mkdir(parents=True)
+            (venv_bin / "activate").touch()
+            (venv_bin / "python3").symlink_to(sys.executable)
+            tools = root / "tools"
+            tools.mkdir()
+            dirname = shutil.which("dirname")
+            self.assertIsNotNone(dirname)
+            if dirname is None:
+                return
+            (tools / "dirname").symlink_to(dirname)
+            environment = os.environ.copy()
+            environment.pop("PYTHON", None)
+            environment.pop(BOOTSTRAP_MARKER, None)
+            environment["PYTHONHOME"] = str(root / "missing-python-home")
+            environment["GDSCRIPT_TOOL_HOME"] = str(root / "tool-home")
+            environment["PATH"] = str(tools)
+            bash = shutil.which("bash")
+            self.assertIsNotNone(bash)
+            if bash is None:
+                return
+            result = subprocess.run(  # noqa: S603
+                [bash, str(scripts / "run-runtime-checks.sh"), "--help"],
+                env=environment,
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("usage:", result.stdout)
+
     def test_classification(self) -> None:
         root = ROOT
         cases: tuple[tuple[list[str], str], ...] = (
@@ -316,6 +458,7 @@ def run_changed(selection: Selection) -> int:
 
 
 def main() -> int:
+    bootstrap_environment()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("command", nargs="?", default="all")
