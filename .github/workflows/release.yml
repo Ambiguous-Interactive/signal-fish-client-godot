@@ -1,6 +1,9 @@
 name: Release
 
 on:
+    push:
+        tags:
+            - "v*"
     workflow_dispatch:
         inputs:
             version:
@@ -24,16 +27,26 @@ jobs:
         steps:
             - name: Check out repository
               uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0
 
             - name: Validate version
               env:
-                  VERSION: ${{ inputs.version }}
+                  VERSION: ${{ inputs.version || github.ref_name }}
               run: |
                   if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$VERSION" == *$'\n'* ]]; then
                       echo "::error::version must be a single vMAJOR.MINOR.PATCH token (e.g. v0.1.0)"
                       exit 1
                   fi
                   echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+            - name: Verify tag commit is on main
+              if: github.event_name == 'push'
+              run: |
+                  if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+                      echo "::error::release tags must point to a commit on main"
+                      exit 1
+                  fi
 
             - name: Cut release notes from CHANGELOG
               run: |
@@ -65,6 +78,7 @@ jobs:
               run: python3 scripts/check-asset-archive.py --repo-root .
 
             - name: Guard against an existing tag
+              if: github.event_name == 'workflow_dispatch'
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
@@ -87,9 +101,13 @@ jobs:
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
+                  tag_args=(--target "$GITHUB_SHA")
+                  if [ "$GITHUB_EVENT_NAME" = push ]; then
+                      tag_args=(--verify-tag)
+                  fi
                   gh release create "$VERSION" \
                       --repo "$GITHUB_REPOSITORY" \
-                      --target "$GITHUB_SHA" \
+                      "${tag_args[@]}" \
                       --title "$VERSION" \
                       --notes-file release-notes.md \
                       "signal-fish-godot-${VERSION}.zip"
@@ -111,7 +129,7 @@ jobs:
                   ASSET_USERNAME: ${{ secrets.GODOT_ASSET_LIBRARY_USERNAME }}
                   ASSET_PASSWORD: ${{ secrets.GODOT_ASSET_LIBRARY_PASSWORD }}
                   ASSET_ID: ${{ vars.GODOT_ASSET_LIBRARY_ASSET_ID }}
-                  VERSION: ${{ inputs.version }}
+                  VERSION: ${{ inputs.version || github.ref_name }}
               run: |
                   if [ -z "$ASSET_USERNAME" ] || [ -z "$ASSET_PASSWORD" ] || [ -z "$ASSET_ID" ]; then
                       echo "Asset Library credentials not configured; skipping the store submission (see .llm/skills/asset-library-release.md)."

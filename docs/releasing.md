@@ -21,7 +21,8 @@ The first store entry must be submitted by hand. Moderators review it before
 it goes live. Later updates are submitted automatically, but each one also
 waits in the moderation queue (see _After release_ below).
 
-Publish the first GitHub Release with the workflow below. It creates the tag.
+Publish the first GitHub Release by pushing a version tag on `main` or running
+the workflow below. The manual workflow creates the tag.
 Use the full commit SHA behind that tag for the Asset Library download field.
 The store step skips until the first asset ID and credentials are configured.
 
@@ -58,7 +59,8 @@ In **Settings -> Secrets and variables -> Actions**, add:
 
 1. Make sure `CHANGELOG.md` has a section for the new version and
    `addons/signal_fish/plugin.cfg` `version` matches it (without the `v`).
-2. On GitHub, run the **Release** workflow
+2. Push a `vMAJOR.MINOR.PATCH` tag on a commit in `main`, or run the **Release**
+   workflow
    ([Actions -> Release -> Run workflow](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/workflows/release.yml))
    with the version, e.g. `v0.1.0`.
 3. The workflow:
