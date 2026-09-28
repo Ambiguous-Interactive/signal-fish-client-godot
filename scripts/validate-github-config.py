@@ -401,6 +401,13 @@ def validate_auto_merge(
         if "workflow_dispatch" not in condition or "head_branch == 'main'" not in condition:
             reporter.error(f"{deploy_path}: dispatched main docs must deploy after validation")
 
+    docs = workflows.get("Docs Validation")
+    if docs is not None:
+        docs_path, docs_workflow = docs
+        required = as_dict(as_dict(docs_workflow.get("jobs")).get("required"))
+        if "verify-dispatch" not in as_list(required.get("needs")):
+            reporter.error(f"{docs_path}: required gate must include dispatch verification")
+
     try:
         ast.parse(script, filename=str(script_path))
     except SyntaxError as exc:

@@ -144,7 +144,7 @@ jobs:
     required:
         name: Docs Validation Required
         if: ${{ always() }}
-        needs: [markdownlint, link-check, accessibility]
+        needs: [verify-dispatch, markdownlint, link-check, accessibility]
         runs-on: ubuntu-24.04
         timeout-minutes: 5
         steps:
@@ -152,7 +152,7 @@ jobs:
               env:
                   NEEDS_JSON: ${{ toJSON(needs) }}
               run: |
-                  failures=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"' <<< "$NEEDS_JSON")
+                  failures=$(jq -r 'to_entries[] | select(.value.result != "success" and (.key != "verify-dispatch" or .value.result != "skipped")) | "\(.key)=\(.value.result)"' <<< "$NEEDS_JSON")
                   if [ -n "$failures" ]; then
                       printf '::error::Required jobs did not succeed:\n%s\n' "$failures"
                       exit 1
