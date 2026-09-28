@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Select fast runtime checks from the dirty tree and test preload graph."""
+"""Select and run the local and CI runtime checks."""
 
 import argparse
+import contextlib
+import io
 import os
 import re
 import shutil
@@ -10,8 +12,11 @@ import sys
 import tempfile
 import unittest
 from collections import deque
+from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNERS = (
@@ -32,19 +37,6 @@ class Selection:
     pins: bool = False
     suites: tuple[str, ...] = ()
     static_files: tuple[str, ...] = ()
-
-    def encode(self) -> bytes:
-        fields = [
-            self.mode,
-            str(int(self.docs)),
-            str(int(self.python)),
-            str(int(self.pins)),
-            str(len(self.suites)),
-            *self.suites,
-            str(len(self.static_files)),
-            *self.static_files,
-        ]
-        return b"\0".join(os.fsencode(field) for field in fields) + b"\0"
 
 
 def dirty_files(root: Path) -> list[str]:
@@ -202,16 +194,158 @@ class SelectionTests(unittest.TestCase):
             (root / "odd\nname.md").write_text("new\n")
             self.assertEqual(dirty_files(root), ["README.md", "odd\nname.md"])
 
+    def test_full_dispatch_keeps_empty_scope_and_pin_gate(self) -> None:
+        cases = (
+            (
+                Selection("full", python=True),
+                [
+                    script("run-runtime-static.py", "scoped"),
+                    script("run-runtime-static.py", "python-types"),
+                ],
+            ),
+            (
+                Selection("full", python=True, pins=True),
+                [script("run-runtime-static.py", "static")],
+            ),
+        )
+        for selection, background in cases:
+            with self.subTest(selection=selection):
+                with (
+                    patch(f"{__name__}.concurrent", return_value=0) as dispatch,
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(run_changed(selection), 0)
+                dispatch.assert_called_once_with(
+                    script("run-runtime-godot.py", "godot"), background
+                )
+
+
+def script(name: str, *args: str) -> list[str]:
+    return [sys.executable, str(ROOT / "scripts" / name), *args]
+
+
+def direct(command: Sequence[str]) -> int:
+    try:
+        return subprocess.run(command, cwd=ROOT, check=False).returncode  # noqa: S603
+    except OSError as exc:
+        print(f"{command[0]}: {exc}", file=sys.stderr)
+        return 1
+
+
+def captured(command: Sequence[str]) -> tuple[int, str]:
+    try:
+        result = subprocess.run(  # noqa: S603
+            command,
+            cwd=ROOT,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+        )
+    except OSError as exc:
+        return 1, f"{command[0]}: {exc}\n"
+    return result.returncode, result.stdout
+
+
+def concurrent(primary: Sequence[str], background: Sequence[Sequence[str]]) -> int:
+    with ThreadPoolExecutor(max_workers=len(background)) as pool:
+        futures = [pool.submit(captured, command) for command in background]
+        primary_status = direct(primary)
+        results = [future.result() for future in futures]
+    for _, output in results:
+        print(output, end="")
+    return int(primary_status != 0 or any(status != 0 for status, _ in results))
+
+
+def run_changed(selection: Selection) -> int:
+    if selection.mode == "clean":
+        print("working tree clean; nothing to check")
+        return 0
+    docs = script("check-docs-style.py", "--changed")
+    if selection.mode == "docs":
+        print(
+            "=== changed: docs-only edit -> style check (runtime suites unaffected) ===", flush=True
+        )
+        return direct(docs)
+    if selection.docs:
+        status = direct(docs)
+        if status != 0:
+            return status
+    python_types = script("run-runtime-static.py", "python-types")
+    if selection.mode == "python":
+        print("=== changed: Python-only edit -> types, lint, format ===", flush=True)
+        return direct(python_types)
+    if selection.python and selection.mode != "full":
+        status = direct(python_types)
+        if status != 0:
+            return status
+
+    static = script("run-runtime-static.py", "static")
+    godot = script("run-runtime-godot.py", "godot")
+    if selection.mode == "full":
+        if selection.pins:
+            print("=== changed: tooling edit -> all suites and full static checks ===", flush=True)
+            background = [static]
+        else:
+            print(
+                "=== changed: production-side edit -> all suites, static scoped to the edit ===",
+                flush=True,
+            )
+            background = [script("run-runtime-static.py", "scoped", *selection.static_files)]
+            if selection.python:
+                background.append(python_types)
+        return concurrent(godot, background)
+
+    if selection.mode in ("unreferenced", "uncertain"):
+        if selection.mode == "uncertain":
+            print("=== changed: uncertain test preload -> full gate ===", flush=True)
+        else:
+            print("=== changed: unreferenced test file -> full gate ===", flush=True)
+        status = direct(static)
+        return status if status != 0 else direct(godot)
+
+    if selection.mode == "suites":
+        print(f"=== changed: suites {' '.join(selection.suites)} ===", flush=True)
+        return concurrent(
+            script("run-runtime-godot.py", "godot", *selection.suites),
+            [script("run-runtime-static.py", "scoped", *selection.static_files)],
+        )
+    print(f"unknown selection mode: {selection.mode}", file=sys.stderr)
+    return 2
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("command", nargs="?", default="all")
+    parser.add_argument("suites", nargs="*")
     args = parser.parse_args()
     if args.self_test:
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(SelectionTests)
         return 0 if unittest.TextTestRunner().run(suite).wasSuccessful() else 1
-    sys.stdout.buffer.write(select(dirty_files(ROOT), ROOT).encode())
-    return 0
+    if args.command == "all":
+        return concurrent(
+            script("run-runtime-godot.py", "godot"),
+            [script("run-runtime-static.py", "static")],
+        )
+    if args.command in (
+        "static",
+        "gdscript-static",
+        "python-types",
+        "private-helpers",
+        "format",
+        "lint",
+    ):
+        return direct(script("run-runtime-static.py", args.command))
+    if args.command == "godot":
+        return direct(script("run-runtime-godot.py", "godot", *args.suites))
+    if args.command == "smoke":
+        return direct(script("run-runtime-godot.py", "smoke"))
+    if args.command == "changed":
+        return run_changed(select(dirty_files(ROOT), ROOT))
+    parser.print_help(sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":
