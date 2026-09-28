@@ -6,8 +6,7 @@ category: Release
 
 # Asset Library Release
 
-How a `vMAJOR.MINOR.PATCH` tag reaches the Godot Asset Library, and the one-time
-manual bootstrap before that flow works.
+How a `vMAJOR.MINOR.PATCH` tag updates the existing Godot Asset Library entry.
 
 ## Flow
 
@@ -21,30 +20,31 @@ manual bootstrap before that flow works.
    via `deep-entertainment/godot-asset-lib-action` (pinned to commit SHA).
 
 The submit step skips with a log line when credentials or the asset ID are not
-configured, so releases stay usable before the one-time bootstrap.
+configured.
 
-## One-time manual bootstrap (cannot be automated)
+## Existing entry and first release update
 
-1. Publish the first GitHub Release by pushing its tag or running the
-   `Release` workflow. The manual workflow creates the tag. Check the package
-   layout in
-   `addons/signal_fish/plugin.cfg`, `icon.png`, `README.md`, and `LICENSE`.
-2. Log in at <https://godotengine.org/asset-library/asset/submit> (or
-   `POST /asset`) and submit the first entry with the same field values as
-   `.asset-template.json.hb` (category: **Scripts**, `godot_version` 4.3,
-   `download_provider` GitHub, `download_commit` = the full SHA behind the
-   release tag). The live form requires 40 or 64 hexadecimal digits.
-3. Wait for moderation. Record the numeric asset ID.
-4. Add repo secrets + var (Settings -> Secrets and variables -> Actions):
+The live [entry #5489](https://godotengine.org/asset-library/asset/5489)
+already points to this repository. It lists version `0.0.0`. The
+[`v0.1.0` GitHub Release](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases/tag/v0.1.0)
+points to `b4441936057628a71b730c3338f0183b4cdc03e2`. Update entry #5489;
+do not create another entry.
+
+1. Add repo secrets + var (Settings -> Secrets and variables -> Actions):
    - secret `GODOT_ASSET_LIBRARY_USERNAME`
    - secret `GODOT_ASSET_LIBRARY_PASSWORD`
-   - var `GODOT_ASSET_LIBRARY_ASSET_ID`
+   - var `GODOT_ASSET_LIBRARY_ASSET_ID` = `5489`
+2. Rerun only the **Submit Asset Library edit** job in the
+   [`v0.1.0` release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36364292644).
+3. Wait for moderation. Verify the live entry lists version `0.1.0`,
+   category Scripts, Godot 4.3, and download commit
+   `b4441936057628a71b730c3338f0183b4cdc03e2`.
 
 Use an Asset Library password without quotes, backslashes, or control
 characters: the action logs its render env, and GitHub's secret masking only
 covers the plain value.
 
-After this, every release run submits a store edit automatically.
+Later release runs submit store edits automatically.
 
 ## Template contract (`.asset-template.json.hb`)
 

@@ -29,10 +29,11 @@ and checks within about one hour. Session cadence:
 
 ### Asset Library bootstrap (P6 remainder)
 
-- [ ] Publish the `v0.1.0` GitHub Release, then complete the first Asset
-      Library submission and moderation. Configure repo secrets
-      `GODOT_ASSET_LIBRARY_USERNAME` / `GODOT_ASSET_LIBRARY_PASSWORD` and var
-      `GODOT_ASSET_LIBRARY_ASSET_ID`. Runbook:
+- [ ] Update existing Asset Library entry #5489 to `v0.1.0` and wait for
+      moderation. Configure repo secrets `GODOT_ASSET_LIBRARY_USERNAME` /
+      `GODOT_ASSET_LIBRARY_PASSWORD` and var
+      `GODOT_ASSET_LIBRARY_ASSET_ID=5489`, then rerun the release's store
+      submission job. Verify the live entry and download. Runbook:
       `.llm/skills/asset-library-release.md`.
 
 ### Post-v1 (P7, each gated)
