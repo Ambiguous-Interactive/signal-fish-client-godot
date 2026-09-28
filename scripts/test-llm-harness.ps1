@@ -1153,8 +1153,10 @@ scenario="${FAKE_GH_SCENARIO:-success}"
 log="${FAKE_GH_LOG:?}"
 
 if [[ "${1:-}" == "api" ]]; then
-  args=("$@")
-  endpoint="${args[$((${#args[@]} - 1))]}"
+  endpoint=""
+  for arg in "$@"; do
+    if [[ "$arg" == /repos/* ]]; then endpoint="$arg"; break; fi
+  done
   if [[ "${endpoint}" == *"/commits/"*"/pulls" ]]; then
     cat <<JSON
 [{"state":"open","user":{"login":"dependabot[bot]"},"base":{"ref":"main"},"head":{"repo":{"full_name":"${GITHUB_REPOSITORY}"},"sha":"${HEAD_SHA}"},"number":12}]
@@ -1194,6 +1196,13 @@ JSON
 JSON
     exit 0
   fi
+  if [[ "${endpoint}" == *"/actions/workflows/"*"/dispatches" ]]; then
+    printf '%s\n' "$*" >> "${log}"
+    if [[ "${scenario}" == "dispatch_failure" ]]; then exit 1; fi
+    if [[ "${scenario}" == "missing_run_details" ]]; then echo '{}'; exit 0; fi
+    echo '{"workflow_run_id":777}'
+    exit 0
+  fi
 fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
@@ -1218,7 +1227,9 @@ JSON
 fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "checks" ]]; then
-  if [[ "${scenario}" == "pending_checks" ]]; then
+  if [[ "${scenario}" == "pending_checks" && ! -f "${log}.pending" ]]; then
+    touch "${log}.pending"
+    echo '[{"bucket":"pending","name":"Dev Container","state":"IN_PROGRESS","workflow":"Dev Container"}]'
     exit 8
   fi
   cat <<'JSON'
@@ -1230,12 +1241,6 @@ fi
 if [[ "${1:-}" == "pr" && "${2:-}" == "merge" ]]; then
   printf '%s\n' "$*" >> "${log}"
   if [[ "${scenario}" == "racing_merge" ]]; then exit 1; fi
-  exit 0
-fi
-
-if [[ "${1:-}" == "workflow" && "${2:-}" == "run" ]]; then
-  printf '%s\n' "$*" >> "${log}"
-  if [[ "${scenario}" == "dispatch_failure" ]]; then exit 1; fi
   exit 0
 fi
 
@@ -1288,18 +1293,20 @@ exit 99
         $env:FAKE_GH_LOG = ConvertTo-BashPath $fakeGhLogWin
 
         $cases = @(
-            [pscustomobject]@{ Scenario = 'success'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 3; Pattern = '--match-head-commit abc123' },
+            [pscustomobject]@{ Scenario = 'success'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 4; Pattern = '--match-head-commit abc123' },
             [pscustomobject]@{ Scenario = 'missing_workflow'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'LLM Harness is missing' },
             [pscustomobject]@{ Scenario = 'failed_workflow'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'LLM Harness concluded failure' },
             [pscustomobject]@{ Scenario = 'rerun_failure'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'LLM Harness concluded failure' },
             [pscustomobject]@{ Scenario = 'stale_head'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'skipping stale workflow_run' },
-            [pscustomobject]@{ Scenario = 'pending_checks'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'pending checks' },
+            [pscustomobject]@{ Scenario = 'pending_checks'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 4; Pattern = 'pending checks' },
             [pscustomobject]@{ Scenario = 'moved_main'; ExpectMerge = $true; ExitCode = 1; DispatchCount = 0; Pattern = 'moved before CI dispatch' },
             [pscustomobject]@{ Scenario = 'dispatch_failure'; ExpectMerge = $true; ExitCode = 1; DispatchCount = 1; Pattern = 'Failed to dispatch ci.yml' },
+            [pscustomobject]@{ Scenario = 'missing_run_details'; ExpectMerge = $true; ExitCode = 1; DispatchCount = 1; Pattern = 'did not return a run ID' },
             [pscustomobject]@{ Scenario = 'racing_merge'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 0; Pattern = 'already merged by a racing workflow_run' }
         )
         foreach ($case in $cases) {
             Remove-Item -LiteralPath $fakeGhLogWin -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "$fakeGhLogWin.pending" -Force -ErrorAction SilentlyContinue
             $env:FAKE_GH_SCENARIO = $case.Scenario
             # Invoke repoRoot-relative: WSL's bash.exe cannot open
             # Windows-style absolute script paths.
@@ -1326,15 +1333,18 @@ exit 99
             }
             if ($case.ExpectMerge) {
                 $mergeLog = [System.IO.File]::ReadAllText($fakeGhLogWin)
-                $dispatches = @($mergeLog -split "`n" | Where-Object { $_ -match '^workflow run ' })
+                $dispatches = @($mergeLog -split "`n" | Where-Object { $_ -match '^api --method POST ' })
                 if ($dispatches.Count -ne $case.DispatchCount) {
                     throw "Auto-merge scenario '$($case.Scenario)' dispatched $($dispatches.Count) workflows; expected $($case.DispatchCount). Log: $mergeLog"
                 }
-                if ($case.DispatchCount -eq 3) {
-                    foreach ($workflow in @('ci.yml', 'llm-harness.yml', 'docs-validation.yml')) {
-                        if ($mergeLog -notmatch "workflow run $([regex]::Escape($workflow)) --repo owner/repo --ref main -f expected_sha=merge-abc123") {
+                if ($case.DispatchCount -eq 4) {
+                    foreach ($workflow in @('ci.yml', 'llm-harness.yml', 'docs-validation.yml', 'docs-deploy.yml')) {
+                        if ($mergeLog -notmatch "/actions/workflows/$([regex]::Escape($workflow))/dispatches") {
                             throw "Auto-merge scenario '$($case.Scenario)' did not dispatch $workflow. Log: $mergeLog"
                         }
+                    }
+                    if ($mergeLog -notmatch 'inputs\[validated_run_id\]=777') {
+                        throw "Auto-merge scenario '$($case.Scenario)' did not link the validated site run. Log: $mergeLog"
                     }
                 }
             }
