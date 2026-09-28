@@ -87,10 +87,14 @@ jobs:
               uses: actions/cache@v6
               with:
                   path: .venv-docs
-                  key: venv-docs-uv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-docs.txt', 'requirements-docs-accessibility.txt') }}
+                  key: venv-docs-uv-v2-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-docs.txt', 'requirements-docs-accessibility.txt') }}
 
             - name: Install MkDocs dependencies with uv
               if: steps.docs-venv-cache.outputs.cache-hit != 'true'
+              env:
+                  PIP_DEFAULT_TIMEOUT: "60"
+                  UV_HTTP_TIMEOUT: "60"
+                  UV_HTTP_RETRIES: "5"
               run: |
                   python3 -m pip install uv
                   python3 -m uv venv .venv-docs
