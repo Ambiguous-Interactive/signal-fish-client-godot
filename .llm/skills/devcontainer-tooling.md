@@ -37,7 +37,7 @@ setup.
   `.devcontainer/install-agent-tools.sh` (invoked from the Dockerfile) into
   npm's global prefix, so ordinary starts and restarts never run package
   installs.
-- `post-create.sh` re-runs the installer in `--verify` mode and fails
+- `post-create.py` re-runs the installer in `--verify` mode and fails
   post-create when any of the four binaries is missing or broken; all four
   versions appear in the toolchain summary.
 - `post-start.sh` re-applies git `safe.directory` trust on every start and
@@ -103,7 +103,7 @@ setup.
   (default 2000) is the backoff between failed install retries; the hermetic
   fake-npm self-test matrix sets 0 so rollback cases do not pay real sleep
   time.
-- `post-create.sh` repairs root-owned mounted directories such as
+- `post-create.py` repairs root-owned mounted directories such as
   `/commandhistory` and `~/.cache` (Docker creates volume-mount parents as
   root; a root-owned `~/.cache` crashed opencode's postinstall verify step and
   VS Code's agent host with EACCES), installs the direct git hooks-path

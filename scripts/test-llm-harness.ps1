@@ -537,6 +537,7 @@ function New-HookBehaviorSandbox {
         '.github/copilot-instructions.md', '.cursor/rules/signal-fish-llm-context.mdc',
         '.githooks/pre-commit',
         '.devcontainer/post-create.sh',
+        '.devcontainer/post-create.py',
         '.github/dependabot.yml',
         '.github/workflows/ci.yml',
         '.github/workflows/dependabot-auto-merge.yml',
@@ -2156,85 +2157,31 @@ exit 127
     }
 } -Behavioral
 
-Assert-Test 'devcontainer post-create installs direct hooks, agent CLIs, and reports summary' {
+Assert-Test 'devcontainer post-create delegates to Python and checks required tools' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $postCreate = Join-Path $repoRoot '.devcontainer/post-create.sh'
-    if (-not (Test-Path -LiteralPath $postCreate -PathType Leaf)) {
-        throw 'Missing .devcontainer/post-create.sh'
+    $postCreatePython = Join-Path $repoRoot '.devcontainer/post-create.py'
+    if (-not (Test-Path -LiteralPath $postCreate -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $postCreatePython -PathType Leaf)) {
+        throw 'Missing devcontainer post-create entry point.'
     }
-    $content = Get-Content -LiteralPath $postCreate -Raw
-
-    foreach ($requirement in @(
-            [pscustomobject]@{
-                Pattern     = 'install-agent-tools\.sh'
-                Requirement = 'invoke .devcontainer/install-agent-tools.sh'
-                Diagnostic  = 'install-agent-tools|agent CLIs'
-            },
-            [pscustomobject]@{
-                Pattern     = 'install-git-hooks\.ps1\s+-Force'
-                Requirement = 'install the direct .git/hooks shim with scripts/install-git-hooks.ps1 -Force'
-                Diagnostic  = 'install-git-hooks|git hooks|pre-commit'
-            },
-            [pscustomobject]@{
-                Pattern     = 'for cli in codex opencode nanocoder claude'
-                Requirement = 'verify every agent CLI is on PATH after the installer runs'
-                Diagnostic  = 'agent CLI|codex|opencode|nanocoder|claude'
-            },
-            [pscustomobject]@{
-                Pattern     = 'is missing after post-create install'
-                Requirement = 'fail loudly if an agent CLI is missing after install-agent-tools.sh runs'
-                Diagnostic  = 'agent CLI|exit 1'
-            },
-            [pscustomobject]@{
-                Pattern     = 'codex --version'
-                Requirement = 'include codex --version in the toolchain summary'
-                Diagnostic  = 'Toolchain summary|codex'
-            },
-            [pscustomobject]@{
-                Pattern     = 'opencode --version'
-                Requirement = 'include opencode --version in the toolchain summary'
-                Diagnostic  = 'Toolchain summary|opencode'
-            },
-            [pscustomobject]@{
-                Pattern     = 'nanocoder --version'
-                Requirement = 'include nanocoder --version in the toolchain summary'
-                Diagnostic  = 'Toolchain summary|nanocoder'
-            },
-            [pscustomobject]@{
-                Pattern     = 'claude --version'
-                Requirement = 'include claude --version in the toolchain summary'
-                Diagnostic  = 'Toolchain summary|claude'
-            },
-            [pscustomobject]@{
-                Pattern     = 'Failed to install PowerShell profile'
-                Requirement = 'fail loudly if PowerShell profile installation fails'
-                Diagnostic  = 'PowerShell profile|profile.ps1|exit 1'
-            },
-            [pscustomobject]@{
-                Pattern     = 'ensure_writable_dir'
-                Requirement = 'repair root-owned mounted directories before installing hooks'
-                Diagnostic  = 'ensure_writable_dir|sudo chown|commandhistory'
-            },
-            [pscustomobject]@{
-                Pattern     = 'sudo chown -R'
-                Requirement = 'repair root-owned mounted directories before installing hooks'
-                Diagnostic  = 'ensure_writable_dir|sudo chown|commandhistory'
-            }
-        )) {
-        Assert-TextMatches `
-            -Subject '.devcontainer/post-create.sh' `
-            -Content $content `
-            -Pattern $requirement.Pattern `
-            -Requirement $requirement.Requirement `
-            -DiagnosticPattern $requirement.Diagnostic
+    $shell = Get-Content -LiteralPath $postCreate -Raw
+    $python = Get-Content -LiteralPath $postCreatePython -Raw
+    Assert-TextMatches -Subject '.devcontainer/post-create.sh' -Content $shell `
+        -Pattern 'exec python3 .*post-create\.py' -Requirement 'delegate setup to Python' `
+        -DiagnosticPattern 'post-create.py|exec python3'
+    foreach ($pattern in @('install-git-hooks\.ps1', '"-Force"', 'install-agent-tools\.sh',
+            '"--verify"', '"codex", "opencode", "nanocoder", "claude"',
+            'is missing after post-create install', 'install-mcp-servers\.py',
+            'seed-mcp-config\.py', 'Failed to install PowerShell profile',
+            'ensure_writable_dir', 'sudo", "chown"', 'pre-commit \(optional\)')) {
+        Assert-TextMatches -Subject '.devcontainer/post-create.py' -Content $python `
+            -Pattern $pattern -Requirement 'preserve strict post-create setup' `
+            -DiagnosticPattern 'post-create|toolchain|hooks|profile'
     }
-    Assert-TextDoesNotMatch `
-        -Subject '.devcontainer/post-create.sh' `
-        -Content $content `
-        -Pattern 'pre-commit\s+install' `
-        -Requirement 'not install the pre-commit framework hook; the direct shim is canonical' `
-        -DiagnosticPattern 'pre-commit|install-git-hooks|direct git hooks'
-
+    Assert-TextDoesNotMatch -Subject '.devcontainer/post-create.py' -Content $python `
+        -Pattern 'pre-commit\s+install' -Requirement 'keep the direct shim' `
+        -DiagnosticPattern 'pre-commit|install-git-hooks'
     Assert-ScriptParsesWithBash -Path $postCreate -Name 'post-create.sh'
 }
 
@@ -2334,7 +2281,7 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     $shim = Join-Path $repoRoot '.devcontainer/mcp-shims/sf-github-mcp.sh'
     $dockerfile = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/Dockerfile') -Raw
     $devcontainer = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/devcontainer.json') -Raw
-    $postCreate = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-create.sh') -Raw
+    $postCreate = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-create.py') -Raw
     $postStart = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-start.py') -Raw
 
     foreach ($script in @($installer, $seeder, $shim)) {
@@ -2641,8 +2588,8 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
         throw 'Missing .env.example; it is the committed template for .env.local.'
     }
     foreach ($pair in @(
-            [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'python3.*install-mcp-servers\.py'; Requirement = 'install npm MCP servers strictly at post-create' },
-            [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'python3.*seed-mcp-config\.py'; Requirement = 'seed agent MCP configurations at post-create' },
+            [pscustomobject]@{ Subject = '.devcontainer/post-create.py'; Content = $postCreate; Pattern = 'install-mcp-servers\.py'; Requirement = 'install npm MCP servers strictly at post-create' },
+            [pscustomobject]@{ Subject = '.devcontainer/post-create.py'; Content = $postCreate; Pattern = 'seed-mcp-config\.py'; Requirement = 'seed agent MCP configurations at post-create' },
             [pscustomobject]@{ Subject = '.devcontainer/post-start.py'; Content = $postStart; Pattern = 'install-mcp-servers\.py"\), "--update"'; Requirement = 'refresh npm MCP servers warn-only at post-start' },
             [pscustomobject]@{ Subject = '.devcontainer/post-start.py'; Content = $postStart; Pattern = 'seed-mcp-config\.py"\), "--update"'; Requirement = 're-seed agent MCP configurations warn-only at post-start' }
         )) {
@@ -3060,6 +3007,7 @@ Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
         '.devcontainer/seed-mcp-config.py',
         '.devcontainer/mcp-shims/sf-github-mcp.sh',
         '.devcontainer/post-create.sh',
+        '.devcontainer/post-create.py',
         '.devcontainer/post-start.sh',
         '.devcontainer/post-start.py'
     )
@@ -3080,7 +3028,7 @@ Assert-Test 'devcontainer pre-commit remnants are optional compatibility only' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $dockerfile = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/Dockerfile') -Raw
     $devcontainer = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/devcontainer.json') -Raw
-    $postCreate = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-create.sh') -Raw
+    $postCreate = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-create.py') -Raw
     $readme = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/README.md') -Raw
 
     Assert-TextDoesNotMatch `
@@ -3123,12 +3071,12 @@ Assert-Test 'devcontainer pre-commit remnants are optional compatibility only' {
             DiagnosticPattern = 'pre-commit|compatibility|framework hook|Git hook'
         },
         [pscustomobject]@{
-            Subject           = '.devcontainer/post-create.sh'
+            Subject           = '.devcontainer/post-create.py'
             Content           = $postCreate
-            AppliesWhen       = 'pre-commit --version'
+            AppliesWhen       = 'pre-commit \(optional\)'
             Requirements      = @(
                 [pscustomobject]@{
-                    Pattern     = '(?m)^\s*printf\s+[''"]\s*pre-commit(?:\s+optional|\s*\(optional\)|\s*\[optional\])\s*:\s+%s\\n[''"]\s+["'']\$\(\s*pre-commit --version\b'
+                    Pattern     = 'pre-commit \(optional\)'
                     Requirement = 'label the pre-commit toolchain summary as optional when reporting the CLI'
                 }
             )
@@ -4817,7 +4765,8 @@ Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without 
                 'scripts/test-llm-harness.ps1',
                 'scripts/validate-github-config.py',
                 'scripts/lib/LlmHarness.psm1',
-                '.devcontainer/post-create.sh'
+                '.devcontainer/post-create.sh',
+                '.devcontainer/post-create.py'
             )) {
             $src = Join-Path $repoRoot $f
             $dst = Join-Path $sandbox $f
@@ -5569,7 +5518,8 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
                 'scripts/run-llm-hooks.ps1', 'scripts/preflight.ps1',
                 'scripts/generate-llm-index.ps1', 'scripts/lint-llm.ps1',
                 'scripts/test-llm-harness.ps1', 'scripts/install-git-hooks.ps1',
-                'scripts/lib/LlmHarness.psm1'
+                'scripts/lib/LlmHarness.psm1',
+                '.devcontainer/post-create.py'
             )) {
             $src = Join-Path $repoRoot $f
             $dst = Join-Path $sandbox $f

@@ -1,5 +1,6 @@
 """Regression checks: python .devcontainer/test_portability.py."""
 
+import importlib.util
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import time
 import unittest
 from pathlib import Path
 from typing import TypedDict
+from unittest.mock import patch
 
 
 class DevcontainerConfig(TypedDict):
@@ -46,6 +48,57 @@ def config() -> DevcontainerConfig:
 
 
 class Portability(unittest.TestCase):
+    def test_post_create_runs_strict_setup_and_offline_maintenance(self) -> None:
+        spec = importlib.util.spec_from_file_location("post_create", ROOT / "post-create.py")
+        if spec is None or spec.loader is None:
+            self.fail("post-create.py could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        calls: list[tuple[tuple[str, ...], dict[str, str] | None]] = []
+
+        def fake_run(*args: str, check: bool = True, env: dict[str, str] | None = None) -> bool:
+            calls.append((args, env))
+            return True
+
+        def fake_writable(path: Path) -> None:
+            if path != Path("/commandhistory"):
+                path.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder)
+            profile_dir = home / ".config/powershell"
+            profile_dir.mkdir(parents=True)
+            original = home / "user-profile.ps1"
+            original.write_text("user content\n", encoding="utf-8")
+            (profile_dir / "profile.ps1").symlink_to(original)
+            with (
+                patch.object(module, "run", side_effect=fake_run),
+                patch.object(module, "ensure_writable_dir", side_effect=fake_writable),
+                patch.object(module, "toolchain_summary"),
+                patch.object(module.shutil, "which", return_value="/usr/bin/tool"),
+                patch.object(module.Path, "home", return_value=home),
+            ):
+                self.assertEqual(module.main(), 0)
+            self.assertEqual(
+                (profile_dir / "profile.ps1").read_bytes(),
+                (ROOT / "pwsh-profile.ps1").read_bytes(),
+            )
+            self.assertFalse((profile_dir / "profile.ps1").is_symlink())
+            self.assertEqual(original.read_text(encoding="utf-8"), "user content\n")
+        commands = [args for args, _ in calls]
+        self.assertIn(
+            ("pwsh", "-NoProfile", "-File", "scripts/install-git-hooks.ps1", "-Force"), commands
+        )
+        self.assertIn(("bash", str(ROOT / "install-agent-tools.sh"), "--verify"), commands)
+        mcp = next(env for args, env in calls if "install-mcp-servers.py" in args[1])
+        if mcp is None:
+            self.fail("MCP installer did not receive its environment")
+        self.assertEqual(mcp["SF_MCP_SKIP_PLAYWRIGHT_BROWSER"], "1")
+        maintenance = next(env for args, env in calls if "post-start.sh" in args[1])
+        if maintenance is None:
+            self.fail("post-start did not receive its environment")
+        self.assertEqual(maintenance["SF_DEVCONTAINER_SKIP_TOOL_UPDATES"], "1")
+
     def test_host_requires_only_docker(self) -> None:
         command = config()["initializeCommand"]
         self.assertEqual(command[0], "docker")
