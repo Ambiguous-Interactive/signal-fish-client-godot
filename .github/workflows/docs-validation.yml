@@ -119,6 +119,9 @@ jobs:
             - name: Set up Playwright Chromium
               uses: ./.github/actions/playwright-chromium
 
+            - name: Test accessibility cleanup
+              run: .venv-docs/bin/python -m unittest discover -s tests -p test_docs_accessibility_cleanup.py
+
             - name: Test responsive documentation accessibility
               run: .venv-docs/bin/python scripts/check-docs-accessibility.py
 

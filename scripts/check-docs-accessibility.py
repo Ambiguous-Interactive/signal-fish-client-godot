@@ -512,35 +512,40 @@ async def run_checks() -> None:
         await run_phase("build freshness", assert_build_freshness)
         server, server_thread, origin = start_server()
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(args=["--disable-gpu"], headless=True)
-            context = await browser.new_context(
-                reduced_motion="reduce", viewport={"width": 1220, "height": 800}
-            )
-            page = await context.new_page()
-            page.set_default_timeout(5000)
-            page.set_default_navigation_timeout(15000)
-            attach_error_capture(page, errors, origin)
-            await run_phase(
-                "closed boundaries", lambda: check_closed_boundaries(current_page(), origin)
-            )
-            await run_phase(
-                "drawer resize ltr", lambda: check_drawer_resize(current_page(), origin, "ltr")
-            )
-            await run_phase(
-                "drawer resize rtl", lambda: check_drawer_resize(current_page(), origin, "rtl")
-            )
-            await run_phase("search resize", lambda: check_search_resize(current_page(), origin))
-            expect_state(not errors, "documentation pages emitted browser errors", errors)
-            print("Documentation accessibility browser checks passed.")
+            try:
+                browser = await playwright.chromium.launch(args=["--disable-gpu"], headless=True)
+                context = await browser.new_context(
+                    reduced_motion="reduce", viewport={"width": 1220, "height": 800}
+                )
+                page = await context.new_page()
+                page.set_default_timeout(5000)
+                page.set_default_navigation_timeout(15000)
+                attach_error_capture(page, errors, origin)
+                await run_phase(
+                    "closed boundaries", lambda: check_closed_boundaries(current_page(), origin)
+                )
+                await run_phase(
+                    "drawer resize ltr", lambda: check_drawer_resize(current_page(), origin, "ltr")
+                )
+                await run_phase(
+                    "drawer resize rtl", lambda: check_drawer_resize(current_page(), origin, "rtl")
+                )
+                await run_phase(
+                    "search resize", lambda: check_search_resize(current_page(), origin)
+                )
+                expect_state(not errors, "documentation pages emitted browser errors", errors)
+            finally:
+                primary_error = sys.exception()
+                if browser is not None:
+                    try:
+                        await asyncio.wait_for(browser.close(), timeout=10)
+                    except Exception as exc:
+                        print(f"Accessibility cleanup failed: {exc}", file=sys.stderr)
+                        if primary_error is None:
+                            raise
     finally:
         primary_error = sys.exception()
         cleanup_error: Exception | None = None
-        if browser is not None:
-            try:
-                await asyncio.wait_for(browser.close(), timeout=10)
-            except Exception as exc:
-                cleanup_error = exc
-                print(f"Accessibility cleanup failed: {exc}", file=sys.stderr)
         if server is not None and server_thread is not None:
             try:
                 await asyncio.to_thread(close_server, server, server_thread)
@@ -549,6 +554,7 @@ async def run_checks() -> None:
                 print(f"Accessibility cleanup failed: {exc}", file=sys.stderr)
         if primary_error is None and cleanup_error is not None:
             raise cleanup_error
+    print("Documentation accessibility browser checks passed.")
 
 
 async def main() -> None:
