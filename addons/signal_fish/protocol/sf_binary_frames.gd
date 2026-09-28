@@ -235,8 +235,8 @@ static func _read_map_header(peer: StreamPeerBuffer) -> int:
 
 
 static func _uuid_string(bytes: PackedByteArray) -> String:
-	var cached: Variant = _uuid_cache.get(bytes)
-	if cached != null:
+	if _uuid_cache.has(bytes):
+		var cached: String = _uuid_cache[bytes]
 		return cached
 	var hex := bytes.hex_encode()
 	var value := (

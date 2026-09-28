@@ -620,7 +620,8 @@ func _test_websocket_closed_state_delivers_queued_packets() -> void:
 		case_peer.ready_state = WebSocketPeer.STATE_CLOSED
 		case_peer.close_code = 1000
 		case_peer.close_reason = "gone"
-		var queued: Array = case[1]
+		var raw_queued: Array = case[1]
+		var queued: Array[PackedByteArray] = Array(raw_queued, TYPE_PACKED_BYTE_ARRAY, &"", null)
 		case_peer.packets.append_array(queued)
 		case_transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
 		_assert_equal(case[3], case_packets.size(), "%s: packets after poll 1" % case[0])
@@ -726,7 +727,8 @@ func _test_close_at_closed_drains_queued_packets() -> void:
 		peer.ready_state = WebSocketPeer.STATE_CLOSED
 		peer.close_code = 1000
 		peer.close_reason = "gone"
-		var queued: Array = case[1]
+		var raw_queued: Array = case[1]
+		var queued: Array[PackedByteArray] = Array(raw_queued, TYPE_PACKED_BYTE_ARRAY, &"", null)
 		peer.packets.append_array(queued)
 		transport.close(1000, "consumer")
 		_assert_equal(case[3], packets.size(), "%s: packets after close" % case[0])

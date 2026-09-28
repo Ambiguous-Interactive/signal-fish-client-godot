@@ -1345,7 +1345,7 @@ func _track_protocol_errors(client: SignalFishClientScript) -> Array[String]:
 
 
 func _assert_no_protocol_errors() -> void:
-	for tracker: Array in _error_trackers:
+	for tracker: Array[String] in _error_trackers:
 		_assert_equal([], tracker, "no spurious protocol_error")
 
 

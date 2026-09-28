@@ -91,7 +91,8 @@ func _test_msgpack_decode_vectors() -> void:
 		},
 	]
 	for vector: Dictionary in vectors:
-		var vector_bytes: Array = vector["bytes"]
+		var raw_bytes: Array = vector["bytes"]
+		var vector_bytes: Array[int] = Array(raw_bytes, TYPE_INT, &"", null)
 		var result: Dictionary = SFMsgpackScript.decode(_packed(vector_bytes))
 		var result_ok: bool = result["ok"]
 		if not _assert(result_ok, true, "decode %s succeeds" % vector["label"]):
@@ -112,7 +113,8 @@ func _test_msgpack_hostile_vectors() -> void:
 		{"label": "fixext1", "bytes": [0xD4, 0x00, 0x2A]},
 	]
 	for vector: Dictionary in vectors:
-		var vector_bytes: Array = vector["bytes"]
+		var raw_bytes: Array = vector["bytes"]
+		var vector_bytes: Array[int] = Array(raw_bytes, TYPE_INT, &"", null)
 		var result: Dictionary = SFMsgpackScript.decode(_packed(vector_bytes))
 		var result_ok: bool = result["ok"]
 		_assert(result_ok, false, "decode %s is rejected" % vector["label"])
@@ -195,7 +197,8 @@ func _test_msgpack_encode_widths() -> void:
 		var result_ok: bool = result["ok"]
 		if not _assert(result_ok, true, "encode %s succeeds" % vector["value"]):
 			continue
-		var vector_bytes: Array = vector["bytes"]
+		var raw_bytes: Array = vector["bytes"]
+		var vector_bytes: Array[int] = Array(raw_bytes, TYPE_INT, &"", null)
 		_assert_equal(_packed(vector_bytes), result["bytes"], "encode %s bytes" % vector["value"])
 	var string_result: Dictionary = SFMsgpackScript.encode("y".repeat(300))
 	var string_result_ok: bool = string_result["ok"]
@@ -244,7 +247,8 @@ func _test_msgpack_non_finite_refusal() -> void:
 		],
 	]
 	for vector: Array in non_finite_vectors:
-		var vector_bytes: Array = vector[1]
+		var raw_bytes: Array = vector[1]
+		var vector_bytes: Array[int] = Array(raw_bytes, TYPE_INT, &"", null)
 		var result: Dictionary = SFMsgpackScript.decode(_packed(vector_bytes))
 		var result_ok: bool = result["ok"]
 		_assert(result_ok, false, "decode %s refused" % vector[0])
@@ -255,7 +259,8 @@ func _test_msgpack_non_finite_refusal() -> void:
 		["f32 1.0", [0xCA, 0x3F, 0x80, 0x00, 0x00]],
 	]
 	for vector: Array in finite_doubles:
-		var finite_bytes: Array = vector[1]
+		var raw_bytes: Array = vector[1]
+		var finite_bytes: Array[int] = Array(raw_bytes, TYPE_INT, &"", null)
 		var finite_decode: Dictionary = SFMsgpackScript.decode(_packed(finite_bytes))
 		var finite_decode_ok: bool = finite_decode["ok"]
 		_assert(finite_decode_ok, true, "decode %s still works" % vector[0])
@@ -666,7 +671,7 @@ func _raw(codepoints: Array[int]) -> PackedByteArray:
 	return _packed(codepoints)
 
 
-func _packed(codepoints: Array) -> PackedByteArray:
+func _packed(codepoints: Array[int]) -> PackedByteArray:
 	var packed := PackedByteArray()
 	packed.resize(codepoints.size())
 	for index: int in codepoints.size():
