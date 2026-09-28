@@ -82,6 +82,9 @@ jobs:
             - name: Check GDScript (helpers, format, lint)
               run: bash scripts/run-runtime-checks.sh gdscript-static
 
+            - name: Check runtime fast-loop selection
+              run: python3 scripts/select-runtime-checks.py --self-test
+
             - name: Asset Library archive allow-list
               run: |
                   python3 scripts/check-asset-archive.py --self-test
