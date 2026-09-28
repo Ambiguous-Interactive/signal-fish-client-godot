@@ -215,7 +215,8 @@ def main(argv: list[str]) -> int:
         print("seed-mcp-config: ERROR: expected 'install' or '--update'", file=sys.stderr)
         return 2
     update = bool(argv and argv[0] == "--update")
-    path = Path.home() / ".codex/config.toml"
+    home = os.environ.get("HOME")
+    path = (Path(home) if home else Path.home()) / ".codex/config.toml"
     found, json_failed = check_json_configs(update)
     seed_ok = seed_codex_config(path, update)
     doctor_ok = doctor(found, path, update)

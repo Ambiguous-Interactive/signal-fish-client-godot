@@ -2633,7 +2633,7 @@ Assert-Test 'devcontainer seed-mcp-config.py is idempotent, preserves user confi
         $env:CONTEXT7_API_KEY = $canary2
         Remove-Item -Path 'Env:GITHUB_READ_ONLY' -ErrorAction SilentlyContinue
         New-Item -ItemType Directory -Path $winHome, "$winHome/.codex" -Force | Out-Null
-        $env:HOME = ConvertTo-BashPath $winHome
+        $env:HOME = if (Test-BashIsWsl) { ConvertTo-BashPath $winHome } else { $winHome }
         $codexConfigWin = Join-Path $winHome '.codex/config.toml'
 
         $runSeeder = {
