@@ -572,23 +572,31 @@ def validate_godot_pin(repo_root: Path, reporter: Reporter) -> None:
         reporter.error(error)
 
 
-def playwright_pin_error(action_text: str, requirements_text: str) -> str:
+def playwright_pin_error(action_text: str, quality_text: str, docs_text: str) -> str:
     action = as_dict(load_yaml_text(action_text))
     action_version = as_dict(as_dict(action.get("inputs")).get("playwright-version")).get("default")
-    requirement = re.search(r"(?m)^playwright==([0-9]+\.[0-9]+\.[0-9]+)$", requirements_text)
-    if not isinstance(action_version, str) or requirement is None:
-        return "Playwright pin must be set in the shared action and Python quality requirements"
-    if action_version != requirement.group(1):
-        return f"Playwright pin drift: action {action_version} != Python {requirement.group(1)}"
+    if not isinstance(action_version, str):
+        return "Playwright pin must be set in the shared action"
+    for label, requirements_text in (("Python quality", quality_text), ("docs", docs_text)):
+        requirement = re.search(r"(?m)^playwright==([0-9]+\.[0-9]+\.[0-9]+)$", requirements_text)
+        if requirement is None:
+            return f"Playwright pin must be set in {label} requirements"
+        if action_version != requirement.group(1):
+            return (
+                f"Playwright pin drift: action {action_version} != {label} {requirement.group(1)}"
+            )
     return ""
 
 
 def validate_playwright_pin(repo_root: Path, reporter: Reporter) -> None:
     action = repo_root / ".github/actions/playwright-chromium/action.yml"
-    requirements = repo_root / "requirements-python-quality.txt"
+    quality = repo_root / "requirements-python-quality.txt"
+    docs = repo_root / "requirements-docs-accessibility.txt"
     try:
         error = playwright_pin_error(
-            action.read_text(encoding="utf-8"), requirements.read_text(encoding="utf-8")
+            action.read_text(encoding="utf-8"),
+            quality.read_text(encoding="utf-8"),
+            docs.read_text(encoding="utf-8"),
         )
     except (OSError, ConfigError) as exc:
         reporter.error(f"Playwright pin check failed: {exc}")
@@ -852,12 +860,16 @@ updates:
 
         action_pin = "inputs:\n  playwright-version:\n    default: '1.61.0'\n"
         python_pin = "ruff==0.16.9\nplaywright==1.61.0\n"
-        if playwright_pin_error(action_pin, python_pin):
+        if playwright_pin_error(action_pin, python_pin, python_pin):
             reporter.error("self-test: matching Playwright pins were rejected")
         if "pin drift" not in playwright_pin_error(
-            action_pin, python_pin.replace("1.61.0", "1.60.0")
+            action_pin, python_pin.replace("1.61.0", "1.60.0"), python_pin
         ):
             reporter.error("self-test: Playwright pin drift was not rejected")
+        if "pin drift" not in playwright_pin_error(
+            action_pin, python_pin, python_pin.replace("1.61.0", "1.60.0")
+        ):
+            reporter.error("self-test: docs Playwright pin drift was not rejected")
 
         shebang_cases = [
             ("lf", b"#!/usr/bin/env bash\nexit 0\n", None),
