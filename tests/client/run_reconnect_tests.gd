@@ -65,6 +65,7 @@ func _run() -> void:
 		_test_baseline_decodes,
 		_test_manual_reconnect_guards_and_wire_bytes,
 		_test_manual_reconnect_completes_and_refreshes_context,
+		_test_near_valid_replay_frames_keep_reconnect_state,
 		_test_manual_reconnect_dial_refreshes_auto_reconnect_context,
 		_test_reconnect_reuses_last_dialed_url,
 		_test_auto_reconnect_requires_context_and_not_user_close,
@@ -254,6 +255,70 @@ func _test_manual_reconnect_completes_and_refreshes_context() -> void:
 	_assert_equal(1, client._auto_reconnect_attempts, "budget restarts at 1 after reset")
 	_assert_no_protocol_errors()
 	client.free()
+	_done()
+
+
+func _test_near_valid_replay_frames_keep_reconnect_state() -> void:
+	for count: int in [SFEventsScript.MAX_MISSED_EVENTS, SFEventsScript.MAX_MISSED_EVENTS + 1]:
+		var client := _make_reconnect_client(TOKEN_V1, false)
+		var transport: SFFakeTransportScript = client.transport
+		transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+		var errors := _track_protocol_errors(client)
+		var received: Array[Array] = []
+		var received_errors: Array[Array] = []
+		client.reconnected.connect(
+			func(
+				_info: SFTypesScript.RoomJoinedInfo, missed: Array[SFTypesScript.DecodedEvent]
+			) -> void:
+				var names: Array[String] = []
+				var diagnostics: Array[String] = []
+				for event: SFTypesScript.DecodedEvent in missed:
+					names.append(String(event.signal_name))
+					if event.signal_name == &"protocol_error":
+						diagnostics.append(str(event.args[0]))
+				received.append(names)
+				received_errors.append(diagnostics)
+		)
+		var data := _room_joined_data({"reconnection_token": TOKEN_V2})
+		var missed_events: Array[Dictionary] = []
+		for index: int in count - 1:
+			missed_events.append({"type": "Pong"})
+		missed_events.append({"type": "Reconnected", "data": data.duplicate(true)})
+		data["missed_events"] = missed_events
+		transport.inject_text(JSON.stringify({"type": "Reconnected", "data": data}))
+		_assert_equal(1, received.size(), "replay cap %d restores once" % count)
+		var names_received: Array = received[0]
+		_assert_equal(
+			(
+				SFEventsScript.MAX_MISSED_EVENTS
+				+ (1 if count > SFEventsScript.MAX_MISSED_EVENTS else 0)
+			),
+			names_received.size(),
+			"replay cap %d limits entries" % count
+		)
+		_assert_equal(
+			"protocol_error", names_received[-1], "replay cap %d reports invalid replay" % count
+		)
+		var diagnostics_received: Array = received_errors[0]
+		_assert_equal(
+			1 if count == SFEventsScript.MAX_MISSED_EVENTS else 2,
+			diagnostics_received.size(),
+			"replay cap %d error count" % count
+		)
+		var nested_error: String = diagnostics_received[0]
+		_assert_string_contains(nested_error, "not replayable", "nested replay rejected")
+		if count > SFEventsScript.MAX_MISSED_EVENTS:
+			var cap_error: String = diagnostics_received[1]
+			_assert_string_contains(cap_error, "exceeds 256", "replay cap reported")
+		_assert_equal(
+			SignalFishClientScript.SessionState.IN_ROOM_WAITING,
+			client.get_session_state(),
+			"replay cap %d keeps room" % count
+		)
+		_assert_equal(ROOM_ID, client.get_room_id(), "replay cap %d room id" % count)
+		_assert_equal(TOKEN_V2, client._context_auth_token, "replay cap %d rotates token" % count)
+		_assert_equal(0, errors.size(), "replay cap %d has no top-level error" % count)
+		client.free()
 	_done()
 
 

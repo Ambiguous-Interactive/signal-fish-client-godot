@@ -92,6 +92,7 @@ func run_all() -> void:
 		_test_envelope_truncation_and_mutations_fail_closed,
 		_test_envelope_length_header_attacks_fail_closed,
 		_test_text_envelope_truncation_and_noise_fail_closed,
+		_test_near_valid_text_frames_fail_closed,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -409,6 +410,188 @@ func _test_text_envelope_truncation_and_noise_fail_closed() -> void:
 		protocol_errors == _TEXT_NOISE_COUNT,
 		"text noise corpus fully refused (%d/%d)" % [protocol_errors, decodes]
 	)
+	_done()
+
+
+static func near_valid_text_cases() -> Array[Dictionary]:
+	var frames := _valid_text_frames()
+	var cases: Array[Dictionary] = []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _TEXT_CORPUS_SEED
+	for type_name: String in ["RoomJoined", "GameData", "Reconnected"]:
+		var frame: String = frames[type_name]
+		var structural_offsets := _json_structural_offsets(frame)
+		for length: int in frame.length():
+			if length % 11 == 0 or length >= frame.length() - 3:
+				cases.append(
+					{"label": "%s prefix %d" % [type_name, length], "text": frame.substr(0, length)}
+				)
+		for iteration: int in 48:
+			var offset: int = structural_offsets[rng.randi_range(0, structural_offsets.size() - 1)]
+			var mutated := frame.substr(0, offset) + "#" + frame.substr(offset + 1)
+			cases.append(
+				{
+					"label":
+					(
+						"%s seed %d mutation %d at %d"
+						% [type_name, _TEXT_CORPUS_SEED, iteration, offset]
+					),
+					"text": mutated
+				}
+			)
+	var room: String = frames["RoomJoined"]
+	cases.append(
+		{
+			"label": "escaped top-level duplicate",
+			"text":
+			room.replace('"type":"RoomJoined"', '"type":"RoomJoined","\\u0074ype":"RoomLeft"')
+		}
+	)
+	cases.append(
+		{
+			"label": "escaped room-id duplicate",
+			"text":
+			room.replace(
+				'"room_id":', '"\\u0072oom_id":"20000000-0000-0000-0000-000000000002","room_id":'
+			)
+		}
+	)
+	var game: String = frames["GameData"]
+	cases.append(
+		{
+			"label": "wrong sender type",
+			"text":
+			game.replace(
+				'"from_player":"10000000-0000-0000-0000-000000000002"', '"from_player":123'
+			)
+		}
+	)
+	var reconnect_text: String = frames["Reconnected"]
+	var reconnected: Dictionary = JSON.parse_string(reconnect_text)
+	var reconnect_data: Dictionary = reconnected["data"]
+	reconnect_data.erase("missed_events")
+	cases.append({"label": "missing replay array", "text": JSON.stringify(reconnected)})
+	var invalid_fields := {
+		"RoomJoined":
+		[
+			["room_id", "not-a-uuid"],
+			["player_id", 7],
+			["current_players", {}],
+			["ready_players", "all"],
+			["lobby_state", "missing"]
+		],
+		"GameData":
+		[
+			["from_player", "not-a-uuid"],
+			["from_player", 7],
+			["from_player", null],
+			["from_player", ""]
+		],
+		"Reconnected":
+		[
+			["room_id", "not-a-uuid"],
+			["player_id", 7],
+			["current_players", {}],
+			["missed_events", {}],
+			["lobby_state", "missing"]
+		]
+	}
+	for type_name: String in ["RoomJoined", "GameData", "Reconnected"]:
+		var original: String = frames[type_name]
+		var fields: Array = invalid_fields[type_name]
+		for mutation: Array in fields:
+			var envelope: Dictionary = JSON.parse_string(original)
+			var data: Dictionary = envelope["data"]
+			data[mutation[0]] = mutation[1]
+			cases.append(
+				{
+					"label": "%s invalid %s" % [type_name, mutation[0]],
+					"text": JSON.stringify(envelope)
+				}
+			)
+	return cases
+
+
+static func _json_structural_offsets(frame: String) -> Array[int]:
+	var offsets: Array[int] = []
+	var in_string := false
+	var escaped := false
+	for index: int in frame.length():
+		var character := frame[index]
+		if escaped:
+			escaped = false
+		elif in_string and character == "\\":
+			escaped = true
+		elif character == '"':
+			in_string = not in_string
+		elif not in_string and character in ["{", "}", "[", "]", ":", ","]:
+			offsets.append(index)
+	return offsets
+
+
+static func _valid_text_frames() -> Dictionary:
+	var frames := {}
+	var source := FileAccess.get_file_as_string("res://tests/fixtures/v2_server_messages.jsonl")
+	for line: String in source.split("\n", false):
+		if not line.begins_with("{"):
+			continue
+		var envelope: Dictionary = JSON.parse_string(line)
+		if envelope["type"] in ["RoomJoined", "GameData", "Reconnected"]:
+			frames[envelope["type"]] = line
+	return frames
+
+
+func _test_near_valid_text_frames_fail_closed() -> void:
+	var frames := _valid_text_frames()
+	for type_name: String in ["RoomJoined", "GameData", "Reconnected"]:
+		var frame: String = frames[type_name]
+		_assert(
+			SFEventsScript.decode_text(frame).signal_name != &"protocol_error",
+			"%s fixture is valid" % type_name
+		)
+		for length: int in frame.length():
+			_assert_protocol_error(
+				SFEventsScript.decode_text(frame.substr(0, length)),
+				(
+					"%s prefix %d input=%s"
+					% [type_name, length, frame.substr(0, length).to_utf8_buffer().hex_encode()]
+				)
+			)
+	var cases := near_valid_text_cases()
+	_assert(cases.size() > 100, "near-valid corpus has broad coverage")
+	for case: Dictionary in cases:
+		var case_text: String = case["text"]
+		_assert_protocol_error(
+			SFEventsScript.decode_text(case_text),
+			"%s input=%s" % [case["label"], case_text.to_utf8_buffer().hex_encode()]
+		)
+	var reconnect_text: String = frames["Reconnected"]
+	var reconnected: Dictionary = JSON.parse_string(reconnect_text)
+	var reconnect_data: Dictionary = reconnected["data"]
+	var replay: Array = reconnect_data["missed_events"]
+	replay.append({"type": "Reconnected", "data": reconnect_data.duplicate(true)})
+	var nested: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(JSON.stringify(reconnected))
+	_assert_equal("reconnected", String(nested.signal_name), "nested replay keeps baseline")
+	var nested_events: Array = nested.args[1]
+	var nested_tail: SFTypesScript.DecodedEvent = nested_events[-1]
+	_assert_equal("protocol_error", String(nested_tail.signal_name), "nested replay is rejected")
+	for count: int in [SFEventsScript.MAX_MISSED_EVENTS, SFEventsScript.MAX_MISSED_EVENTS + 1]:
+		reconnect_data["missed_events"] = []
+		var capped_replay: Array = reconnect_data["missed_events"]
+		for index: int in count:
+			capped_replay.append({"type": "Pong"})
+		var decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(
+			JSON.stringify(reconnected)
+		)
+		_assert_equal("reconnected", String(decoded.signal_name), "replay cap %d baseline" % count)
+		var events: Array = decoded.args[1]
+		_assert_equal(count, events.size(), "replay cap %d entries" % count)
+		var tail: SFTypesScript.DecodedEvent = events[-1]
+		_assert_equal(
+			"protocol_error" if count > SFEventsScript.MAX_MISSED_EVENTS else "pong",
+			String(tail.signal_name),
+			"replay cap %d tail" % count
+		)
 	_done()
 
 
