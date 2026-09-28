@@ -69,6 +69,10 @@ jobs:
 
             - name: Install MkDocs dependencies with uv
               if: github.event_name == 'workflow_dispatch' && inputs.validated_run_id == ''
+              env:
+                  PIP_DEFAULT_TIMEOUT: "60"
+                  UV_HTTP_TIMEOUT: "60"
+                  UV_HTTP_RETRIES: "5"
               run: |
                   python3 -m pip install uv
                   python3 -m uv venv .venv-docs
