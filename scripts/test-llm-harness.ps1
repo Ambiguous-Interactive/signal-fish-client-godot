@@ -2261,7 +2261,7 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
 
 Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired' {
     $repoRoot = Split-Path -Parent $ScriptsDir
-    $installer = Join-Path $repoRoot '.devcontainer/install-mcp-servers.sh'
+    $installer = Join-Path $repoRoot '.devcontainer/install-mcp-servers.py'
     $seeder = Join-Path $repoRoot '.devcontainer/seed-mcp-config.sh'
     $godotInstaller = Join-Path $repoRoot '.devcontainer/install-godot.py'
     $shim = Join-Path $repoRoot '.devcontainer/mcp-shims/sf-github-mcp.sh'
@@ -2274,7 +2274,7 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
         if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
             throw "Missing devcontainer MCP tooling script: $script"
         }
-        Assert-ScriptParsesWithBash -Path $script -Name (Split-Path -Leaf $script)
+        if ($script -ne $installer) { Assert-ScriptParsesWithBash -Path $script -Name (Split-Path -Leaf $script) }
     }
 
     # Single source of truth for the server set: the seeder's SERVERS array.
@@ -2363,16 +2363,16 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     # install, warn-only update, pinned concrete specs, npm >= 11 lifecycle
     # allow list, credential unsetting, and npm-state-based verification.
     $installerContent = Get-Content -LiteralPath $installer -Raw
-    if ($installerContent -notmatch '\(no args\)\s+post-create install: strict' -or $installerContent -notmatch '--update\s+post-start refresh') {
-        throw 'install-mcp-servers.sh must support the strict install and warn-only --update modes.'
+    if ($installerContent -notmatch 'def main\(argv:' -or $installerContent -notmatch '--update') {
+        throw 'install-mcp-servers.py must support the strict install and warn-only --update modes.'
     }
     foreach ($pin in @(
-            [pscustomobject]@{ Spec = 'GODOT_MCP_NPM_SPEC:-@coding-solo/godot-mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'godot-mcp' },
-            [pscustomobject]@{ Spec = 'PLAYWRIGHT_MCP_NPM_SPEC:-@playwright/mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'playwright-mcp' },
-            [pscustomobject]@{ Spec = 'CONTEXT7_MCP_NPM_SPEC:-@upstash/context7-mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'context7-mcp' }
+            [pscustomobject]@{ Spec = 'GODOT_MCP_NPM_SPEC.*@coding-solo/godot-mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'godot-mcp' },
+            [pscustomobject]@{ Spec = 'PLAYWRIGHT_MCP_NPM_SPEC.*@playwright/mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'playwright-mcp' },
+            [pscustomobject]@{ Spec = 'CONTEXT7_MCP_NPM_SPEC.*@upstash/context7-mcp@[0-9]+\.[0-9]+\.[0-9]+'; Name = 'context7-mcp' }
         )) {
         Assert-TextMatches `
-            -Subject '.devcontainer/install-mcp-servers.sh' `
+            -Subject '.devcontainer/install-mcp-servers.py' `
             -Content $installerContent `
             -Pattern $pin.Spec `
             -Requirement "pin the $($pin.Name) npm spec to a concrete version (an env override may replace it)" `
@@ -2380,32 +2380,32 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     }
     foreach ($requirement in @(
             [pscustomobject]@{
-                Pattern     = 'unset GITHUB_TOKEN GH_TOKEN GITHUB_MCP_PAT GITHUB_PERSONAL_ACCESS_TOKEN'
+                Pattern     = 'SECRET_NAMES = \('
                 Requirement = 'unset forwarded credentials before package installs'
                 Diagnostic  = 'unset|GITHUB_MCP_PAT'
             },
             [pscustomobject]@{
-                Pattern     = '--allow-scripts="\$ALLOW_SCRIPTS"'
+                Pattern     = '--allow-scripts=\{ALLOW_SCRIPTS\}'
                 Requirement = 'pass the reviewed lifecycle-script allow list to npm install'
                 Diagnostic  = 'allow-scripts|ALLOW_SCRIPTS'
             },
             [pscustomobject]@{
-                Pattern     = '-ge 11'
+                Pattern     = '>= 11'
                 Requirement = 'pass --allow-scripts only on npm 11 or newer, which introduced the lifecycle-script policy'
                 Diagnostic  = 'npm_major|npm 11'
             },
             [pscustomobject]@{
-                Pattern     = '-lt 22'
+                Pattern     = '< 22'
                 Requirement = 'refuse to install on Node.js older than 22'
                 Diagnostic  = 'node_major|Node.js 22'
             },
             [pscustomobject]@{
-                Pattern     = 'npm install --global'
+                Pattern     = '"npm", "install", "--global"'
                 Requirement = 'install the MCP servers with a global npm install'
                 Diagnostic  = 'npm install|install_specs|failed_specs'
             },
             [pscustomobject]@{
-                Pattern     = 'package_is_installed'
+                Pattern     = 'installed_versions'
                 Requirement = 'verify readiness from npm global state, not from captured output'
                 Diagnostic  = 'package_is_installed|npm list'
             },
@@ -2421,7 +2421,7 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
             }
         )) {
         Assert-TextMatches `
-            -Subject '.devcontainer/install-mcp-servers.sh' `
+            -Subject '.devcontainer/install-mcp-servers.py' `
             -Content $installerContent `
             -Pattern $requirement.Pattern `
             -Requirement $requirement.Requirement `
@@ -2574,9 +2574,9 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
         throw 'Missing .env.example; it is the committed template for .env.local.'
     }
     foreach ($pair in @(
-            [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'install-mcp-servers\.sh'; Requirement = 'install npm MCP servers strictly at post-create' },
+            [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'python3.*install-mcp-servers\.py'; Requirement = 'install npm MCP servers strictly at post-create' },
             [pscustomobject]@{ Subject = '.devcontainer/post-create.sh'; Content = $postCreate; Pattern = 'seed-mcp-config\.sh'; Requirement = 'seed agent MCP configurations at post-create' },
-            [pscustomobject]@{ Subject = '.devcontainer/post-start.sh'; Content = $postStart; Pattern = 'install-mcp-servers\.sh" --update'; Requirement = 'refresh npm MCP servers warn-only at post-start' },
+            [pscustomobject]@{ Subject = '.devcontainer/post-start.sh'; Content = $postStart; Pattern = 'python3.*install-mcp-servers\.py" --update'; Requirement = 'refresh npm MCP servers warn-only at post-start' },
             [pscustomobject]@{ Subject = '.devcontainer/post-start.sh'; Content = $postStart; Pattern = 'seed-mcp-config\.sh" --update'; Requirement = 're-seed agent MCP configurations warn-only at post-start' }
         )) {
         Assert-TextMatches `
@@ -2763,9 +2763,9 @@ Assert-Test 'devcontainer seed-mcp-config.sh is idempotent, preserves user confi
     }
 } -Behavioral
 
-Assert-Test 'devcontainer install-mcp-servers.sh installs pinned packages hermetically without leaking secrets' {
+Assert-Test 'devcontainer install-mcp-servers.py installs pinned packages hermetically without leaking secrets' {
     $repoRoot = Split-Path -Parent $ScriptsDir
-    $installer = Join-Path $repoRoot '.devcontainer/install-mcp-servers.sh'
+    $installer = Join-Path $repoRoot '.devcontainer/install-mcp-servers.py'
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("llm-mcp-install-$([Guid]::NewGuid())")
     $fakeNpm = @'
 #!/usr/bin/env bash
@@ -2858,15 +2858,15 @@ case "${1:-}" in
     *) exit 2 ;;
 esac
 '@
-    $godotSpec = 'GODOT_MCP_NPM_SPEC:-@coding-solo/godot-mcp@'
-    $playwrightSpec = 'PLAYWRIGHT_MCP_NPM_SPEC:-@playwright/mcp@'
-    $context7Spec = 'CONTEXT7_MCP_NPM_SPEC:-@upstash/context7-mcp@'
+    $godotSpec = 'GODOT_MCP_NPM_SPEC.*@coding-solo/godot-mcp@'
+    $playwrightSpec = 'PLAYWRIGHT_MCP_NPM_SPEC.*@playwright/mcp@'
+    $context7Spec = 'CONTEXT7_MCP_NPM_SPEC.*@upstash/context7-mcp@'
     $installerContent = Get-Content -LiteralPath $installer -Raw
-    $godotVersion = [regex]::Match($installerContent, [regex]::Escape($godotSpec) + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
-    $playwrightVersion = [regex]::Match($installerContent, [regex]::Escape($playwrightSpec) + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
-    $context7Version = [regex]::Match($installerContent, [regex]::Escape($context7Spec) + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+    $godotVersion = [regex]::Match($installerContent, $godotSpec + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+    $playwrightVersion = [regex]::Match($installerContent, $playwrightSpec + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+    $context7Version = [regex]::Match($installerContent, $context7Spec + '([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
     if (-not $godotVersion -or -not $playwrightVersion -or -not $context7Version) {
-        throw 'install-mcp-servers.sh must pin all three npm specs to concrete versions.'
+        throw 'install-mcp-servers.py must pin all three npm specs to concrete versions.'
     }
     $godotPackage = '@coding-solo/godot-mcp'
     $playwrightPackage = '@playwright/mcp'
@@ -2946,7 +2946,7 @@ exit 127
                 $env:GITHUB_MCP_PAT = $canary
                 $env:CONTEXT7_API_KEY = $canary
                 $env:SF_MCP_SKIP_PLAYWRIGHT_BROWSER = '1'
-                $output = if ($case.Mode) { & bash (ConvertTo-BashPath $installer) $case.Mode 2>&1 } else { & bash (ConvertTo-BashPath $installer) 2>&1 }
+                $output = if ($case.Mode) { & bash -c 'python3 "$@"' bash (ConvertTo-BashPath $installer) $case.Mode 2>&1 } else { & bash -c 'python3 "$@"' bash (ConvertTo-BashPath $installer) 2>&1 }
                 $exit = $LASTEXITCODE
                 $outputText = $output | Out-String
                 Expect-Equal $exit $case.Exit "$($case.Name): exit code (output: $outputText)"
@@ -2989,7 +2989,7 @@ Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
     $paths = @(
         '.devcontainer/install-agent-tools.sh',
         '.devcontainer/install-godot.py',
-        '.devcontainer/install-mcp-servers.sh',
+        '.devcontainer/install-mcp-servers.py',
         '.devcontainer/seed-mcp-config.sh',
         '.devcontainer/mcp-shims/sf-github-mcp.sh',
         '.devcontainer/post-create.sh',
