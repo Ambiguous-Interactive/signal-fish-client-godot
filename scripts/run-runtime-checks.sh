@@ -582,102 +582,54 @@ run_smoke() {
 	run_godot_script tests/smoke/run_websocket_smoke.gd
 }
 
-# Agent fast loop (issue #117): check only what the dirty tree can affect.
-# Suite selection is a BFS over the runners' res:// preload strings — a
-# changed test file maps to the suites that (transitively) load it; any
-# production-side or unreferenced change falls back to the full gate, so the
-# mapping can't silently under-run. Output states exactly what ran and why.
-collect_changed_files() {
-	{
-		git diff --name-only HEAD
-		git ls-files --others --exclude-standard
-	} | sort -u
-}
-
-suite_uses_file() {
-	local runner="$1" target="$2"
-	if [[ "${runner}" == "${target}" ]]; then
-		return 0
-	fi
-	local queue=("$runner") seen=""
-	while [[ "${#queue[@]}" -gt 0 ]]; do
-		local current="${queue[0]}"
-		queue=("${queue[@]:1}")
-		case " $seen " in *" ${current} "*) continue ;; esac
-		seen+="${current} "
-		if grep -qF "res://${target}" "${current}" 2>/dev/null; then
-			return 0
-		fi
-		while IFS= read -r dep; do
-			queue+=("${dep#res://}")
-		done < <(grep -o 'res://tests/[^"]*' "${current}" 2>/dev/null || true)
-	done
-	return 1
-}
-
+# Agent fast loop (issue #117): Python selects checks from NUL-delimited Git
+# paths and the test preload graph. Bash runs the selected gates.
 run_changed() {
-	local files
-	files="$(collect_changed_files)"
-	if [[ -z "${files}" ]]; then
+	local plan
+	plan="$(mktemp)"
+	cleanup_paths+=("${plan}")
+	"${bootstrap_python}" scripts/select-runtime-checks.py >"${plan}"
+	local fields=() field
+	while IFS= read -r -d '' field; do
+		fields+=("${field}")
+	done <"${plan}"
+	local mode="${fields[0]}" docs="${fields[1]}" python="${fields[2]}" pins="${fields[3]}"
+	local suite_count="${fields[4]}" index=5 names=() static_files=()
+	local i static_count
+	for ((i = 0; i < suite_count; i++)); do
+		names+=("${fields[${index}]}")
+		index=$((index + 1))
+	done
+	static_count="${fields[${index}]}"
+	index=$((index + 1))
+	for ((i = 0; i < static_count; i++)); do
+		static_files+=("${fields[${index}]}")
+		index=$((index + 1))
+	done
+
+	if [[ "${mode}" == "clean" ]]; then
 		echo "working tree clean; nothing to check"
 		return 0
 	fi
-	local runtime_changed="" gd_suites=() md_only=1 dirty_docs=0 file
-	local python_changed=0
-	local python_only=1
-	local tool_pins_changed=0
-	while IFS= read -r file; do
-		[[ "${file}" == requirements-ci.txt ]] && tool_pins_changed=1
-		case "${file}" in
-		*.py | ruff.toml | requirements-python-quality.txt) python_changed=1 ;;
-		esac
-		case "${file}" in
-		*.py | ruff.toml | requirements-python-quality.txt | *.md | llms.txt | .markdownlint* | LICENSE) ;;
-		*) python_only=0 ;;
-		esac
-		case "${file}" in
-		# Docs-ish edits only decide WHEN the style gate runs; WHAT it
-		# scans is the checker's own scope (--changed), so this list
-		# cannot drift from CI the way the file list once did.
-		*.md | llms.txt | .markdownlint* | LICENSE)
-			dirty_docs=1
-			;;
-		*)
-			md_only=""
-			;;
-		esac
-		case "${file}" in
-		addons/* | demo/* | scripts/* | project.godot | export_presets.cfg | requirements-ci.txt | tests/fixtures/*)
-			runtime_changed="full"
-			;;
-		tests/*.gd)
-			gd_suites+=("${file}")
-			;;
-		esac
-	done <<<"${files}"
-
-	if [[ -n "${md_only}" ]]; then
+	if [[ "${mode}" == "docs" ]]; then
 		echo "=== changed: docs-only edit -> style check (runtime suites unaffected) ==="
 		"${bootstrap_python}" scripts/check-docs-style.py --changed
 		return
 	fi
-
-	# Mixed trees: runtime checks below never look at prose, so the dirty
-	# docs still get the style gate here (a sub-second scan).
-	if [[ "${dirty_docs}" -eq 1 ]]; then
+	if [[ "${docs}" == "1" ]]; then
 		"${bootstrap_python}" scripts/check-docs-style.py --changed
 	fi
-	if [[ "${python_changed}" -eq 1 && "${python_only}" -eq 1 && "${runtime_changed}" != "full" ]]; then
+	if [[ "${mode}" == "python" ]]; then
 		echo "=== changed: Python-only edit -> types, lint, format ==="
 		run_python_types
 		return
 	fi
-	if [[ "${python_changed}" -eq 1 && "${runtime_changed}" != "full" ]]; then
+	if [[ "${python}" == "1" && "${mode}" != "full" ]]; then
 		run_python_types
 	fi
 
-	if [[ "${runtime_changed}" == "full" ]]; then
-		if [[ "${tool_pins_changed}" -eq 1 ]]; then
+	if [[ "${mode}" == "full" ]]; then
+		if [[ "${pins}" == "1" ]]; then
 			echo "=== changed: tooling edit -> all suites and full static checks ==="
 		else
 			echo "=== changed: production-side edit -> all suites, static scoped to the edit ==="
@@ -686,31 +638,13 @@ run_changed() {
 		static_output="$(mktemp)"
 		cleanup_paths+=("${static_output}")
 		local python_output="" python_pid="" python_rc=0
-		if [[ "${python_changed}" -eq 1 && "${tool_pins_changed}" -eq 0 ]]; then
+		if [[ "${python}" == "1" && "${pins}" == "0" ]]; then
 			python_output="$(mktemp)"
 			cleanup_paths+=("${python_output}")
 			run_python_types >"${python_output}" 2>&1 &
 			python_pid=$!
 		fi
-		# Format/lint/private-helper checks are per-file, so scoping them to
-		# the edited files cannot miss an effect of the edit; the analyzer
-		# self-test and whole-tree sweep stay the `all`/CI/pre-push contract.
-		# Every godot suite still runs: a production file can affect any of
-		# them, so the behavioral gate never under-runs (issue #117).
-		local static_files=() gd_file
-		for gd_file in ${gd_suites[@]+"${gd_suites[@]}"}; do
-			[[ -f "${gd_file}" ]] && static_files+=("${gd_file}")
-		done
-		# Same directory scope as the gate (addons/signal_fish, tests, demo, scripts):
-		# the fast loop must never be stricter than the pre-push contract.
-		while IFS= read -r file; do
-			case "${file}" in
-			addons/signal_fish/*.gd | demo/*.gd | scripts/*.gd)
-				[[ -f "${file}" ]] && static_files+=("${file}")
-				;;
-			esac
-		done <<<"${files}"
-		if [[ "${tool_pins_changed}" -eq 1 ]]; then
+		if [[ "${pins}" == "1" ]]; then
 			run_static >"${static_output}" 2>&1 &
 		else
 			run_static_on ${static_files[@]+"${static_files[@]}"} >"${static_output}" 2>&1 &
@@ -727,40 +661,19 @@ run_changed() {
 		return
 	fi
 
-	local runner name names=()
-	for runner in \
-		"protocol tests/protocol/run_protocol_tests.gd" \
-		"transport tests/transport/run_transport_tests.gd" \
-		"client tests/client/run_client_tests.gd" \
-		"binary tests/client/run_binary_tests.gd" \
-		"reconnect tests/client/run_reconnect_tests.gd"; do
-		name="${runner%% *}"
-		runner="${runner#* }"
-		# ${gd_suites[@]+...}: possibly empty; bare expansion aborts under
-		# `set -u` on bash < 4.4 (macOS stock 3.2).
-		for file in ${gd_suites[@]+"${gd_suites[@]}"}; do
-			if suite_uses_file "${runner}" "${file}"; then
-				names+=("${name}")
-				break
-			fi
-		done
-	done
-	if [[ "${#names[@]}" -eq 0 ]]; then
-		echo "=== changed: unreferenced test file -> full gate ==="
+	if [[ "${mode}" == "unreferenced" || "${mode}" == "uncertain" ]]; then
+		if [[ "${mode}" == "uncertain" ]]; then
+			echo "=== changed: uncertain test preload -> full gate ==="
+		else
+			echo "=== changed: unreferenced test file -> full gate ==="
+		fi
 		run_static
 		run_godot
 		return
 	fi
 
 	echo "=== changed: suites ${names[*]} ==="
-	# Deleted paths still map to their suite above (the runners reference
-	# them), but the static tools cannot read a missing file.
-	local static_files=()
-	for file in ${gd_suites[@]+"${gd_suites[@]}"}; do
-		[[ -f "${file}" ]] && static_files+=("${file}")
-	done
 	local godot_rc=0 static_rc=0
-	# Same bash < 4.4 empty-array guard as above.
 	run_static_on ${static_files[@]+"${static_files[@]}"} &
 	local static_pid=$!
 	run_godot "${names[@]}" || godot_rc=$?
