@@ -421,10 +421,17 @@ def validate_auto_merge(
             for step in (as_dict(item) for item in as_list(build.get("steps")))
         }
         wait = as_dict(steps.get("Wait for validated site"))
-        wait_script = str(wait.get("run", ""))
-        for token in ("VALIDATED_RUN_ID", "EXPECTED_SHA", "gh api", "docs-validation.yml"):
-            if token not in wait_script:
-                reporter.error(f"{deploy_path}: validated site check is missing {token!r}")
+        if wait.get("run") != "python3 scripts/wait_for_docs_validation.py":
+            reporter.error(f"{deploy_path}: validated site check must use the Python validator")
+        checkout = as_dict(steps.get("Check out repository"))
+        if checkout.get("if") != "github.event_name == 'workflow_dispatch'":
+            reporter.error(f"{deploy_path}: dispatched deploy must check out the validator")
+        wait_path = repo_root / "scripts/wait_for_docs_validation.py"
+        try:
+            wait_script = wait_path.read_text(encoding="utf-8")
+            ast.parse(wait_script, filename=str(wait_path))
+        except (OSError, SyntaxError) as exc:
+            reporter.error(f"{wait_path}: Python validator failed: {exc}")
         download = as_dict(steps.get("Download validated site"))
         if "inputs.validated_run_id" not in str(as_dict(download.get("with")).get("run-id", "")):
             reporter.error(f"{deploy_path}: deploy must download the validated run artifact")

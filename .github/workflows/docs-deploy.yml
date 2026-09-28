@@ -58,7 +58,7 @@ jobs:
             actions: read
         steps:
             - name: Check out repository
-              if: github.event_name == 'workflow_dispatch' && inputs.validated_run_id == ''
+              if: github.event_name == 'workflow_dispatch'
               uses: actions/checkout@v7
 
             - name: Set up Python
@@ -90,42 +90,7 @@ jobs:
                   GH_TOKEN: ${{ github.token }}
                   VALIDATED_RUN_ID: ${{ inputs.validated_run_id }}
                   EXPECTED_SHA: ${{ inputs.expected_sha }}
-              run: |
-                  if [[ ! "$VALIDATED_RUN_ID" =~ ^[0-9]+$ ]] || [ -z "$EXPECTED_SHA" ] || [ "$GITHUB_SHA" != "$EXPECTED_SHA" ]; then
-                      echo '::error::Invalid validated run ID or commit SHA.'
-                      exit 1
-                  fi
-                  validated=0
-                  for ((attempt = 0; attempt < 150; attempt++)); do
-                      if ! run_json=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$VALIDATED_RUN_ID"); then
-                          sleep 10
-                          continue
-                      fi
-                      if ! jq -e --arg sha "$EXPECTED_SHA" --arg repo "$GITHUB_REPOSITORY" '
-                          .repository.full_name == $repo and
-                          .path == ".github/workflows/docs-validation.yml" and
-                          .event == "workflow_dispatch" and
-                          .head_branch == "main" and
-                          .head_sha == $sha
-                      ' <<< "$run_json" > /dev/null; then
-                          echo '::error::The selected run is not main Docs Validation for this commit.'
-                          exit 1
-                      fi
-                      status=$(jq -r '.status' <<< "$run_json")
-                      if [ "$status" = completed ]; then
-                          if [ "$(jq -r '.conclusion' <<< "$run_json")" != success ]; then
-                              echo '::error::Docs Validation did not succeed.'
-                              exit 1
-                          fi
-                          validated=1
-                          break
-                      fi
-                      sleep 10
-                  done
-                  if [ "$validated" -ne 1 ]; then
-                      echo '::error::Timed out waiting for Docs Validation.'
-                      exit 1
-                  fi
+              run: python3 scripts/wait_for_docs_validation.py
 
             - name: Download validated site
               if: github.event_name == 'workflow_run' || inputs.validated_run_id != ''
