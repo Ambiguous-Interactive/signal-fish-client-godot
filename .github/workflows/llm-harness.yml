@@ -62,7 +62,7 @@ jobs:
               if: steps.venv-cache.outputs.cache-hit != 'true'
               shell: bash
               run: |
-                  python3 -m pip install uv
+                  python3 -m pip install uv==0.12.19
                   python3 -m uv venv .venv-ci
                   python3 -m uv pip install --python .venv-ci/bin/python -r requirements-automation.txt
 

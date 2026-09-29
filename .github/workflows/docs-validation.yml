@@ -101,7 +101,7 @@ jobs:
                   UV_HTTP_TIMEOUT: "60"
                   UV_HTTP_RETRIES: "5"
               run: |
-                  python3 -m pip install uv
+                  python3 -m pip install uv==0.12.19
                   python3 -m uv venv .venv-docs
                   python3 -m uv pip install --python .venv-docs/bin/python -r requirements-docs.txt -r requirements-docs-accessibility.txt
 
