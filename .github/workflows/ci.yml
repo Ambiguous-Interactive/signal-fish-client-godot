@@ -92,7 +92,7 @@ jobs:
             - name: Install GDScript tooling
               if: steps.venv-cache.outputs.cache-hit != 'true'
               run: |
-                  python3 -m pip install uv
+                  python3 -m pip install uv==0.12.19
                   python3 -m uv venv .venv-ci
                   python3 -m uv pip install --python .venv-ci/bin/python -r requirements-ci.txt
 
@@ -138,7 +138,7 @@ jobs:
             - name: Install Python tooling
               if: steps.venv-cache.outputs.cache-hit != 'true'
               run: |
-                  python3 -m pip install uv
+                  python3 -m pip install uv==0.12.19
                   python3 -m uv venv .venv-ci
                   python3 -m uv pip install --python .venv-ci/bin/python -r requirements-python-quality.txt
 
