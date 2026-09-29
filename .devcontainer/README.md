@@ -113,7 +113,7 @@ Switch color themes with the `Preferences: Color Theme` command.
 - [`install-agent-tools.py`](./install-agent-tools.py) - agent CLI install/refresh
 - [`install-mcp-servers.py`](./install-mcp-servers.py) - npm MCP server install/refresh
 - [`seed-mcp-config.py`](./seed-mcp-config.py) - Codex managed block + MCP doctor
-- [`mcp-shims/sf-github-mcp.sh`](./mcp-shims/sf-github-mcp.sh) - GitHub MCP launcher shim
+- [`mcp-shims/sf-github-mcp.py`](./mcp-shims/sf-github-mcp.py) - GitHub MCP launcher shim
 - [`initialize.py`](./initialize.py) - create the local env file through Docker
 - [`post-create.py`](./post-create.py) - git hooks, tool checks, MCP config, Python dependencies
 - [`post-start.py`](./post-start.py) - offline git trust; optional maintenance

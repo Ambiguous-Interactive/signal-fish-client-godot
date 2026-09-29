@@ -232,27 +232,26 @@ function Assert-TextDoesNotMatch {
     throw "$Subject must $Requirement. Forbidden pattern: $Pattern$details"
 }
 
-function Assert-ScriptParsesWithBash {
-    # WSL's bash.exe cannot open Windows-style absolute paths, so run bash -n
-    # with the script's directory as the working directory and the bare file
-    # name. Identical behavior under Git Bash, WSL, and native Linux.
+function Assert-ScriptParsesWithPython {
+    # py_compile defaults the .pyc next to the source, which would dirty the
+    # repo, so the compile output goes to a private temp file. Skips silently
+    # when no python3 interpreter is on PATH (local Windows checkouts);
+    # CI always has one.
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$Name
     )
 
-    if (-not (Get-Command bash -ErrorAction SilentlyContinue)) { return }
-    $dir = Split-Path -Parent $Path
-    $leaf = Split-Path -Leaf $Path
-    Push-Location $dir
+    if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) { return }
+    $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("sf-parse-" + [System.IO.Path]::GetRandomFileName() + ".pyc")
     try {
-        & bash -n $leaf
+        python3 -c "import py_compile,sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)" $Path $tempFile
         if ($LASTEXITCODE -ne 0) {
-            throw "$Name failed bash -n syntax validation."
+            throw "$Name failed python syntax validation."
         }
     }
     finally {
-        Pop-Location
+        Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -2166,7 +2165,7 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     $installer = Join-Path $repoRoot '.devcontainer/install-mcp-servers.py'
     $seeder = Join-Path $repoRoot '.devcontainer/seed-mcp-config.py'
     $godotInstaller = Join-Path $repoRoot '.devcontainer/install-godot.py'
-    $shim = Join-Path $repoRoot '.devcontainer/mcp-shims/sf-github-mcp.sh'
+    $shim = Join-Path $repoRoot '.devcontainer/mcp-shims/sf-github-mcp.py'
     $dockerfile = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/Dockerfile') -Raw
     $devcontainer = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/devcontainer.json') -Raw
     $postCreate = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/post-create.py') -Raw
@@ -2176,7 +2175,7 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
         if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
             throw "Missing devcontainer MCP tooling script: $script"
         }
-        if ($script -ne $installer -and $script -ne $seeder) { Assert-ScriptParsesWithBash -Path $script -Name (Split-Path -Leaf $script) }
+        if ($script -ne $installer -and $script -ne $seeder) { Assert-ScriptParsesWithPython -Path $script -Name (Split-Path -Leaf $script) }
     }
 
     # Single source of truth for the server set: the seeder's SERVERS array.
@@ -2367,12 +2366,12 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
     $shimContent = Get-Content -LiteralPath $shim -Raw
     foreach ($requirement in @(
             [pscustomobject]@{
-                Pattern     = 'GITHUB_PERSONAL_ACCESS_TOKEN="\$\{GITHUB_PERSONAL_ACCESS_TOKEN:-\$\{GITHUB_MCP_PAT:-\}\}"'
+                Pattern     = 'or os\.environ\.get\("GITHUB_MCP_PAT"\)'
                 Requirement = 'map GITHUB_MCP_PAT onto GITHUB_PERSONAL_ACCESS_TOKEN without persisting it'
                 Diagnostic  = 'GITHUB_PERSONAL_ACCESS_TOKEN|GITHUB_MCP_PAT'
             },
             [pscustomobject]@{
-                Pattern     = 'GITHUB_READ_ONLY="\$\{GITHUB_READ_ONLY:-1\}"'
+                Pattern     = 'os\.environ\.setdefault\("GITHUB_READ_ONLY", "1"\)'
                 Requirement = 'default the GitHub MCP server to read-only'
                 Diagnostic  = 'GITHUB_READ_ONLY|read-only'
             },
@@ -2382,18 +2381,18 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
                 Diagnostic  = 'no token|GITHUB_MCP_PAT'
             },
             [pscustomobject]@{
-                Pattern     = "unexpanded variable reference"
+                Pattern     = 'unexpanded variable reference'
                 Requirement = 'reject an unexpanded variable-reference literal so a non-substituting client fails loudly instead of authenticating with garbage'
                 Diagnostic  = 'unexpanded|substitute'
             },
             [pscustomobject]@{
-                Pattern     = 'exec /usr/local/bin/github-mcp-server stdio'
+                Pattern     = 'os\.execv\(SERVER, \[SERVER, "stdio"\]\)'
                 Requirement = 'exec the official server in stdio mode'
                 Diagnostic  = 'github-mcp-server|stdio'
             }
         )) {
         Assert-TextMatches `
-            -Subject '.devcontainer/mcp-shims/sf-github-mcp.sh' `
+            -Subject '.devcontainer/mcp-shims/sf-github-mcp.py' `
             -Content $shimContent `
             -Pattern $requirement.Pattern `
             -Requirement $requirement.Requirement `
@@ -2438,7 +2437,7 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
                 Diagnostic  = 'install-godot.py|templates'
             },
             [pscustomobject]@{
-                Pattern     = 'COPY mcp-shims/sf-github-mcp\.sh /usr/local/bin/sf-github-mcp'
+                Pattern     = 'COPY mcp-shims/sf-github-mcp\.py /usr/local/bin/sf-github-mcp'
                 Requirement = 'install the GitHub MCP shim onto PATH'
                 Diagnostic  = 'sf-github-mcp|mcp-shims'
             }
@@ -2893,7 +2892,7 @@ Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
         '.devcontainer/install-godot.py',
         '.devcontainer/install-mcp-servers.py',
         '.devcontainer/seed-mcp-config.py',
-        '.devcontainer/mcp-shims/sf-github-mcp.sh',
+        '.devcontainer/mcp-shims/sf-github-mcp.py',
         '.devcontainer/post-create.py',
         '.devcontainer/post-start.py'
     )
