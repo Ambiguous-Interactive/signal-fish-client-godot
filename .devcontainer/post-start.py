@@ -14,6 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 VENV = ROOT / ".venv-ci"
 
 
+def configure_path() -> None:
+    home = str(Path.home())
+    os.environ["PATH"] = f"/usr/local/bin:{home}/.local/bin:{os.environ.get('PATH', '')}"
+
+
 def run(*command: str, env: dict[str, str] | None = None, quiet: bool = False) -> bool:
     try:
         result = subprocess.run(  # noqa: S603
@@ -124,6 +129,7 @@ def ensure_venv() -> None:
 
 
 def main() -> int:
+    configure_path()
     if os.environ.get("SF_DEVCONTAINER_SKIP_TOOL_UPDATES") != "1":
         try_update(
             "Checking agent CLI versions (best-effort refresh)",

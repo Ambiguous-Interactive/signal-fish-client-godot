@@ -73,18 +73,22 @@ class Portability(unittest.TestCase):
             (profile_dir / "profile.ps1").symlink_to(original)
             with (
                 patch.object(module, "run", side_effect=fake_run),
+                patch.object(module, "ensure_safe_directory") as trust,
                 patch.object(module, "ensure_writable_dir", side_effect=fake_writable),
                 patch.object(module, "toolchain_summary"),
                 patch.object(module.shutil, "which", return_value="/usr/bin/tool"),
                 patch.object(module.Path, "home", return_value=home),
+                patch.dict(os.environ),
             ):
                 self.assertEqual(module.main(), 0)
+                self.assertTrue(os.environ["PATH"].startswith(f"/usr/local/bin:{home}/.local/bin:"))
             self.assertEqual(
                 (profile_dir / "profile.ps1").read_bytes(),
                 (ROOT / "pwsh-profile.ps1").read_bytes(),
             )
             self.assertFalse((profile_dir / "profile.ps1").is_symlink())
             self.assertEqual(original.read_text(encoding="utf-8"), "user content\n")
+        trust.assert_called_once_with()
         commands = [args for args, _ in calls]
         self.assertIn(
             ("pwsh", "-NoProfile", "-File", "scripts/install-git-hooks.ps1", "-Force"), commands
@@ -98,6 +102,30 @@ class Portability(unittest.TestCase):
         if maintenance is None:
             self.fail("post-start did not receive its environment")
         self.assertEqual(maintenance["SF_DEVCONTAINER_SKIP_TOOL_UPDATES"], "1")
+
+    def test_post_create_git_trust_is_idempotent(self) -> None:
+        spec = importlib.util.spec_from_file_location("post_create", ROOT / "post-create.py")
+        if spec is None or spec.loader is None:
+            self.fail("post-create.py could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory(prefix="sf git trust ") as folder:
+            workspace = Path(folder) / "workspace with spaces"
+            workspace.mkdir()
+            config_path = Path(folder) / "gitconfig"
+            with (
+                patch.object(module, "ROOT", workspace),
+                patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(config_path)}),
+            ):
+                module.ensure_safe_directory()
+                module.ensure_safe_directory()
+            result = subprocess.run(
+                ("git", "config", "--file", str(config_path), "--get-all", "safe.directory"),  # noqa: S607
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(result.stdout.splitlines(), [str(workspace)])
 
     def test_host_requires_only_docker(self) -> None:
         command = config()["initializeCommand"]

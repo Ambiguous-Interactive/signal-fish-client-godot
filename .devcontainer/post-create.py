@@ -14,6 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTAINER = ROOT / ".devcontainer"
 
 
+def configure_path() -> None:
+    home = str(Path.home())
+    os.environ["PATH"] = f"/usr/local/bin:{home}/.local/bin:{os.environ.get('PATH', '')}"
+
+
 def run(*command: str, check: bool = True, env: dict[str, str] | None = None) -> bool:
     try:
         result = subprocess.run(command, cwd=ROOT, env=env, check=False)  # noqa: S603
@@ -24,6 +29,22 @@ def run(*command: str, check: bool = True, env: dict[str, str] | None = None) ->
     if check and result.returncode != 0:
         raise RuntimeError(f"{command[0]} failed (exit {result.returncode})")
     return result.returncode == 0
+
+
+def ensure_safe_directory() -> None:
+    try:
+        result = subprocess.run(
+            ("git", "config", "--global", "--get-all", "safe.directory"),  # noqa: S607
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return
+    if result.returncode == 0 and str(ROOT) in result.stdout.splitlines():
+        return
+    run("git", "config", "--global", "--add", "safe.directory", str(ROOT), check=False)
 
 
 def ensure_writable_dir(path: Path) -> None:
@@ -81,8 +102,9 @@ def toolchain_summary() -> None:
 
 
 def main() -> int:
+    configure_path()
     print("==> Configuring git safe.directory", flush=True)
-    run("git", "config", "--global", "--add", "safe.directory", str(ROOT), check=False)
+    ensure_safe_directory()
 
     print("==> Preparing writable mounted directories", flush=True)
     ensure_writable_dir(Path("/commandhistory"))
