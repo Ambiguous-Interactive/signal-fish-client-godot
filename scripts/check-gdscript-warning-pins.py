@@ -8,6 +8,8 @@ failure modes this check catches:
 
 - An engine registers a warning class that project.godot does not pin, so the
   untyped-code hole silently reopens at that engine's default severity.
+- A pin's level drifts off the documented invariant (error level, except the
+  two classes that must stay ignorable), so a downgrade silently weakens CI.
 - project.godot pins a key no matrix engine knows (typo or dead key), so the
   pin looks enforced while every engine ignores it.
 
@@ -34,13 +36,16 @@ CI_WORKFLOW = Path(".github/workflows/ci.yml")
 # kickoff trips it, and the rationale lives in project.godot.
 EXEMPT_WARNINGS = frozenset({"missing_await"})
 
-PIN_LINE = re.compile(r"^gdscript/warnings/([a-z0-9_]+)=\d+$")
-MATRIX_LINE = re.compile(r"godot:\s*\[([^\]]*)\]")
+# The two pins the project comment deliberately keeps at ignore level.
+KNOWN_IGNORED = frozenset({"inferred_declaration", "return_value_discarded"})
+
+PIN_LINE = re.compile(r"^gdscript/warnings/([a-z0-9_]+)=(\d+)$")
+MATRIX_LINE = re.compile(r"^\s*godot:\s*\[([^\]]*)\]$")
 VERSIONS = re.compile(r'"([^"]+)"')
 
 
-def parse_pins(text: str) -> set[str]:
-    pins: set[str] = set()
+def parse_pins(text: str) -> dict[str, int]:
+    pins: dict[str, int] = {}
     section = ""
     for line in text.splitlines():
         stripped = line.strip()
@@ -51,7 +56,7 @@ def parse_pins(text: str) -> set[str]:
             continue
         match = PIN_LINE.match(stripped)
         if match:
-            pins.add(match.group(1))
+            pins[match.group(1)] = int(match.group(2))
     return pins
 
 
@@ -63,7 +68,9 @@ def parse_matrix_versions(text: str) -> list[str]:
     return []
 
 
-def find_failures(versions: list[str], engines: dict[str, list[str]], pins: set[str]) -> list[str]:
+def find_failures(
+    versions: list[str], engines: dict[str, list[str]], pins: dict[str, int]
+) -> list[str]:
     failures: list[str] = []
     for version in versions:
         if version not in engines:
@@ -72,15 +79,28 @@ def find_failures(versions: list[str], engines: dict[str, list[str]], pins: set[
                 "capture its GDScriptWarning::Code list from the upstream tag."
             )
             continue
-        unpinned = sorted(set(engines[version]) - pins - EXEMPT_WARNINGS)
+        unpinned = sorted(set(engines[version]) - set(pins) - EXEMPT_WARNINGS)
         if unpinned:
             failures.append(
                 f"{version} registers warning classes project.godot does not pin "
                 f"(add gdscript/warnings/<name>=2 under [debug] or extend the "
                 f"documented exemptions): {', '.join(unpinned)}"
             )
+    for name in sorted(set(pins) - KNOWN_IGNORED):
+        if pins[name] != 2:
+            failures.append(
+                f"gdscript/warnings/{name}={pins[name]} in project.godot; the "
+                f"documented invariant is error level 2 (only "
+                f"{', '.join(sorted(KNOWN_IGNORED))} may be 0)."
+            )
+    for name in sorted(KNOWN_IGNORED & set(pins)):
+        if pins[name] != 0:
+            failures.append(
+                f"gdscript/warnings/{name}={pins[name]} in project.godot; the "
+                "project comment keeps this class ignorable, so it must stay 0."
+            )
     known = {code for codes in engines.values() for code in codes}
-    dead = sorted(pins - known)
+    dead = sorted(set(pins) - known)
     if dead:
         failures.append(
             f"project.godot pins warning classes no matrix engine registers "
@@ -105,7 +125,10 @@ def run_check(root: Path) -> int:
         for version, entry in fixtures["engines"].items()
     }
     if not versions:
-        print(f"error: no Godot matrix found in {CI_WORKFLOW}", file=sys.stderr)
+        print(
+            f"error: no single-line double-quoted godot: [...] matrix in {CI_WORKFLOW}",
+            file=sys.stderr,
+        )
         return 2
     failures = find_failures(versions, engines, pins)
     for failure in failures:
@@ -125,18 +148,23 @@ def self_test() -> int:
         "2.0-stable": ["alpha", "gamma"],
     }
     versions = ["1.0-stable", "2.0-stable"]
-    cases: list[tuple[set[str], list[str]]] = [
-        ({"alpha", "beta", "gamma"}, []),
+    cases: list[tuple[dict[str, int], list[str]]] = [
+        ({"alpha": 2, "beta": 2, "gamma": 2}, []),
         (
-            {"alpha", "beta"},
+            {"alpha": 2, "beta": 2},
             [
                 "2.0-stable registers warning classes project.godot "
                 "does not pin (add gdscript/warnings/<name>=2 under "
                 "[debug] or extend the documented exemptions): gamma"
             ],
         ),
-        ({"alpha", "beta", "gamma", "delta"}, ["project.godot pins warning classes"]),
-        (set(), ["1.0-stable registers warning classes", "2.0-stable registers warning classes"]),
+        ({"alpha": 2, "beta": 2, "gamma": 2, "delta": 2}, ["project.godot pins warning classes"]),
+        (
+            {},
+            ["1.0-stable registers warning classes", "2.0-stable registers warning classes"],
+        ),
+        ({"alpha": 1, "beta": 2, "gamma": 2}, ["gdscript/warnings/alpha=1"]),
+        ({"alpha": 2, "beta": 0, "gamma": 2}, ["gdscript/warnings/beta=0"]),
     ]
     for index, (pins, expected_fragments) in enumerate(cases):
         failures = find_failures(versions, engines, pins)
@@ -154,9 +182,13 @@ def self_test() -> int:
                     file=sys.stderr,
                 )
                 return 1
-    exempt = find_failures(["1.0-stable"], {"1.0-stable": ["missing_await"]}, set())
+    exempt = find_failures(["1.0-stable"], {"1.0-stable": ["missing_await"]}, {})
     if exempt:
         print(f"self-test: exemption not honored: {exempt}", file=sys.stderr)
+        return 1
+    missing = find_failures(["9.9-stable"], {"1.0-stable": ["alpha"]}, {"alpha": 2})
+    if len(missing) != 1 or "has no entry in" not in missing[0]:
+        print(f"self-test: missing fixture entry not reported: {missing}", file=sys.stderr)
         return 1
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -167,10 +199,10 @@ def self_test() -> int:
         )
         other = tmp_path / "other.godot"
         other.write_text("[rendering]\ngdscript/warnings/gamma=2\n", encoding="utf-8")
-        if parse_pins(project.read_text(encoding="utf-8")) != {"alpha", "beta"}:
-            print("self-test: pin parser missed [debug] keys", file=sys.stderr)
+        if parse_pins(project.read_text(encoding="utf-8")) != {"alpha": 2, "beta": 0}:
+            print("self-test: pin parser missed [debug] keys or levels", file=sys.stderr)
             return 1
-        if parse_pins(other.read_text(encoding="utf-8")) != set():
+        if parse_pins(other.read_text(encoding="utf-8")) != {}:
             print("self-test: pin parser read a non-[debug] section", file=sys.stderr)
             return 1
         workflow = tmp_path / "ci.yml"
@@ -180,6 +212,14 @@ def self_test() -> int:
         )
         if parse_matrix_versions(workflow.read_text(encoding="utf-8")) != versions:
             print("self-test: matrix parser returned wrong versions", file=sys.stderr)
+            return 1
+        workflow.write_text(
+            '                # godot: ["9.9-stable"]\n'
+            '                other-godot: ["8.8-stable"]\n',
+            encoding="utf-8",
+        )
+        if parse_matrix_versions(workflow.read_text(encoding="utf-8")) != []:
+            print("self-test: matrix parser matched a comment or suffix key", file=sys.stderr)
             return 1
     return 0
 
