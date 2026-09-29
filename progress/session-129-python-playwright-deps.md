@@ -2,6 +2,7 @@
 
 Branch: `codex/session-129-python-playwright-deps` from `origin/main` at
 `68ccc2f`.
+PR: #251.
 
 - Moved shared Chromium system dependency setup into Python for #168.
 - Used Playwright's own apt simulation result to skip installs when the runner
