@@ -27,10 +27,12 @@ def main() -> int:
     parser.add_argument(
         "--tool-dir",
         type=Path,
-        default=Path(os.environ.get("RUNNER_TEMP", ".")),
+        default=Path(os.environ["RUNNER_TEMP"]) if "RUNNER_TEMP" in os.environ else None,
         help="Directory receiving the pinned shfmt and shellcheck binaries",
     )
     args = parser.parse_args()
+    if args.tool_dir is None:
+        parser.error("--tool-dir is required when RUNNER_TEMP is unset")
     try:
         run(("npm", "ci", "--ignore-scripts"))
         run(

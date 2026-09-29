@@ -39,7 +39,7 @@ def main() -> int:
             missing.append("uv")
     python = VENV / "bin" / "python"
     if not python.is_file():
-        missing.append(".venv-ci python")
+        missing.extend((".venv-ci python", "gdformat", "ruff"))
     else:
         for label, command in (
             ("venv Python", (str(python), "-c", "import yaml")),
