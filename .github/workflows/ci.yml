@@ -106,6 +106,8 @@ jobs:
 
             - name: Release preparation self-test
               run: python3 scripts/prepare-release.py --self-test
+            - name: Test release workflow
+              run: python3 scripts/release_workflow.py self-test
 
     python-types:
         name: Python types

@@ -32,11 +32,7 @@ jobs:
 
             - name: Verify tag commit is on main
               if: github.event_name == 'push'
-              run: |
-                  if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-                      echo "::error::release tags must point to a commit on main"
-                      exit 1
-                  fi
+              run: python3 scripts/release_workflow.py check-main
 
             - name: Check Asset Library download
               run: python3 scripts/check-asset-archive.py --repo-root .
@@ -48,35 +44,12 @@ jobs:
 
             - name: Guard against an existing tag
               if: github.event_name == 'workflow_dispatch'
-              env:
-                  GH_TOKEN: ${{ github.token }}
-              run: |
-                  set +e
-                  git ls-remote --exit-code --tags origin "refs/tags/$VERSION" 2>/dev/null
-                  status=$?
-                  set -e
-                  if [ "$status" -eq 0 ]; then
-                      echo "::error::tag $VERSION already exists; pick the next version"
-                      exit 1
-                  elif [ "$status" -ne 2 ]; then
-                      echo "::error::could not query tags (git ls-remote exit $status)"
-                      exit 1
-                  fi
+              run: python3 scripts/release_workflow.py check-new-tag
 
             - name: Create tag and release
               env:
                   GH_TOKEN: ${{ github.token }}
-              run: |
-                  tag_args=(--target "$GITHUB_SHA")
-                  if [ "$GITHUB_EVENT_NAME" = push ]; then
-                      tag_args=(--verify-tag)
-                  fi
-                  gh release create "$VERSION" \
-                      --repo "$GITHUB_REPOSITORY" \
-                      "${tag_args[@]}" \
-                      --title "$VERSION" \
-                      --notes-file release-notes.md \
-                      "signal-fish-godot-${VERSION}.zip"
+              run: python3 scripts/release_workflow.py publish
 
     publish-asset-store:
         name: Submit Asset Library edit
@@ -96,18 +69,7 @@ jobs:
                   ASSET_PASSWORD: ${{ secrets.GODOT_ASSET_LIBRARY_PASSWORD }}
                   ASSET_ID: ${{ vars.GODOT_ASSET_LIBRARY_ASSET_ID }}
                   VERSION: ${{ inputs.version || github.ref_name }}
-              run: |
-                  if [ -z "$ASSET_USERNAME" ] || [ -z "$ASSET_PASSWORD" ] || [ -z "$ASSET_ID" ]; then
-                      echo "Asset Library credentials not configured; skipping the store submission (see .llm/skills/asset-library-release.md)."
-                      echo "available=false" >> "$GITHUB_OUTPUT"
-                      exit 0
-                  fi
-                  if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                      echo "::error::version must be a single vMAJOR.MINOR.PATCH token (e.g. v0.1.0)"
-                      exit 1
-                  fi
-                  echo "available=true" >> "$GITHUB_OUTPUT"
-                  echo "RELEASE_VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+              run: python3 scripts/release_workflow.py asset-gate
 
             - name: Submit Asset Library edit
               if: steps.gate.outputs.available == 'true'
