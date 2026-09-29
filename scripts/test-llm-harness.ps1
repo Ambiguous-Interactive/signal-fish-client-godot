@@ -243,9 +243,14 @@ function Assert-ScriptParsesWithPython {
     )
 
     if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) { return }
+    # The Windows Store "python3" alias is a stub that exits 9009 without
+    # running Python; probe once and skip when the interpreter is not real.
+    $python = (Get-Command python3 -ErrorAction SilentlyContinue).Source
+    & $python -c "pass" 2>$null
+    if ($LASTEXITCODE -ne 0) { return }
     $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("sf-parse-" + [System.IO.Path]::GetRandomFileName() + ".pyc")
     try {
-        python3 -c "import py_compile,sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)" $Path $tempFile
+        & $python -c "import py_compile,sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)" $Path $tempFile
         if ($LASTEXITCODE -ne 0) {
             throw "$Name failed python syntax validation."
         }

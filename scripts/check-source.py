@@ -30,9 +30,8 @@ def tracked(*patterns: str) -> list[str]:
     return [os.fsdecode(path) for path in output.split(b"\0") if path]
 
 
-def tool(name: str, env_name: str | None = None) -> str:
-    candidate = os.environ.get(env_name, name) if env_name else name
-    found = shutil.which(candidate)
+def tool(name: str) -> str:
+    found = shutil.which(name)
     if found is None:
         raise RuntimeError(f"{name} is required.")
     return found

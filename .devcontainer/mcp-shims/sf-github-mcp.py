@@ -36,8 +36,12 @@ def main() -> None:
         )
     os.environ["GITHUB_PERSONAL_ACCESS_TOKEN"] = token
     # Read-only by default; opt out with GITHUB_READ_ONLY=0 in .env.local.
-    os.environ.setdefault("GITHUB_READ_ONLY", "1")
-    os.execv(SERVER, [SERVER, "stdio"])  # noqa: S606
+    if not os.environ.get("GITHUB_READ_ONLY"):
+        os.environ["GITHUB_READ_ONLY"] = "1"
+    try:
+        os.execv(SERVER, [SERVER, "stdio"])  # noqa: S606
+    except OSError as error:
+        fail(f"cannot exec {SERVER}: {error}")
 
 
 if __name__ == "__main__":
