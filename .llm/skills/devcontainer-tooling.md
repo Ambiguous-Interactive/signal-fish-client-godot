@@ -60,11 +60,11 @@ setup.
   the Dockerfile removes that hook first; the other mounts have no such
   in-image cleanup.
 - The create-time env guard (`initializeCommand` in `devcontainer.json` +
-  `.devcontainer/initialize.sh`) materializes `.env.local` from
+  `.devcontainer/initialize.py`) materializes `.env.local` from
   `.env.example` on a fresh clone (docker `--env-file` fails the create when
   the file is absent); it never overwrites an existing file. The guard runs
-  through Docker's own shell, so the host needs only Docker - no host `sh`
-  or pwsh (the previous host-shell guard could block create on Windows).
+  inside Docker, so the host needs only Docker - no host Python, `sh`, or
+  pwsh (the previous host-shell guard could block create on Windows).
   Ownership matching on the created file is best-effort: some bind mounts
   reject `chown`, and create must not fail for a cosmetic fix.
 - The installer installs each package with its own `npm install --global`

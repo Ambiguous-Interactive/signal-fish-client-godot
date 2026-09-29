@@ -211,16 +211,63 @@ class Portability(unittest.TestCase):
                 self.assertIn(message, result.stderr)
             self.assertIn("Container ready.", result.stdout)
 
+    def test_env_guard(self) -> None:
+        spec = importlib.util.spec_from_file_location("initialize", ROOT / "initialize.py")
+        if spec is None or spec.loader is None:
+            self.fail("initialize.py could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as folder:
+            workspace = Path(folder)
+            target = workspace / ".env.local"
+            self.assertEqual(module.initialize(workspace), 1)
+            self.assertFalse(target.exists())
+
+            source = workspace / ".env.example"
+            source.write_bytes(b"SF_TEST=placeholder\r\n")
+            self.assertEqual(module.initialize(workspace), 0)
+            self.assertEqual(target.read_bytes(), source.read_bytes())
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
+            target.write_bytes(b"SF_TEST=preserve-canary\n")
+            self.assertEqual(module.initialize(workspace), 0)
+            self.assertEqual(target.read_bytes(), b"SF_TEST=preserve-canary\n")
+            target.unlink()
+            target.mkdir()
+            self.assertEqual(module.initialize(workspace), 1)
+
     def test_env_guard_chown_is_best_effort(self) -> None:
-        # Some bind mounts reject ownership changes; create must survive
-        # that (Bugbot on PR #159). Static pin for the source of the
-        # docker-level behavior test below: the guard must attempt to
-        # keep the file readable and warn on the degraded path.
-        script = (ROOT / "initialize.sh").read_text(encoding="utf-8")
-        chown = script.index("chown --reference=")
-        window = script[chown : script.index("Created .env.local", chown)]
-        self.assertIn("chmod a+r", window)
-        self.assertIn("WARN", window)
+        spec = importlib.util.spec_from_file_location("initialize", ROOT / "initialize.py")
+        if spec is None or spec.loader is None:
+            self.fail("initialize.py could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as folder:
+            workspace = Path(folder)
+            (workspace / ".env.example").write_bytes(b"SF_TEST=placeholder\n")
+            with patch.object(module.os, "chown", side_effect=PermissionError):
+                self.assertEqual(module.initialize(workspace), 0)
+            target = workspace / ".env.local"
+            self.assertEqual(target.stat().st_mode & 0o444, 0o444)
+
+    def test_env_guard_keeps_concurrent_file(self) -> None:
+        spec = importlib.util.spec_from_file_location("initialize", ROOT / "initialize.py")
+        if spec is None or spec.loader is None:
+            self.fail("initialize.py could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as folder:
+            workspace = Path(folder)
+            (workspace / ".env.example").write_bytes(b"SF_TEST=template\n")
+            concurrent = b"SF_TEST=other-window\n"
+
+            def concurrent_create(*_args: object) -> int:
+                (workspace / ".env.local").write_bytes(concurrent)
+                raise FileExistsError
+
+            with patch.object(module.os, "open", side_effect=concurrent_create):
+                self.assertEqual(module.initialize(workspace), 0)
+            self.assertEqual((workspace / ".env.local").read_bytes(), concurrent)
 
 
 @unittest.skipUnless(os.environ.get("SF_TEST_DOCKER") == "1", "set SF_TEST_DOCKER=1")
@@ -230,7 +277,7 @@ class DockerBehavior(unittest.TestCase):
             workspace = Path(folder)
             scripts = workspace / ".devcontainer"
             scripts.mkdir()
-            for name in ("initialize.sh", "post-start.sh", "post-start.py"):
+            for name in ("initialize.py", "post-start.sh", "post-start.py"):
                 shutil.copyfile(ROOT / name, scripts / name)
             command = [
                 arg.replace("${localWorkspaceFolder}", folder)
@@ -248,7 +295,11 @@ class DockerBehavior(unittest.TestCase):
             result = subprocess.run(command, check=True, capture_output=True, timeout=60)
             self.assertEqual((workspace / ".env.local").read_bytes(), existing)
             self.assertNotIn(b"preserve-canary", result.stdout + result.stderr)
-            command[-1] = ".devcontainer/post-start.sh"
+            command[-3:] = [
+                "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+                "bash",
+                ".devcontainer/post-start.sh",
+            ]
             started = time.monotonic()
             result = subprocess.run(command, check=True, capture_output=True, timeout=15)
             self.assertIn(b"Container ready", result.stdout)
@@ -261,28 +312,24 @@ class DockerBehavior(unittest.TestCase):
             workspace = Path(folder)
             scripts = workspace / ".devcontainer"
             scripts.mkdir()
-            shutil.copyfile(ROOT / "initialize.sh", scripts / "initialize.sh")
+            shutil.copyfile(ROOT / "initialize.py", scripts / "initialize.py")
             example = b"SF_TEST=placeholder\n"
             (workspace / ".env.example").write_bytes(example)
             command = [
                 arg.replace("${localWorkspaceFolder}", folder)
                 for arg in config()["initializeCommand"]
             ]
-            image = next(
-                i
-                for i, arg in enumerate(command)
-                if arg.startswith("mcr.microsoft.com/devcontainers/")
-            )
+            image = command.index("python:3.12-slim-bookworm")
             shim = (
-                'mkdir -p /tmp/shim && printf "#!/bin/sh\\nexit 1\\n" > /tmp/shim/chown '
-                "&& chmod +x /tmp/shim/chown "
-                '&& PATH="/tmp/shim:$PATH" bash .devcontainer/initialize.sh '
-                "&& cat .env.local"
+                "import runpy\n"
+                "from unittest.mock import patch\n"
+                "with patch('os.chown', side_effect=PermissionError):\n"
+                "    runpy.run_path('.devcontainer/initialize.py', run_name='__main__')\n"
             )
-            shimmed = [*command[: image + 1], "bash", "-c", shim]
+            shimmed = [*command[: image + 1], "python3", "-c", shim]
             result = subprocess.run(shimmed, capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("SF_TEST=placeholder", result.stdout)
+            self.assertEqual((workspace / ".env.local").read_bytes(), example)
             self.assertIn("WARN", result.stderr)
             # Content is read inside the container: with chown refused the
             # file is deliberately root-owned, and the degraded path keeps
