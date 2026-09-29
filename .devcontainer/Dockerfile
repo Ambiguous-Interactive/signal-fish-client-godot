@@ -103,7 +103,7 @@ RUN --mount=type=cache,target=/var/cache/godot-editor,sharing=locked \
     python3 /usr/local/bin/install-godot.py editor "${GODOT_VERSION}" /var/cache/godot-editor
 
 # Ubuntu's Python enforces PEP 668 (EXTERNALLY-MANAGED), which blocks the
-# user-site installs that post-start.sh uses to heal the local automation
+# user-site installs that post-start.py uses to heal the local automation
 # gates. CI runner images ship their Python globally without that marker, so
 # this keeps the local gate on the same install path as CI.
 RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf

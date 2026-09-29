@@ -2090,10 +2090,6 @@ Assert-Test 'devcontainer post-create delegates to Python and checks required to
 
 Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attach' {
     $repoRoot = Split-Path -Parent $ScriptsDir
-    $postStart = Join-Path $repoRoot '.devcontainer/post-start.sh'
-    if (-not (Test-Path -LiteralPath $postStart -PathType Leaf)) {
-        throw 'Missing .devcontainer/post-start.sh'
-    }
     $postStartPython = Join-Path $repoRoot '.devcontainer/post-start.py'
     if (-not (Test-Path -LiteralPath $postStartPython -PathType Leaf)) {
         throw 'Missing .devcontainer/post-start.py'
@@ -2155,25 +2151,23 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
     Assert-TextMatches `
         -Subject '.devcontainer/devcontainer.json' `
         -Content $devcontainer `
-        -Pattern 'bash \.devcontainer/post-start\.sh' `
-        -Requirement 'run post-start.sh as the postStartCommand' `
+        -Pattern 'python3 \.devcontainer/post-start\.py' `
+        -Requirement 'run post-start.py as the postStartCommand' `
         -DiagnosticPattern 'postStartCommand|post-start'
 
     Assert-TextMatches `
-        -Subject '.devcontainer/post-start.sh' `
-        -Content (Get-Content -LiteralPath $postStart -Raw) `
+        -Subject '.devcontainer/post-start.py' `
+        -Content $content `
         -Pattern 'safe\.directory' `
         -Requirement 'keep the workspace trusted for git on every start' `
         -DiagnosticPattern 'safe.directory|git config'
 
     Assert-TextMatches `
-        -Subject '.devcontainer/post-start.sh' `
-        -Content (Get-Content -LiteralPath $postStart -Raw) `
-        -Pattern 'exec python3 .*post-start\.py' `
-        -Requirement 'delegate optional maintenance to Python' `
-        -DiagnosticPattern 'post-start.py|exec python3'
-
-    Assert-ScriptParsesWithBash -Path $postStart -Name 'post-start.sh'
+        -Subject '.devcontainer/post-start.py' `
+        -Content $content `
+        -Pattern 'SF_DEVCONTAINER_MAINTENANCE' `
+        -Requirement 'run optional maintenance only when requested' `
+        -DiagnosticPattern 'SF_DEVCONTAINER_MAINTENANCE|post-start'
 }
 
 Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired' {
@@ -2912,7 +2906,6 @@ Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
         '.devcontainer/mcp-shims/sf-github-mcp.sh',
         '.devcontainer/post-create.sh',
         '.devcontainer/post-create.py',
-        '.devcontainer/post-start.sh',
         '.devcontainer/post-start.py'
     )
     foreach ($rel in $paths) {

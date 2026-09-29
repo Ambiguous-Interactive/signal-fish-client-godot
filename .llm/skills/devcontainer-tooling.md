@@ -40,8 +40,8 @@ setup.
 - `post-create.py` re-runs the installer in `--verify` mode and fails
   post-create when any of the four binaries is missing or broken; all four
   versions appear in the toolchain summary.
-- `post-start.sh` re-applies git `safe.directory` trust on every start and
-  starts `post-start.py` only for explicit maintenance. Python re-runs the
+- `post-start.py` re-applies git `safe.directory` trust on every start and
+  runs optional maintenance only when requested. Python re-runs the
   installer with `--update`
   (warn-only), and heals the Python automation deps so the local gate matches
   CI: PyYAML is installed into user site-packages when bare `python3` cannot
