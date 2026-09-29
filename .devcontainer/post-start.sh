@@ -2,8 +2,6 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-export PATH="/usr/local/bin:${HOME}/.local/bin:${PATH}"
-
 echo "==> Configuring git safe.directory"
 if git config --global --get-all safe.directory 2>/dev/null | grep -qxF "${repo_root}"; then
     :
