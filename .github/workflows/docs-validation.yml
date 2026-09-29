@@ -143,6 +143,8 @@ jobs:
             # workflows cannot drift.
             - name: Set up Playwright Chromium
               uses: ./.github/actions/playwright-chromium
+              with:
+                  python-path: .venv-docs/bin/python
 
             - name: Test accessibility cleanup
               run: .venv-docs/bin/python -m unittest discover -s tests -p test_docs_accessibility_cleanup.py

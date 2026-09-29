@@ -60,12 +60,6 @@ jobs:
                       -subj "/CN=localhost" \
                       -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
-            # Shared, cached Playwright + Chromium setup (issue #137). The
-            # composite action sets the browser version for both workflows.
-            - name: Set up Playwright Chromium
-              id: playwright
-              uses: ./.github/actions/playwright-chromium
-
             - name: Set up Python
               uses: actions/setup-python@v7
               with:
@@ -76,7 +70,12 @@ jobs:
                   python3 -m pip install uv
                   python3 -m uv venv .venv-web-smoke
                   python3 -m uv pip install --python .venv-web-smoke/bin/python \
-                      "playwright==${{ steps.playwright.outputs.playwright-version }}"
+                      -r requirements-docs-accessibility.txt
+
+            - name: Set up Playwright Chromium
+              uses: ./.github/actions/playwright-chromium
+              with:
+                  python-path: .venv-web-smoke/bin/python
 
             - name: Browser-export checklist
               run: |

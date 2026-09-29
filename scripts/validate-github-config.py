@@ -666,6 +666,37 @@ def playwright_pin_error(action_text: str, quality_text: str, docs_text: str) ->
     return ""
 
 
+def playwright_consumer_errors(workflows: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    for name, job, python_path in (
+        ("docs-validation.yml", "accessibility", ".venv-docs/bin/python"),
+        ("web-export-smoke.yml", "web-export", ".venv-web-smoke/bin/python"),
+    ):
+        steps = as_list(
+            as_dict(as_dict(as_dict(workflows.get(name)).get("jobs")).get(job)).get("steps")
+        )
+        action_index = next(
+            (
+                index
+                for index, step in enumerate(steps)
+                if as_dict(step).get("uses") == "./.github/actions/playwright-chromium"
+            ),
+            None,
+        )
+        if action_index is None:
+            errors.append(f"{name}: missing shared Playwright Chromium action")
+            continue
+        action = as_dict(steps[action_index])
+        if as_dict(action.get("with")).get("python-path") != python_path:
+            errors.append(f"{name}: Playwright action must use {python_path}")
+        if not any(
+            "requirements-docs-accessibility.txt" in str(as_dict(step).get("run", ""))
+            for step in steps[:action_index]
+        ):
+            errors.append(f"{name}: install Python Playwright before the browser action")
+    return errors
+
+
 def validate_playwright_pin(repo_root: Path, reporter: Reporter) -> None:
     action = repo_root / ".github/actions/playwright-chromium/action.yml"
     quality = repo_root / "requirements-python-quality.txt"
@@ -680,6 +711,15 @@ def validate_playwright_pin(repo_root: Path, reporter: Reporter) -> None:
         reporter.error(f"Playwright pin check failed: {exc}")
         return
     if error:
+        reporter.error(error)
+    workflows = {}
+    for name in ("docs-validation.yml", "web-export-smoke.yml"):
+        try:
+            workflows[name] = load_yaml(repo_root / ".github/workflows" / name)
+        except (OSError, ConfigError) as exc:
+            reporter.error(f"Playwright workflow check failed: {exc}")
+            return
+    for error in playwright_consumer_errors(workflows):
         reporter.error(error)
 
 
@@ -948,6 +988,46 @@ updates:
             action_pin, python_pin, python_pin.replace("1.61.0", "1.60.0")
         ):
             reporter.error("self-test: docs Playwright pin drift was not rejected")
+        consumers: dict[str, object] = {}
+        for name, job, python_path in (
+            ("docs-validation.yml", "accessibility", ".venv-docs/bin/python"),
+            ("web-export-smoke.yml", "web-export", ".venv-web-smoke/bin/python"),
+        ):
+            consumers[name] = {
+                "jobs": {
+                    job: {
+                        "steps": [
+                            {"run": "uv pip install -r requirements-docs-accessibility.txt"},
+                            {
+                                "uses": "./.github/actions/playwright-chromium",
+                                "with": {"python-path": python_path},
+                            },
+                        ]
+                    }
+                }
+            }
+        if playwright_consumer_errors(consumers):
+            reporter.error("self-test: ordered Python Playwright setup was rejected")
+        early_action = {
+            "jobs": {
+                "web-export": {
+                    "steps": [
+                        {
+                            "uses": "./.github/actions/playwright-chromium",
+                            "with": {"python-path": ".venv-web-smoke/bin/python"},
+                        },
+                        {"run": "uv pip install -r requirements-docs-accessibility.txt"},
+                    ]
+                }
+            }
+        }
+        if not any(
+            "before the browser action" in error
+            for error in playwright_consumer_errors(
+                {**consumers, "web-export-smoke.yml": early_action}
+            )
+        ):
+            reporter.error("self-test: early Playwright action was not rejected")
 
         shebang_cases = [
             ("lf", b"#!/usr/bin/env bash\nexit 0\n", None),
