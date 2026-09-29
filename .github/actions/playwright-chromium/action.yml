@@ -4,14 +4,13 @@ description: >-
   contract. The default input sets the browser version for both workflows
   (issue #137).
 inputs:
+  python-path:
+    description: Python interpreter with the pinned Playwright package installed
+    required: true
   playwright-version:
     description: Pinned playwright package version
     required: false
     default: "1.63.0"
-outputs:
-  playwright-version:
-    description: Pinned version for either Playwright client
-    value: ${{ inputs.playwright-version }}
 runs:
   using: composite
   steps:
@@ -25,21 +24,17 @@ runs:
       with:
         path: |
           ~/.cache/ms-playwright
-          node_modules
-        # v3: the entry also carries the system-deps stamp, and the key
+        # v4: the entry carries only the browser and system-deps stamp. The key
         # includes the runner image version so an image refresh cannot
         # pair a stale stamp with changed libraries.
-        key: playwright-chromium-v3-${{ runner.os }}-${{ runner.arch }}-${{ env.IMAGE_VERSION }}-${{ inputs.playwright-version }}
-
-    - name: Install pinned Playwright package
-      if: steps.playwright-cache.outputs.cache-hit != 'true'
-      shell: bash
-      run: npm install --no-save --no-package-lock "playwright@${{ inputs.playwright-version }}"
+        key: playwright-chromium-v4-${{ runner.os }}-${{ runner.arch }}-${{ env.IMAGE_VERSION }}-${{ inputs.playwright-version }}
 
     - name: Install pinned Chromium
       if: steps.playwright-cache.outputs.cache-hit != 'true'
       shell: bash
-      run: npx playwright install chromium
+      env:
+        PLAYWRIGHT_PYTHON: ${{ inputs.python-path }}
+      run: '"$PLAYWRIGHT_PYTHON" -m playwright install chromium'
 
     # System libraries are needed on every fresh runner even when the
     # browser cache hits, but apt-get update (which Playwright's
@@ -48,12 +43,14 @@ runs:
     # step of the consumer jobs. A stamp file inside the cached browser
     # directory records a completed install for this runner image +
     # Playwright pair (the cache key also carries both), so warm runs
-    # skip the ~9 s npx probe and the apt cycle entirely. On any miss,
+    # skip the Playwright probe and the apt cycle entirely. On any miss,
     # ask Playwright for its own package list and skip apt entirely when
     # dpkg already satisfies it; any parse surprise falls back to the
     # original install path.
     - name: Install Chromium system dependencies
       shell: bash
+      env:
+        PLAYWRIGHT_PYTHON: ${{ inputs.python-path }}
       run: |
         stamp="${HOME}/.cache/ms-playwright/.sf-system-deps"
         mkdir -p "$(dirname "$stamp")"
@@ -65,13 +62,16 @@ runs:
             echo "chromium system dependencies already installed (stamp)"
             exit 0
         fi
-        pkgs=$(npx playwright install-deps --dry-run chromium 2>/dev/null \
+        probe=$("$PLAYWRIGHT_PYTHON" -m playwright install-deps --dry-run chromium 2>/dev/null) || probe=""
+        pkgs=$(printf '%s\n' "$probe" \
             | tr ' \\\t' '\n\n\n' \
             | grep -E '^[a-z0-9][a-z0-9+.~-]*$' \
             | grep -vE '^(sudo|apt|apt-get|install|update|cd)$' \
             | sort -u) || true
         missing=1
-        if [ -n "$pkgs" ]; then
+        if [ "$probe" = "All system dependencies are installed." ]; then
+            missing=0
+        elif [ -n "$pkgs" ]; then
             missing=0
             for pkg in $pkgs; do
                 # Exact status (not `dpkg -s`, which succeeds for
@@ -97,7 +97,7 @@ runs:
         fi
         sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
         for attempt in 1 2 3; do
-            if npx playwright install-deps chromium; then
+            if "$PLAYWRIGHT_PYTHON" -m playwright install-deps chromium; then
                 if [ "${IMAGE_VERSION}" != "unknown" ]; then
                     printf '%s %s\n' "${IMAGE_VERSION}" "${{ inputs.playwright-version }}" > "$stamp"
                 fi
