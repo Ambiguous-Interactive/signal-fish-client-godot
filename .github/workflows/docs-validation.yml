@@ -92,7 +92,7 @@ jobs:
               uses: actions/cache@v6
               with:
                   path: .venv-docs
-                  key: venv-docs-uv-v2-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-docs.txt', 'requirements-docs-accessibility.txt') }}
+                  key: venv-docs-uv-v2-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('scripts/install-ci-venv.py', 'requirements-docs.txt', 'requirements-docs-accessibility.txt') }}
 
             - name: Install MkDocs dependencies with uv
               if: steps.docs-venv-cache.outputs.cache-hit != 'true'
@@ -100,10 +100,7 @@ jobs:
                   PIP_DEFAULT_TIMEOUT: "60"
                   UV_HTTP_TIMEOUT: "60"
                   UV_HTTP_RETRIES: "5"
-              run: |
-                  python3 -m pip install uv==0.12.19
-                  python3 -m uv venv .venv-docs
-                  python3 -m uv pip install --python .venv-docs/bin/python -r requirements-docs.txt -r requirements-docs-accessibility.txt
+              run: python3 scripts/install-ci-venv.py .venv-docs requirements-docs.txt requirements-docs-accessibility.txt
 
             - name: Build MkDocs site strictly
               run: |
