@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -98,7 +99,7 @@ class Portability(unittest.TestCase):
         if mcp is None:
             self.fail("MCP installer did not receive its environment")
         self.assertEqual(mcp["SF_MCP_SKIP_PLAYWRIGHT_BROWSER"], "1")
-        maintenance = next(env for args, env in calls if "post-start.sh" in args[1])
+        maintenance = next(env for args, env in calls if "post-start.py" in args[1])
         if maintenance is None:
             self.fail("post-start did not receive its environment")
         self.assertEqual(maintenance["SF_DEVCONTAINER_SKIP_TOOL_UPDATES"], "1")
@@ -150,17 +151,15 @@ class Portability(unittest.TestCase):
             workspace = Path(folder)
             scripts = workspace / ".devcontainer"
             scripts.mkdir()
-            for name in ("post-start.sh", "post-start.py"):
-                shutil.copyfile(ROOT / name, scripts / name)
+            shutil.copyfile(ROOT / "post-start.py", scripts / "post-start.py")
             home = workspace / "home"
             home.mkdir()
             env = os.environ.copy()
             env["HOME"] = str(home)
             env.pop("SF_DEVCONTAINER_MAINTENANCE", None)
-            bash = shutil.which("bash") or "bash"
             for _ in range(2):
                 result = subprocess.run(
-                    (bash, str(scripts / "post-start.sh")),
+                    (sys.executable, str(scripts / "post-start.py")),
                     cwd=workspace,
                     env=env,
                     capture_output=True,
@@ -178,8 +177,7 @@ class Portability(unittest.TestCase):
             workspace = Path(folder)
             scripts = workspace / ".devcontainer"
             scripts.mkdir()
-            for name in ("post-start.sh", "post-start.py"):
-                shutil.copyfile(ROOT / name, scripts / name)
+            shutil.copyfile(ROOT / "post-start.py", scripts / "post-start.py")
             (workspace / ".venv-ci" / "bin").mkdir(parents=True)
             home = workspace / "home"
             home.mkdir()
@@ -188,7 +186,7 @@ class Portability(unittest.TestCase):
             env["SF_DEVCONTAINER_MAINTENANCE"] = "1"
             env["SF_DEVCONTAINER_SKIP_TOOL_UPDATES"] = "1"
             result = subprocess.run(
-                (shutil.which("bash") or "bash", str(scripts / "post-start.sh")),
+                (sys.executable, str(scripts / "post-start.py")),
                 cwd=workspace,
                 env=env,
                 capture_output=True,
@@ -204,8 +202,7 @@ class Portability(unittest.TestCase):
             workspace = Path(folder)
             scripts = workspace / ".devcontainer"
             scripts.mkdir()
-            for name in ("post-start.sh", "post-start.py"):
-                shutil.copyfile(ROOT / name, scripts / name)
+            shutil.copyfile(ROOT / "post-start.py", scripts / "post-start.py")
             (scripts / "install-agent-tools.sh").write_text("exit 1\n", encoding="utf-8")
             for name in ("install-mcp-servers.py", "seed-mcp-config.py"):
                 (scripts / name).write_text("raise SystemExit(1)\n", encoding="utf-8")
@@ -223,7 +220,7 @@ class Portability(unittest.TestCase):
             env["SF_DEVCONTAINER_MAINTENANCE"] = "1"
             env.pop("SF_DEVCONTAINER_SKIP_TOOL_UPDATES", None)
             result = subprocess.run(
-                (shutil.which("bash") or "bash", str(scripts / "post-start.sh")),
+                (sys.executable, str(scripts / "post-start.py")),
                 cwd=workspace,
                 env=env,
                 capture_output=True,
@@ -305,7 +302,7 @@ class DockerBehavior(unittest.TestCase):
             workspace = Path(folder)
             scripts = workspace / ".devcontainer"
             scripts.mkdir()
-            for name in ("initialize.py", "post-start.sh", "post-start.py"):
+            for name in ("initialize.py", "post-start.py"):
                 shutil.copyfile(ROOT / name, scripts / name)
             command = [
                 arg.replace("${localWorkspaceFolder}", folder)
@@ -324,9 +321,9 @@ class DockerBehavior(unittest.TestCase):
             self.assertEqual((workspace / ".env.local").read_bytes(), existing)
             self.assertNotIn(b"preserve-canary", result.stdout + result.stderr)
             command[-3:] = [
-                "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
-                "bash",
-                ".devcontainer/post-start.sh",
+                "python:3.12-slim-bookworm",
+                "python3",
+                ".devcontainer/post-start.py",
             ]
             started = time.monotonic()
             result = subprocess.run(command, check=True, capture_output=True, timeout=15)

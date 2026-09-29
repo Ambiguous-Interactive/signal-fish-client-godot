@@ -117,7 +117,7 @@ Switch color themes with the `Preferences: Color Theme` command.
 - [`mcp-shims/sf-github-mcp.sh`](./mcp-shims/sf-github-mcp.sh) - GitHub MCP launcher shim
 - [`initialize.py`](./initialize.py) - create the local env file through Docker
 - [`post-create.sh`](./post-create.sh) + [`post-create.py`](./post-create.py) - git hooks, tool checks, MCP config, Python dependencies
-- [`post-start.sh`](./post-start.sh) + [`post-start.py`](./post-start.py) - offline git trust; optional maintenance
+- [`post-start.py`](./post-start.py) - offline git trust; optional maintenance
 - [`test_portability.py`](./test_portability.py) - lifecycle regression checks
 
 ## Local font tip
@@ -160,7 +160,7 @@ matrix sets 0).
 - **post-create** verifies all four without registry requests. The toolchain
   summary reports every version. OpenCode must report major version 2.
 - **post-start** performs local git setup. Run
-  `SF_DEVCONTAINER_MAINTENANCE=1 bash .devcontainer/post-start.sh` for an
+  `SF_DEVCONTAINER_MAINTENANCE=1 python3 .devcontainer/post-start.py` for an
   explicit best-effort update and Python dependency repair. uv rebuilds
   `.venv-ci` when needed. pip retains the bare Python user-site PyYAML repair.
 

@@ -158,7 +158,7 @@ def main() -> int:
     toolchain_summary()
     maintenance_env = os.environ.copy()
     maintenance_env.update(SF_DEVCONTAINER_MAINTENANCE="1", SF_DEVCONTAINER_SKIP_TOOL_UPDATES="1")
-    run("bash", str(CONTAINER / "post-start.sh"), env=maintenance_env)
+    run(sys.executable, str(CONTAINER / "post-start.py"), env=maintenance_env)
     print("==> Dev container ready.")
     return 0
 

@@ -45,4 +45,4 @@ jobs:
                   npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \
                     bash -c 'uv --version && .venv-ci/bin/python -c "import yaml" && .venv-ci/bin/gdformat --version && .venv-ci/bin/ruff --version'
                   npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \
-                    bash .devcontainer/post-start.sh
+                    python3 .devcontainer/post-start.py

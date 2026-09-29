@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repair devcontainer tooling during explicit post-start maintenance."""
+"""Trust the workspace and repair tools during explicit maintenance."""
 
 from __future__ import annotations
 
@@ -12,6 +12,23 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VENV = ROOT / ".venv-ci"
+
+
+def ensure_safe_directory() -> None:
+    print("==> Configuring git safe.directory", flush=True)
+    try:
+        result = subprocess.run(
+            ("git", "config", "--global", "--get-all", "safe.directory"),  # noqa: S607
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return
+    if result.returncode == 0 and str(ROOT) in result.stdout.splitlines():
+        return
+    run("git", "config", "--global", "--add", "safe.directory", str(ROOT))
 
 
 def configure_path() -> None:
@@ -129,6 +146,10 @@ def ensure_venv() -> None:
 
 
 def main() -> int:
+    ensure_safe_directory()
+    if os.environ.get("SF_DEVCONTAINER_MAINTENANCE") != "1":
+        print("==> Container ready. Rebuild to update tools.")
+        return 0
     configure_path()
     if os.environ.get("SF_DEVCONTAINER_SKIP_TOOL_UPDATES") != "1":
         try_update(
