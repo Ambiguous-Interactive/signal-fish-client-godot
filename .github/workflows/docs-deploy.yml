@@ -77,9 +77,7 @@ jobs:
 
             - name: Build MkDocs site
               if: github.event_name == 'workflow_dispatch' && inputs.validated_run_id == ''
-              run: |
-                  .venv-docs/bin/mkdocs build --strict
-                  test -f site/llms.txt
+              run: .venv-docs/bin/python -m mkdocs build --strict
 
             - name: Wait for validated site
               if: github.event_name == 'workflow_dispatch' && inputs.validated_run_id != ''

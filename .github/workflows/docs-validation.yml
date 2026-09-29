@@ -102,28 +102,11 @@ jobs:
                   UV_HTTP_RETRIES: "5"
               run: python3 scripts/install-ci-venv.py .venv-docs requirements-docs.txt requirements-docs-accessibility.txt
 
-            - name: Build MkDocs site strictly
-              run: |
-                  .venv-docs/bin/mkdocs build --strict
-                  test -f site/llms.txt
+            - name: Test documentation output checks
+              run: python3 -m unittest tests.test_docs_build
 
-            - name: Verify every nav page rendered
-              run: |
-                  status=0
-                  for page in index getting-started client events errors \
-                      game-data reconnection web-export testing mesh-guide \
-                      releasing attributions; do
-                      if [ "${page}" = "index" ]; then
-                          rendered="site/index.html"
-                      else
-                          rendered="site/${page}/index.html"
-                      fi
-                      if [ ! -f "${rendered}" ]; then
-                          printf '::error::missing rendered page: %s\n' "${page}"
-                          status=1
-                      fi
-                  done
-                  exit "${status}"
+            - name: Build MkDocs site strictly
+              run: .venv-docs/bin/python -m mkdocs build --strict
 
             # Issue #123: this build is the one artifact Docs Deploy publishes;
             # main pushes hand it off instead of building a third time there.
