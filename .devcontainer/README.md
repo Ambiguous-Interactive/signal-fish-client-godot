@@ -115,7 +115,7 @@ Switch color themes with the `Preferences: Color Theme` command.
 - [`install-mcp-servers.py`](./install-mcp-servers.py) - npm MCP server install/refresh
 - [`seed-mcp-config.py`](./seed-mcp-config.py) - Codex managed block + MCP doctor
 - [`mcp-shims/sf-github-mcp.sh`](./mcp-shims/sf-github-mcp.sh) - GitHub MCP launcher shim
-- [`initialize.sh`](./initialize.sh) - create the local env file through Docker
+- [`initialize.py`](./initialize.py) - create the local env file through Docker
 - [`post-create.sh`](./post-create.sh) + [`post-create.py`](./post-create.py) - git hooks, tool checks, MCP config, Python dependencies
 - [`post-start.sh`](./post-start.sh) + [`post-start.py`](./post-start.py) - offline git trust; optional maintenance
 - [`test_portability.py`](./test_portability.py) - lifecycle regression checks

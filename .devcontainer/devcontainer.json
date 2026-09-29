@@ -51,9 +51,9 @@
     "${localWorkspaceFolder}:/workspace",
     "--workdir",
     "/workspace",
-    "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
-    "bash",
-    ".devcontainer/initialize.sh"
+    "python:3.12-slim-bookworm",
+    "python3",
+    ".devcontainer/initialize.py"
   ],
   // Load the user's local secrets (.env.local, git-ignored; copy from
   // .env.example) into the container environment at create time. MCP
