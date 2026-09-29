@@ -256,10 +256,10 @@ private handlers.
   them deterministically.
 - Any new broad Git scan or repeated full-file read in a pre-commit path needs
   a measured budget and a static self-test that prevents accidental drift.
-- Devcontainer shell scripts must not fork a subprocess per item (the measured
+- Devcontainer setup must not fork a subprocess per item (the measured
   fork tax made the seed-config test 15.1s and the npm installer test 6.9s);
   parse once per run and emit a report (`seed-mcp-config.py` `check_json_configs`,
-  `install-agent-tools.sh` `refresh_installed_versions`, issue #145).
+  `install-agent-tools.py` `refresh_versions`, issue #145).
 - `scripts/check-asset-archive.py` pins the Asset Library archive surface to an
   explicit allow-list via real `git archive HEAD` output (issue #158); extend
   `REQUIRED_ARCHIVE_ENTRIES` only for user-facing asset content.

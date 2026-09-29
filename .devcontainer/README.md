@@ -111,12 +111,11 @@ Switch color themes with the `Preferences: Color Theme` command.
 - [`Dockerfile`](./Dockerfile) - base image, Godot install, MCP binaries
 - [`install-godot.py`](./install-godot.py) - deterministic Godot editor and web template installs (cache-mounted)
 - [`install-agent-tools.py`](./install-agent-tools.py) - agent CLI install/refresh
-- [`install-agent-tools.sh`](./install-agent-tools.sh) - shell entry point
 - [`install-mcp-servers.py`](./install-mcp-servers.py) - npm MCP server install/refresh
 - [`seed-mcp-config.py`](./seed-mcp-config.py) - Codex managed block + MCP doctor
 - [`mcp-shims/sf-github-mcp.sh`](./mcp-shims/sf-github-mcp.sh) - GitHub MCP launcher shim
 - [`initialize.py`](./initialize.py) - create the local env file through Docker
-- [`post-create.sh`](./post-create.sh) + [`post-create.py`](./post-create.py) - git hooks, tool checks, MCP config, Python dependencies
+- [`post-create.py`](./post-create.py) - git hooks, tool checks, MCP config, Python dependencies
 - [`post-start.py`](./post-start.py) - offline git trust; optional maintenance
 - [`test_portability.py`](./test_portability.py) - lifecycle regression checks
 
@@ -309,7 +308,7 @@ local one is what the shared file ships).
   copied into `$HOME/.config/powershell/profile.ps1`.
 - **An agent CLI (`codex`/`opencode`/`nanocoder`/`claude`) is missing after
   rebuild:** check the image build log or run
-  `bash .devcontainer/install-agent-tools.sh` to repair it. The installer
+  `python3 .devcontainer/install-agent-tools.py` to repair it. The installer
   requires Node.js >= 22 and a writable npm global prefix; if npm installs
   successfully but a CLI is still not found, compare `npm config get prefix`
   with `$PATH` - the installer prepends the expected npm global `bin`

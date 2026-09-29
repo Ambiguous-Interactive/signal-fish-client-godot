@@ -91,7 +91,7 @@
     "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
     "PIP_DISABLE_PIP_VERSION_CHECK": "1"
   },
-  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postCreateCommand": "python3 .devcontainer/post-create.py",
   "postStartCommand": "python3 .devcontainer/post-start.py",
   "customizations": {
     "vscode": {

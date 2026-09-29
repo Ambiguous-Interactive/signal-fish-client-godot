@@ -536,7 +536,6 @@ function New-HookBehaviorSandbox {
         'llms.txt', '.cursorrules', '.windsurfrules',
         '.github/copilot-instructions.md', '.cursor/rules/signal-fish-llm-context.mdc',
         '.githooks/pre-commit',
-        '.devcontainer/post-create.sh',
         '.devcontainer/post-create.py',
         '.github/dependabot.yml',
         '.github/workflows/ci.yml',
@@ -1682,21 +1681,11 @@ Assert-Test 'generated executable test fixtures normalize shebang newlines' {
 
 Assert-Test 'devcontainer agent CLI installer is complete, parseable, and validated' {
     $repoRoot = Split-Path -Parent $ScriptsDir
-    $wrapper = Join-Path $repoRoot '.devcontainer/install-agent-tools.sh'
     $installer = Join-Path $repoRoot '.devcontainer/install-agent-tools.py'
-    if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $installer -PathType Leaf)) {
-        throw 'Missing agent CLI installer or its shell entry point.'
+    if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+        throw 'Missing agent CLI installer.'
     }
-    Assert-ScriptParsesWithBash -Path $wrapper -Name 'install-agent-tools.sh'
-    $wrapperContent = Get-Content -LiteralPath $wrapper -Raw
     $content = Get-Content -LiteralPath $installer -Raw
-    Assert-TextMatches `
-        -Subject '.devcontainer/install-agent-tools.sh' `
-        -Content $wrapperContent `
-        -Pattern 'install-agent-tools\.py' `
-        -Requirement 'launch the Python installer' `
-        -DiagnosticPattern 'python|installer'
     foreach ($package in @('@openai/codex', '@opencode/cli',
             '@nanocollective/nanocoder', '@anthropic-ai/claude-code')) {
         Assert-TextMatches `
@@ -1710,7 +1699,7 @@ Assert-Test 'devcontainer agent CLI installer is complete, parseable, and valida
     if ($LASTEXITCODE -ne 0) {
         throw "install-agent-tools.py has invalid Python syntax: $($syntax -join '; ')"
     }
-    $usage = @(& bash $wrapper --invalid-mode 2>&1)
+    $usage = @(& bash -c 'exec python3 "$@"' bash (ConvertTo-BashPath $installer) --invalid-mode 2>&1)
     Expect-Equal $LASTEXITCODE 2 "agent CLI installer rejects unknown mode: $($usage -join '; ')"
 }
 
@@ -2002,7 +1991,7 @@ exit 127
                 # Bins move with each case copy; retarget the WSL pin so the
                 # installer resolves the case's fakes, not a host npm/node.
                 Set-WslBashSandboxPath -File (Join-Path $tempRoot 'bash-path.sh') -Bins @($foreignEarlierBin, $bin)
-                $output = @(& bash '.devcontainer/install-agent-tools.sh' $case.Mode 2>&1)
+                $output = @(& bash -c 'exec python3 .devcontainer/install-agent-tools.py "$@"' bash $case.Mode 2>&1)
                 $exitCode = $LASTEXITCODE
                 Expect-Equal $exitCode $case.Exit "$($case.Name): $($output -join '; ')"
                 $packageText = Get-Content -LiteralPath "$state/packages" -Raw
@@ -2060,20 +2049,19 @@ exit 127
     }
 } -Behavioral
 
-Assert-Test 'devcontainer post-create delegates to Python and checks required tools' {
+Assert-Test 'devcontainer post-create Python entry point checks required tools' {
     $repoRoot = Split-Path -Parent $ScriptsDir
-    $postCreate = Join-Path $repoRoot '.devcontainer/post-create.sh'
     $postCreatePython = Join-Path $repoRoot '.devcontainer/post-create.py'
-    if (-not (Test-Path -LiteralPath $postCreate -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $postCreatePython -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $postCreatePython -PathType Leaf)) {
         throw 'Missing devcontainer post-create entry point.'
     }
-    $shell = Get-Content -LiteralPath $postCreate -Raw
     $python = Get-Content -LiteralPath $postCreatePython -Raw
-    Assert-TextMatches -Subject '.devcontainer/post-create.sh' -Content $shell `
-        -Pattern 'exec python3 .*post-create\.py' -Requirement 'delegate setup to Python' `
-        -DiagnosticPattern 'post-create.py|exec python3'
-    foreach ($pattern in @('install-git-hooks\.ps1', '"-Force"', 'install-agent-tools\.sh',
+    $devcontainer = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/devcontainer.json') -Raw
+    Assert-TextMatches -Subject '.devcontainer/devcontainer.json' -Content $devcontainer `
+        -Pattern '"postCreateCommand":\s*"python3 \.devcontainer/post-create\.py"' `
+        -Requirement 'run the Python post-create entry point' `
+        -DiagnosticPattern 'postCreateCommand|post-create.py'
+    foreach ($pattern in @('install-git-hooks\.ps1', '"-Force"', 'install-agent-tools\.py',
             '"--verify"', '"codex", "opencode", "nanocoder", "claude"',
             'is missing after post-create install', 'install-mcp-servers\.py',
             'seed-mcp-config\.py', 'Failed to install PowerShell profile',
@@ -2085,7 +2073,10 @@ Assert-Test 'devcontainer post-create delegates to Python and checks required to
     Assert-TextDoesNotMatch -Subject '.devcontainer/post-create.py' -Content $python `
         -Pattern 'pre-commit\s+install' -Requirement 'keep the direct shim' `
         -DiagnosticPattern 'pre-commit|install-git-hooks'
-    Assert-ScriptParsesWithBash -Path $postCreate -Name 'post-create.sh'
+    $syntax = @(& python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' $postCreatePython 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "post-create.py has invalid Python syntax: $($syntax -join '; ')"
+    }
 }
 
 Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attach' {
@@ -2098,8 +2089,8 @@ Assert-Test 'devcontainer post-start refreshes agent CLIs without blocking attac
 
     foreach ($requirement in @(
             [pscustomobject]@{
-                Pattern     = 'install-agent-tools\.sh.*"--update"'
-                Requirement = 'refresh agent CLIs via install-agent-tools.sh --update'
+                Pattern     = 'install-agent-tools\.py.*"--update"'
+                Requirement = 'refresh agent CLIs via install-agent-tools.py --update'
                 Diagnostic  = 'agent-tools|--update|refresh'
             },
             [pscustomobject]@{
@@ -2270,7 +2261,7 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
             -DiagnosticPattern 'github_pat_|ctx7sk-'
     }
 
-    # The npm installer mirrors install-agent-tools.sh conventions: strict
+    # The npm installer mirrors install-agent-tools.py conventions: strict
     # install, warn-only update, pinned concrete specs, npm >= 11 lifecycle
     # allow list, credential unsetting, and npm-state-based verification.
     $installerContent = Get-Content -LiteralPath $installer -Raw
@@ -2898,13 +2889,11 @@ exit 127
 Assert-Test 'devcontainer setup avoids fixed /tmp diagnostic files' {
     $repoRoot = Split-Path -Parent $ScriptsDir
     $paths = @(
-        '.devcontainer/install-agent-tools.sh',
         '.devcontainer/install-agent-tools.py',
         '.devcontainer/install-godot.py',
         '.devcontainer/install-mcp-servers.py',
         '.devcontainer/seed-mcp-config.py',
         '.devcontainer/mcp-shims/sf-github-mcp.sh',
-        '.devcontainer/post-create.sh',
         '.devcontainer/post-create.py',
         '.devcontainer/post-start.py'
     )
@@ -2929,7 +2918,7 @@ Assert-Test 'devcontainer pre-commit remnants are optional compatibility only' {
     $readme = Get-Content -LiteralPath (Join-Path $repoRoot '.devcontainer/README.md') -Raw
 
     Assert-TextDoesNotMatch `
-        -Subject '.devcontainer/post-create.sh' `
+        -Subject '.devcontainer/post-create.py' `
         -Content $postCreate `
         -Pattern 'pre-commit\s+install' `
         -Requirement 'not install the pre-commit framework hook; scripts/install-git-hooks.ps1 owns the canonical direct shim' `
@@ -4662,7 +4651,6 @@ Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without 
                 'scripts/test-llm-harness.ps1',
                 'scripts/validate-github-config.py',
                 'scripts/lib/LlmHarness.psm1',
-                '.devcontainer/post-create.sh',
                 '.devcontainer/post-create.py'
             )) {
             $src = Join-Path $repoRoot $f
@@ -4798,7 +4786,7 @@ Assert-Test 'adversarial: AgentFast catches tracked sibling strays outside contr
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
     $sandbox = New-HookBehaviorSandbox -Prefix 'llm-agentfast-sibling-strays'
     $strays = @(
-        '.devcontainer/post-create.sh.tmp',
+        '.devcontainer/post-create.py.tmp',
         '.github/workflows/llm-harness.yml.tmp',
         '.pre-commit-config.yaml.tmp'
     )
@@ -4845,7 +4833,7 @@ Assert-Test 'adversarial: PreCommit AutoFix deletes tracked sibling strays outsi
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
     $sandbox = New-HookBehaviorSandbox -Prefix 'llm-precommit-sibling-strays'
     $strays = @(
-        '.devcontainer/post-create.sh.tmp',
+        '.devcontainer/post-create.py.tmp',
         '.github/workflows/llm-harness.yml.tmp',
         '.pre-commit-config.yaml.tmp'
     )
