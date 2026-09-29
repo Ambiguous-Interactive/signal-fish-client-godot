@@ -145,6 +145,9 @@ jobs:
             - name: Check Python types, format, and lint
               run: bash scripts/run-runtime-checks.sh python-types
 
+            - name: Check Playwright system setup
+              run: python3 -m unittest tests.test_install_playwright_deps
+
     test:
         name: Godot ${{ matrix.godot }} tests
         runs-on: ubuntu-24.04
