@@ -157,7 +157,7 @@ Definition of done for the first usable client:
   per-suite project copies; locally each copy clones a warm `.godot` import
   cache so boots skip the cold reimport (`SF_COLD=1` forces the
   CI-identical cold import; CI checkouts have no `.godot` and stay cold).
-  The shell entry point remains for existing callers. Subcommands are `all`,
+  Subcommands are `all`,
   `static`, `private-helpers`, `format`, `lint`, and `godot`, plus opt-in
   `smoke` (real `WebSocketPeer` round-trip against a local RFC 6455 test server;
   never part of `all`) and `changed` (dirty-tree fast loop; issue #117).

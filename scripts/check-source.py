@@ -52,14 +52,8 @@ def run(*command: str) -> None:
 
 
 def format_sources(mode: str) -> None:
-    shfmt = tool("shfmt", "SHFMT_BIN")
     prettier = node_tool("prettier")
     pwsh = tool("pwsh")
-    for path in tracked("*.sh"):
-        indent = {
-            "scripts/run-runtime-checks.sh": 0,
-        }.get(path, 4)
-        run(shfmt, "-i", str(indent), "-w" if mode == "write" else "-d", path)
     run(prettier, "--write" if mode == "write" else "--check", *tracked(*PRETTIER_SUFFIXES))
     command = [pwsh, "-NoProfile", "-File", "scripts/format-powershell.ps1"]
     if mode == "write":
@@ -68,10 +62,8 @@ def format_sources(mode: str) -> None:
 
 
 def analyze_sources() -> None:
-    shellcheck = tool("shellcheck", "SHELLCHECK_BIN")
     eslint = node_tool("eslint")
     pwsh = tool("pwsh")
-    run(shellcheck, "--severity=style", *tracked("*.sh"))
     run(eslint, "--max-warnings", "0", *tracked("*.js", "*.cjs", "*.mjs"))
     run(pwsh, "-NoProfile", "-File", "scripts/check-powershell-quality.ps1")
 

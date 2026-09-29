@@ -22,10 +22,6 @@ and checks within about one hour. Session cadence:
 
 - [ ] #234: Verify that a later Dependabot merge dispatches Docs Deploy and
       publishes the validated main artifact without a manual CI rerun.
-- [ ] #168: Close the issue once the last non-Python script surface is moved
-      or accepted as inherent (MCP sh shim, `run-runtime-checks.sh` legacy
-      entry point). Workflow shell gates now all run through Python; the
-      pwsh harness stays by design.
 
 ### Asset Library settings (#194)
 
