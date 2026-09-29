@@ -41,7 +41,7 @@ jobs:
             - name: Verify installed tools and restart
               run: |
                   npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \
-                    bash .devcontainer/install-agent-tools.sh --verify
+                    python3 .devcontainer/install-agent-tools.py --verify
                   npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \
                     bash -c 'uv --version && .venv-ci/bin/python -c "import yaml" && .venv-ci/bin/gdformat --version && .venv-ci/bin/ruff --version'
                   npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \

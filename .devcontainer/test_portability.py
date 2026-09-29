@@ -94,7 +94,7 @@ class Portability(unittest.TestCase):
         self.assertIn(
             ("pwsh", "-NoProfile", "-File", "scripts/install-git-hooks.ps1", "-Force"), commands
         )
-        self.assertIn(("bash", str(ROOT / "install-agent-tools.sh"), "--verify"), commands)
+        self.assertIn(("python3", str(ROOT / "install-agent-tools.py"), "--verify"), commands)
         mcp = next(env for args, env in calls if "install-mcp-servers.py" in args[1])
         if mcp is None:
             self.fail("MCP installer did not receive its environment")
@@ -135,8 +135,8 @@ class Portability(unittest.TestCase):
 
     def test_agents_installed_in_image(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("COPY install-agent-tools.sh install-agent-tools.py", dockerfile)
-        self.assertIn("bash /usr/local/share/devcontainer/install-agent-tools.sh", dockerfile)
+        self.assertIn("COPY install-agent-tools.py install-mcp-servers.py", dockerfile)
+        self.assertIn("python3 /usr/local/share/devcontainer/install-agent-tools.py", dockerfile)
         for package in (
             "@openai/codex",
             "@opencode/cli",
@@ -203,7 +203,9 @@ class Portability(unittest.TestCase):
             scripts = workspace / ".devcontainer"
             scripts.mkdir()
             shutil.copyfile(ROOT / "post-start.py", scripts / "post-start.py")
-            (scripts / "install-agent-tools.sh").write_text("exit 1\n", encoding="utf-8")
+            (scripts / "install-agent-tools.py").write_text(
+                "raise SystemExit(1)\n", encoding="utf-8"
+            )
             for name in ("install-mcp-servers.py", "seed-mcp-config.py"):
                 (scripts / name).write_text("raise SystemExit(1)\n", encoding="utf-8")
             venv_bin = workspace / ".venv-ci" / "bin"

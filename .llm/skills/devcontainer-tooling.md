@@ -16,7 +16,7 @@ setup.
 
 - The Dockerfile runs before devcontainer features. Tools that depend on Node,
   PowerShell, or the final remote user should be installed
-  from `post-create.sh` or a helper it calls, unless the Dockerfile installs the
+  from `post-create.py` or a helper it calls, unless the Dockerfile installs the
   dependency itself (it provides Python 3.12 via Ubuntu apt, so `RUN` steps may
   use it directly; PEP 668 is pre-unlocked via `/etc/pip.conf` to match CI's
   global-Python install path).
@@ -34,7 +34,7 @@ setup.
 - The four terminal agent CLIs - OpenAI Codex (`@openai/codex`), OpenCode v2
   (`@opencode/cli`), Nanocoder (`@nanocollective/nanocoder`), and Claude Code
   (`@anthropic-ai/claude-code`) - are installed at image build by
-  `.devcontainer/install-agent-tools.sh` (invoked from the Dockerfile) into
+  `.devcontainer/install-agent-tools.py` (invoked from the Dockerfile) into
   npm's global prefix, so ordinary starts and restarts never run package
   installs.
 - `post-create.py` re-runs the installer in `--verify` mode and fails
@@ -251,12 +251,12 @@ pwsh -NoProfile -File scripts/agent-check.ps1
 When feasible, also run:
 
 ```bash
-bash .devcontainer/post-create.sh
+python3 .devcontainer/post-create.py
 ```
 
 The harness self-tests statically check the agent CLI installer (packages,
 binaries, Node >= 22 guard, `--allow-scripts`, verification), parse-check the
-shell scripts with `bash -n`, and simulate the PSReadLine assembly conflict
+GitHub MCP shell shim with `bash -n`, and simulate the PSReadLine assembly conflict
 that previously made the PowerShell extension terminal noisy.
 
 The harness also covers the MCP tooling: static completeness checks (managed

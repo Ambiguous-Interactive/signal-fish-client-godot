@@ -185,7 +185,7 @@ RUN --mount=type=cache,target=/var/cache/godot-templates,sharing=locked \
 
 # Persist bash history via mounted volume (`/commandhistory`, declared in
 # devcontainer.json `mounts`). The PowerShell profile that persists pwsh
-# history is installed by post-create.sh, since the PowerShell feature lays
+# history is installed by post-create.py, since the PowerShell feature lays
 # down /opt/microsoft/powershell/7/ *after* this Dockerfile finishes building.
 RUN set -eux; \
     mkdir -p /commandhistory; \
@@ -200,7 +200,7 @@ RUN echo 'export PAGER=less' >> /etc/profile.d/sf-defaults.sh \
 COPY --from=node /usr/local/ /usr/local/
 ENV NPM_CONFIG_PREFIX=/home/vscode/.npm-global \
     PATH=/home/vscode/.npm-global/bin:${PATH}
-COPY install-agent-tools.sh install-agent-tools.py install-mcp-servers.py /usr/local/share/devcontainer/
+COPY install-agent-tools.py install-mcp-servers.py /usr/local/share/devcontainer/
 RUN mkdir -p /home/vscode/.npm-global /home/vscode/.cache \
     && chown -R vscode:vscode /home/vscode/.npm-global /home/vscode/.cache
 
@@ -215,7 +215,7 @@ ADD https://registry.npmjs.org/@opencode/cli/latest /tmp/agent-releases/opencode
 ADD https://registry.npmjs.org/@nanocollective/nanocoder/latest /tmp/agent-releases/nanocoder.json
 ADD https://registry.npmjs.org/@anthropic-ai/claude-code/latest /tmp/agent-releases/claude.json
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000 \
-    bash /usr/local/share/devcontainer/install-agent-tools.sh
+    python3 /usr/local/share/devcontainer/install-agent-tools.py
 
 WORKDIR /workspaces
 

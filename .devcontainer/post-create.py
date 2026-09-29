@@ -114,7 +114,7 @@ def main() -> int:
     run("pwsh", "-NoProfile", "-File", "scripts/install-git-hooks.ps1", "-Force")
 
     print("==> Verifying image agent CLIs (codex, opencode, nanocoder, claude)", flush=True)
-    run("bash", str(CONTAINER / "install-agent-tools.sh"), "--verify")
+    run("python3", str(CONTAINER / "install-agent-tools.py"), "--verify")
     for cli in ("codex", "opencode", "nanocoder", "claude"):
         if shutil.which(cli) is None:
             raise RuntimeError(f"agent CLI '{cli}' is missing after post-create install")

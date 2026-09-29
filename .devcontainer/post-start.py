@@ -154,7 +154,7 @@ def main() -> int:
     if os.environ.get("SF_DEVCONTAINER_SKIP_TOOL_UPDATES") != "1":
         try_update(
             "Checking agent CLI versions (best-effort refresh)",
-            ("bash", str(ROOT / ".devcontainer/install-agent-tools.sh"), "--update"),
+            ("python3", str(ROOT / ".devcontainer/install-agent-tools.py"), "--update"),
             "Agent CLI refresh attempted",
             "agent CLI refresh failed; using installed versions.",
         )
