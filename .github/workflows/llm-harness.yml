@@ -29,10 +29,13 @@ jobs:
         runs-on: ubuntu-24.04
         timeout-minutes: 5
         steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
             - name: Check dispatched commit
               env:
                   EXPECTED_SHA: ${{ inputs.expected_sha }}
-              run: test "$GITHUB_SHA" = "$EXPECTED_SHA"
+              run: python3 scripts/workflow-gates.py verify-sha
 
     validate:
         name: Validate LLM context

@@ -16,7 +16,7 @@ runs:
   steps:
     - name: Record runner image version
       shell: bash
-      run: echo "IMAGE_VERSION=${ImageVersion:-unknown}" >> "$GITHUB_ENV"
+      run: python3 scripts/install_playwright_deps.py record-image-version
 
     - name: Cache Playwright Chromium
       id: playwright-cache
@@ -42,6 +42,6 @@ runs:
         PLAYWRIGHT_PYTHON: ${{ inputs.python-path }}
         PLAYWRIGHT_VERSION: ${{ inputs.playwright-version }}
       run: >-
-        python3 scripts/install_playwright_deps.py
+        python3 scripts/install_playwright_deps.py install
         --python "$PLAYWRIGHT_PYTHON"
         --playwright-version "$PLAYWRIGHT_VERSION"

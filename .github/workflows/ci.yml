@@ -51,11 +51,7 @@ jobs:
                   cache: npm
 
             - name: Install formatters
-              run: |
-                  npm ci --ignore-scripts
-                  pwsh -NoProfile -Command 'Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -AcceptLicense'
-                  python3 scripts/install-source-tool.py shfmt "$RUNNER_TEMP/shfmt"
-                  python3 scripts/install-source-tool.py shellcheck "$RUNNER_TEMP/shellcheck"
+              run: python3 scripts/install-source-tools.py --tool-dir "$RUNNER_TEMP"
 
             - name: Check source formatting
               env:
@@ -170,17 +166,7 @@ jobs:
             # often already carry the three libraries, so skip apt entirely
             # when dpkg confirms they are present.
             - name: Install Godot runtime dependencies
-              run: |
-                  if ! dpkg -s libfontconfig1 libfreetype6 libudev1 >/dev/null 2>&1; then
-                    sudo apt-get update
-                    sudo apt-get install -y --no-install-recommends \
-                      ca-certificates \
-                      curl \
-                      unzip \
-                      libfontconfig1 \
-                      libfreetype6 \
-                      libudev1
-                  fi
+              run: sudo python3 .devcontainer/install-godot.py runtime-deps
 
             - name: Cache Godot binary
               id: godot-cache

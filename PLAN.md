@@ -18,13 +18,14 @@ Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:
 `.llm/skills/architectural-planning.md`.
 
-### Automation (#168)
+### Automation
 
 - [ ] #234: Verify that a later Dependabot merge dispatches Docs Deploy and
       publishes the validated main artifact without a manual CI rerun.
-- [ ] #168: Move remaining workflow shell logic to Python and uv while preserving the
-      PowerShell harness and the runtime gate behavior. Next: Godot package setup,
-      source tool setup, Playwright image metadata, and container tool checks.
+- [ ] #168: Close the issue once the last non-Python script surface is moved
+      or accepted as inherent (MCP sh shim, `run-runtime-checks.sh` legacy
+      entry point). Workflow shell gates now all run through Python; the
+      pwsh harness stays by design.
 
 ### Asset Library settings (#194)
 

@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
-"""Install Playwright Chromium system packages on GitHub runners."""
+"""Record the runner image and install Playwright Chromium system packages."""
 
 import argparse
 import os
 import shutil
 import subprocess
 import time
+from collections.abc import Mapping
 from pathlib import Path
+
+
+def record_image_version(environment: Mapping[str, str]) -> None:
+    output = environment.get("GITHUB_ENV")
+    if not output:
+        raise RuntimeError("GITHUB_ENV is required to record the runner image version")
+    version = environment.get("ImageVersion") or "unknown"
+    with open(output, "a", encoding="utf-8") as stream:
+        stream.write(f"IMAGE_VERSION={version}\n")
+    print(f"Recorded runner image version: {version}")
 
 
 def install(python: str, version: str, image: str, home: Path) -> None:
@@ -53,16 +64,22 @@ def install(python: str, version: str, image: str, home: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--python", required=True)
-    parser.add_argument("--playwright-version", required=True)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("record-image-version")
+    install_command = commands.add_parser("install")
+    install_command.add_argument("--python", required=True)
+    install_command.add_argument("--playwright-version", required=True)
     args = parser.parse_args()
     try:
-        install(
-            args.python,
-            args.playwright_version,
-            os.environ.get("IMAGE_VERSION", "unknown"),
-            Path.home(),
-        )
+        if args.command == "record-image-version":
+            record_image_version(os.environ)
+        else:
+            install(
+                args.python,
+                args.playwright_version,
+                os.environ.get("IMAGE_VERSION", "unknown"),
+                Path.home(),
+            )
     except (OSError, RuntimeError) as error:
         parser.exit(1, f"{error}\n")
     return 0
