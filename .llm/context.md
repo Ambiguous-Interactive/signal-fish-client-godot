@@ -54,7 +54,7 @@ point here unless a tool requires a tiny wrapper format.
   detail; changelogs list user-relevant changes only.
 - Docs (tracked Markdown + `llms.txt`) stay ASCII-only and skip contrast
   constructions; `scripts/check-docs-style.py` enforces this in CI and in
-  `run-runtime-checks.sh changed`.
+  `run-runtime-checks.py changed`.
 - Keep code comments minimal: comments carry only non-inferable rationale
   (upstream/issue citations, behavioral "why"). No comments on internal
   helpers; keep `##` docs on public API; naming and structure carry the rest.
@@ -151,16 +151,16 @@ Definition of done for the first usable client:
   for unreachable private GDScript helper chains and cold-cache-fragile
   self-`class_name` references; runtime CI runs it with `--self-test` before
   protocol fixtures.
-- `scripts/run-runtime-checks.sh`: shell bootstrap for the Python runtime
-  dispatcher used by CI and local checks. It sets a writable `HOME` for
-  tool caches, activates `.venv-ci` when present, and runs Godot through Python from fresh
+- `scripts/run-runtime-checks.py`: runtime dispatcher used by CI and local
+  checks. It sets a writable `HOME` for tool caches, activates `.venv-ci`
+  when present, and runs Godot through Python from fresh
   per-suite project copies; locally each copy clones a warm `.godot` import
   cache so boots skip the cold reimport (`SF_COLD=1` forces the
   CI-identical cold import; CI checkouts have no `.godot` and stay cold).
-  Subcommands are `all`, `static`, `private-helpers`,
-  `format`, `lint`, and `godot`, plus opt-in `smoke` (real `WebSocketPeer`
-  round-trip against a local RFC 6455 test server; never part of `all`) and
-  `changed` (agent fast loop: only what the dirty tree can affect; issue #117).
+  The shell entry point remains for existing callers. Subcommands are `all`,
+  `static`, `private-helpers`, `format`, `lint`, and `godot`, plus opt-in
+  `smoke` (real `WebSocketPeer` round-trip against a local RFC 6455 test server;
+  never part of `all`) and `changed` (dirty-tree fast loop; issue #117).
 - `scripts/validate-github-config.py`: deterministic local validator for
   GitHub workflows and Dependabot config. It rejects duplicate YAML keys,
   `gh api --slurp` combined with `--jq`, unsafe workflow triggers or
@@ -234,7 +234,7 @@ Agent fast loop for runtime code (dirty-tree scoped; full gate stays the
 pre-push contract):
 
 ```bash
-bash scripts/run-runtime-checks.sh changed
+python3 -E scripts/run-runtime-checks.py changed
 ```
 
 Use `-Check` in CI to validate generated files without modifying them:
@@ -246,7 +246,7 @@ pwsh -NoProfile -File scripts/generate-llm-index.ps1 -Check
 Runtime protocol checks are separate from the LLM harness:
 
 ```bash
-bash scripts/run-runtime-checks.sh all
+python3 -E scripts/run-runtime-checks.py all
 ```
 
 ## Generated LLM Index

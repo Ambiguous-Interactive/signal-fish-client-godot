@@ -172,7 +172,7 @@ Relay-only users pay nothing.
 | Protocol codec (F)      | `tests/protocol/` fixtures, byte-pinned to upstream samples |
 | Transport (K)           | `tests/transport/` fake + adapter tests                     |
 | Client (K)              | `tests/client/` (incl. reconnect, binary, v3, mesh)         |
-| Real socket (S, opt-in) | `tests/smoke/` via `run-runtime-checks.sh smoke`            |
+| Real socket (S, opt-in) | `tests/smoke/` via `run-runtime-checks.py smoke`            |
 
 Fast gates stay deterministic: fake transports, injected clocks, byte-pinned
 fixtures, no live network.
