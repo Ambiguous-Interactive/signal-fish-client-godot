@@ -87,14 +87,11 @@ jobs:
               uses: actions/cache@v6
               with:
                   path: .venv-ci
-                  key: venv-ci-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-ci.txt') }}
+                  key: venv-ci-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('scripts/install-ci-venv.py', 'requirements-ci.txt') }}
 
             - name: Install GDScript tooling
               if: steps.venv-cache.outputs.cache-hit != 'true'
-              run: |
-                  python3 -m pip install uv==0.12.19
-                  python3 -m uv venv .venv-ci
-                  python3 -m uv pip install --python .venv-ci/bin/python -r requirements-ci.txt
+              run: python3 scripts/install-ci-venv.py .venv-ci requirements-ci.txt
 
             - name: Check GDScript (helpers, format, lint)
               run: python3 -E scripts/run-runtime-checks.py gdscript-static
@@ -133,14 +130,11 @@ jobs:
               uses: actions/cache@v6
               with:
                   path: .venv-ci
-                  key: venv-python-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-ci.txt', 'requirements-python-quality.txt') }}
+                  key: venv-python-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('scripts/install-ci-venv.py', 'requirements-ci.txt', 'requirements-python-quality.txt') }}
 
             - name: Install Python tooling
               if: steps.venv-cache.outputs.cache-hit != 'true'
-              run: |
-                  python3 -m pip install uv==0.12.19
-                  python3 -m uv venv .venv-ci
-                  python3 -m uv pip install --python .venv-ci/bin/python -r requirements-python-quality.txt
+              run: python3 scripts/install-ci-venv.py .venv-ci requirements-python-quality.txt
 
             - name: Check Python types, format, and lint
               run: python3 -E scripts/run-runtime-checks.py python-types

@@ -73,10 +73,7 @@ jobs:
                   PIP_DEFAULT_TIMEOUT: "60"
                   UV_HTTP_TIMEOUT: "60"
                   UV_HTTP_RETRIES: "5"
-              run: |
-                  python3 -m pip install uv==0.12.19
-                  python3 -m uv venv .venv-docs
-                  python3 -m uv pip install --python .venv-docs/bin/python -r requirements-docs.txt
+              run: python3 scripts/install-ci-venv.py .venv-docs requirements-docs.txt
 
             - name: Build MkDocs site
               if: github.event_name == 'workflow_dispatch' && inputs.validated_run_id == ''

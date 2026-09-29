@@ -56,15 +56,12 @@ jobs:
               uses: actions/cache@v6
               with:
                   path: .venv-ci
-                  key: venv-automation-uv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('requirements-automation.txt') }}
+                  key: venv-automation-uv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('scripts/install-ci-venv.py', 'requirements-automation.txt') }}
 
             - name: Install automation validation dependencies
               if: steps.venv-cache.outputs.cache-hit != 'true'
               shell: bash
-              run: |
-                  python3 -m pip install uv==0.12.19
-                  python3 -m uv venv .venv-ci
-                  python3 -m uv pip install --python .venv-ci/bin/python -r requirements-automation.txt
+              run: python3 scripts/install-ci-venv.py .venv-ci requirements-automation.txt
 
             - name: Preflight (parse-check toolkit sources)
               # MUST run before the main harness step. If any toolkit script
