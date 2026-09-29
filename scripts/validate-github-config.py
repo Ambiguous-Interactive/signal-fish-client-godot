@@ -149,6 +149,19 @@ def iter_workflow_runs(data: object) -> list[str]:
     return runs
 
 
+def dispatch_checks_sha(verify: dict[object, object]) -> bool:
+    if "EXPECTED_SHA" not in str(verify):
+        return False
+    checked_out = False
+    for item in as_list(verify.get("steps")):
+        step = as_dict(item)
+        if str(step.get("uses", "")).startswith("actions/checkout@") and not step.get("if"):
+            checked_out = True
+        if step.get("run") == "python3 scripts/workflow-gates.py verify-sha":
+            return checked_out
+    return "GITHUB_SHA" in str(verify)
+
+
 def iter_workflow_uses(data: object) -> list[str]:
     uses: list[str] = []
     for job in as_dict(as_dict(data).get("jobs")).values():
@@ -394,7 +407,7 @@ def validate_auto_merge(
         if "expected_sha" not in inputs:
             reporter.error(f"{workflow_path}: workflow_dispatch needs expected_sha input")
         verify = as_dict(as_dict(workflow_data.get("jobs")).get("verify-dispatch"))
-        if "EXPECTED_SHA" not in str(verify) or "GITHUB_SHA" not in str(verify):
+        if not dispatch_checks_sha(verify):
             reporter.error(f"{workflow_path}: verify-dispatch must check the run SHA")
         concurrency = as_dict(workflow_data.get("concurrency"))
         group = str(concurrency.get("group", ""))
@@ -735,6 +748,22 @@ def validate_repo(repo_root: Path) -> Reporter:
 
 def run_self_test() -> int:
     reporter = Reporter()
+
+    checkout = {"uses": "actions/checkout@v7"}
+    python_gate = {
+        "run": "python3 scripts/workflow-gates.py verify-sha",
+        "env": {"EXPECTED_SHA": "${{ inputs.expected_sha }}"},
+    }
+    for steps, expected in (
+        ([checkout, python_gate], True),
+        ([python_gate], False),
+        ([python_gate, checkout], False),
+        ([{**checkout, "if": "false"}, python_gate], False),
+        ([checkout, {"run": python_gate["run"]}], False),
+        ([{"run": 'test "$GITHUB_SHA" = "$EXPECTED_SHA"'}], True),
+    ):
+        if dispatch_checks_sha({"steps": steps}) != expected:
+            reporter.error(f"self-test: wrong dispatch SHA verdict for {steps}")
 
     try:
         load_yaml_text("name: one\nname: two\n", "duplicate.yml")

@@ -23,7 +23,8 @@ and checks within about one hour. Session cadence:
 - [ ] #234: Verify that a later Dependabot merge dispatches Docs Deploy and
       publishes the validated main artifact without a manual CI rerun.
 - [ ] #168: Move remaining workflow shell logic to Python and uv while preserving the
-      PowerShell harness and the runtime gate behavior.
+      PowerShell harness and the runtime gate behavior. Next: Godot package setup,
+      source tool setup, Playwright image metadata, and container tool checks.
 
 ### Asset Library settings (#194)
 
