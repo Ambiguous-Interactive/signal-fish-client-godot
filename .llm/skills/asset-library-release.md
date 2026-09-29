@@ -26,16 +26,15 @@ configured.
 
 The live [entry #5489](https://godotengine.org/asset-library/asset/5489)
 points to this repository. The `v0.1.0` update was submitted as edit #24434
-on September 28, 2026. Moderation must complete before the new listing is
-live. Do not create another entry.
+on September 28, 2026, and went live on September 29. Use this entry for
+later releases.
 
-After moderation, verify the live entry lists version `0.1.0`, category
-Scripts, Godot 4.3, and download commit
-`b4441936057628a71b730c3338f0183b4cdc03e2`. Check that its download
-contains only `addons/`.
+The live entry lists version `0.1.0`, category Scripts, Godot 4.3, and
+download commit `b4441936057628a71b730c3338f0183b4cdc03e2`. Its
+download contains only `addons/` and loads in Godot 4.3.
 
 The [release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36364292644)
-records the submission. Keep these Settings -> Secrets and variables ->
+records the submission. Set these Settings -> Secrets and variables ->
 Actions values for later releases:
 
 - secret `GODOT_ASSET_LIBRARY_USERNAME`

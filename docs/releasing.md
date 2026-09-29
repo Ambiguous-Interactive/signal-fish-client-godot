@@ -15,17 +15,17 @@ Each store edit waits for moderation.
 - Admin access to this repository (to add secrets and run workflows).
 - A merged `vMAJOR.MINOR.PATCH` section in [`CHANGELOG.md`](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/main/CHANGELOG.md).
 
-## `v0.1.0` store edit
+## `v0.1.0` listing
 
-Entry #5489 points to this repository. The `v0.1.0` edit was submitted as
-edit #24434 on September 28, 2026. Wait for moderation before treating it
-as live. Do not create a second listing.
+Entry #5489 points to this repository. Edit #24434 was submitted on
+September 28, 2026, and the `v0.1.0` listing went live on September 29.
+Use this entry for later releases.
 
 The [`v0.1.0` GitHub Release](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases/tag/v0.1.0)
 is published. Its tag points to
 `b4441936057628a71b730c3338f0183b4cdc03e2`.
 
-After moderation, verify the live entry has these values:
+The live entry has these values:
 
 | Field             | Value                                                                                                            |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -40,13 +40,13 @@ After moderation, verify the live entry has these values:
 | Icon URL          | `https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/docs/assets/icon-256.png` |
 | Download commit   | `b4441936057628a71b730c3338f0183b4cdc03e2`                                                                       |
 
-If moderation rejects the edit, correct the fields and resubmit the existing
-entry. The [release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36364292644)
+The live download contains only `addons/` and loads in Godot 4.3. The
+[release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36364292644)
 contains the submission job and its logs.
 
 ## Repository settings
 
-In **Settings -> Secrets and variables -> Actions**, keep:
+In **Settings -> Secrets and variables -> Actions**, set:
 
 - Secret `GODOT_ASSET_LIBRARY_USERNAME` - your Asset Library username.
 - Secret `GODOT_ASSET_LIBRARY_PASSWORD` - your Asset Library password.

@@ -25,11 +25,10 @@ and checks within about one hour. Session cadence:
 - [ ] #168: Move suitable automation to Python and uv while preserving the
       PowerShell harness and the runtime gate behavior.
 
-### Asset Library moderation (P6 remainder)
+### Asset Library settings (#194)
 
-- [ ] Wait for moderation of edit #24434 on Asset Library entry #5489.
-      Verify the live entry shows `0.1.0`, Scripts, Godot 4.3, and the
-      `v0.1.0` tag commit. Check the download contents. Runbook:
+- [ ] Add the Asset Library username and password as repository secrets.
+      Confirm the asset ID variable stays `5489`, then close #194. Runbook:
       `.llm/skills/asset-library-release.md`.
 
 ### Post-v1 (P7, each gated)
