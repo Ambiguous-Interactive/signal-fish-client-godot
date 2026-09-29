@@ -1699,7 +1699,7 @@ Assert-Test 'devcontainer agent CLI installer is complete, parseable, and valida
     if ($LASTEXITCODE -ne 0) {
         throw "install-agent-tools.py has invalid Python syntax: $($syntax -join '; ')"
     }
-    $usage = @(& bash -c 'exec python3 "$@"' bash (ConvertTo-BashPath $installer) --invalid-mode 2>&1)
+    $usage = @(Invoke-SandboxBash 'exec python3 "$1" --invalid-mode' @((ConvertTo-BashPath $installer)) 2>&1)
     Expect-Equal $LASTEXITCODE 2 "agent CLI installer rejects unknown mode: $($usage -join '; ')"
 }
 
@@ -1991,7 +1991,7 @@ exit 127
                 # Bins move with each case copy; retarget the WSL pin so the
                 # installer resolves the case's fakes, not a host npm/node.
                 Set-WslBashSandboxPath -File (Join-Path $tempRoot 'bash-path.sh') -Bins @($foreignEarlierBin, $bin)
-                $output = @(& bash -c 'exec python3 .devcontainer/install-agent-tools.py "$@"' bash $case.Mode 2>&1)
+                $output = @(Invoke-SandboxBash 'exec python3 .devcontainer/install-agent-tools.py "$1"' @($case.Mode) 2>&1)
                 $exitCode = $LASTEXITCODE
                 Expect-Equal $exitCode $case.Exit "$($case.Name): $($output -join '; ')"
                 $packageText = Get-Content -LiteralPath "$state/packages" -Raw
