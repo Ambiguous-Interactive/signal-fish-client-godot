@@ -36,29 +36,8 @@ jobs:
                   include-templates: true
                   use-dotnet: false
 
-            - name: Import project
-              run: godot --headless --import --path .
-
-            - name: Export web build
-              # The exporter refuses a missing target folder on a fresh checkout.
-              run: |
-                  mkdir -p build/web
-                  godot --headless --path . --export-release "Web" build/web/index.html
-
-            - name: Verify artifacts
-              run: |
-                  test -f build/web/index.html
-                  test -f build/web/index.wasm
-                  ls -la build/web
-
-            - name: Generate smoke TLS certificate
-              run: |
-                  mkdir -p build/smoke-certs
-                  openssl req -x509 -newkey rsa:2048 -days 1 -nodes \
-                      -keyout build/smoke-certs/key.pem \
-                      -out build/smoke-certs/cert.pem \
-                      -subj "/CN=localhost" \
-                      -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+            - name: Prepare web export and smoke certificate
+              run: python3 scripts/prepare-web-export.py
 
             - name: Set up Python
               uses: actions/setup-python@v7
