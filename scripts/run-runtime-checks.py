@@ -438,6 +438,7 @@ def main() -> int:
         "gdscript-static",
         "python-types",
         "private-helpers",
+        "warning-pins",
         "format",
         "lint",
     ):

@@ -14,6 +14,8 @@ config/icon="res://demo/icon.svg"
 ; engine default exempts res://addons from every warning, which silenced
 ; these errors for the entire addon. The base SFTransport keeps four
 ; unused_signal ignores: adapters emit those contract signals.
+; scripts/check-gdscript-warning-pins.py keeps this list complete per
+; matrix engine (tests/fixtures/gdscript_warnings.json).
 ; Two classes stay ignorable by style: inferred_declaration (`:=` is the
 ; house style) and return_value_discarded (assert helpers and engine calls
 ; discard returns on purpose; flagging them would add ~1,200 markers). The
@@ -49,6 +51,7 @@ gdscript/warnings/onready_with_export=2
 gdscript/warnings/property_used_as_function=2
 gdscript/warnings/redundant_await=2
 gdscript/warnings/redundant_static_unload=2
+gdscript/warnings/renamed_in_godot_4_hint=2
 gdscript/warnings/return_value_discarded=0
 gdscript/warnings/shadowed_global_identifier=2
 gdscript/warnings/shadowed_variable=2

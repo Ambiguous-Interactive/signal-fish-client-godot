@@ -146,21 +146,21 @@ Definition of done for the first usable client:
   leaving foreign hook paths in place unless `-Force` is used.
 - `scripts/agent-check.ps1`: fast post-edit validator for agents and humans.
   It invokes `run-llm-hooks.ps1 -Mode AgentFast -SkipStagedCheck -NoAutoFix`
-  in the same PowerShell process; pass `-Full` for exhaustive behavioral tests.
+  in the same PowerShell process.
 - `scripts/check-gdscript-private-helpers.py`: gdtoolkit-parser static guard
   for unreachable private GDScript helper chains and cold-cache-fragile
-  self-`class_name` references; runtime CI runs it with `--self-test` before
-  protocol fixtures.
+  self-`class_name` references; CI runs it with `--self-test` before fixtures.
+- `scripts/check-gdscript-warning-pins.py`: keeps the `project.godot` `[debug]`
+  warning pins complete for every `ci.yml` matrix engine (fixture-pinned to
+  upstream warning codes); `gdscript-static` runs it with `--self-test`.
 - `scripts/run-runtime-checks.py`: runtime dispatcher used by CI and local
   checks. It sets a writable `HOME` for tool caches, activates `.venv-ci`
-  when present, and runs Godot through Python from fresh
-  per-suite project copies; locally each copy clones a warm `.godot` import
-  cache so boots skip the cold reimport (`SF_COLD=1` forces the
-  CI-identical cold import; CI checkouts have no `.godot` and stay cold).
+  when present, and runs Godot through Python from fresh per-suite project
+  copies; local copies clone a warm `.godot` import cache so boots skip the
+  cold reimport (`SF_COLD=1` forces the CI-identical cold import).
   Subcommands are `all`, `static`, `gdscript-static`, `python-types`,
-  `private-helpers`, `format`, `lint`, and `godot`, plus opt-in
-  `smoke` (real `WebSocketPeer` round-trip against a local RFC 6455 test server;
-  never part of `all`) and `changed` (dirty-tree fast loop; issue #117).
+  `private-helpers`, `warning-pins`, `format`, `lint`, and `godot`, plus opt-in
+  `smoke` (real `WebSocketPeer` round-trip against a local RFC 6455 test server; never part of `all`) and `changed` (dirty-tree fast loop; issue #117).
 - `scripts/validate-github-config.py`: deterministic local validator for
   GitHub workflows and Dependabot config. It rejects duplicate YAML keys,
   `gh api --slurp` combined with `--jq`, unsafe workflow triggers or
