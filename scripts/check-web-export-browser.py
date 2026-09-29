@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlencode
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -127,10 +128,13 @@ def demo_url(endpoint: str) -> str:
     return f"https://{HOST}:{HTTPS_PORT}/index.html?{params}"
 
 
-def run_check(web_root: Path, key: Path, cert: Path) -> None:
+def run_attempt(web_root: Path, key: Path, cert: Path) -> None:
     server = SmokeServer(web_root, key, cert)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(args=["--no-sandbox"])
+        crash_state = {"page": False, "browser": False}
+        browser.on("disconnected", lambda _target: crash_state.__setitem__("browser", True))
+        stage = "browser setup"
         try:
             context = browser.new_context(ignore_https_errors=True)
             context.add_init_script(
@@ -138,10 +142,12 @@ def run_check(web_root: Path, key: Path, cert: Path) -> None:
                 "window.__sfSmokeLog = line => window.__sfSmokeLogs.push(String(line));"
             )
             page = context.new_page()
+            page.on("crash", lambda _target: crash_state.__setitem__("page", True))
             page_errors: list[str] = []
             page.on("pageerror", lambda error: page_errors.append(str(error)))
 
             server.start()
+            stage = "HTTPS and WSS"
             response = page.goto(
                 demo_url(f"wss://{HOST}:{WSS_PORT}"),
                 wait_until="domcontentloaded",
@@ -170,6 +176,7 @@ def run_check(web_root: Path, key: Path, cert: Path) -> None:
 
             server.stop()
             server.start()
+            stage = "secure-page ws:// refusal"
             page.goto(
                 demo_url(f"ws://{HOST}:{WSS_PORT}"),
                 wait_until="domcontentloaded",
@@ -184,10 +191,53 @@ def run_check(web_root: Path, key: Path, cert: Path) -> None:
                 raise AssertionError(f"ws:// dial reached the smoke server: {insecure_logs}")
             if page_errors:
                 raise AssertionError(f"page errors during smoke: {page_errors}; demo log: {logs}")
-            print("web-export browser check passed: HTTPS boot, wss+Origin, ws:// predial refusal")
+        except PlaywrightError as exc:
+            if "Target crashed" in str(exc) or any(crash_state.values()):
+                raise BrowserCrash(
+                    f"Chromium crashed during {stage}: {exc}; "
+                    f"browser connected: {browser.is_connected()}"
+                ) from exc
+            raise
+        except TimeoutError as exc:
+            if any(crash_state.values()):
+                raise BrowserCrash(
+                    f"Chromium crashed while waiting during {stage}: {exc}; "
+                    f"browser connected: {browser.is_connected()}"
+                ) from exc
+            raise
         finally:
-            server.stop()
-            browser.close()
+            primary_error = sys.exception()
+            cleanup_error: Exception | None = None
+            try:
+                server.stop()
+            except Exception as exc:
+                cleanup_error = exc
+                print(f"web-export cleanup failed: {exc}", file=sys.stderr)
+            try:
+                browser.close()
+            except Exception as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+                print(f"web-export cleanup failed: {exc}", file=sys.stderr)
+            if primary_error is None and cleanup_error is not None:
+                raise cleanup_error
+
+
+class BrowserCrash(RuntimeError):
+    pass
+
+
+def run_check(web_root: Path, key: Path, cert: Path) -> None:
+    for attempt in range(2):
+        try:
+            run_attempt(web_root, key, cert)
+            print("web-export browser check passed: HTTPS boot, wss+Origin, ws:// predial refusal")
+            return
+        except BrowserCrash as exc:
+            print(f"web-export browser crash (attempt {attempt + 1}/2): {exc}", file=sys.stderr)
+            if attempt:
+                raise RuntimeError("web-export Chromium crashed twice") from exc
+            print("web-export: retrying both scenarios in a fresh browser", file=sys.stderr)
 
 
 def main() -> int:

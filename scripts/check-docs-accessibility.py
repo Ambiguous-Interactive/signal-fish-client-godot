@@ -17,6 +17,7 @@ from typing import TypedDict, cast
 from urllib.parse import unquote, urlsplit
 
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+from playwright.async_api import Error as PlaywrightError
 
 ROOT = Path(__file__).resolve().parents[1]
 HOST = "127.0.0.1"
@@ -477,14 +478,46 @@ async def run_checks() -> None:
     context: BrowserContext | None = None
     page: Page | None = None
     origin = ""
+    crash_state = {"page": False, "browser": False}
 
     def current_page() -> Page:
         if page is None:
             raise RuntimeError("browser page is unavailable")
         return page
 
+    def mark_browser_crash(target: Browser) -> None:
+        if target is browser:
+            crash_state["browser"] = True
+
+    def mark_page_crash(target: Page) -> None:
+        if target is page:
+            crash_state["page"] = True
+
+    async def restart_browser() -> None:
+        nonlocal browser, context, page
+        if browser is None:
+            raise RuntimeError("browser is unavailable for crash recovery")
+        try:
+            await asyncio.wait_for(browser.close(), timeout=10)
+        except Exception as close_error:
+            print(f"Accessibility cleanup failed: {close_error}", file=sys.stderr)
+        browser = None
+        context = None
+        page = None
+        crash_state.update(page=False, browser=False)
+        browser = await playwright.chromium.launch(args=["--disable-gpu"], headless=True)
+        browser.on("disconnected", mark_browser_crash)
+        context = await browser.new_context(
+            reduced_motion="reduce", viewport={"width": 1220, "height": 800}
+        )
+        page = await context.new_page()
+        page.on("crash", mark_page_crash)
+        page.set_default_timeout(5000)
+        page.set_default_navigation_timeout(15000)
+        attach_error_capture(page, errors, origin)
+
     async def run_phase(name: str, check: Callable[[], Awaitable[None]]) -> None:
-        nonlocal page
+        nonlocal browser, context, page
         print(
             f"Accessibility: start {name} at {time.monotonic() - start:.1f}s",
             file=sys.stderr,
@@ -494,7 +527,31 @@ async def run_checks() -> None:
             try:
                 await asyncio.wait_for(check(), timeout=PHASE_TIMEOUT)
                 break
+            except PlaywrightError as exc:
+                if "Target crashed" not in str(exc) and not any(crash_state.values()):
+                    raise
+                print(
+                    f"Accessibility: Chromium crash in {name} (attempt {attempt + 1}/2): "
+                    f"{exc}; browser connected: {browser.is_connected() if browser else False}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if attempt:
+                    raise RuntimeError(f'phase "{name}" crashed twice in Chromium') from exc
+                await restart_browser()
+                print(f"Accessibility: retrying {name} in a fresh browser", file=sys.stderr)
             except TimeoutError as exc:
+                if any(crash_state.values()):
+                    print(
+                        f"Accessibility: Chromium crashed while waiting in {name} "
+                        f"(attempt {attempt + 1}/2)",
+                        file=sys.stderr,
+                    )
+                    if attempt:
+                        raise RuntimeError(f'phase "{name}" crashed twice in Chromium') from exc
+                    await restart_browser()
+                    print(f"Accessibility: retrying {name} in a fresh browser", file=sys.stderr)
+                    continue
                 if attempt or context is None or page is None:
                     suffix = " again on a fresh page" if attempt else ""
                     raise TimeoutError(
@@ -507,6 +564,8 @@ async def run_checks() -> None:
                 )
                 previous = page
                 page = await context.new_page()
+                crash_state["page"] = False
+                page.on("crash", mark_page_crash)
                 page.set_default_timeout(5000)
                 page.set_default_navigation_timeout(15000)
                 attach_error_capture(page, errors, origin)
@@ -524,10 +583,12 @@ async def run_checks() -> None:
         async with async_playwright() as playwright:
             try:
                 browser = await playwright.chromium.launch(args=["--disable-gpu"], headless=True)
+                browser.on("disconnected", mark_browser_crash)
                 context = await browser.new_context(
                     reduced_motion="reduce", viewport={"width": 1220, "height": 800}
                 )
                 page = await context.new_page()
+                page.on("crash", mark_page_crash)
                 page.set_default_timeout(5000)
                 page.set_default_navigation_timeout(15000)
                 attach_error_capture(page, errors, origin)

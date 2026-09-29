@@ -147,6 +147,8 @@ jobs:
               run: .venv-docs/bin/python -m unittest discover -s tests -p test_docs_accessibility_cleanup.py
 
             - name: Test responsive documentation accessibility
+              env:
+                  DEBUG: pw:browser
               run: .venv-docs/bin/python scripts/check-docs-accessibility.py
 
     required:
