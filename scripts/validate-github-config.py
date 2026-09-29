@@ -159,7 +159,7 @@ def dispatch_checks_sha(verify: dict[object, object]) -> bool:
             checked_out = True
         if step.get("run") == "python3 scripts/workflow-gates.py verify-sha":
             return checked_out
-    return "GITHUB_SHA" in str(verify)
+    return False
 
 
 def iter_workflow_uses(data: object) -> list[str]:
@@ -760,7 +760,7 @@ def run_self_test() -> int:
         ([python_gate, checkout], False),
         ([{**checkout, "if": "false"}, python_gate], False),
         ([checkout, {"run": python_gate["run"]}], False),
-        ([{"run": 'test "$GITHUB_SHA" = "$EXPECTED_SHA"'}], True),
+        ([{"run": 'test "$GITHUB_SHA" = "$EXPECTED_SHA"'}], False),
     ):
         if dispatch_checks_sha({"steps": steps}) != expected:
             reporter.error(f"self-test: wrong dispatch SHA verdict for {steps}")

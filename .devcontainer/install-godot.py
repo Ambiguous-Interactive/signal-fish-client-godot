@@ -21,6 +21,10 @@ from pathlib import Path
 RELEASES = "https://github.com/godotengine/godot/releases/download"
 EDITOR_MIN_BYTES = 1_000_000
 TEMPLATES_MIN_BYTES = 100_000_000
+# Headless Godot loads only fontconfig, freetype, and udev; the X11/GL/audio
+# stack is never loaded, so installing it only wastes CI minutes.
+RUNTIME_PACKAGES = ("libfontconfig1", "libfreetype6", "libudev1")
+EXTRA_RUNTIME_PACKAGES = ("ca-certificates", "curl", "unzip")
 
 
 def archive_valid(path: Path, minimum_bytes: int) -> bool:
@@ -148,6 +152,39 @@ def install_templates(version: str, cache_dir: Path, templates_root: Path) -> No
     print(f"==> Installed web templates for {version_dir}: {len(web_members)} files")
 
 
+def install_runtime_deps() -> None:
+    if os.geteuid() != 0:
+        raise RuntimeError("runtime-deps must run as root (sudo)")
+    dpkg = shutil.which("dpkg")
+    if dpkg is None:
+        raise RuntimeError("dpkg is required to check Godot runtime libraries")
+    probe = subprocess.run(  # noqa: S603
+        (dpkg, "-s", *RUNTIME_PACKAGES), capture_output=True, check=False
+    )
+    if probe.returncode == 0:
+        print("==> Godot runtime libraries already present")
+        return
+    apt_get = shutil.which("apt-get")
+    if apt_get is None:
+        raise RuntimeError("apt-get is required to install Godot runtime libraries")
+    for command in (
+        (apt_get, "update"),
+        (
+            apt_get,
+            "install",
+            "-y",
+            "--no-install-recommends",
+            *EXTRA_RUNTIME_PACKAGES,
+            *RUNTIME_PACKAGES,
+        ),
+    ):
+        print(f"==> {' '.join(command)}")
+        result = subprocess.run(command, check=False)  # noqa: S603
+        if result.returncode != 0:
+            raise RuntimeError(f"apt-get failed with exit code {result.returncode}")
+    print("==> Installed Godot runtime libraries")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="kind", required=True)
@@ -159,8 +196,9 @@ def main() -> int:
     templates.add_argument("version")
     templates.add_argument("cache_dir", type=Path)
     templates.add_argument("templates_root", type=Path)
+    commands.add_parser("runtime-deps")
     args = parser.parse_args()
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", args.version):
+    if args.kind != "runtime-deps" and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", args.version):
         parser.error("version must be a release tag without path separators")
     try:
         if args.kind == "editor":
@@ -169,8 +207,10 @@ def main() -> int:
             else:
                 with tempfile.TemporaryDirectory(prefix="sf-godot-") as temporary:
                     install_editor(args.version, Path(temporary), args.target)
-        else:
+        elif args.kind == "templates":
             install_templates(args.version, args.cache_dir, args.templates_root)
+        else:
+            install_runtime_deps()
     except (OSError, ValueError, RuntimeError, urllib.error.URLError) as exc:
         print(f"Godot install failed: {exc}", file=sys.stderr)
         return 1
