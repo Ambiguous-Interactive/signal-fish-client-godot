@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import unittest
+from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -74,7 +75,7 @@ class BrowserRetryTests(unittest.TestCase):
 
     def assert_disconnected_failure(self, failure: Exception) -> None:
         events: list[str] = []
-        callbacks = {}
+        callbacks: dict[str, Callable[[object], None]] = {}
         browser = SimpleNamespace(
             on=lambda name, callback: callbacks.__setitem__(name, callback),
             is_connected=lambda: False,

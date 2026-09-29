@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import io
 import unittest
+from collections.abc import Callable
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
@@ -23,8 +24,8 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.events: list[str] = []
         self.stdout = io.StringIO()
-        self.page_events = {}
-        self.browser_events = {}
+        self.page_events: dict[str, Callable[[object], None]] = {}
+        self.browser_events: dict[str, Callable[[object], None]] = {}
         page = SimpleNamespace(
             set_default_timeout=lambda _value: None,
             set_default_navigation_timeout=lambda _value: None,
