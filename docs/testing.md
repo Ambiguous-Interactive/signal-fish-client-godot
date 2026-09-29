@@ -32,7 +32,7 @@ produce deterministic results:
 ## Run locally
 
 ```bash
-bash scripts/run-runtime-checks.sh all
+python3 -E scripts/run-runtime-checks.py all
 ```
 
 `all` runs the private-helper guard, GDScript and Python format/lint checks,
@@ -48,7 +48,7 @@ strict Python typing, and the Godot suites. Subcommands for targeted runs:
 ### Smoke (opt-in)
 
 ```bash
-bash scripts/run-runtime-checks.sh smoke
+python3 -E scripts/run-runtime-checks.py smoke
 ```
 
 `smoke` is never part of `all`. It drives a real `WebSocketPeer` round-trip

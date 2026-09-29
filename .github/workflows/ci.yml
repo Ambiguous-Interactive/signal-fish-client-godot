@@ -97,7 +97,7 @@ jobs:
                   python3 -m uv pip install --python .venv-ci/bin/python -r requirements-ci.txt
 
             - name: Check GDScript (helpers, format, lint)
-              run: bash scripts/run-runtime-checks.sh gdscript-static
+              run: python3 -E scripts/run-runtime-checks.py gdscript-static
 
             - name: Check runtime fast-loop selection
               run: python3 scripts/run-runtime-checks.py --self-test
@@ -143,7 +143,7 @@ jobs:
                   python3 -m uv pip install --python .venv-ci/bin/python -r requirements-python-quality.txt
 
             - name: Check Python types, format, and lint
-              run: bash scripts/run-runtime-checks.sh python-types
+              run: python3 -E scripts/run-runtime-checks.py python-types
 
             - name: Check Playwright system setup
               run: python3 -m unittest tests.test_install_playwright_deps
@@ -198,4 +198,4 @@ jobs:
               run: godot --headless --version
 
             - name: Run protocol fixture tests
-              run: bash scripts/run-runtime-checks.sh godot
+              run: python3 -E scripts/run-runtime-checks.py godot

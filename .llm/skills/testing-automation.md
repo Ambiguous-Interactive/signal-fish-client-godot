@@ -116,7 +116,7 @@ These checks enforce:
 Runtime protocol code is validated separately from the LLM harness:
 
 ```bash
-bash scripts/run-runtime-checks.sh all
+python3 -E scripts/run-runtime-checks.py all
 ```
 
 GitHub workflow and Dependabot policy checks are part of the LLM harness.
@@ -141,8 +141,8 @@ actions are pinned to commit SHAs; `actions/*` may stay on major tags. The
 release flow is dispatch-only and documented in
 `.llm/skills/asset-library-release.md`.
 
-`scripts/run-runtime-checks.sh` prepares `HOME` and `.venv-ci`, then delegates
-to `scripts/run-runtime-checks.py` for local/CI check selection. It exposes
+`scripts/run-runtime-checks.py` prepares `HOME` and `.venv-ci` for local and CI
+checks. The shell launcher remains for existing callers. The dispatcher exposes
 `private-helpers`, `format`, `lint`, `godot`, `all`, `changed`, and `smoke`
 subcommands so CI can keep separate step names without drifting from local
 reproduction commands. The `all` subcommand runs the static checks and the
@@ -281,7 +281,7 @@ integration tests:
 - Fake transport adapter tests covering connect, receive, send, close, error,
   reconnect, and backpressure before live network tests.
 - Godot 4 smoke test for the `WebSocketPeer` adapter path (landed:
-  `bash scripts/run-runtime-checks.sh smoke`).
+  `python3 -E scripts/run-runtime-checks.py smoke`).
 - Browser export manual check covering HTTPS hosting, `wss://`, WebSocket
   `Origin`, mixed-content rejection, and no native-only socket assumptions.
 - Godot 3 smoke tests only after a separate compatibility decision, focused on

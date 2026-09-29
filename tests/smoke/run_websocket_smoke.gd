@@ -4,7 +4,7 @@ extends SceneTree
 ## Runs a local RFC 6455 server (tests/smoke/ws_test_server.gd) and drives
 ## SFWebSocketTransport against it: open, text/binary echo round-trip,
 ## client- and server-initiated close handshakes, and a refused dial.
-## Run via: bash scripts/run-runtime-checks.sh smoke
+## Run via: python3 -E scripts/run-runtime-checks.py smoke
 
 const SFWebSocketTransportScript = preload(
 	"res://addons/signal_fish/transport/sf_websocket_transport.gd"
