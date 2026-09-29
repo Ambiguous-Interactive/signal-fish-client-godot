@@ -80,6 +80,25 @@ def dispatch_main_checks(repo: str, target: str, merge_sha: str) -> None:
     dispatch_workflow(repo, target, merge_sha, "docs-deploy.yml", validated_run_id=str(docs_run_id))
 
 
+def needs_dev_container(pr: dict[str, object]) -> bool:
+    if str(pr.get("headRefName", "")).startswith("dependabot/devcontainers/"):
+        return True
+    files = pr.get("files")
+    return isinstance(files, list) and any(
+        isinstance(item, dict)
+        and (
+            str(item.get("path", "")).startswith(".devcontainer/")
+            or item.get("path") == ".github/workflows/devcontainer.yml"
+        )
+        for item in files
+    )
+
+
+def pr_is_current(number: str, sha: str) -> bool:
+    current = record(gh_json("pr", "view", number, "--json", "headRefOid,state"))
+    return current.get("state") == "OPEN" and current.get("headRefOid") == sha
+
+
 def main() -> int:
     if shutil.which("gh") is None:
         print("::error::Required command 'gh' was not found on PATH.")
@@ -93,7 +112,7 @@ def main() -> int:
     sha = os.environ.get("HEAD_SHA", "")
     target = os.environ.get("DEPENDABOT_TARGET_BRANCH", "main")
     login = os.environ.get("DEPENDABOT_LOGIN", "dependabot[bot]")
-    workflows = os.environ.get("REQUIRED_WORKFLOWS", "Runtime CI|LLM Harness")
+    workflows = os.environ.get("REQUIRED_WORKFLOWS", "Runtime CI|LLM Harness|Docs Validation")
     if not sha:
         print("Missing check head SHA; skipping.")
         return 0
@@ -121,7 +140,11 @@ def main() -> int:
         return 1
     number = str(numbers[0])
 
-    pr = record(gh_json("pr", "view", number, "--json", "baseRefName,headRefOid,isDraft,state"))
+    pr = record(
+        gh_json(
+            "pr", "view", number, "--json", "baseRefName,files,headRefName,headRefOid,isDraft,state"
+        )
+    )
     if (
         pr.get("state") != "OPEN"
         or pr.get("baseRefName") != target
@@ -135,37 +158,48 @@ def main() -> int:
         )
         return 0
 
-    pages = required_records(
-        gh_json(
-            "api",
-            "--paginate",
-            "--slurp",
-            f"/repos/{repo}/actions/runs?head_sha={sha}&event=pull_request&per_page=100",
-        ),
-        "workflow run pages",
-    )
-    runs = [
-        run
-        for page in pages
-        for run in records(page.get("workflow_runs"))
-        if run.get("head_sha") == sha
-    ]
-    for workflow in (part.strip() for part in workflows.split("|")):
-        if not workflow:
-            continue
-        matching = [run for run in runs if run.get("name") == workflow]
-        latest = max(matching, key=lambda run: str(run.get("run_started_at") or ""), default={})
-        status = str(latest.get("status") or "missing")
-        conclusion = str(latest.get("conclusion") or "")
-        print(f"{workflow}: status={status} conclusion={conclusion or 'none'}")
-        if status != "completed":
-            print(f"{workflow} is {status}; waiting for another workflow_run event.")
-            return 0
-        if conclusion != "success":
-            print(f"{workflow} concluded {conclusion}; not merging.")
+    deadline = time.monotonic() + 35 * 60
+    required = [part.strip() for part in workflows.split("|") if part.strip()]
+    if needs_dev_container(pr) and "Dev Container" not in required:
+        required.append("Dev Container")
+    while True:
+        pages = required_records(
+            gh_json(
+                "api",
+                "--paginate",
+                "--slurp",
+                f"/repos/{repo}/actions/runs?head_sha={sha}&event=pull_request&per_page=100",
+            ),
+            "workflow run pages",
+        )
+        runs = [
+            run
+            for page in pages
+            for run in records(page.get("workflow_runs"))
+            if run.get("head_sha") == sha
+        ]
+        pending = False
+        for workflow in required:
+            matching = [run for run in runs if run.get("name") == workflow]
+            latest = max(matching, key=lambda run: str(run.get("run_started_at") or ""), default={})
+            status = str(latest.get("status") or "missing")
+            conclusion = str(latest.get("conclusion") or "")
+            print(f"{workflow}: status={status} conclusion={conclusion or 'none'}")
+            if status != "completed":
+                pending = True
+            elif conclusion != "success":
+                print(f"{workflow} concluded {conclusion}; not merging.")
+                return 0
+        if not pending:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"PR #{number} workflow runs stayed pending for 35 minutes")
+        print(f"PR #{number} workflow runs are pending; checking again.")
+        time.sleep(10)
+        if not pr_is_current(number, sha):
+            print(f"PR #{number} moved or closed while waiting for workflow runs; skipping.")
             return 0
 
-    deadline = time.monotonic() + 35 * 60
     while True:
         checks_result = gh("pr", "checks", number, "--json", "bucket,name,state,workflow")
         if checks_result.returncode not in (0, 8):
@@ -190,8 +224,7 @@ def main() -> int:
             raise RuntimeError(f"PR #{number} checks stayed pending for 35 minutes")
         print(f"PR #{number} still has pending checks; checking again.")
         time.sleep(10)
-        current = record(gh_json("pr", "view", number, "--json", "headRefOid,state"))
-        if current.get("state") != "OPEN" or current.get("headRefOid") != sha:
+        if not pr_is_current(number, sha):
             print(f"PR #{number} moved or closed while waiting for checks; skipping.")
             return 0
 

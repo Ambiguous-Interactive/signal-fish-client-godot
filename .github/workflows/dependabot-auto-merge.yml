@@ -31,7 +31,7 @@ jobs:
         env:
             GH_TOKEN: ${{ github.token }}
             HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-            REQUIRED_WORKFLOWS: Runtime CI|LLM Harness
+            REQUIRED_WORKFLOWS: Runtime CI|LLM Harness|Docs Validation
         steps:
             - name: Check out repository
               uses: actions/checkout@v7

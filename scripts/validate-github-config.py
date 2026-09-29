@@ -330,9 +330,9 @@ def validate_auto_merge(
     required_workflows = split_required_workflows(str(env.get("REQUIRED_WORKFLOWS", "")))
     if trigger_workflows != list(AUTO_MERGE_TRIGGERS):
         reporter.error(f"{path}: workflow_run.workflows must cover all PR workflows")
-    if required_workflows != list(AUTO_MERGE_TRIGGERS[:2]):
+    if required_workflows != list(AUTO_MERGE_TRIGGERS[:3]):
         reporter.error(
-            f"{path}: REQUIRED_WORKFLOWS must name Runtime CI and LLM Harness "
+            f"{path}: REQUIRED_WORKFLOWS must name Runtime CI, LLM Harness, and Docs Validation "
             f"({required_workflows!r})"
         )
     for workflow in trigger_workflows:

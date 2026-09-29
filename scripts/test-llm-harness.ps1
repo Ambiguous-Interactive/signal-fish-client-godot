@@ -1167,10 +1167,14 @@ JSON
   if [[ "${endpoint}" == *"/actions/runs?"* ]]; then
     case "${scenario}" in
       missing_workflow)
-        cat <<JSON
+        if [[ ! -f "${log}.workflow" ]]; then
+          touch "${log}.workflow"
+          cat <<JSON
 [{"workflow_runs":[{"name":"Runtime CI","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"}]}]
 JSON
-        ;;
+          exit 0
+        fi
+        ;;&
       failed_workflow)
         cat <<JSON
 [{"workflow_runs":[{"name":"Runtime CI","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"},{"name":"LLM Harness","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:01:00Z","status":"completed","conclusion":"failure"}]}]
@@ -1183,7 +1187,7 @@ JSON
         ;;
       *)
         cat <<JSON
-[{"workflow_runs":[{"name":"Runtime CI","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"},{"name":"LLM Harness","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:01:00Z","status":"completed","conclusion":"success"}]}]
+[{"workflow_runs":[{"name":"Runtime CI","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:00:00Z","status":"completed","conclusion":"success"},{"name":"LLM Harness","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:01:00Z","status":"completed","conclusion":"success"},{"name":"Docs Validation","head_sha":"${HEAD_SHA}","created_at":"2026-05-31T00:02:00Z","status":"completed","conclusion":"success"}]}]
 JSON
         ;;
     esac
@@ -1275,7 +1279,7 @@ exit 99
         $env:GITHUB_REPOSITORY = 'owner/repo'
         $env:HEAD_SHA = 'abc123'
         $env:HEAD_BRANCH = 'dependabot/fake'
-        $env:REQUIRED_WORKFLOWS = 'Runtime CI|LLM Harness'
+        $env:REQUIRED_WORKFLOWS = 'Runtime CI|LLM Harness|Docs Validation'
         # pwsh assertions read the Windows flavor; the fake gh appends the
         # bash flavor, and WSL only passes registered variables through.
         $fakeGhLogWin = Join-Path $sandbox 'merge.log'
@@ -1295,7 +1299,7 @@ exit 99
 
         $cases = @(
             [pscustomobject]@{ Scenario = 'success'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 4; Pattern = '--match-head-commit abc123' },
-            [pscustomobject]@{ Scenario = 'missing_workflow'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'LLM Harness is missing' },
+            [pscustomobject]@{ Scenario = 'missing_workflow'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 4; Pattern = 'workflow runs are pending' },
             [pscustomobject]@{ Scenario = 'failed_workflow'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'LLM Harness concluded failure' },
             [pscustomobject]@{ Scenario = 'rerun_failure'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'LLM Harness concluded failure' },
             [pscustomobject]@{ Scenario = 'stale_head'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'skipping stale workflow_run' },
@@ -1308,6 +1312,7 @@ exit 99
         foreach ($case in $cases) {
             Remove-Item -LiteralPath $fakeGhLogWin -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath "$fakeGhLogWin.pending" -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "$fakeGhLogWin.workflow" -Force -ErrorAction SilentlyContinue
             $env:FAKE_GH_SCENARIO = $case.Scenario
             # Invoke repoRoot-relative: WSL's bash.exe cannot open
             # Windows-style absolute script paths.
