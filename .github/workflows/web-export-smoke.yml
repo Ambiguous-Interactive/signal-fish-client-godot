@@ -73,7 +73,12 @@ jobs:
               with:
                   python-path: .venv-web-smoke/bin/python
 
+            - name: Browser retry tests
+              run: .venv-web-smoke/bin/python -m unittest discover -s tests -p test_web_export_browser_retry.py
+
             - name: Browser-export checklist
+              env:
+                  DEBUG: pw:browser
               run: |
                   .venv-web-smoke/bin/python scripts/check-web-export-browser.py \
                       --web-root build/web \
