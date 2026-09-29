@@ -230,45 +230,6 @@ class SelectionTests(unittest.TestCase):
                         self.assertTrue(Path(os.environ["HOME"]).is_dir())
                     self.assertEqual("missing bin/activate" in errors.getvalue(), broken)
 
-    def test_shell_starts_with_venv_and_ignores_pythonhome(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            scripts = root / "scripts"
-            scripts.mkdir()
-            for name in ("run-runtime-checks.sh", "run-runtime-checks.py"):
-                shutil.copy2(ROOT / "scripts" / name, scripts / name)
-            venv_bin = root / ".venv-ci/bin"
-            venv_bin.mkdir(parents=True)
-            (venv_bin / "activate").touch()
-            (venv_bin / "python3").symlink_to(sys.executable)
-            tools = root / "tools"
-            tools.mkdir()
-            dirname = shutil.which("dirname")
-            self.assertIsNotNone(dirname)
-            if dirname is None:
-                return
-            (tools / "dirname").symlink_to(dirname)
-            environment = os.environ.copy()
-            environment.pop("PYTHON", None)
-            environment.pop(BOOTSTRAP_MARKER, None)
-            environment["PYTHONHOME"] = str(root / "missing-python-home")
-            environment["GDSCRIPT_TOOL_HOME"] = str(root / "tool-home")
-            environment["PATH"] = str(tools)
-            bash = shutil.which("bash")
-            self.assertIsNotNone(bash)
-            if bash is None:
-                return
-            result = subprocess.run(  # noqa: S603
-                [bash, str(scripts / "run-runtime-checks.sh"), "--help"],
-                env=environment,
-                cwd=root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("usage:", result.stdout)
-
     def test_classification(self) -> None:
         root = ROOT
         cases: tuple[tuple[list[str], str], ...] = (

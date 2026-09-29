@@ -135,7 +135,7 @@ drain v3 clients get a best-effort `GoingAway` before the `4000` close.
 ## Testing rules
 
 - Suite: `tests/client/run_reconnect_tests.gd` (wired into
-  `scripts/run-runtime-checks.sh`).
+  `scripts/run-runtime-checks.py`).
 - Backoff values are plan-locked: assert the scheduled delay against the
   `DELAY_BOUNDS` table instead of real time.
 - Reconnect fixtures use placeholder tokens only (`TOKEN_V1`/`TOKEN_V2` in

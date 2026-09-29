@@ -30,9 +30,8 @@ def tracked(*patterns: str) -> list[str]:
     return [os.fsdecode(path) for path in output.split(b"\0") if path]
 
 
-def tool(name: str, env_name: str | None = None) -> str:
-    candidate = os.environ.get(env_name, name) if env_name else name
-    found = shutil.which(candidate)
+def tool(name: str) -> str:
+    found = shutil.which(name)
     if found is None:
         raise RuntimeError(f"{name} is required.")
     return found
@@ -52,14 +51,8 @@ def run(*command: str) -> None:
 
 
 def format_sources(mode: str) -> None:
-    shfmt = tool("shfmt", "SHFMT_BIN")
     prettier = node_tool("prettier")
     pwsh = tool("pwsh")
-    for path in tracked("*.sh"):
-        indent = {
-            "scripts/run-runtime-checks.sh": 0,
-        }.get(path, 4)
-        run(shfmt, "-i", str(indent), "-w" if mode == "write" else "-d", path)
     run(prettier, "--write" if mode == "write" else "--check", *tracked(*PRETTIER_SUFFIXES))
     command = [pwsh, "-NoProfile", "-File", "scripts/format-powershell.ps1"]
     if mode == "write":
@@ -68,10 +61,8 @@ def format_sources(mode: str) -> None:
 
 
 def analyze_sources() -> None:
-    shellcheck = tool("shellcheck", "SHELLCHECK_BIN")
     eslint = node_tool("eslint")
     pwsh = tool("pwsh")
-    run(shellcheck, "--severity=style", *tracked("*.sh"))
     run(eslint, "--max-warnings", "0", *tracked("*.js", "*.cjs", "*.mjs"))
     run(pwsh, "-NoProfile", "-File", "scripts/check-powershell-quality.ps1")
 

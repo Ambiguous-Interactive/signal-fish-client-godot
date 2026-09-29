@@ -155,16 +155,14 @@ python3 -E scripts/run-runtime-checks.py smoke  # opt-in: real WebSocketPeer rou
 Requires Godot 4.3+ and Python 3 with `requirements-python-quality.txt`. AI/agent
 context lives in [.llm/context.md](.llm/context.md).
 
-Source formatting and analysis use pinned Prettier, shfmt, ShellCheck,
-PSScriptAnalyzer, and ESLint:
+Source formatting and analysis use pinned Prettier, PSScriptAnalyzer, and
+ESLint:
 
 ```bash
 npm ci --ignore-scripts
 pwsh -NoProfile -Command 'Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force -AcceptLicense'
-python3 scripts/install-source-tool.py shfmt /tmp/sf-shfmt
-python3 scripts/install-source-tool.py shellcheck /tmp/sf-shellcheck
-SHFMT_BIN=/tmp/sf-shfmt python3 scripts/check-source.py format
-SHELLCHECK_BIN=/tmp/sf-shellcheck python3 scripts/check-source.py quality
+python3 scripts/check-source.py format
+python3 scripts/check-source.py quality
 ```
 
 Use `write` in place of `check` to format the tracked files.

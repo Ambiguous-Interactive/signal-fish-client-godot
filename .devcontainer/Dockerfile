@@ -131,7 +131,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 ARG GITHUB_MCP_VERSION=1.12.2
 ARG MCP_SERVER_GIT_VERSION=2026.8.18
 ARG MCP_SERVER_FETCH_VERSION=2026.8.18
-COPY mcp-shims/sf-github-mcp.sh /usr/local/bin/sf-github-mcp
+COPY mcp-shims/sf-github-mcp.py /usr/local/bin/sf-github-mcp
 # pipx/pip download caches are cache-mounted (same rationale as the
 # pre-commit layer above): warm rebuilds reuse fetched wheels.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \

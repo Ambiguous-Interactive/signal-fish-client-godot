@@ -50,7 +50,7 @@ setup.
   broken (the old tree is removed first, then uv creates the venv and installs
   requirements) with the runtime (gdtoolkit, per ci.yml) and
   automation (PyYAML, per llm-harness.yml) requirements, so
-  `scripts/run-runtime-checks.sh` and the harness share one local venv. Both
+  `scripts/run-runtime-checks.py` and the harness share one local venv. Both
   heals are warn-only and never block attaching.
 - Heavyweight downloads (apt archives/indexes, the Godot editor zip, the
   ~900 MB web export templates, pipx/pip wheels) ride BuildKit cache mounts,
@@ -163,7 +163,7 @@ Q&A), `git` (mcp-server-git), `fetch` (mcp-server-fetch), and `playwright`
   managed names and corrupted blocks (begin marker without end marker) are
   refused instead of rewritten; CRLF-edited configs are handled. In install
   mode the doctor gates the exit status - MISSING is a failure, not a note.
-- `.devcontainer/mcp-shims/sf-github-mcp.sh` renames the repo's
+- `.devcontainer/mcp-shims/sf-github-mcp.py` renames the repo's
   `GITHUB_MCP_PAT` convention onto github-mcp-server's canonical
   `GITHUB_PERSONAL_ACCESS_TOKEN` at launch time and defaults
   `GITHUB_READ_ONLY=1` (opt out with `GITHUB_READ_ONLY=0`); with no token it
