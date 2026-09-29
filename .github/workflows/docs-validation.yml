@@ -42,8 +42,10 @@ jobs:
             - name: Docs style (ASCII, no LLM-isms)
               run: python3 scripts/check-docs-style.py
 
-            - name: Docs Deploy run handoff
-              run: python3 tests/test_docs_deploy_wait.py
+            - name: Dependabot run handoff
+              run: |
+                  python3 tests/test_docs_deploy_wait.py
+                  python3 tests/test_dependabot_auto_merge.py
 
             - name: Run markdownlint
               uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24
