@@ -2376,7 +2376,7 @@ Assert-Test 'devcontainer MCP tooling is complete, parseable, pinned, and wired'
                 Diagnostic  = 'GITHUB_PERSONAL_ACCESS_TOKEN|GITHUB_MCP_PAT'
             },
             [pscustomobject]@{
-                Pattern     = 'os\.environ\.setdefault\("GITHUB_READ_ONLY", "1"\)'
+                Pattern     = 'os\.environ\["GITHUB_READ_ONLY"\] = "1"'
                 Requirement = 'default the GitHub MCP server to read-only'
                 Diagnostic  = 'GITHUB_READ_ONLY|read-only'
             },
