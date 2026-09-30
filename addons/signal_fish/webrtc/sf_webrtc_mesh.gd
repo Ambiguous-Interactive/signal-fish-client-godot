@@ -55,6 +55,7 @@ extends Node
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 
@@ -269,6 +270,13 @@ func _on_client_new_peer(peer_id: String, you_initiate: bool) -> void:
 		return
 	if _peers.has(peer_id):
 		return
+	if _peers.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
+		# Hostile NewPeer streams must not open unbounded peer connections
+		# (issue #274); only the next plan reconciliation can reshuffle.
+		SFLogScript.error(
+			"mesh: peer count is at cap %d; NewPeer not tracked" % SFTypeUtils.MAX_TRACKED_PEERS
+		)
+		return
 	_open_peer(peer_id, you_initiate)
 
 
@@ -310,7 +318,17 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 			_drop_peer(uuid)
 		return
 	var wanted: Dictionary = {}
-	for peer: SFSessionTypesScript.SessionPeerInfo in plan.peers:
+	var peer_count: int = plan.peers.size()
+	if peer_count > SFTypeUtils.MAX_TRACKED_PEERS:
+		SFLogScript.error(
+			(
+				"mesh: plan exceeds %d peers; dropped %d"
+				% [SFTypeUtils.MAX_TRACKED_PEERS, peer_count - SFTypeUtils.MAX_TRACKED_PEERS]
+			)
+		)
+		peer_count = SFTypeUtils.MAX_TRACKED_PEERS
+	for index: int in peer_count:
+		var peer: SFSessionTypesScript.SessionPeerInfo = plan.peers[index]
 		wanted[peer.player_id] = peer
 	for uuid: String in wanted:
 		var entry: _MeshPeer = _peers.get(uuid)

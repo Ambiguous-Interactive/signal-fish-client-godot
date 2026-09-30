@@ -108,6 +108,13 @@ const RECONNECT_BACKOFF_FACTOR := 2.0
 const RECONNECT_MAX_DELAY_SEC := 15.0
 const RECONNECT_JITTER_FRACTION := 0.25
 
+## Redaction-list bound for rotating secrets (issue #274): a hostile relay
+## cycling fresh reconnection tokens per baseline must not grow the list
+## without a bound. Configured secrets (credential, passwords, consumer-
+## supplied reconnect identities) stay pinned; per-baseline tokens rotate
+## under the cap, evicting the oldest.
+const MAX_REMEMBERED_SECRETS := 16
+
 ## Upstream `CloseReason::Kicked`: a kick removes the reconnection record, so
 ## the episode is over and retrying can never rejoin.
 const CLOSE_CODE_KICKED := 4007
@@ -127,6 +134,7 @@ var _config: SignalFishConfigScript = null
 var _connection_state: ConnectionState = ConnectionState.DISCONNECTED
 var _session_state: SessionState = SessionState.UNAUTHENTICATED
 var _secrets: PackedStringArray = PackedStringArray()
+var _pinned_secrets := 0
 var _player_id := ""
 var _room_id := ""
 var _room_code := ""
@@ -203,12 +211,13 @@ func configure(config: SignalFishConfigScript) -> Error:
 		return ERR_INVALID_DATA
 	_config = config
 	_secrets = PackedStringArray()
+	_pinned_secrets = 0
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
-	_remember_secret(config.credential)
+	_remember_secret(config.credential, true)
 	# Retained reconnect identities may outlive configure() (it is allowed
 	# whenever no connection is active); keep them on the redaction list.
-	_remember_secret(_reconnect_auth_token)
-	_remember_secret(_context_auth_token)
+	_remember_secret(_reconnect_auth_token, true)
+	_remember_secret(_context_auth_token, true)
 	return OK
 
 
@@ -398,7 +407,7 @@ func join_room(params: JoinRoomParams) -> Error:
 	if guard != OK:
 		return guard
 	# Join passwords are secrets like tokens: redact them from any log line.
-	_remember_secret(params.password)
+	_remember_secret(params.password, true)
 	var max_players: Variant = null
 	if params.max_players > 0:
 		max_players = params.max_players
@@ -522,7 +531,7 @@ func join_as_spectator(
 	var guard := _guard_session_send("join_as_spectator")
 	if guard != OK:
 		return guard
-	_remember_secret(password)
+	_remember_secret(password, true)
 	return _send_envelope(
 		SFMessagesScript.join_as_spectator(
 			game_name, room_code, spectator_name, _optional_string(password)
@@ -1126,7 +1135,9 @@ func _apply_room_info(info: SFTypesScript.RoomJoinedInfo) -> void:
 	# Duplicate the rosters so later presence updates never mutate the payload
 	# objects already handed to consumers.
 	_players = info.current_players.duplicate()
+	_bound_roster(_players, "current_players")
 	_spectators = info.current_spectators.duplicate()
+	_bound_roster(_spectators, "current_spectators")
 	# Retain the freshest reconnection identity for opt-in auto-reconnect.
 	# Every authoritative baseline replaces it; a baseline without a token
 	# clears it (upstream client_core.rs baseline handling).
@@ -1138,7 +1149,9 @@ func _apply_spectator_info(info: SFTypesScript.SpectatorJoinedInfo) -> void:
 	_room_code = info.room_code
 	_lobby_state = info.lobby_state
 	_players = info.current_players.duplicate()
+	_bound_roster(_players, "current_players")
 	_spectators = info.current_spectators.duplicate()
+	_bound_roster(_spectators, "current_spectators")
 	# The protocol has no spectator reconnect: drop any retained identity.
 	_capture_reconnect_context("", "", "")
 
@@ -1152,11 +1165,26 @@ func _clear_room_state() -> void:
 	_spectators = []
 
 
+func _bound_roster(roster: Array, label: String) -> void:
+	if roster.size() <= SFTypeUtils.MAX_TRACKED_PEERS:
+		return
+	var dropped: int = roster.size() - SFTypeUtils.MAX_TRACKED_PEERS
+	roster.resize(SFTypeUtils.MAX_TRACKED_PEERS)
+	_emit_protocol_error(
+		"%s exceeds %d entries; dropped %d" % [label, SFTypeUtils.MAX_TRACKED_PEERS, dropped]
+	)
+
+
 func _upsert_player(player: SFTypesScript.PlayerInfo) -> void:
 	for index: int in _players.size():
 		if _players[index].id == player.id:
 			_players[index] = player
 			return
+	if _players.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
+		_emit_protocol_error(
+			"player roster is at cap %d; PlayerJoined not tracked" % SFTypeUtils.MAX_TRACKED_PEERS
+		)
+		return
 	_players.append(player)
 
 
@@ -1183,6 +1211,14 @@ func _upsert_spectator(spectator: SFTypesScript.SpectatorInfo) -> void:
 		if _spectators[index].id == spectator.id:
 			_spectators[index] = spectator
 			return
+	if _spectators.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
+		_emit_protocol_error(
+			(
+				"spectator roster is at cap %d; NewSpectatorJoined not tracked"
+				% SFTypeUtils.MAX_TRACKED_PEERS
+			)
+		)
+		return
 	_spectators.append(spectator)
 
 
@@ -1311,9 +1347,16 @@ func _terminate_reconnection_attempt() -> void:
 		_schedule_auto_reconnect()
 
 
-func _remember_secret(secret: String) -> void:
-	if not secret.is_empty() and not _secrets.has(secret):
-		_secrets.append(secret)
+func _remember_secret(secret: String, pinned := false) -> void:
+	if secret.is_empty() or _secrets.has(secret):
+		return
+	if pinned:
+		_secrets.insert(_pinned_secrets, secret)
+		_pinned_secrets += 1
+		return
+	_secrets.append(secret)
+	if _secrets.size() > _pinned_secrets + MAX_REMEMBERED_SECRETS:
+		_secrets.remove_at(_pinned_secrets)
 
 
 func _teardown_transport() -> void:

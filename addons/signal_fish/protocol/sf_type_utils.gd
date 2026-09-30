@@ -3,6 +3,12 @@ extends RefCounted
 ## Bounds recursive decoding and encoding of untrusted payloads.
 const MAX_MESSAGE_DEPTH := 16
 
+## Maximum players, spectators, or plan peers session state tracks against a
+## hostile relay (issue #274). Excess entries are dropped with one diagnostic
+## per event, mirroring SFEvents.MAX_MISSED_EVENTS; the wire keeps legit rooms
+## under the cap (max_players is a u8, plan peers are room members).
+const MAX_TRACKED_PEERS := 256
+
 const _UUID_HEX_DIGITS := "0123456789abcdef"
 
 
