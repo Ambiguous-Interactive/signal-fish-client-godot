@@ -19,6 +19,7 @@ extends RefCounted
 ##   any marker width that carries the value, and trailing bytes are malformed.
 
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
 
 const _UUID_BYTES := 16
 const _KNOWN_FIELDS := {
@@ -62,10 +63,16 @@ static func decode_envelope(bytes: PackedByteArray) -> Dictionary:
 			result["error"] = "binary game-data envelope key is malformed"
 			return result
 		if fields.has(key):
-			result["error"] = "binary game-data envelope contains duplicate field %s" % key
+			result["error"] = (
+				"binary game-data envelope contains duplicate field %s"
+				% SFDiagnosticsScript.render_key(key)
+			)
 			return result
 		if not _KNOWN_FIELDS.has(key):
-			result["error"] = "binary game-data envelope contains unknown field %s" % key
+			result["error"] = (
+				"binary game-data envelope contains unknown field %s"
+				% SFDiagnosticsScript.render_key(key)
+			)
 			return result
 		var value: Variant = _read_field(peer, key)
 		if value == null:
@@ -89,7 +96,11 @@ static func _validate_fields(fields: Dictionary, result: Dictionary) -> Dictiona
 		return result
 	var encoding := _encoding_token(fields["encoding"], is_v3)
 	if encoding == SFTypesScript.GameDataEncoding.UNKNOWN:
-		result["error"] = "binary game-data encoding %s is not allowed here" % fields["encoding"]
+		var encoding_text: String = fields["encoding"]
+		result["error"] = (
+			"binary game-data encoding %s is not allowed here"
+			% SFDiagnosticsScript.render_key(encoding_text)
+		)
 		return result
 	if is_v3:
 		# _read_unsigned only accepts unsigned marker forms, so a wrapped
