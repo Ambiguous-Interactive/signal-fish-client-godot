@@ -121,6 +121,11 @@ func _test_msgpack_hostile_vectors() -> void:
 			"bytes": [0x81, 0xA1, 0x61, 0x82, 0xA1, 0x6B, 0x01, 0xA1, 0x6B, 0x02],
 			"error_contains": '"k"',
 		},
+		{
+			"label": "duplicate key with a map16 header",
+			"bytes": [0xDE, 0x00, 0x02, 0xA1, 0x6B, 0x01, 0xA1, 0x6B, 0x02],
+			"error_contains": '"k"',
+		},
 	]
 	for vector: Dictionary in vectors:
 		var raw_bytes: Array = vector["bytes"]
@@ -157,8 +162,9 @@ func _test_msgpack_hostile_vectors() -> void:
 	var at_cap_decode: Dictionary = SFMsgpackScript.decode(at_cap_bytes)
 	var at_cap_decode_ok: bool = at_cap_decode["ok"]
 	_assert(at_cap_decode_ok, true, "nesting at the cap decodes")
-	# Issue #273: the refusal is per map, so the same key may appear in a
-	# nested map, and the diagnostic for a huge hostile key is capped.
+	# Issue #273: the refusal is per map, so the same key may appear in
+	# nested and sibling maps, and the diagnostic for a huge hostile key
+	# is capped.
 	var legal_nest: Array[int] = Array(
 		[0x81, 0xA1, 0x6B, 0x81, 0xA1, 0x6B, 0x01], TYPE_INT, &"", null
 	)
@@ -166,6 +172,15 @@ func _test_msgpack_hostile_vectors() -> void:
 	var legal_ok: bool = legal_decode["ok"]
 	if _assert(legal_ok, true, "same key in nested maps decodes"):
 		_assert_equal({"k": {"k": 1}}, legal_decode["value"], "same key in nested maps value")
+	var legal_siblings: Array[int] = Array(
+		[0x92, 0x81, 0xA1, 0x6B, 0x01, 0x81, 0xA1, 0x6B, 0x02], TYPE_INT, &"", null
+	)
+	var sibling_decode: Dictionary = SFMsgpackScript.decode(_packed(legal_siblings))
+	var sibling_ok: bool = sibling_decode["ok"]
+	if _assert(sibling_ok, true, "same key in sibling maps decodes"):
+		_assert_equal(
+			[{"k": 1}, {"k": 2}], sibling_decode["value"], "same key in sibling maps value"
+		)
 	var long_key := "x".repeat(40)
 	var long_key_bytes: Array[int] = Array(
 		(

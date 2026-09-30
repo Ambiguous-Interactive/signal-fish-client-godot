@@ -111,7 +111,7 @@ Follow-up verdicts recorded for later rounds: `SFMsgpack` map decode
 silently last-wins duplicate keys (`_read_counted_map`), while the text
 path (issue #92) and the binary envelope decoder refuse them - a
 fail-closed parity gap on the opt-in payload path; linear in time and
-space, so outside round 6's bar.
+space, so outside round 6's bar (closed by round 7 below).
 
 ## Round 7: MessagePack duplicate-key verdict (2026-09-30, issue #273)
 
