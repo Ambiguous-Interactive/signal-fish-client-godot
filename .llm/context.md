@@ -60,11 +60,11 @@ point here unless a tool requires a tiny wrapper format.
   helpers; keep `##` docs on public API; naming and structure carry the rest.
 - Keep `PLAN.md` going-forward only: in-progress items, next work, open
   questions, and the definition of done. When an item ships, record it in
-  `progress/session-NNN-*.md` and delete it from `PLAN.md` in the same
-  session. Durable rules and context belong in `.llm/skills` and
-  `.llm/research`; `PLAN.md` links to them instead of copying. Never append
-  session summaries or completed checklists to `PLAN.md` (see
-  `.llm/skills/architectural-planning.md`, "Plan File Hygiene").
+  the local `progress/session-NNN-*.md` note (git-ignored) and delete it
+  from `PLAN.md` in the same session. Durable rules and context belong in
+  `.llm/skills` and `.llm/research`; `PLAN.md` links to them instead of
+  copying. Never append session summaries or completed checklists to
+  `PLAN.md` (see `.llm/skills/architectural-planning.md`, "Plan File Hygiene").
 
 ## Locked Decisions
 
