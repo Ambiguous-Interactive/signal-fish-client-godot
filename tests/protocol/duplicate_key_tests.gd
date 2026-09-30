@@ -34,6 +34,7 @@ func run_all() -> void:
 		_test_duplicate_key_frames_fail_closed,
 		_test_clean_frames_still_decode,
 		_test_escape_canonicalization,
+		_test_hostile_depth_flood_fails_closed,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -203,6 +204,53 @@ func _test_escape_canonicalization() -> void:
 	var truncated := SFJsonGuardScript.duplicate_key_error(oversized)
 	_assert_string_contains(truncated, "duplicate", "oversized key still reported")
 	_assert(not truncated.contains("k".repeat(64)), "oversized key truncated in diagnostic")
+	_done()
+
+
+## Issue #161 round 6: the guard used to allocate a key-set Dictionary per
+## opened container, so one hostile brace flood amplified ~128x (a 256 KiB
+## frame peaked near 33 MB before the engine parser could refuse its depth).
+## The tracked-depth cap bounds that bookkeeping; frames beyond it were
+## already doomed at the engine parse, so refusing earlier changes nothing
+## that used to decode.
+func _test_hostile_depth_flood_fails_closed() -> void:
+	# Mirrors SFJsonGuard._MAX_TRACKED_DEPTH (1024): decodable frames nest at
+	# most 16 levels, so the cap only relocates an already-refused failure.
+	var max_depth := 1024
+	var vectors := [
+		["brace flood at the frame cap", "{".repeat(262144), "nesting exceeds depth"],
+		[
+			"one level past the cap",
+			'{"k":'.repeat(max_depth + 1) + "1" + "}".repeat(max_depth + 1),
+			"nesting exceeds depth"
+		],
+		[
+			"duplicate at the cap boundary is still tracked",
+			'{"k":'.repeat(max_depth) + '"a","k":"b"' + "}".repeat(max_depth),
+			"duplicate"
+		],
+		[
+			"clean frame at the cap boundary is accepted",
+			'{"k":'.repeat(max_depth) + "1" + "}".repeat(max_depth),
+			""
+		],
+	]
+	for case: Array in vectors:
+		var text: String = case[1]
+		var expected: String = case[2]
+		var error := SFJsonGuardScript.duplicate_key_error(text)
+		if expected.is_empty():
+			_assert_equal("", error, "%s accepted" % case[0])
+		else:
+			if not _assert(not error.is_empty(), "%s rejected" % case[0]):
+				continue
+			_assert_string_contains(error, expected, "%s diagnostic" % case[0])
+	# End to end: the text path fails closed before the engine parse, so a
+	# flood inside any envelope surfaces as one protocol_error.
+	var decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(
+		'{"type":"GameData","data":{"flood":%s}' % "{".repeat(262144)
+	)
+	_assert_protocol_error_contains(decoded, "nesting exceeds depth", "flood envelope rejected")
 	_done()
 
 

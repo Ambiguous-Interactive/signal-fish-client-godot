@@ -60,11 +60,67 @@ zeros bypass because float keys cannot distinguish -0.0 from 0.0).
 identical to the uncached path; pinned by byte-identity, eviction-survival,
 and negative-zero wire tests.
 
+## Round 6: algorithmic-complexity sweep (2026-09-30)
+
+Owner ask (2026-09-28): prove hostile inputs cannot drive any decoder
+super-linear. Method: doubling-size probes on Godot 4.3 headless; a 4x
+input growth costing ~4x time is linear, a constant cost is O(1).
+
+Time verdicts (all surfaces linear or constant):
+
+- JSON guard byte scan: brace flood, object+key flood, and
+  backslash-quote adversarial strings all cost ~4x per 4x of input
+  (~0.5 us/input byte). The per-byte interpreted scan stays the floor.
+- MessagePack: hostile nesting fast-fails at the depth cap (0.02 ms at
+  any declared depth to 1M); a declared huge count with a truncated
+  stream refuses in ~5 us, independent of the declared count.
+- Binary payload byte-array path: 3.2-3.9x per 4x input (linear).
+- UUID gate: constant per call; a 1 MiB hostile string costs 0.3 us
+  behind the length check (36-char scan only for well-shaped text).
+
+Space verdict, fixed: `SFJsonGuard.duplicate_key_error` allocated a
+key-set Dictionary per opened container, so a 256 KiB `{` flood peaked
+near 33 MB (~128x the frame) and ~117 ms before any refusal. The
+tracked-depth cap (`_MAX_TRACKED_DEPTH`, 1024) bounds the bookkeeping;
+every decoded payload position nests at most MAX_MESSAGE_DEPTH (16)
+levels, so the cap only relocates where an already-refused frame fails
+closed, independent of engine version. The engine JSON parser refuses
+deep documents near the same depth anyway (arrays accepted to 1025,
+objects to 1024 on 4.3). Post-fix: the flood refuses in 0.8 ms with
+sub-MB peak and a
+"nesting exceeds depth 1024" diagnostic; the object+key flood drops
+137 ms to 2.5 ms (probe frames ~1.5 MB, above the 256 KiB inbound frame
+cap; both shapes are linear so the verdict is unchanged). Clean-frame
+guard cost unchanged (31.4 -> 29.2 us, inside noise). Pinned by the
+duplicate-key depth-cap vectors, including a duplicate at the boundary
+level and a clean frame one level past the cap. The remaining per-frame
+latency floor is the interpreted byte scan (~0.5 us per input byte),
+linear and inside the round's bar.
+
+Session-state surfaces (roster/spectator upserts, mesh reconciliation)
+are O(session size) per event through linear scans. No validator caps
+roster or peer-array length, so a hostile relay streaming distinct
+PlayerJoined events grows client state without a bound (a server-trust
+assumption, not an enforced bound); decode inputs stay the only
+peer/hostile-input amplification surface.
+
+Follow-up verdicts recorded for later rounds: `SFMsgpack` map decode
+silently last-wins duplicate keys (`_read_counted_map`), while the text
+path (issue #92) and the binary envelope decoder refuse them - a
+fail-closed parity gap on the opt-in payload path; linear in time and
+space, so outside round 6's bar.
+
 ## Engine facts worth remembering
 
 - `StreamPeerBuffer.get_data(n)` returns an `[Error, PackedByteArray]` Array
   on 4.3 (allocation per call).
 - `PackedByteArray.decode_u16/u32/u64/float/double` are little-endian.
+- The engine JSON parser has a hard nesting limit that depends on the
+  container kind: arrays accepted to depth 1025, objects to 1024,
+  refused one level past each ("JSON structure is too deep"; measured
+  on Godot 4.3). Deep hostile JSON therefore fails closed at the
+  engine; the text guard's 1024 tracked-depth cap sits just under the
+  array boundary (issue #161).
 - A true runtime `-0.0` reliably formats `"-0"` and `+0.0` formats `"0"`;
   both round-trip (`"-0.0"`/`"0.0"` after normalization). Subnormals and the
   min normal format as `"0"` through both engine formatters, so those floats

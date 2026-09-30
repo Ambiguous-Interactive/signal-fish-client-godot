@@ -6,6 +6,16 @@ extends RefCounted
 
 const _MAX_REPORTED_KEY_BYTES := 32
 
+## Tracked object/array nesting bound. Every payload position the client
+## decodes nests at most MAX_MESSAGE_DEPTH levels (sf_events and
+## sf_type_utils), so this cap only changes where an already-refused frame
+## fails closed, on any engine version. The engine JSON parser refuses deep
+## documents around the same depth anyway (arrays accepted to 1025, objects
+## to 1024, measured on Godot 4.3). Without the cap a hostile brace flood
+## drove one key-set Dictionary per container byte: a 256 KiB frame peaked
+## near 33 MB (~128x) before any refusal (issue #161 round 6).
+const _MAX_TRACKED_DEPTH := 1024
+
 
 ## Returns "" when the frame has no duplicate keys, otherwise a
 ## protocol-error diagnostic naming the first duplicated key.
@@ -34,10 +44,14 @@ static func duplicate_key_error(text: String) -> String:
 			expect_key = false
 			continue
 		if byte == 0x7B:  # '{'
+			if key_sets.size() >= _MAX_TRACKED_DEPTH:
+				return "message nesting exceeds depth %d" % _MAX_TRACKED_DEPTH
 			key_sets.append({})
 			is_object.append(true)
 			expect_key = true
 		elif byte == 0x5B:  # '['
+			if key_sets.size() >= _MAX_TRACKED_DEPTH:
+				return "message nesting exceeds depth %d" % _MAX_TRACKED_DEPTH
 			key_sets.append({})
 			is_object.append(false)
 			expect_key = false
