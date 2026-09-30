@@ -60,9 +60,12 @@ class IceServerInfo:
 		return raw.duplicate(true)
 
 	func _to_string() -> String:
-		# The url list is wire-derived and count-bounded like every
-		# diagnostic sink (issue #284).
-		return "IceServerInfo(%s)" % ", ".join(SFDiagnosticsScript.bound_items(urls))
+		# Urls stay free text after validation (array shape only), so
+		# each item is length-bounded like a key (issues #284, #286).
+		var shown := PackedStringArray()
+		for url: String in SFDiagnosticsScript.bound_items(urls):
+			shown.append(SFDiagnosticsScript.bound_item(url))
+		return "IceServerInfo(%s)" % ", ".join(shown)
 
 
 ## A peer the recipient should connect to within a SessionPlanInfo (upstream
