@@ -247,6 +247,8 @@ func _test_encode_boundary_refusals() -> void:
 
 ## Issue #79: the downgrade diagnostic renders the server's statement as
 ## wire tokens, not coerced enum ints (unknown becomes "-1" today).
+## Issue #284: the composed reason is count-bounded — a hostile relay
+## cannot stretch one WARN line by sending thousands of format entries.
 
 
 func _test_format_downgrade_diagnostics() -> void:
@@ -261,6 +263,16 @@ func _test_format_downgrade_diagnostics() -> void:
 			"supported": ["json", "weird"],
 			"expected": "[json, weird]",
 		},
+		{
+			"label": "count cap keeps every label visible at the boundary",
+			"supported": ["a", "b", "c", "d", "e", "f", "g", "h"],
+			"expected": "[a, b, c, d, e, f, g, h]",
+		},
+		{
+			"label": "count cap collapses the remainder (issue #284)",
+			"supported": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+			"expected": "[a, b, c, d, e, f, g, h, and 2 more]",
+		},
 	]
 	for case: Dictionary in cases:
 		var supported: Array = case["supported"]
@@ -270,6 +282,12 @@ func _test_format_downgrade_diagnostics() -> void:
 		_assert_string_contains(
 			reason, "does not include the requested format", "downgrade %s explains" % case["label"]
 		)
+	var hostile_supported: Array = []
+	hostile_supported.resize(1000)
+	hostile_supported.fill("hostile")
+	var hostile_reason := SFGameDataFormatScript.downgrade_reason("message_pack", hostile_supported)
+	_assert_string_contains(hostile_reason, "and 992 more", "downgrade hostile count")
+	_assert(hostile_reason.length() < 200, "downgrade hostile count stays bounded")
 	_assert_equal(
 		"", SFGameDataFormatScript.downgrade_reason("rkyv", [0, 2]), "supported preference silent"
 	)

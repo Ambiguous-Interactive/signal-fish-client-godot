@@ -143,6 +143,9 @@ class ProtocolInfo:
 	var sdk_version: String = ""
 	var minimum_version: String = ""
 	var recommended_version: String = ""
+	# capabilities/transports are never logged by the client (the fields
+	# travel only on the protocol_info signal), so they carry no count cap:
+	# there is no diagnostic sink to bound (issue #284).
 	var capabilities: PackedStringArray = PackedStringArray()
 	var notes: String = ""
 	var game_data_formats: Array[int] = []

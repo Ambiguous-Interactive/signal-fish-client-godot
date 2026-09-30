@@ -34,9 +34,81 @@ func run_all() -> void:
 		_test_v3_server_decoders_match_fixtures,
 		_test_v3_validation_and_sentinels,
 		_test_truncated_missed_events_keep_the_newest,
+		_test_plan_debug_repr_count_bounds,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
+
+
+## Issue #284: wire-derived lists in debug reprs are count-bounded, so a
+## hostile relay cannot stretch one printed line with thousands of peers
+## or ICE urls.
+func _test_plan_debug_repr_count_bounds() -> void:
+	var peers: Array = []
+	for index: int in 300:
+		var peer := {
+			"player_id": "30000000-0000-0000-0000-%012d" % index,
+			"player_name": "p%d" % index,
+			"is_authority": false,
+			"initiate": true,
+		}
+		peers.append(peer)
+	var plan_data := {
+		"generation": "50000000-0000-0000-0000-000000000001",
+		"topology": "mesh",
+		"transport": "webrtc",
+		"fallback": "relay",
+		"peers": peers,
+	}
+	var plan: SFSessionTypesScript.SessionPlanInfo = SFSessionTypesScript.make_session_plan_info(
+		plan_data
+	)
+	var plan_text := plan._to_string()
+	_assert_string_contains(plan_text, "and 292 more", "plan debug caps peer list")
+	_assert(plan_text.length() < 600, "plan debug stays bounded")
+
+	# Legit traffic keeps the plain, readable repr: no array brackets or
+	# per-item quotes.
+	var small_peers: Array = []
+	for index: int in 2:
+		var peer := {
+			"player_id": "30000000-0000-0000-0000-%012d" % index,
+			"player_name": "p%d" % index,
+			"is_authority": false,
+			"initiate": true,
+		}
+		small_peers.append(peer)
+	var small_plan_data := {
+		"generation": "50000000-0000-0000-0000-000000000001",
+		"topology": "mesh",
+		"transport": "webrtc",
+		"fallback": "relay",
+		"peers": small_peers,
+	}
+	var small_plan: SFSessionTypesScript.SessionPlanInfo = (
+		SFSessionTypesScript.make_session_plan_info(small_plan_data)
+	)
+	var small_text := small_plan._to_string()
+	_assert_string_contains(
+		small_text,
+		"peers=[30000000-0000-0000-0000-000000000000, 30000000-0000-0000-0000-000000000001]",
+		"plan debug keeps the plain repr"
+	)
+
+	var urls: Array = []
+	for index: int in 40:
+		urls.append("stun:stun.example.com:%d" % index)
+	var ice := SFSessionTypesScript.IceServerInfo.new({"urls": urls})
+	var ice_text := ice._to_string()
+	_assert_string_contains(ice_text, "and 32 more", "ice debug caps url list")
+	_assert(ice_text.length() < 300, "ice debug stays bounded")
+	var small_ice := SFSessionTypesScript.IceServerInfo.new({"urls": ["stun:a:1", "stun:b:2"]})
+	_assert_equal(
+		"IceServerInfo(stun:a:1, stun:b:2)",
+		small_ice._to_string(),
+		"ice debug keeps the plain repr"
+	)
+	_done()
 
 
 func _test_v3_client_encoders_match_fixtures() -> void:
