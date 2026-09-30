@@ -1,8 +1,8 @@
 extends RefCounted
 
-## Roster bound tests (issue #274). A hostile relay streaming distinct joins
-## must not grow session state without a bound; receives the client runner
-## instance so connect/auth fakes stay defined in one place.
+## Session-state bound tests (issue #274). A hostile relay must not grow
+## session state (rosters, secret-redaction list) without a bound; receives
+## the client runner instance so connect/auth fakes stay defined in one place.
 
 const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
@@ -32,6 +32,7 @@ func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_over_cap_baseline_clamps,
 		_test_roster_growth_stays_bounded,
+		_test_secret_list_stays_bounded,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -151,6 +152,38 @@ func _test_roster_growth_stays_bounded() -> void:
 	_done()
 
 
+## Issue #274: hostile baselines cycling fresh reconnection tokens must not
+## grow the redaction list; pinned secrets never age out.
+
+
+func _test_secret_list_stays_bounded() -> void:
+	var client: SignalFishClientScript = _runner.call("_make_authenticated_client")
+	var fake: SFFakeTransportScript = client.transport
+	var params := SignalFishClientScript.JoinRoomParams.new()
+	params.game_name = "g"
+	params.player_name = "p"
+	params.password = "pinned-pass-not-secret"
+	_assert_equal(OK, client.join_room(params), "join_room pins the password")
+	var rounds: int = SignalFishClientScript.MAX_REMEMBERED_SECRETS * 4
+	for index: int in rounds:
+		var baseline: Dictionary = _runner.call(
+			"_room_joined_data", {"reconnection_token": "rotated-token-%d-not-secret" % index}
+		)
+		fake.inject_server_message({"type": "RoomJoined", "data": baseline})
+	_assert_equal(1, client._pinned_secrets, "the join password is the only pinned secret")
+	_assert_equal(
+		client._pinned_secrets + SignalFishClientScript.MAX_REMEMBERED_SECRETS,
+		client._secrets.size(),
+		"rotating tokens evict oldest past the cap"
+	)
+	_assert(client._secrets.has("pinned-pass-not-secret"), "pinned password never ages out")
+	var freshest := "rotated-token-%d-not-secret" % (rounds - 1)
+	_assert(client._secrets.has(freshest), "the freshest token stays redacted")
+	_assert(not client._secrets.has("rotated-token-0-not-secret"), "the oldest token ages out")
+	client.free()
+	_done()
+
+
 func _inject_roster_baseline(client: SignalFishClientScript, flow: String, members: Array) -> void:
 	var fake: SFFakeTransportScript = client.transport
 	if flow == "players":
@@ -191,6 +224,10 @@ func _player(id: String, display_name: String) -> Dictionary:
 
 func _spectator(id: String, display_name: String) -> Dictionary:
 	return _runner.call("_spectator", id, display_name)
+
+
+func _assert(condition: bool, label: String) -> bool:
+	return _runner.call("_assert", condition, label)
 
 
 func _assert_equal(expected: Variant, actual: Variant, label: String) -> bool:

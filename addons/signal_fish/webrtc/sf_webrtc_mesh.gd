@@ -270,6 +270,13 @@ func _on_client_new_peer(peer_id: String, you_initiate: bool) -> void:
 		return
 	if _peers.has(peer_id):
 		return
+	if _peers.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
+		# Hostile NewPeer streams must not open unbounded peer connections
+		# (issue #274); only the next plan reconciliation can reshuffle.
+		SFLogScript.error(
+			"mesh: peer count is at cap %d; NewPeer not tracked" % SFTypeUtils.MAX_TRACKED_PEERS
+		)
+		return
 	_open_peer(peer_id, you_initiate)
 
 

@@ -77,8 +77,8 @@ func get_buffered_amount() -> int
 
 Cached rosters (players, spectators) and mesh peers stay capped at 256
 entries (`SFTypeUtils.MAX_TRACKED_PEERS`). Excess entries from a hostile
-or misbehaving relay are dropped with one `protocol_error` per event;
-the session stays live.
+or misbehaving relay are dropped: rosters surface one `protocol_error`
+per event, and the mesh logs an error. The session stays live.
 
 ## Send methods
 

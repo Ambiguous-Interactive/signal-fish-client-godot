@@ -55,6 +55,7 @@ func run_all() -> void:
 		_test_ice_replace_and_clear,
 		_test_signal_gates,
 		_test_new_peer_event_obey_flag,
+		_test_new_peer_stream_stays_bounded,
 		_test_closing_window_suppresses_sends,
 		_test_transport_status_boundary_survives_backpressure,
 		_test_refused_relays_recover,
@@ -581,6 +582,38 @@ func _test_new_peer_event_obey_flag() -> void:
 		{"type": "NewPeer", "data": {"peer_id": PLAYER_C, "you_initiate": true}}
 	)
 	_assert_equal(0, mesh.get_peer_count(), "relay plan gates new_peer")
+	mesh.free()
+	client.free()
+	_done()
+
+
+## Issue #274: NewPeer is additive membership, so a hostile stream between
+## plans must not open unbounded peer connections (log-only diagnostic by
+## mesh design; the state bound is the pinned contract here).
+
+
+func _test_new_peer_stream_stays_bounded() -> void:
+	var cap := SFTypeUtils.MAX_TRACKED_PEERS
+	var client := _make_in_room_client()
+	var mesh := _make_mesh()
+	_attach(mesh, client)
+	_inject_plan(client, [], "40000000-0000-0000-0000-000000000001")
+	var fake_transport: SFFakeTransportScript = client.transport
+	for index: int in cap + 1:
+		(
+			fake_transport
+			. inject_server_message(
+				{
+					"type": "NewPeer",
+					"data":
+					{
+						"peer_id": "000000cc-0000-0000-0000-%012d" % index,
+						"you_initiate": index % 2 == 0,
+					}
+				}
+			)
+		)
+	_assert_equal(cap, mesh.get_peer_count(), "NewPeer stream opens at most the cap")
 	mesh.free()
 	client.free()
 	_done()

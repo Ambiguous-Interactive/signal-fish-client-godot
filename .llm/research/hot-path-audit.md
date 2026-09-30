@@ -100,9 +100,11 @@ linear and inside the round's bar.
 Session-state surfaces (roster/spectator upserts, mesh reconciliation)
 are O(session size) per event through linear scans, bounded by
 `SFTypeUtils.MAX_TRACKED_PEERS` = 256 (issue #274): roster baselines and
-plan reconciliation clamp to the cap with one diagnostic per refused
-event, so a hostile relay streaming distinct joins keeps client state
-at the cap. Decode inputs stay the only peer/hostile-input amplification
+plan/new-peer reconciliation clamp to the cap with one diagnostic per
+refused event, and the secret-redaction list evicts its oldest rotating
+token past `MAX_REMEMBERED_SECRETS` (pinned credential and passwords
+never age out), so hostile input can no longer grow client session
+state. Decode inputs stay the only peer/hostile-input amplification
 surface.
 
 Follow-up verdicts recorded for later rounds: `SFMsgpack` map decode
