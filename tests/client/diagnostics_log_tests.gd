@@ -6,6 +6,7 @@ extends RefCounted
 ## instance so connect/auth fakes stay defined in one place.
 
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
+const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
@@ -56,7 +57,7 @@ func _test_transport_log_lines_render_bounded() -> void:
 	for row: Array in rows:
 		var lines: Array[String] = []
 		SFLogScript.sink = func(line: String) -> void: lines.append(line)
-		var client: SignalFishClient = _runner.call("_make_in_room_client")
+		var client: SignalFishClientScript = _runner.call("_make_in_room_client")
 		var fake: SFFakeTransportScript = client.transport
 		var closes: Array[Array] = []
 		client.disconnected.connect(
@@ -101,7 +102,7 @@ func _test_transport_log_lines_render_bounded() -> void:
 	for fail_row: Array in fail_rows:
 		var failed_lines: Array[String] = []
 		SFLogScript.sink = func(line: String) -> void: failed_lines.append(line)
-		var fail_client: SignalFishClient = _runner.call("_make_in_room_client")
+		var fail_client: SignalFishClientScript = _runner.call("_make_in_room_client")
 		var fail_fake: SFFakeTransportScript = fail_client.transport
 		var failures: Array[String] = []
 		fail_client.connection_failed.connect(func(error: String) -> void: failures.append(error))
@@ -115,7 +116,7 @@ func _test_transport_log_lines_render_bounded() -> void:
 	# raw token characters reach the log even inside the cap window.
 	var secret_lines: Array[String] = []
 	SFLogScript.sink = func(line: String) -> void: secret_lines.append(line)
-	var secret_client: SignalFishClient = _runner.call("_make_in_room_client")
+	var secret_client: SignalFishClientScript = _runner.call("_make_in_room_client")
 	secret_client._remember_secret("s3cret-token")
 	var secret_fake: SFFakeTransportScript = secret_client.transport
 	secret_fake.inject_close(4400, "s3cret-token\nEVIL" + "z".repeat(30))
