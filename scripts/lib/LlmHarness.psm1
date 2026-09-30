@@ -785,9 +785,6 @@ function Invoke-LlmLint {
     $pointerChecks = @(
         [pscustomobject]@{ Path = 'AGENTS.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
         [pscustomobject]@{ Path = 'CLAUDE.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
-        [pscustomobject]@{ Path = 'GEMINI.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
-        [pscustomobject]@{ Path = 'CHATGPT.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
-        [pscustomobject]@{ Path = 'CODEX.md'; Required = $true; RequiredPattern = '\.llm/context\.md' },
         [pscustomobject]@{ Path = 'llms.txt'; Required = $true; RequiredPattern = '\.llm/context\.md' },
         [pscustomobject]@{ Path = '.cursorrules'; Required = $true; RequiredPattern = '\.llm/context\.md' },
         [pscustomobject]@{ Path = '.windsurfrules'; Required = $true; RequiredPattern = '\.llm/context\.md' },

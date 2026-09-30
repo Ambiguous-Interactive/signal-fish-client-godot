@@ -33,8 +33,7 @@ $Preflight = Join-Path $ScriptsDir 'preflight.ps1'
 $GithubConfigValidator = Join-Path $ScriptsDir 'validate-github-config.py'
 $GeneratedFiles = @('.llm/index.md', '.llm/context.md')
 $PointerFiles = @(
-    'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'CHATGPT.md', 'CODEX.md',
-    'llms.txt', '.cursorrules', '.windsurfrules',
+    'AGENTS.md', 'CLAUDE.md', 'llms.txt', '.cursorrules', '.windsurfrules',
     '.github/copilot-instructions.md', '.cursor/rules/signal-fish-llm-context.mdc'
 )
 

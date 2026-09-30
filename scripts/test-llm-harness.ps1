@@ -536,8 +536,7 @@ function New-HookBehaviorSandbox {
 
     $files = @(
         '.gitignore',
-        'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'CHATGPT.md', 'CODEX.md',
-        'llms.txt', '.cursorrules', '.windsurfrules',
+        'AGENTS.md', 'CLAUDE.md', 'llms.txt', '.cursorrules', '.windsurfrules',
         '.github/copilot-instructions.md', '.cursor/rules/signal-fish-llm-context.mdc',
         '.githooks/pre-commit',
         '.devcontainer/post-create.py',
@@ -826,7 +825,7 @@ $script:HookPredicatePrefixes = @(
     '.llm/', 'scripts/', '.githooks/', '.github/workflows/', '.devcontainer/', '.claude/'
 )
 $script:HookPredicateExact = @(
-    'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'CHATGPT.md', 'CODEX.md', 'llms.txt',
+    'AGENTS.md', 'CLAUDE.md', 'llms.txt',
     '.cursorrules', '.windsurfrules', '.github/copilot-instructions.md',
     '.cursor/rules/signal-fish-llm-context.mdc', '.pre-commit-config.yaml',
     '.gitattributes', '.gitignore', '.github/dependabot.yml',
