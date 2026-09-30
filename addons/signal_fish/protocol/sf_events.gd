@@ -16,6 +16,7 @@ const MAX_MESSAGE_DEPTH := SFTypeUtils.MAX_MESSAGE_DEPTH
 const MAX_MISSED_EVENTS := 256
 
 const SFBinaryCodecScript = preload("res://addons/signal_fish/protocol/sf_binary_codec.gd")
+const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
@@ -419,7 +420,9 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> SFTypesScript.D
 				envelope
 			)
 		_:
-			return _protocol_error("unknown message type: %s" % type_name, envelope)
+			return _protocol_error(
+				"unknown message type: %s" % SFDiagnosticsScript.render_key(type_name), envelope
+			)
 
 
 static func _decode_authenticated(

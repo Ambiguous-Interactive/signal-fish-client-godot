@@ -132,6 +132,12 @@ func _test_msgpack_hostile_vectors() -> void:
 			"error_contains": '"a\\x0Ab"',
 			"error_not_contains": "a\nb",
 		},
+		{
+			"label": "duplicate key with a C1 control",
+			"bytes": [0x82, 0xA4, 0x61, 0xC2, 0x9B, 0x62, 0x01, 0xA4, 0x61, 0xC2, 0x9B, 0x62, 0x02],
+			"error_contains": '"a\\x9Bb"',
+			"error_not_contains": "a\u009Bb",
+		},
 	]
 	for vector: Dictionary in vectors:
 		var raw_bytes: Array = vector["bytes"]
@@ -212,7 +218,10 @@ func _test_msgpack_hostile_vectors() -> void:
 	_assert(capped_ok, false, "long duplicate key is rejected")
 	var capped_error: String = capped["error"]
 	_assert(
-		capped_error.contains('"%s"' % "x".repeat(32)) and not capped_error.contains(long_key),
+		(
+			capped_error.contains('"%s"' % "x".repeat(32))
+			and not capped_error.contains("x".repeat(33))
+		),
 		true,
 		"long duplicate key diagnostic is capped"
 	)
@@ -482,7 +491,7 @@ func _test_envelope_hostile_matrix() -> void:
 				[0x82]
 			),
 			"error_contains": '"%s"' % "x".repeat(32),
-			"error_not_contains": "x".repeat(40),
+			"error_not_contains": "x".repeat(33),
 		},
 		{
 			"label": "duplicate key control characters are escaped",
@@ -497,7 +506,7 @@ func _test_envelope_hostile_matrix() -> void:
 			"label": "unknown long key is capped",
 			"bytes": _envelope([_str8_field("y".repeat(40), _bin_value([0x01]))], [0x81]),
 			"error_contains": '"%s"' % "y".repeat(32),
-			"error_not_contains": "y".repeat(40),
+			"error_not_contains": "y".repeat(33),
 		},
 		{"label": "trailing byte", "bytes": _envelope(v2_fields) + PackedByteArray([0x00])},
 		{

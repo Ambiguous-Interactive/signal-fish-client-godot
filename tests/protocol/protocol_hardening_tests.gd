@@ -32,6 +32,7 @@ func run_all() -> void:
 		_test_binary_codec_hardening,
 		_test_forward_compatible_inbound_strings,
 		_test_non_empty_wire_strings,
+		_test_hostile_unknown_type_renders_safely,
 		_test_reconnected_missed_events_nonfatal,
 		_test_reconnected_missed_events_depth_hardening,
 		_test_decode_raw_aliasing,
@@ -1053,6 +1054,26 @@ func _test_non_empty_wire_strings() -> void:
 		var label: String = test_case["label"]
 		_assert_protocol_error_envelope(envelope, label)
 
+	_done()
+
+
+## Issue #279 sweep: an unknown hostile type name rides the same refusal
+## sink as the decoder keys, so it renders capped and single-line.
+func _test_hostile_unknown_type_renders_safely() -> void:
+	var newline_decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "Ghost\nEvil"}
+	)
+	_assert_protocol_error_contains(
+		newline_decoded, '"Ghost\\x0AEvil"', "hostile type newline escaped"
+	)
+	_assert(
+		not str(newline_decoded.args[0]).contains("Ghost\nEvil"), "hostile type raw newline absent"
+	)
+	var long_decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{"type": "z".repeat(40)}
+	)
+	_assert_protocol_error_contains(long_decoded, '"%s"' % "z".repeat(32), "hostile type capped")
+	_assert(not str(long_decoded.args[0]).contains("z".repeat(33)), "hostile type cap is exact")
 	_done()
 
 

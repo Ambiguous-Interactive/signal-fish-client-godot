@@ -211,7 +211,7 @@ func _test_escape_canonicalization() -> void:
 	_assert_string_contains(
 		multibyte_error, '"%s"' % "é".repeat(32), "multibyte key capped at 32 characters"
 	)
-	_assert(not multibyte_error.contains("é".repeat(40)), "multibyte key fully hidden")
+	_assert(not multibyte_error.contains("é".repeat(33)), "multibyte key fully hidden")
 	var newline_error := SFJsonGuardScript.duplicate_key_error('{"a\\nb":1,"a\\nb":2}')
 	_assert_string_contains(newline_error, '"a\\x0Ab"', "newline in key escaped")
 	_assert(not newline_error.contains("a\nb"), "raw newline absent from diagnostic")
