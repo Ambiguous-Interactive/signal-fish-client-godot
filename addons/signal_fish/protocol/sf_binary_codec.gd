@@ -1,6 +1,8 @@
 class_name SFBinaryCodec
 extends RefCounted
 
+const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
+
 
 static func decode_payload(payload: Variant) -> Dictionary:
 	if typeof(payload) == TYPE_PACKED_BYTE_ARRAY:
@@ -39,7 +41,13 @@ static func _decode_byte_array(values: Array) -> Dictionary:
 				"ok": false,
 				"bytes": PackedByteArray(),
 				"error":
-				"payload byte array[%d] contains a non-number: %s" % [index, var_to_str(value)]
+				# var_to_str leaves control characters raw, so the echoed
+				# wire-derived value renders through the diagnostic
+				# contract (issues #279/#289).
+				(
+					"payload byte array[%d] contains a non-number: %s"
+					% [index, SFDiagnosticsScript.render_key(var_to_str(value))]
+				)
 			}
 		var number: float = value
 		if not is_finite(number) or number != floor(number) or number < 0 or number > 255:
@@ -49,7 +57,7 @@ static func _decode_byte_array(values: Array) -> Dictionary:
 				"error":
 				(
 					"payload byte array[%d] contains a value outside 0..255: %s"
-					% [index, var_to_str(value)]
+					% [index, SFDiagnosticsScript.render_key(var_to_str(value))]
 				)
 			}
 		var int_value := int(number)

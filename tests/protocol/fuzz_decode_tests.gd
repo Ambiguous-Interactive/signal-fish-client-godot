@@ -98,6 +98,7 @@ func run_all() -> void:
 		_test_msgpack_random_values_round_trip,
 		_test_binary_codec_base64_fail_closed,
 		_test_binary_codec_byte_array_fail_closed,
+		_test_binary_codec_decode_echo_bounded,
 		_test_binary_codec_truncation_prefixes,
 		_test_binary_codec_encode_round_trip,
 		_test_envelope_truncation_and_mutations_fail_closed,
@@ -407,6 +408,41 @@ func _test_binary_codec_byte_array_fail_closed() -> void:
 			"array noise corpus exercised both outcomes (%d accepts, %d refuses)"
 			% [noise_accepts, noise_refuses]
 		)
+	)
+	_done()
+
+
+func _test_binary_codec_decode_echo_bounded() -> void:
+	# Issue #289: the echoed entry is wire-derived text, so it renders
+	# through the #279 diagnostic contract (capped, control-escaped,
+	# single-line) while legit values keep a readable reason.
+	for case: Dictionary in [
+		{"value": "1", "reason": "non-number", "echo": '""1""'},
+		{"value": 0.5, "reason": "outside 0..255", "echo": '"0.5"'},
+	]:
+		var value: Variant = case["value"]
+		var reason: String = case["reason"]
+		var echo: String = case["echo"]
+		var result: Dictionary = SFBinaryCodecScript.decode_payload([value])
+		var ok: bool = result["ok"]
+		_assert(not ok, "%s stays refused" % reason)
+		var error := _codec_refusal(result, reason)
+		_assert(error.contains(reason), "%s names the reason (%s)" % [reason, error])
+		_assert(error.contains(echo), "%s echoes a readable token (%s)" % [reason, error])
+	var hostile := "a\nb".repeat(20000)
+	var hostile_result: Dictionary = SFBinaryCodecScript.decode_payload([hostile])
+	var hostile_ok: bool = hostile_result["ok"]
+	_assert(not hostile_ok, "a hostile string entry stays refused")
+	var hostile_error := _codec_refusal(hostile_result, "hostile string entry")
+	_assert(
+		hostile_error.contains("non-number"),
+		"hostile string entry names the reason (%s)" % hostile_error
+	)
+	_assert(not hostile_error.contains("\n"), "the diagnostic stays one line")
+	_assert(hostile_error.contains("a\\x0Ab"), "newlines render as escapes (%s)" % hostile_error)
+	_assert(
+		hostile_error.length() < 200,
+		"the diagnostic stays bounded (%d chars)" % hostile_error.length()
 	)
 	_done()
 
