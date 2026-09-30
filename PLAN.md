@@ -20,8 +20,11 @@ and checks within about one hour. Session cadence:
 
 ### Automation
 
-- [ ] #234: Verify that a later Dependabot merge dispatches Docs Deploy and
-      publishes the validated main artifact without a manual CI rerun.
+- [ ] #234: Record the next Dependabot auto merge in the issue (main SHA plus
+      Runtime CI, LLM Harness, Docs Validation, and Docs Deploy run links),
+      confirm the deploy used the validated artifact, then close it. The
+      dispatch chain is pinned by tests; deferred-dispatch behavior covers
+      back-to-back merges.
 
 ### Asset Library settings (#194)
 
