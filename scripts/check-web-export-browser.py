@@ -228,15 +228,15 @@ class BrowserCrash(RuntimeError):
 
 
 def run_check(web_root: Path, key: Path, cert: Path) -> None:
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             run_attempt(web_root, key, cert)
             print("web-export browser check passed: HTTPS boot, wss+Origin, ws:// predial refusal")
             return
         except BrowserCrash as exc:
-            print(f"web-export browser crash (attempt {attempt + 1}/2): {exc}", file=sys.stderr)
-            if attempt:
-                raise RuntimeError("web-export Chromium crashed twice") from exc
+            print(f"web-export browser crash (attempt {attempt + 1}/3): {exc}", file=sys.stderr)
+            if attempt == 2:
+                raise RuntimeError("web-export Chromium crashed three times") from exc
             print("web-export: retrying both scenarios in a fresh browser", file=sys.stderr)
 
 

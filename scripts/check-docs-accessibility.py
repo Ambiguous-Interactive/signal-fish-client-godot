@@ -523,7 +523,7 @@ async def run_checks() -> None:
             file=sys.stderr,
             flush=True,
         )
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 await asyncio.wait_for(check(), timeout=PHASE_TIMEOUT)
                 break
@@ -531,24 +531,26 @@ async def run_checks() -> None:
                 if "Target crashed" not in str(exc) and not any(crash_state.values()):
                     raise
                 print(
-                    f"Accessibility: Chromium crash in {name} (attempt {attempt + 1}/2): "
+                    f"Accessibility: Chromium crash in {name} (attempt {attempt + 1}/3): "
                     f"{exc}; browser connected: {browser.is_connected() if browser else False}",
                     file=sys.stderr,
                     flush=True,
                 )
-                if attempt:
-                    raise RuntimeError(f'phase "{name}" crashed twice in Chromium') from exc
+                if attempt == 2:
+                    raise RuntimeError(f'phase "{name}" crashed three times in Chromium') from exc
                 await restart_browser()
                 print(f"Accessibility: retrying {name} in a fresh browser", file=sys.stderr)
             except TimeoutError as exc:
                 if any(crash_state.values()):
                     print(
                         f"Accessibility: Chromium crashed while waiting in {name} "
-                        f"(attempt {attempt + 1}/2)",
+                        f"(attempt {attempt + 1}/3)",
                         file=sys.stderr,
                     )
-                    if attempt:
-                        raise RuntimeError(f'phase "{name}" crashed twice in Chromium') from exc
+                    if attempt == 2:
+                        raise RuntimeError(
+                            f'phase "{name}" crashed three times in Chromium'
+                        ) from exc
                     await restart_browser()
                     print(f"Accessibility: retrying {name} in a fresh browser", file=sys.stderr)
                     continue

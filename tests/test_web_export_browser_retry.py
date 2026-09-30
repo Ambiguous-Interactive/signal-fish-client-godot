@@ -37,10 +37,29 @@ class BrowserRetryTests(unittest.TestCase):
         ):
             browser_check.run_check(*self.paths)
         self.assertEqual(attempt.call_count, 2)
-        self.assertIn("attempt 1/2", self.stderr.getvalue())
+        self.assertIn("attempt 1/3", self.stderr.getvalue())
         self.assertIn("check passed", self.stdout.getvalue())
 
-    def test_second_crash_fails(self) -> None:
+    def test_second_crash_retries_once_more(self) -> None:
+        with (
+            patch.object(
+                browser_check,
+                "run_attempt",
+                side_effect=[
+                    browser_check.BrowserCrash("Target crashed"),
+                    browser_check.BrowserCrash("Target crashed"),
+                    None,
+                ],
+            ) as attempt,
+            redirect_stdout(self.stdout),
+            redirect_stderr(self.stderr),
+        ):
+            browser_check.run_check(*self.paths)
+        self.assertEqual(attempt.call_count, 3)
+        self.assertIn("attempt 2/3", self.stderr.getvalue())
+        self.assertIn("check passed", self.stdout.getvalue())
+
+    def test_third_crash_fails(self) -> None:
         with (
             patch.object(
                 browser_check,
@@ -48,10 +67,10 @@ class BrowserRetryTests(unittest.TestCase):
                 side_effect=browser_check.BrowserCrash("Target crashed"),
             ) as attempt,
             redirect_stderr(self.stderr),
-            self.assertRaisesRegex(RuntimeError, "Chromium crashed twice"),
+            self.assertRaisesRegex(RuntimeError, "Chromium crashed three times"),
         ):
             browser_check.run_check(*self.paths)
-        self.assertEqual(attempt.call_count, 2)
+        self.assertEqual(attempt.call_count, 3)
 
     def test_assertion_does_not_retry(self) -> None:
         with (
