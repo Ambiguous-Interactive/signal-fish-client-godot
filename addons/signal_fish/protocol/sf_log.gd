@@ -12,6 +12,11 @@ const REDACTED := "[REDACTED]"
 
 static var min_level: int = Level.WARN
 
+## Optional in-process capture sink (issue #282). When valid, rendered
+## lines call it instead of printing, so test suites can pin exactly
+## what a diagnostic would emit.
+static var sink: Callable = Callable()
+
 
 static func debug(message: String, secrets: PackedStringArray = PackedStringArray()) -> void:
 	_log(Level.DEBUG, message, secrets)
@@ -42,6 +47,9 @@ static func _log(level: int, message: String, secrets: PackedStringArray) -> voi
 	if level < min_level or level >= Level.OFF:
 		return
 	var line := "[signal_fish] %s" % redact(message, secrets)
+	if sink.is_valid():
+		sink.call(line)
+		return
 	if level >= Level.ERROR:
 		printerr(line)
 	else:

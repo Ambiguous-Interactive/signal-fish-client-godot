@@ -1,9 +1,10 @@
 class_name SFDiagnostics
 extends RefCounted
 
-## Safe rendering of hostile wire-derived keys in refusal diagnostics
-## (issue #279). Refusal text reaches the [code]protocol_error[/code]
-## signal and the debug log, so each rendered key is capped at 32
+## Safe rendering of hostile wire-derived text in diagnostics (issues
+## #279, #282). Refusal text reaches the [code]protocol_error[/code]
+## signal and the debug log, and transport close reasons and failure
+## text reach the info log, so each rendered token is capped at 32
 ## characters before escaping, and control characters (C0, C1, DEL)
 ## render as [code]\xNN[/code] escapes: a hostile peer can neither flood
 ## a log line with a huge key nor forge log lines with embedded newlines.

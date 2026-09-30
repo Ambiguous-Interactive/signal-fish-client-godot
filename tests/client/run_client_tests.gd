@@ -86,6 +86,7 @@ func _run() -> void:
 		_test_reconnected_restores_room_state,
 		_test_backpressure_returns_busy_and_drops,
 		_test_close_surfaces_code_reason_and_cleans_up,
+		_test_transport_log_lines_render_bounded,
 		_test_process_and_exit_tree_paths,
 		_test_roster_accessors_are_copies,
 		_test_failures_clean_up_and_failed_open_surfaces_reason,
@@ -1009,6 +1010,59 @@ func _test_close_surfaces_code_reason_and_cleans_up() -> void:
 		_assert_equal(null, client.transport, "transport released on close")
 		_assert_equal(true, client.close() == OK, "close after closed is a no-op")
 		client.free()
+	_done()
+
+
+## Issue #282: relay-controlled close reasons and transport failure text
+## used to reach the transport log lines raw. Each now renders capped and
+## escaped (one bounded line), while the signals keep the raw wire values.
+func _test_transport_log_lines_render_bounded() -> void:
+	var hostile := "ok\nEVIL" + "z".repeat(30)
+	var hostile_rendered := '"ok\\x0AEVIL' + "z".repeat(25) + '"'
+	var rows: Array[Array] = [
+		[4400, hostile, hostile_rendered],
+		[1000, "bye", '"bye"'],
+	]
+	var original_level: int = SFLogScript.min_level
+	SFLogScript.min_level = SFLogScript.Level.INFO
+	for row: Array in rows:
+		var lines: Array[String] = []
+		SFLogScript.sink = func(line: String) -> void: lines.append(line)
+		var client := _make_in_room_client()
+		var fake: SFFakeTransportScript = client.transport
+		var closes: Array[Array] = []
+		client.disconnected.connect(
+			func(code: int, reason: String) -> void: closes.append([code, reason])
+		)
+		var close_code: int = row[0]
+		var close_reason: String = row[1]
+		fake.inject_close(close_code, close_reason)
+		_assert_equal(
+			["[signal_fish] transport closed (code %d): %s" % [close_code, row[2]]],
+			lines,
+			"close log renders bounded (%d)" % close_code
+		)
+		_assert_equal([[close_code, close_reason]], closes, "close signal keeps the raw reason")
+		client.free()
+
+	var failed_lines: Array[String] = []
+	SFLogScript.sink = func(line: String) -> void: failed_lines.append(line)
+	var fail_client := _make_in_room_client()
+	var fail_fake: SFFakeTransportScript = fail_client.transport
+	var failures: Array[String] = []
+	fail_client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	fail_fake.inject_failure("before open: " + hostile)
+	# The cap bounds the whole emitted line, prefix included: a megabyte
+	# close reason cannot flood past the 32-character window.
+	_assert_equal(
+		['[signal_fish] transport failed: "before open: ok\\x0AEVIL' + "z".repeat(12) + '"'],
+		failed_lines,
+		"failure log renders bounded"
+	)
+	_assert_equal(["before open: " + hostile], failures, "failure signal keeps the raw text")
+	fail_client.free()
+	SFLogScript.sink = Callable()
+	SFLogScript.min_level = original_level
 	_done()
 
 
