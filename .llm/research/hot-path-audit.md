@@ -113,6 +113,20 @@ path (issue #92) and the binary envelope decoder refuse them - a
 fail-closed parity gap on the opt-in payload path; linear in time and
 space, so outside round 6's bar.
 
+## Round 7: MessagePack duplicate-key verdict (2026-09-30, issue #273)
+
+Decision: refuse duplicate keys in decoded maps (fail closed), not
+last-wins upstream parity. The client's JSON path already refuses
+duplicates even though `serde_json` last-wins, so the divergence is the
+established local contract: no hostile frame may silently substitute a
+payload value. Cost stays linear - one extra hash probe per map entry on
+the opt-in decode path - and refusal degrades exactly like every other
+payload decode failure (`protocol_error` plus raw bytes via
+`game_data_binary_received`). Pinned by one-level, nested-level, and
+capped-diagnostic vectors in the hostile matrix
+(`tests/protocol/binary_frame_tests.gd`); the refusal is per map, so the
+same key in sibling or nested maps still decodes.
+
 ## Engine facts worth remembering
 
 - `StreamPeerBuffer.get_data(n)` returns an `[Error, PackedByteArray]` Array

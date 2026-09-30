@@ -111,6 +111,16 @@ func _test_msgpack_hostile_vectors() -> void:
 		{"label": "trailing bytes", "bytes": [0x01, 0x02]},
 		{"label": "ext marker", "bytes": [0xC7, 0x01, 0x00, 0x2A]},
 		{"label": "fixext1", "bytes": [0xD4, 0x00, 0x2A]},
+		{
+			"label": "duplicate key in one map",
+			"bytes": [0x82, 0xA1, 0x6B, 0x01, 0xA1, 0x6B, 0x02],
+			"error_contains": '"k"',
+		},
+		{
+			"label": "duplicate key in a nested map",
+			"bytes": [0x81, 0xA1, 0x61, 0x82, 0xA1, 0x6B, 0x01, 0xA1, 0x6B, 0x02],
+			"error_contains": '"k"',
+		},
 	]
 	for vector: Dictionary in vectors:
 		var raw_bytes: Array = vector["bytes"]
@@ -118,6 +128,15 @@ func _test_msgpack_hostile_vectors() -> void:
 		var result: Dictionary = SFMsgpackScript.decode(_packed(vector_bytes))
 		var result_ok: bool = result["ok"]
 		_assert(result_ok, false, "decode %s is rejected" % vector["label"])
+		var result_error: String = result["error"]
+		_assert(not result_error.is_empty(), true, "decode %s explains itself" % vector["label"])
+		if vector.has("error_contains"):
+			var expected_fragment: String = vector["error_contains"]
+			_assert(
+				result_error.contains(expected_fragment),
+				true,
+				"decode %s names the duplicate key" % vector["label"]
+			)
 	var deep: Array = []
 	for _index: int in SFMsgpackScript.MAX_DEPTH + 1:
 		deep = [deep]
@@ -138,6 +157,37 @@ func _test_msgpack_hostile_vectors() -> void:
 	var at_cap_decode: Dictionary = SFMsgpackScript.decode(at_cap_bytes)
 	var at_cap_decode_ok: bool = at_cap_decode["ok"]
 	_assert(at_cap_decode_ok, true, "nesting at the cap decodes")
+	# Issue #273: the refusal is per map, so the same key may appear in a
+	# nested map, and the diagnostic for a huge hostile key is capped.
+	var legal_nest: Array[int] = Array(
+		[0x81, 0xA1, 0x6B, 0x81, 0xA1, 0x6B, 0x01], TYPE_INT, &"", null
+	)
+	var legal_decode: Dictionary = SFMsgpackScript.decode(_packed(legal_nest))
+	var legal_ok: bool = legal_decode["ok"]
+	if _assert(legal_ok, true, "same key in nested maps decodes"):
+		_assert_equal({"k": {"k": 1}}, legal_decode["value"], "same key in nested maps value")
+	var long_key := "x".repeat(40)
+	var long_key_bytes: Array[int] = Array(
+		(
+			[0x82, 0xD9, 0x28]
+			+ _string_codepoints(long_key)
+			+ [0x01, 0xD9, 0x28]
+			+ _string_codepoints(long_key)
+			+ [0x02]
+		),
+		TYPE_INT,
+		&"",
+		null
+	)
+	var capped: Dictionary = SFMsgpackScript.decode(_packed(long_key_bytes))
+	var capped_ok: bool = capped["ok"]
+	_assert(capped_ok, false, "long duplicate key is rejected")
+	var capped_error: String = capped["error"]
+	_assert(
+		capped_error.contains('"%s"' % "x".repeat(32)) and not capped_error.contains(long_key),
+		true,
+		"long duplicate key diagnostic is capped"
+	)
 	_done()
 
 
