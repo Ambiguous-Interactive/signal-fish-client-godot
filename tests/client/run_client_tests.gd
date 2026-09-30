@@ -12,6 +12,7 @@ const SFPluginScript = preload("res://addons/signal_fish/plugin.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const HeartbeatTestsScript = preload("res://tests/client/heartbeat_tests.gd")
+const DiagnosticsLogTestsScript = preload("res://tests/client/diagnostics_log_tests.gd")
 const SessionStateBoundTestsScript = preload("res://tests/client/session_state_bound_tests.gd")
 const SessionGuardTestsScript = preload("res://tests/client/session_guard_tests.gd")
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
@@ -57,6 +58,9 @@ func _helper_suites_are_loadable() -> bool:
 	if not (V3ClientTestsScript as Script).has_method("run"):
 		push_error("helper suite failed to load: v3_client_tests")
 		return false
+	if not (DiagnosticsLogTestsScript as Script).has_method("run"):
+		push_error("helper suite failed to load: diagnostics_log_tests")
+		return false
 	if not (WebrtcMeshTestsScript as Script).has_method("run"):
 		push_error("helper suite failed to load: webrtc_mesh_tests")
 		return false
@@ -101,6 +105,7 @@ func _run() -> void:
 	CompletionGuard.check_registration(self, cases, _failures)
 	_failures.append_array(V3ClientTestsScript.run(self))
 	_failures.append_array(HeartbeatTestsScript.run(self))
+	_failures.append_array(DiagnosticsLogTestsScript.run(self))
 	_failures.append_array(SessionStateBoundTestsScript.run(self))
 	_failures.append_array(SessionGuardTestsScript.run(self))
 	_failures.append_array(WebrtcMeshTestsScript.run(self))

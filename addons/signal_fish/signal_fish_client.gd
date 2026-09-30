@@ -92,6 +92,7 @@ const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.
 const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
 const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
 const SFGameDataFormatScript = preload("res://addons/signal_fish/protocol/sf_game_data_format.gd")
+const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
 const SFTransportScript = preload("res://addons/signal_fish/transport/sf_transport.gd")
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
@@ -874,7 +875,16 @@ func _on_transport_closed(code: int, reason: String) -> void:
 	_connection_state = ConnectionState.CLOSED
 	_reset_session()
 	_teardown_transport()
-	SFLogScript.info("transport closed (code %d): %s" % [code, reason], _secrets)
+	# Issue #282: the close reason is relay-controlled wire text, so the
+	# log line redacts secrets first, then renders it bounded and
+	# single-line; the signal keeps the raw value.
+	SFLogScript.info(
+		(
+			"transport closed (code %d): %s"
+			% [code, SFDiagnosticsScript.render_key(SFLogScript.redact(reason, _secrets))]
+		),
+		_secrets
+	)
 	var kicked := code == CLOSE_CODE_KICKED
 	if kicked:
 		# Cancel before the emit so a consumer redialing from the handler
@@ -893,7 +903,9 @@ func _on_transport_failed(error: String) -> void:
 	_connection_state = ConnectionState.FAILED
 	_reset_session()
 	_teardown_transport()
-	SFLogScript.info("transport failed: %s" % error, _secrets)
+	SFLogScript.info(
+		"transport failed: %s" % SFDiagnosticsScript.render_failure(error, _secrets), _secrets
+	)
 	connection_failed.emit(error)
 	if _auto_reconnect_enabled and not user_close:
 		_schedule_auto_reconnect()
