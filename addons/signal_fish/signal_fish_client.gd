@@ -876,10 +876,14 @@ func _on_transport_closed(code: int, reason: String) -> void:
 	_reset_session()
 	_teardown_transport()
 	# Issue #282: the close reason is relay-controlled wire text, so the
-	# log line renders it bounded and single-line; the signal keeps the
-	# raw value.
+	# log line redacts secrets first, then renders it bounded and
+	# single-line; the signal keeps the raw value.
 	SFLogScript.info(
-		"transport closed (code %d): %s" % [code, SFDiagnosticsScript.render_key(reason)], _secrets
+		(
+			"transport closed (code %d): %s"
+			% [code, SFDiagnosticsScript.render_key(SFLogScript.redact(reason, _secrets))]
+		),
+		_secrets
 	)
 	var kicked := code == CLOSE_CODE_KICKED
 	if kicked:
@@ -899,7 +903,13 @@ func _on_transport_failed(error: String) -> void:
 	_connection_state = ConnectionState.FAILED
 	_reset_session()
 	_teardown_transport()
-	SFLogScript.info("transport failed: %s" % SFDiagnosticsScript.render_key(error), _secrets)
+	SFLogScript.info(
+		(
+			"transport failed: %s"
+			% SFDiagnosticsScript.render_failure(SFLogScript.redact(error, _secrets))
+		),
+		_secrets
+	)
 	connection_failed.emit(error)
 	if _auto_reconnect_enabled and not user_close:
 		_schedule_auto_reconnect()

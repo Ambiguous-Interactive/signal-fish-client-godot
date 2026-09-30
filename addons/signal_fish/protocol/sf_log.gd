@@ -14,7 +14,8 @@ static var min_level: int = Level.WARN
 
 ## Optional in-process capture sink (issue #282). When valid, rendered
 ## lines call it instead of printing, so test suites can pin exactly
-## what a diagnostic would emit.
+## what a diagnostic would emit. Levels still gate: raise
+## [member min_level] too or nothing reaches the sink.
 static var sink: Callable = Callable()
 
 
