@@ -32,8 +32,9 @@ static func label(encoding: int) -> String:
 ## stand. An empty statement means "no server opinion": keep the preference.
 ## Formats are rendered as wire tokens, not coerced enum ints, so the
 ## diagnostic stays readable (unknown tokens surface as "unknown"), and the
-## rendered list is count-bounded so a hostile statement cannot stretch one
-## WARN line (issue #284).
+## rendered list is count-bounded with each free-text item bounded like a
+## key, so a hostile statement cannot stretch one WARN line
+## (issues #284, #286).
 static func downgrade_reason(config_format: String, supported_formats: Array) -> String:
 	if supported_formats.is_empty():
 		return ""
@@ -52,8 +53,8 @@ static func downgrade_reason(config_format: String, supported_formats: Array) ->
 				labels.append(SFTypesScript.game_data_encoding_to_string(encoding))
 			TYPE_STRING:
 				var token: String = value
-				labels.append(token)
+				labels.append(SFDiagnosticsScript.bound_item(token))
 			_:
-				labels.append(str(value))
+				labels.append(SFDiagnosticsScript.bound_item(str(value)))
 	var shown := SFDiagnosticsScript.bound_items(labels)
 	return "server game_data_formats [%s] does not include the requested format" % ", ".join(shown)

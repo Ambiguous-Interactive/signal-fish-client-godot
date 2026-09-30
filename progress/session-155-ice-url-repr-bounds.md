@@ -22,13 +22,22 @@ Branch: `session-155-ice-url-repr-bounds` from `origin/main` at `e2007e9`.
   members stay raw and free text needs per-item bounding.
 - `sf_session_types.gd`: `IceServerInfo._to_string` bounds each url
   through `bound_item` (after the #284 count bound).
-- Sweep verdict on the neighboring reprs: `generation` and peer ids
-  are canonical UUID text enforced by `validate_session_plan_info`,
-  and game-data labels are enum-coerced client-side, so `urls` was
-  the one free-text member left unbounded.
-- Vectors: 8 hostile 60 KB urls stay bounded and single-line, an
-  over-cap url truncates at the 32-char key cap, an embedded newline
-  renders as `\x0A`, and the plain in-bounds repr pin still holds.
+- `sf_game_data_format.gd`: `downgrade_reason` bounds each rendered
+  token too. The wire path coerces statements to enum ints, but the
+  static also takes free-text arrays, so the count bound alone left
+  the same hole one test away.
+- Sweep verdict on the neighboring reprs: on the validated decode
+  path, `generation` and peer ids are canonical UUID text enforced by
+  `validate_session_plan_info`, and labels were the only free-text
+  members left. They keep raw rendering on purpose: bounding them at
+  the 32-char cap would truncate legit 36-char UUIDs, and only a game
+  feeding its own dictionaries to the public constructors could hit
+  the residual. Decision recorded here and in #287.
+- Vectors: 9 hostile 60 KB urls stay bounded and single-line with
+  count collapse and truncation composed, an over-cap url truncates
+  at the 32-char key cap, an embedded newline renders as `\x0A`, the
+  plain in-bounds repr pin still holds, and a 100-char free-text
+  downgrade token renders capped.
 - Pointer-file removal: `LlmHarness.psm1` required-pointer table,
   `run-llm-hooks.ps1` pointer list, `test-llm-harness.ps1` sandbox
   and hook-predicate pins, both shim staged-path predicates

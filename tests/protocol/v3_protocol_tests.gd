@@ -115,15 +115,22 @@ func _test_plan_debug_repr_count_bounds() -> void:
 ## Issue #286: urls stay free text after validation (array shape only),
 ## so each rendered item is length-capped and control-escaped: 8 hostile
 ## urls cannot stretch one printed line, and embedded control
-## characters cannot forge log lines.
+## characters cannot forge log lines. The ninth hostile url pins both
+## caps composed: count collapse plus per-item truncation.
 func _test_ice_debug_repr_item_bounds() -> void:
 	var hostile_urls: Array = []
-	for index: int in 8:
+	for index: int in 9:
 		hostile_urls.append("stun:%s" % "x".repeat(60000))
 	var hostile := SFSessionTypesScript.IceServerInfo.new({"urls": hostile_urls})
 	var hostile_text := hostile._to_string()
 	_assert(hostile_text.length() < 600, "hostile urls stay bounded in the repr")
 	_assert(not hostile_text.contains("\n"), "the repr stays one line")
+	_assert_string_contains(
+		hostile_text, ", and 1 more)", "the count cap still collapses the overflow"
+	)
+	_assert_string_contains(
+		hostile_text, "stun:%s, and 1 more)" % "x".repeat(27), "overflow items render truncated"
+	)
 
 	var over_cap := "stun:abc123abc123abc123abc123abc123abc123"
 	var truncated := SFSessionTypesScript.IceServerInfo.new({"urls": [over_cap]})
