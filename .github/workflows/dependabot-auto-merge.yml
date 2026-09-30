@@ -13,8 +13,11 @@ on:
 permissions:
     contents: read
 
+# A single group serializes merge jobs. Two Dependabot PRs finishing CI at
+# the same time would otherwise merge and dispatch post-merge checks
+# concurrently, interleaving the SHA gate and the dispatch calls (issue #234).
 concurrency:
-    group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha }}
+    group: dependabot-auto-merge
     cancel-in-progress: false
 
 jobs:
