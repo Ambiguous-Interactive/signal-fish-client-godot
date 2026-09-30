@@ -6,6 +6,7 @@ extends RefCounted
 ## instance so connect/auth fakes stay defined in one place.
 
 const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
+const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
@@ -56,6 +57,7 @@ func run_all() -> void:
 		_test_signal_gates,
 		_test_new_peer_event_obey_flag,
 		_test_new_peer_stream_stays_bounded,
+		_test_mesh_diagnostics_are_pinned,
 		_test_closing_window_suppresses_sends,
 		_test_transport_status_boundary_survives_backpressure,
 		_test_refused_relays_recover,
@@ -616,6 +618,144 @@ func _test_new_peer_stream_stays_bounded() -> void:
 	_assert_equal(cap, mesh.get_peer_count(), "NewPeer stream opens at most the cap")
 	mesh.free()
 	client.free()
+	_done()
+
+
+func _captured_log_lines(drive: Callable) -> Array[String]:
+	var lines: Array[String] = []
+	SFLogScript.sink = func(line: String) -> void: lines.append(line)
+	drive.call()
+	SFLogScript.sink = Callable()
+	return lines
+
+
+# Issue #277: every mesh refusal surfaces exactly one diagnostic naming the
+# cap or cause; the SFLog capture sink pins the rendered lines without
+# touching stdout.
+func _test_mesh_diagnostics_are_pinned() -> void:
+	var cap := SFTypeUtils.MAX_TRACKED_PEERS
+	var over_cap_plan := _captured_log_lines(
+		func() -> void:
+			var client := _make_in_room_client()
+			var mesh := _make_mesh()
+			_attach(mesh, client)
+			var peers: Array[Dictionary] = []
+			for index: int in cap + 1:
+				peers.append(_peer("000000dd-0000-0000-0000-%012d" % index, false))
+			_inject_plan(client, peers)
+			mesh.free()
+			client.free()
+	)
+	_assert_equal(
+		["[signal_fish] mesh: plan exceeds %d peers; dropped 1" % cap],
+		over_cap_plan,
+		"over-cap plan names the cap and the drop count"
+	)
+
+	var over_cap_new_peer := _captured_log_lines(
+		func() -> void:
+			var client := _make_in_room_client()
+			var mesh := _make_mesh()
+			_attach(mesh, client)
+			_inject_plan(client, [], "40000000-0000-0000-0000-000000000001")
+			var fake_transport: SFFakeTransportScript = client.transport
+			for index: int in cap:
+				var hostile_peer := "000000ee-0000-0000-0000-%012d" % index
+				fake_transport.inject_server_message(
+					{"type": "NewPeer", "data": {"peer_id": hostile_peer, "you_initiate": false}}
+				)
+			fake_transport.inject_server_message(
+				{"type": "NewPeer", "data": {"peer_id": PLAYER_B, "you_initiate": false}}
+			)
+			mesh.free()
+			client.free()
+	)
+	_assert_equal(
+		["[signal_fish] mesh: peer count is at cap %d; NewPeer not tracked" % cap],
+		over_cap_new_peer,
+		"a NewPeer at the cap names the cap"
+	)
+
+	var refused_initialize := _captured_log_lines(
+		func() -> void:
+			var client := _make_in_room_client()
+			var mesh := SFWebRTCMeshScript.new()
+			mesh.peer_connection_factory = func() -> Variant:
+				var pc := FakePeerConnection.new()
+				pc.initialize_result = ERR_UNAVAILABLE
+				return pc
+			mesh.multiplayer_peer_factory = func() -> Variant: return FakeMultiplayerPeer.new()
+			_attach(mesh, client)
+			_inject_plan(client, [_peer(PLAYER_B, true)])
+			mesh.free()
+			client.free()
+	)
+	_assert_equal(
+		["[signal_fish] mesh: peer connection refused (%d)" % ERR_UNAVAILABLE],
+		refused_initialize,
+		"an initialize refusal names the engine error"
+	)
+
+	var refused_add_peer := _captured_log_lines(
+		func() -> void:
+			var client := _make_in_room_client()
+			var mesh := _make_mesh()
+			var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(mesh)
+			multiplayer.add_peer_result = ERR_UNAVAILABLE
+			_attach(mesh, client)
+			_inject_plan(client, [_peer(PLAYER_B, true)])
+			mesh.free()
+			client.free()
+	)
+	_assert_equal(
+		["[signal_fish] mesh: add_peer refused (%d)" % ERR_UNAVAILABLE],
+		refused_add_peer,
+		"an add_peer refusal names the engine error"
+	)
+
+	var exhausted_relay := _captured_log_lines(
+		func() -> void:
+			var client := _make_in_room_client()
+			var mesh := _make_mesh()
+			mesh.signal_retry_msec = 0
+			mesh.signal_retry_budget = 2
+			_attach(mesh, client)
+			_inject_plan(client, [_peer(PLAYER_B, true)])
+			var fake_transport: SFFakeTransportScript = client.transport
+			fake_transport.buffered_amount = 262145  # over the client's 256 KiB cap
+			var pc: FakePeerConnection = _mesh_peers(mesh)[0]
+			pc.emit_session_description_created("offer", "v=0")
+			mesh.poll()
+			mesh.free()
+			client.free()
+	)
+	_assert_equal(
+		[
+			(
+				"[signal_fish] mesh: signal relay to %s dropped after %d refused attempts"
+				% [PLAYER_B, 2]
+			)
+		],
+		exhausted_relay,
+		"an exhausted relay queue drops loudly once"
+	)
+
+	var refused_create_mesh := _captured_log_lines(
+		func() -> void:
+			var client := _make_in_room_client()
+			var mesh := _make_mesh()
+			var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(mesh)
+			multiplayer.create_mesh_result = ERR_UNAVAILABLE
+			_attach(mesh, client)
+			_inject_plan(client, [_peer(PLAYER_B, true)])
+			mesh.free()
+			client.free()
+	)
+	_assert_equal(
+		["[signal_fish] mesh: create_mesh refused (%d)" % ERR_UNAVAILABLE],
+		refused_create_mesh,
+		"a create_mesh refusal names the engine error"
+	)
 	_done()
 
 
@@ -1276,6 +1416,7 @@ class FakeMultiplayerPeer:
 
 	var mesh_id := 0
 	var create_mesh_result: Error = OK
+	var add_peer_result: Error = OK
 	var added: Array[Array] = []
 	var removed: Array[int] = []
 	var closed := false
@@ -1287,7 +1428,7 @@ class FakeMultiplayerPeer:
 
 	func add_peer(connection: Variant, unique_id: int) -> Error:
 		added.append([connection, unique_id])
-		return OK
+		return add_peer_result
 
 	func remove_peer(unique_id: int) -> void:
 		removed.append(unique_id)
