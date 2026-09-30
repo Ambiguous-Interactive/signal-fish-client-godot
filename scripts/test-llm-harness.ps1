@@ -1307,7 +1307,7 @@ exit 99
             [pscustomobject]@{ Scenario = 'rerun_failure'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'LLM Harness concluded failure' },
             [pscustomobject]@{ Scenario = 'stale_head'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'skipping stale workflow_run' },
             [pscustomobject]@{ Scenario = 'pending_checks'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 4; Pattern = 'pending checks' },
-            [pscustomobject]@{ Scenario = 'moved_main'; ExpectMerge = $true; ExitCode = 1; DispatchCount = 0; Pattern = 'moved before CI dispatch' },
+            [pscustomobject]@{ Scenario = 'moved_main'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 0; Pattern = 'newer merge owns the dispatches' },
             [pscustomobject]@{ Scenario = 'dispatch_failure'; ExpectMerge = $true; ExitCode = 1; DispatchCount = 1; Pattern = 'Failed to dispatch ci.yml' },
             [pscustomobject]@{ Scenario = 'missing_run_details'; ExpectMerge = $true; ExitCode = 1; DispatchCount = 1; Pattern = 'did not return a run ID' },
             [pscustomobject]@{ Scenario = 'racing_merge'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 0; Pattern = 'already merged by a racing workflow_run' }
