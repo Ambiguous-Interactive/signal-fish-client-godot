@@ -621,11 +621,6 @@ func _test_new_peer_stream_stays_bounded() -> void:
 	_done()
 
 
-## Issue #277: every mesh refusal surfaces exactly one diagnostic naming the
-## cap or cause. The [code]SFLog[/code] capture sink pins the rendered lines
-## without touching stdout; the default stream behavior stays unchanged.
-
-
 func _captured_log_lines(drive: Callable) -> Array[String]:
 	var lines: Array[String] = []
 	SFLogScript.sink = func(line: String) -> void: lines.append(line)
@@ -634,6 +629,9 @@ func _captured_log_lines(drive: Callable) -> Array[String]:
 	return lines
 
 
+# Issue #277: every mesh refusal surfaces exactly one diagnostic naming the
+# cap or cause; the SFLog capture sink pins the rendered lines without
+# touching stdout.
 func _test_mesh_diagnostics_are_pinned() -> void:
 	var cap := SFTypeUtils.MAX_TRACKED_PEERS
 	var over_cap_plan := _captured_log_lines(
@@ -662,18 +660,9 @@ func _test_mesh_diagnostics_are_pinned() -> void:
 			_inject_plan(client, [], "40000000-0000-0000-0000-000000000001")
 			var fake_transport: SFFakeTransportScript = client.transport
 			for index: int in cap:
-				(
-					fake_transport
-					. inject_server_message(
-						{
-							"type": "NewPeer",
-							"data":
-							{
-								"peer_id": "000000ee-0000-0000-0000-%012d" % index,
-								"you_initiate": false,
-							}
-						}
-					)
+				var hostile_peer := "000000ee-0000-0000-0000-%012d" % index
+				fake_transport.inject_server_message(
+					{"type": "NewPeer", "data": {"peer_id": hostile_peer, "you_initiate": false}}
 				)
 			fake_transport.inject_server_message(
 				{"type": "NewPeer", "data": {"peer_id": PLAYER_B, "you_initiate": false}}
