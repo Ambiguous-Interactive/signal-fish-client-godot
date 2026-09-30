@@ -30,9 +30,6 @@ and checks within about one hour. Session cadence:
 
 ### Open issues (correctness first)
 
-- [ ] #280: Let the docs accessibility and web-export browser checks try a
-      third fresh browser before giving up (a runner flake failed main Docs
-      Validation twice on identical bytes).
 - [ ] #277: Pin mesh log diagnostics behind a log-capture seam (left
       unpinned by the session-state-bounds work).
 - [ ] #275: Add the Prettier check to the local runtime gate.
