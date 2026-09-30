@@ -555,7 +555,7 @@ async def run_checks() -> None:
                     print(f"Accessibility: retrying {name} in a fresh browser", file=sys.stderr)
                     continue
                 if attempt or context is None or page is None:
-                    suffix = " again on a fresh page" if attempt else ""
+                    suffix = " again after a retry" if attempt else ""
                     raise TimeoutError(
                         f'phase "{name}" exceeded {PHASE_TIMEOUT} seconds{suffix}'
                     ) from exc

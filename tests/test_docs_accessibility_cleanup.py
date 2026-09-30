@@ -219,6 +219,20 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 2)
         self.assertEqual(self.launch.await_count, 2)
 
+    async def test_repeated_crash_timeouts_fail_after_two_restarts(self) -> None:
+        self.launch.side_effect = [self.browser, self.browser, self.browser]
+
+        async def check(*_args: object) -> None:
+            self.browser_events["disconnected"](self.browser)
+            raise TimeoutError("wait expired")
+
+        with (
+            patch.object(accessibility, "check_closed_boundaries", check),
+            self.assertRaisesRegex(RuntimeError, 'phase "closed boundaries" crashed three times'),
+        ):
+            await accessibility.run_checks()
+        self.assertEqual(self.launch.await_count, 3)
+
     async def test_old_page_crash_does_not_retry_new_page_error(self) -> None:
         new_page = SimpleNamespace(
             set_default_timeout=lambda _value: None,
