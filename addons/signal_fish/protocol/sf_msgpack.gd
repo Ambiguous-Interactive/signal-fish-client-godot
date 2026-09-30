@@ -2,6 +2,7 @@ class_name SFMsgpack
 extends RefCounted
 
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
+const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
 
 ## Pure-GDScript MessagePack codec (PLAN §4.6, P2 binary game data). Decodes
 ## the MessagePack binary game-data envelope frames and, when the consumer
@@ -29,10 +30,6 @@ const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd"
 ## a hostile payload cannot overflow the script stack during recursive
 ## decode/encode.
 const MAX_DEPTH := SFTypeUtils.MAX_MESSAGE_DEPTH
-
-## Diagnostic cap for refused duplicate map keys, mirroring
-## SFJsonGuard._MAX_REPORTED_KEY_BYTES: a hostile key cannot flood the log.
-const _MAX_REPORTED_KEY_CHARS := 32
 
 const _U64_CARRY := 18446744073709551616.0
 const _SIGNED_INT_WIDTHS := {0xD0: 1, 0xD1: 2, 0xD2: 4, 0xD3: 8}
@@ -189,20 +186,17 @@ static func _read_counted_map(
 		var text_key: String = key
 		if entries.has(text_key):
 			return _fail(
-				failure, "MessagePack map contains duplicate key %s" % _render_key(text_key)
+				failure,
+				(
+					"MessagePack map contains duplicate key %s"
+					% SFDiagnosticsScript.render_key(text_key)
+				)
 			)
 		var value: Variant = _decode_value(peer, depth + 1, failure)
 		if not failure[0].is_empty():
 			return null
 		entries[text_key] = value
 	return entries
-
-
-static func _render_key(key: String) -> String:
-	var shown := key
-	if shown.length() > _MAX_REPORTED_KEY_CHARS:
-		shown = shown.substr(0, _MAX_REPORTED_KEY_CHARS)
-	return '"%s"' % shown
 
 
 static func _read_sized_string(

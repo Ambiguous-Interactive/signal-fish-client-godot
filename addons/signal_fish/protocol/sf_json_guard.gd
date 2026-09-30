@@ -1,10 +1,10 @@
 class_name SFJsonGuard
 extends RefCounted
 
+const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
+
 # Godot's parser is last-wins and strips NUL; reject duplicate or NUL keys first
 # (issue #92).
-
-const _MAX_REPORTED_KEY_BYTES := 32
 
 ## Tracked object/array nesting bound. Every payload position the client
 ## decodes nests at most MAX_MESSAGE_DEPTH levels (sf_events and
@@ -38,7 +38,10 @@ static func duplicate_key_error(text: String) -> String:
 					return "message contains a NUL character in a JSON key"
 				var keys: Dictionary = key_sets[key_sets.size() - 1]
 				if keys.has(key):
-					return "message contains duplicate JSON key %s" % _render_key(key)
+					return (
+						"message contains duplicate JSON key %s"
+						% SFDiagnosticsScript.render_key(key.get_string_from_utf8())
+					)
 				keys[key] = true
 			index = close + 1
 			expect_key = false
@@ -175,10 +178,3 @@ static func _append_utf8(key: PackedByteArray, code_point: int) -> void:
 		key.append(0x80 | ((code_point >> 12) & 0x3F))
 		key.append(0x80 | ((code_point >> 6) & 0x3F))
 		key.append(0x80 | (code_point & 0x3F))
-
-
-static func _render_key(key: PackedByteArray) -> String:
-	var shown := key
-	if shown.size() > _MAX_REPORTED_KEY_BYTES:
-		shown = shown.slice(0, _MAX_REPORTED_KEY_BYTES)
-	return '"%s"' % shown.get_string_from_utf8()

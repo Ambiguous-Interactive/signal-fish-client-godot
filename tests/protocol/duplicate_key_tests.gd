@@ -204,6 +204,17 @@ func _test_escape_canonicalization() -> void:
 	var truncated := SFJsonGuardScript.duplicate_key_error(oversized)
 	_assert_string_contains(truncated, "duplicate", "oversized key still reported")
 	_assert(not truncated.contains("k".repeat(64)), "oversized key truncated in diagnostic")
+	# Issue #279: rendered keys cap at 32 characters and escape control
+	# characters, so a hostile key can neither flood nor forge log lines.
+	var multibyte := '{"%s":1,"%s":2}' % ["é".repeat(40), "é".repeat(40)]
+	var multibyte_error := SFJsonGuardScript.duplicate_key_error(multibyte)
+	_assert_string_contains(
+		multibyte_error, '"%s"' % "é".repeat(32), "multibyte key capped at 32 characters"
+	)
+	_assert(not multibyte_error.contains("é".repeat(33)), "multibyte key fully hidden")
+	var newline_error := SFJsonGuardScript.duplicate_key_error('{"a\\nb":1,"a\\nb":2}')
+	_assert_string_contains(newline_error, '"a\\x0Ab"', "newline in key escaped")
+	_assert(not newline_error.contains("a\nb"), "raw newline absent from diagnostic")
 	_done()
 
 
