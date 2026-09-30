@@ -126,6 +126,12 @@ func _test_msgpack_hostile_vectors() -> void:
 			"bytes": [0xDE, 0x00, 0x02, 0xA1, 0x6B, 0x01, 0xA1, 0x6B, 0x02],
 			"error_contains": '"k"',
 		},
+		{
+			"label": "duplicate key with a newline",
+			"bytes": [0x82, 0xA3, 0x61, 0x0A, 0x62, 0x01, 0xA3, 0x61, 0x0A, 0x62, 0x02],
+			"error_contains": '"a\\x0Ab"',
+			"error_not_contains": "a\nb",
+		},
 	]
 	for vector: Dictionary in vectors:
 		var raw_bytes: Array = vector["bytes"]
@@ -141,6 +147,13 @@ func _test_msgpack_hostile_vectors() -> void:
 				result_error.contains(expected_fragment),
 				true,
 				"decode %s names the duplicate key" % vector["label"]
+			)
+		if vector.has("error_not_contains"):
+			var banned_fragment: String = vector["error_not_contains"]
+			_assert(
+				not result_error.contains(banned_fragment),
+				true,
+				"decode %s renders the key safely" % vector["label"]
 			)
 	var deep: Array = []
 	for _index: int in SFMsgpackScript.MAX_DEPTH + 1:
@@ -451,10 +464,40 @@ func _test_envelope_hostile_matrix() -> void:
 		{
 			"label": "duplicate key",
 			"bytes": _envelope(v2_fields, [0x84]) + _payload_field([0x02]),
+			"error_contains": '"payload"',
 		},
 		{
 			"label": "unknown field",
 			"bytes": _envelope(v2_fields + [_field("extra", _bin_value([0x01]))]),
+			"error_contains": '"extra"',
+		},
+		{
+			"label": "duplicate long key is capped",
+			"bytes":
+			_envelope(
+				[
+					_str8_field("x".repeat(40), _bin_value([0x01])),
+					_str8_field("x".repeat(40), _bin_value([0x02])),
+				],
+				[0x82]
+			),
+			"error_contains": '"%s"' % "x".repeat(32),
+			"error_not_contains": "x".repeat(40),
+		},
+		{
+			"label": "duplicate key control characters are escaped",
+			"bytes":
+			_envelope(
+				[_field("a\nb", _bin_value([0x01])), _field("a\nb", _bin_value([0x02]))], [0x82]
+			),
+			"error_contains": '"a\\x0Ab"',
+			"error_not_contains": "a\nb",
+		},
+		{
+			"label": "unknown long key is capped",
+			"bytes": _envelope([_str8_field("y".repeat(40), _bin_value([0x01]))], [0x81]),
+			"error_contains": '"%s"' % "y".repeat(32),
+			"error_not_contains": "y".repeat(40),
 		},
 		{"label": "trailing byte", "bytes": _envelope(v2_fields) + PackedByteArray([0x00])},
 		{
@@ -527,6 +570,13 @@ func _test_envelope_hostile_matrix() -> void:
 					_payload_field([])
 				]
 			),
+			"error_contains": "\uFFFD",
+		},
+		{
+			"label": "hostile encoding token is escaped",
+			"bytes": _envelope([_uuid_field(), _encoding_field("a\nb"), _payload_field([])]),
+			"error_contains": '"a\\x0Ab"',
+			"error_not_contains": "a\nb",
 		},
 		{
 			"label": "v3 seq only",
@@ -608,6 +658,18 @@ func _test_envelope_hostile_matrix() -> void:
 		_assert(result_ok, false, "%s is rejected" % case["label"])
 		var result_error: String = result["error"]
 		_assert(not result_error.is_empty(), true, "%s explains itself" % case["label"])
+		if case.has("error_contains"):
+			var expected_fragment: String = case["error_contains"]
+			_assert(
+				result_error.contains(expected_fragment), true, "%s names the cause" % case["label"]
+			)
+		if case.has("error_not_contains"):
+			var banned_fragment: String = case["error_not_contains"]
+			_assert(
+				not result_error.contains(banned_fragment),
+				true,
+				"%s renders the field safely" % case["label"]
+			)
 	_done()
 
 
@@ -712,6 +774,15 @@ func _payload_field(codepoints: Array[int]) -> PackedByteArray:
 ## Prefixes a fixstr key onto raw value bytes.
 func _field(key: String, value_bytes: PackedByteArray) -> PackedByteArray:
 	var bytes := _string_value(key)
+	bytes.append_array(value_bytes)
+	return bytes
+
+
+## Prefixes a str8 key onto raw value bytes (keys beyond the fixstr width).
+func _str8_field(key: String, value_bytes: PackedByteArray) -> PackedByteArray:
+	var size := key.to_utf8_buffer().size()
+	var codepoints: Array[int] = Array([0xD9, size] + _string_codepoints(key), TYPE_INT, &"", null)
+	var bytes: PackedByteArray = _raw(codepoints)
 	bytes.append_array(value_bytes)
 	return bytes
 
