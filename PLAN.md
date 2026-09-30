@@ -26,12 +26,6 @@ and checks within about one hour. Session cadence:
       dispatch chain is pinned by tests; deferred-dispatch behavior covers
       back-to-back merges.
 
-### Asset Library settings (#194)
-
-- [ ] Add the Asset Library username and password as repository secrets.
-      Confirm the asset ID variable stays `5489`, then close #194. Runbook:
-      `.llm/skills/asset-library-release.md`.
-
 ### Post-v1 (P7, each gated)
 
 - [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke
