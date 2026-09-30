@@ -132,7 +132,7 @@ class DispatchSequenceTests(unittest.TestCase):
             if "/git/ref/heads/" in joined:
                 return {"object": {"sha": ref_sha}}
             if "/dispatches" in joined:
-                workflow = args[4].rsplit("/", 1)[-1]
+                workflow = args[3].rsplit("/", 2)[-2]
                 run_id = next(counter)
                 dispatches.append((workflow, args, run_id))
                 return {"workflow_run_id": run_id}
@@ -150,6 +150,8 @@ class DispatchSequenceTests(unittest.TestCase):
         )
         for name, args, _ in dispatches:
             with self.subTest(workflow=name):
+                self.assertIn("--method POST", " ".join(args))
+                self.assertIn(f"workflows/{name}/dispatches", " ".join(args))
                 self.assertIn("-F return_run_details=true", " ".join(args))
                 self.assertIn("-f ref=main", " ".join(args))
                 self.assertIn(f"-f inputs[expected_sha]={self.SHA}", " ".join(args))
@@ -157,13 +159,19 @@ class DispatchSequenceTests(unittest.TestCase):
         deploy_args = " ".join(dispatches[3][1])
         self.assertIn(f"inputs[validated_run_id]={docs_run_id}", deploy_args)
 
+    def test_displaced_merge_defers_dispatch_to_newer_tip(self) -> None:
+        dispatches: list[tuple[str, tuple[str, ...], int]] = []
+        with patch.object(merge, "gh_json", side_effect=self.fake_gh_json(dispatches, "b" * 40)):
+            merge.dispatch_main_checks("owner/repo", "main", self.SHA)
+        self.assertEqual(dispatches, [])
+
     def test_dispatch_rejects_moved_branch_and_missing_run_id(self) -> None:
         dispatches: list[tuple[str, tuple[str, ...], int]] = []
         with (
             patch.object(merge, "gh_json", side_effect=self.fake_gh_json(dispatches, "b" * 40)),
             self.assertRaisesRegex(RuntimeError, "moved before CI dispatch"),
         ):
-            merge.dispatch_main_checks("owner/repo", "main", self.SHA)
+            merge.dispatch_workflow("owner/repo", "main", self.SHA, "ci.yml")
         self.assertEqual(dispatches, [])
 
         def no_run_id(*args: str) -> object:
@@ -175,7 +183,7 @@ class DispatchSequenceTests(unittest.TestCase):
             patch.object(merge, "gh_json", side_effect=no_run_id),
             self.assertRaisesRegex(RuntimeError, "did not return a run ID"),
         ):
-            merge.dispatch_main_checks("owner/repo", "main", self.SHA)
+            merge.dispatch_workflow("owner/repo", "main", self.SHA, "ci.yml")
 
 
 if __name__ == "__main__":

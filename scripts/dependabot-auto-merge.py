@@ -74,6 +74,13 @@ def dispatch_workflow(repo: str, target: str, merge_sha: str, workflow: str, **i
 
 
 def dispatch_main_checks(repo: str, target: str, merge_sha: str) -> None:
+    current = field(gh_json("api", f"/repos/{repo}/git/ref/heads/{target}"), "object")
+    if field(current, "sha") != merge_sha:
+        print(
+            f"{target} moved to {field(current, 'sha')} before CI dispatch; "
+            "the newer merge owns the dispatches for the tip."
+        )
+        return
     dispatch_workflow(repo, target, merge_sha, "ci.yml")
     dispatch_workflow(repo, target, merge_sha, "llm-harness.yml")
     docs_run_id = dispatch_workflow(repo, target, merge_sha, "docs-validation.yml")
