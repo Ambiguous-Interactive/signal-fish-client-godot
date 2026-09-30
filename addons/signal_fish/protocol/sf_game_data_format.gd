@@ -7,6 +7,7 @@ extends RefCounted
 ## `websocket/connection.rs` downgrades unsupported preferences to JSON).
 
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
 
 
 ## The requested format drives the wire until the server says otherwise: an
@@ -30,7 +31,9 @@ static func label(encoding: int) -> String:
 ## contradicts the requested binary preference, or "" when the preference can
 ## stand. An empty statement means "no server opinion": keep the preference.
 ## Formats are rendered as wire tokens, not coerced enum ints, so the
-## diagnostic stays readable (unknown tokens surface as "unknown").
+## diagnostic stays readable (unknown tokens surface as "unknown"), and the
+## rendered list is count-bounded so a hostile statement cannot stretch one
+## WARN line (issue #284).
 static func downgrade_reason(config_format: String, supported_formats: Array) -> String:
 	if supported_formats.is_empty():
 		return ""
@@ -52,4 +55,5 @@ static func downgrade_reason(config_format: String, supported_formats: Array) ->
 				labels.append(token)
 			_:
 				labels.append(str(value))
-	return "server game_data_formats [%s] does not include the requested format" % ", ".join(labels)
+	var shown := SFDiagnosticsScript.bound_items(labels)
+	return "server game_data_formats [%s] does not include the requested format" % ", ".join(shown)

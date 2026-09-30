@@ -13,6 +13,10 @@ const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 
 const MAX_REPORTED_KEY_CHARS := 32
 
+## A wire-derived list renders at most this many items in one diagnostic
+## line; longer lists collapse into a trailing "and N more" entry.
+const MAX_REPORTED_LIST_ITEMS := 8
+
 
 ## Renders a wire-derived key as a bounded, single-line quoted token.
 static func render_key(key: String) -> String:
@@ -20,6 +24,17 @@ static func render_key(key: String) -> String:
 	if shown.length() > MAX_REPORTED_KEY_CHARS:
 		shown = shown.substr(0, MAX_REPORTED_KEY_CHARS)
 	return '"%s"' % _escape_controls(shown)
+
+
+## Caps a rendered wire-derived list so one diagnostic line cannot be
+## stretched by a hostile peer sending thousands of entries (issue #284).
+## Returns the caller's array unchanged when already within the cap.
+static func bound_items(items: PackedStringArray) -> PackedStringArray:
+	if items.size() <= MAX_REPORTED_LIST_ITEMS:
+		return items
+	var shown := items.slice(0, MAX_REPORTED_LIST_ITEMS)
+	shown.append("and %d more" % (items.size() - MAX_REPORTED_LIST_ITEMS))
+	return shown
 
 
 ## Renders a composite failure text where only the detail after the

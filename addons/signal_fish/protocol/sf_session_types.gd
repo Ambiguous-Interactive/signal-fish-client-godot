@@ -12,6 +12,7 @@ enum Topology { UNKNOWN = -1, RELAY, HOST, MESH }
 enum TransportKind { UNKNOWN = -1, RELAY, DIRECT, WEBRTC }
 
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
+const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
 
 const U16_MAX := 65535
 const U32_MAX := 4294967295
@@ -59,7 +60,9 @@ class IceServerInfo:
 		return raw.duplicate(true)
 
 	func _to_string() -> String:
-		return "IceServerInfo(%s)" % [", ".join(urls)]
+		# The url list is wire-derived and count-bounded like every
+		# diagnostic sink (issue #284).
+		return "IceServerInfo(%s)" % ", ".join(SFDiagnosticsScript.bound_items(urls))
 
 
 ## A peer the recipient should connect to within a SessionPlanInfo (upstream
@@ -150,6 +153,8 @@ class SessionPlanInfo:
 	func _to_string() -> String:
 		# Inner classes cannot call the outer script's static functions, so
 		# the wire labels are looked up through the shared constant tables.
+		# The peer list is wire-derived and count-bounded like every
+		# diagnostic sink (issue #284); ids are validated canonical UUIDs.
 		var peer_ids := PackedStringArray()
 		for peer: SessionPeerInfo in peers:
 			peer_ids.append(peer.player_id)
@@ -161,7 +166,7 @@ class SessionPlanInfo:
 				generation,
 				topology_text,
 				transport_text,
-				", ".join(peer_ids),
+				", ".join(SFDiagnosticsScript.bound_items(peer_ids)),
 			]
 		)
 
