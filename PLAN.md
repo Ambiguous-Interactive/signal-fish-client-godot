@@ -1,7 +1,8 @@
 # Signal Fish - Godot 4 GDScript Client Bindings - Plan
 
-Living plan: **in-progress and future work only.** Completed work lives in
-`progress/`, durable rules in `.llm/context.md` + `.llm/skills/`, the shipped
+Living plan: **in-progress and future work only.** Completed work is logged in
+the local `progress/` notes (git-ignored; never committed), durable rules in
+`.llm/context.md` + `.llm/skills/`, the shipped
 API map in `.llm/code-samples/gdscript-client-shape.md` (see
 `.llm/skills/architectural-planning.md`, "Plan File Hygiene").
 
@@ -10,7 +11,7 @@ upstream v0.9.1), transport seam, core client/config/state machines,
 authority, spectators, reconnection + replay, MessagePack/binary game data,
 v3 session-plan signaling + WebRTC mesh, demo + Web export smoke, MkDocs
 docs site, CI matrix (Godot 4.3/4.4.1/4.7.2), and release automation.
-Per-session history: `progress/session-NNN-*.md`.
+Per-session history: local `progress/session-NNN-*.md` notes (git-ignored).
 
 ## Next work
 
@@ -29,9 +30,6 @@ and checks within about one hour. Session cadence:
 
 ### Open issues (correctness first)
 
-- [ ] #280: Let the docs accessibility and web-export browser checks try a
-      third fresh browser before giving up (a runner flake failed main Docs
-      Validation twice on identical bytes).
 - [ ] #277: Pin mesh log diagnostics behind a log-capture seam (left
       unpinned by the session-state-bounds work).
 - [ ] #275: Add the Prettier check to the local runtime gate.

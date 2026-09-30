@@ -121,19 +121,61 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
             ["browser.close", "replacement.close", "playwright.exit", "server.close"],
         )
 
-    async def test_repeated_crash_fails_after_one_restart(self) -> None:
-        self.launch.side_effect = [self.browser, self.browser]
+    async def test_second_crash_still_retries_in_a_fresh_browser(self) -> None:
+        first = SimpleNamespace(
+            new_context=self.browser.new_context,
+            close=AsyncMock(side_effect=lambda: self.events.append("first.close")),
+            on=lambda *_args: None,
+            is_connected=lambda: True,
+        )
+        second = SimpleNamespace(
+            new_context=self.browser.new_context,
+            close=AsyncMock(side_effect=lambda: self.events.append("second.close")),
+            on=lambda *_args: None,
+            is_connected=lambda: True,
+        )
+        self.launch.side_effect = [self.browser, first, second]
+        with (
+            patch.object(
+                accessibility,
+                "check_closed_boundaries",
+                AsyncMock(
+                    side_effect=[
+                        PlaywrightError("Page.evaluate: Target crashed"),
+                        PlaywrightError("Page.evaluate: Target crashed"),
+                        None,
+                    ]
+                ),
+            ) as check,
+            redirect_stdout(self.stdout),
+        ):
+            await accessibility.run_checks()
+        self.assertEqual(check.await_count, 3)
+        self.assertEqual(self.launch.await_count, 3)
+        self.assertEqual(
+            self.events,
+            [
+                "browser.close",
+                "first.close",
+                "second.close",
+                "playwright.exit",
+                "server.close",
+            ],
+        )
+
+    async def test_repeated_crash_fails_after_two_restarts(self) -> None:
+        self.launch.side_effect = [self.browser, self.browser, self.browser]
         with (
             patch.object(
                 accessibility,
                 "check_closed_boundaries",
                 AsyncMock(side_effect=PlaywrightError("Target crashed")),
             ) as check,
-            self.assertRaisesRegex(RuntimeError, 'phase "closed boundaries" crashed twice'),
+            self.assertRaisesRegex(RuntimeError, 'phase "closed boundaries" crashed three times'),
         ):
             await accessibility.run_checks()
-        self.assertEqual(check.await_count, 2)
-        self.assertEqual(self.launch.await_count, 2)
+        self.assertEqual(check.await_count, 3)
+        self.assertEqual(self.launch.await_count, 3)
 
     async def test_other_playwright_error_does_not_restart(self) -> None:
         with (
@@ -176,6 +218,20 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
             await accessibility.run_checks()
         self.assertEqual(calls, 2)
         self.assertEqual(self.launch.await_count, 2)
+
+    async def test_repeated_crash_timeouts_fail_after_two_restarts(self) -> None:
+        self.launch.side_effect = [self.browser, self.browser, self.browser]
+
+        async def check(*_args: object) -> None:
+            self.browser_events["disconnected"](self.browser)
+            raise TimeoutError("wait expired")
+
+        with (
+            patch.object(accessibility, "check_closed_boundaries", check),
+            self.assertRaisesRegex(RuntimeError, 'phase "closed boundaries" crashed three times'),
+        ):
+            await accessibility.run_checks()
+        self.assertEqual(self.launch.await_count, 3)
 
     async def test_old_page_crash_does_not_retry_new_page_error(self) -> None:
         new_page = SimpleNamespace(
