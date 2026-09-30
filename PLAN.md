@@ -30,8 +30,6 @@ and checks within about one hour. Session cadence:
 
 ### Open issues (correctness first)
 
-- [ ] #277: Pin mesh log diagnostics behind a log-capture seam (left
-      unpinned by the session-state-bounds work).
 - [ ] #275: Add the Prettier check to the local runtime gate.
 
 ### Post-v1 (P7, each gated)
