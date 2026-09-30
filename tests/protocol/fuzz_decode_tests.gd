@@ -8,16 +8,22 @@ extends RefCounted
 ## is refused, and legal values survive encode/decode bit-exactly. Explicit
 ## vectors pin the 8/16/32-bit length-header paths the curated hostile
 ## matrices never reach. Failures report the input bytes; a re-run replays
-## exactly via the file's fixed seeds.
+## exactly via the file's fixed seeds. The JSON-carried binary-payload codec
+## (`SFBinaryCodec.decode_payload`, the `game_data_binary_received` text-form
+## surface) gets the same treatment: canonical round-trip on accept, indexed
+## diagnostics on refuse, and truncation prefixes that decode to exact byte
+## prefixes.
 
 const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
 const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
+const SFBinaryCodecScript = preload("res://addons/signal_fish/protocol/sf_binary_codec.gd")
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const _MSGPACK_CORPUS_SEED := 0x516F1BEF
 const _TEXT_CORPUS_SEED := 0x516F1BE0
+const _CODEC_CORPUS_SEED := 0x516F1BE1
 
 const _SMALL_CORPUS_LENGTHS := 65
 const _SMALL_CORPUS_PER_LENGTH := 30
@@ -26,6 +32,7 @@ const _MEDIUM_CORPUS_MAX_LENGTH := 256
 const _TEXT_NOISE_COUNT := 300
 const _ROUND_TRIP_COUNT := 200
 const _MAX_GENERATED_DEPTH := 6
+const _CODEC_NOISE_COUNT := 300
 
 const _INT_BOUNDARIES := [
 	0,
@@ -89,6 +96,10 @@ func run_all() -> void:
 		_test_msgpack_mutations_stay_typed,
 		_test_msgpack_length_header_attacks_fail_closed,
 		_test_msgpack_random_values_round_trip,
+		_test_binary_codec_base64_fail_closed,
+		_test_binary_codec_byte_array_fail_closed,
+		_test_binary_codec_truncation_prefixes,
+		_test_binary_codec_encode_round_trip,
 		_test_envelope_truncation_and_mutations_fail_closed,
 		_test_envelope_length_header_attacks_fail_closed,
 		_test_text_envelope_truncation_and_noise_fail_closed,
@@ -261,6 +272,326 @@ func _test_msgpack_random_values_round_trip() -> void:
 		_assert_round_trip(value, decoded["value"], "round trip %d" % round_trips)
 	_assert(round_trips == _ROUND_TRIP_COUNT, "round-trip corpus ran %d cases" % round_trips)
 	_done()
+
+
+func _test_binary_codec_base64_fail_closed() -> void:
+	# Handpicked canonical and hostile vectors: accepts pin byte-exact decodes
+	# plus the canonical re-encode proof; refuses pin the diagnostic class.
+	for case: Dictionary in _codec_base64_cases():
+		var input: String = case["input"]
+		var result: Dictionary = SFBinaryCodecScript.decode_payload(input)
+		var ok: bool = result["ok"]
+		var expected_accept: bool = case["accept"]
+		if not _assert(
+			ok == expected_accept, "base64 %s decodes=%s expected=%s" % [input, ok, expected_accept]
+		):
+			continue
+		if expected_accept:
+			var bytes: PackedByteArray = result["bytes"]
+			var expected_hex: String = case["bytes"]
+			_assert(
+				bytes.hex_encode() == expected_hex,
+				"base64 %s decodes to %s (got %s)" % [input, expected_hex, bytes.hex_encode()]
+			)
+			_codec_canonical_round_trip(bytes, input, "base64 %s" % input)
+		else:
+			var error := _codec_refusal(result, "base64 %s" % input)
+			var expected_reason: String = case["reason"]
+			_assert(
+				error.contains(expected_reason),
+				"base64 %s diagnostic names %s (%s)" % [input, expected_reason, error]
+			)
+	# Seeded noise: every input is well-formed, accepts are canonical
+	# round-trips, refusals carry diagnostics, and both outcomes occur.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _CODEC_CORPUS_SEED
+	var alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n @\t-_é@"
+	var accepts := 0
+	var refuses := 0
+	for _iteration: int in _CODEC_NOISE_COUNT:
+		var text := ""
+		for _piece: int in rng.randi_range(0, 32):
+			text += alphabet[rng.randi_range(0, alphabet.length() - 1)]
+		var result: Dictionary = SFBinaryCodecScript.decode_payload(text)
+		if not _codec_shape(result, "base64 noise [%s]" % text):
+			continue
+		var ok: bool = result["ok"]
+		if not ok:
+			refuses += 1
+			_codec_refusal(result, "base64 noise [%s]" % text)
+			continue
+		accepts += 1
+		var bytes: PackedByteArray = result["bytes"]
+		_codec_canonical_round_trip(bytes, text, "base64 noise [%s]" % text)
+	_assert(
+		accepts > 0 and refuses > 0,
+		"base64 noise corpus exercised both outcomes (%d accepts, %d refuses)" % [accepts, refuses]
+	)
+	_done()
+
+
+func _test_binary_codec_byte_array_fail_closed() -> void:
+	# Boundary matrix, data-driven: every entry pins decode-or-refuse plus the
+	# surviving byte or the diagnostic class.
+	for case: Dictionary in _codec_byte_cases():
+		var value: Variant = case["value"]
+		var result: Dictionary = SFBinaryCodecScript.decode_payload([value])
+		var ok: bool = result["ok"]
+		var expected_accept: bool = case["accept"]
+		var label := "byte case %s" % var_to_str(value)
+		if not _assert(
+			ok == expected_accept, "%s decodes=%s expected=%s" % [label, ok, expected_accept]
+		):
+			continue
+		if expected_accept:
+			var bytes: PackedByteArray = result["bytes"]
+			var expected_byte: int = case["byte"]
+			_assert_equal(expected_byte, bytes[0] if bytes.size() == 1 else -1, "%s byte" % label)
+			continue
+		var error := _codec_refusal(result, label)
+		_assert(
+			error.contains("non-number") or error.contains("outside 0..255"),
+			"%s diagnostic names the reason (%s)" % [label, error]
+		)
+	# Seeded noise: mixed-value arrays are byte-exact or refused with an index.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _CODEC_CORPUS_SEED
+	var noise_accepts := 0
+	var noise_refuses := 0
+	for _iteration: int in _CODEC_NOISE_COUNT:
+		var values: Array = []
+		for _entry: int in rng.randi_range(0, 16):
+			match rng.randi_range(0, 6):
+				0:
+					values.append(rng.randi_range(-300, 300))
+				1:
+					values.append(rng.randf_range(-300.0, 300.0))
+				2:
+					values.append(float(rng.randi_range(0, 255)))
+				3:
+					values.append("x")
+				4:
+					values.append(null)
+				5:
+					values.append(rng.randf_range(0.0, 1.0))
+				_:
+					values.append([rng.randi_range(0, 255)])
+		var result: Dictionary = SFBinaryCodecScript.decode_payload(values)
+		var label := "array noise %s" % var_to_str(values)
+		if not _codec_shape(result, label):
+			continue
+		var ok: bool = result["ok"]
+		if not ok:
+			noise_refuses += 1
+			var error := _codec_refusal(result, label)
+			_assert(
+				error.contains("payload byte array["),
+				"%s refusal names the element index (%s)" % [label, error]
+			)
+			continue
+		noise_accepts += 1
+		var bytes: PackedByteArray = result["bytes"]
+		if not _assert(
+			bytes.size() == values.size(), "%s keeps its size (%d)" % [label, bytes.size()]
+		):
+			continue
+		for index: int in values.size():
+			var raw: float = values[index]
+			_assert(
+				int(raw) == bytes[index],
+				"%s [%d] survives byte-exactly (%d vs %d)" % [label, index, int(raw), bytes[index]]
+			)
+	_assert(
+		noise_accepts > 0 and noise_refuses > 0,
+		(
+			"array noise corpus exercised both outcomes (%d accepts, %d refuses)"
+			% [noise_accepts, noise_refuses]
+		)
+	)
+	_done()
+
+
+func _test_binary_codec_truncation_prefixes() -> void:
+	# Base64 prefixes either refuse or decode to the exact byte prefix of the
+	# full payload (block code semantics); nothing crashes and every refusal
+	# keeps a diagnostic.
+	for valid: String in ["yv4=", "eHh5", "YWJjZGVmZ2hpamtsbW5vcA==", "/w==", "AAAA"]:
+		var full: Dictionary = SFBinaryCodecScript.decode_payload(valid)
+		var full_ok: bool = full["ok"]
+		if not _assert(full_ok, "%s baseline decodes" % valid):
+			continue
+		var full_bytes: PackedByteArray = full["bytes"]
+		for cut: int in valid.length() + 1:
+			var prefix := valid.substr(0, cut)
+			var result: Dictionary = SFBinaryCodecScript.decode_payload(prefix)
+			var label := "%s prefix %d" % [valid, cut]
+			var ok: bool = result["ok"]
+			if not ok:
+				_codec_refusal(result, label)
+				continue
+			var bytes: PackedByteArray = result["bytes"]
+			_assert(
+				bytes.size() <= full_bytes.size(),
+				"%s never grows (%d > %d)" % [label, bytes.size(), full_bytes.size()]
+			)
+			_assert(
+				bytes == full_bytes.slice(0, bytes.size()),
+				"%s decodes to the full payload's byte prefix" % label
+			)
+	# The empty string is the zero-byte payload, not an error.
+	var empty: Dictionary = SFBinaryCodecScript.decode_payload("")
+	var empty_ok: bool = empty["ok"]
+	var empty_bytes: PackedByteArray = empty["bytes"]
+	_assert(empty_ok and empty_bytes.is_empty(), "empty payload is zero bytes (ok=%s)" % empty_ok)
+	_done()
+
+
+func _test_binary_codec_encode_round_trip() -> void:
+	# Both encode legs survive decode byte-exactly and agree with each other.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _CODEC_CORPUS_SEED
+	var batches: Array[PackedByteArray] = [
+		PackedByteArray([0, 1, 127, 128, 254, 255]),
+		PackedByteArray(),
+	]
+	for _iteration: int in 100:
+		batches.append(_random_bytes(rng, rng.randi_range(1, 64)))
+	for bytes: PackedByteArray in batches:
+		var as_array: Dictionary = SFBinaryCodecScript.decode_payload(
+			SFBinaryCodecScript.encode_payload_as_array(bytes)
+		)
+		if not _codec_shape(as_array, "array leg %s" % bytes.hex_encode()):
+			continue
+		var array_ok: bool = as_array["ok"]
+		_assert(array_ok, "array leg %s decodes" % bytes.hex_encode())
+		var from_array: PackedByteArray = as_array["bytes"]
+		_assert(from_array == bytes, "array leg %s survives byte-exactly" % bytes.hex_encode())
+		if not bytes.is_empty():
+			var as_base64: Dictionary = SFBinaryCodecScript.decode_payload(
+				SFBinaryCodecScript.encode_payload_as_base64(bytes)
+			)
+			if not _codec_shape(as_base64, "base64 leg %s" % bytes.hex_encode()):
+				continue
+			var base64_ok: bool = as_base64["ok"]
+			_assert(base64_ok, "base64 leg %s decodes" % bytes.hex_encode())
+			var from_base64: PackedByteArray = as_base64["bytes"]
+			_assert(
+				from_base64 == bytes, "base64 leg %s survives byte-exactly" % bytes.hex_encode()
+			)
+			_assert(from_base64 == from_array, "both legs agree for %s" % bytes.hex_encode())
+	_done()
+
+
+static func _codec_base64_cases() -> Array[Dictionary]:
+	return [
+		{"input": "yv4=", "accept": true, "bytes": "cafe"},
+		{"input": "yv4", "accept": true, "bytes": "cafe"},
+		{"input": "eHh4", "accept": true, "bytes": "787878"},
+		{"input": "AA==", "accept": true, "bytes": "00"},
+		{"input": "AAA=", "accept": true, "bytes": "0000"},
+		{"input": "AAAA", "accept": true, "bytes": "000000"},
+		{"input": "/w==", "accept": true, "bytes": "ff"},
+		{"input": "////", "accept": true, "bytes": "ffffff"},
+		{"input": "ABCD", "accept": true, "bytes": "001083"},
+		{"input": "YWJjZA==", "accept": true, "bytes": "61626364"},
+		{"input": "YWJjZA", "accept": true, "bytes": "61626364"},
+		{"input": "", "accept": true, "bytes": ""},
+		{"input": "yv4==", "accept": false, "reason": "length is invalid"},
+		{"input": "yv=4", "accept": false, "reason": "padding is invalid"},
+		{"input": "AA=A", "accept": false, "reason": "padding is invalid"},
+		{"input": "yv4=\t", "accept": false, "reason": "padding is invalid"},
+		{"input": "=", "accept": false, "reason": "length is invalid"},
+		{"input": "==", "accept": false, "reason": "length is invalid"},
+		{"input": "====", "accept": false, "reason": "padding is invalid"},
+		{"input": "A", "accept": false, "reason": "length is invalid"},
+		{"input": "AAAAA", "accept": false, "reason": "length is invalid"},
+		{"input": "AB", "accept": false, "reason": "base64 is invalid"},
+		{"input": "ABC", "accept": false, "reason": "base64 is invalid"},
+		{"input": "aaa=", "accept": false, "reason": "base64 is invalid"},
+		{"input": "00==", "accept": false, "reason": "base64 is invalid"},
+		{"input": "eHh=", "accept": false, "reason": "base64 is invalid"},
+		{"input": "eHh4\n", "accept": false, "reason": "invalid characters"},
+		{"input": " eHh4", "accept": false, "reason": "invalid characters"},
+		{"input": "éHh4", "accept": false, "reason": "invalid characters"},
+		{"input": "-_-_", "accept": false, "reason": "invalid characters"},
+		{"input": "@/@@", "accept": false, "reason": "invalid characters"},
+		{"input": "____", "accept": false, "reason": "invalid characters"},
+	]
+
+
+static func _codec_byte_cases() -> Array[Dictionary]:
+	# -0.0 is built from bits at runtime: +/-0.0 literal folding is per-script
+	# and unreliable (see _float_boundary_values).
+	var negative_zero := _double_from_bits(-0x8000000000000000)
+	return [
+		{"value": 0, "accept": true, "byte": 0x00},
+		{"value": 255, "accept": true, "byte": 0xFF},
+		{"value": 255.0, "accept": true, "byte": 0xFF},
+		{"value": negative_zero, "accept": true, "byte": 0x00},
+		{"value": 0.5, "accept": false, "reason": "outside 0..255"},
+		{"value": 255.5, "accept": false, "reason": "outside 0..255"},
+		{"value": -1, "accept": false, "reason": "outside 0..255"},
+		{"value": 256, "accept": false, "reason": "outside 0..255"},
+		{"value": 1e308, "accept": false, "reason": "outside 0..255"},
+		{"value": -1e308, "accept": false, "reason": "outside 0..255"},
+		{"value": NAN, "accept": false, "reason": "outside 0..255"},
+		{"value": INF, "accept": false, "reason": "outside 0..255"},
+		{"value": -INF, "accept": false, "reason": "outside 0..255"},
+		{"value": 9007199254740993, "accept": false, "reason": "outside 0..255"},
+		{"value": 9223372036854775807, "accept": false, "reason": "outside 0..255"},
+		{"value": -9223372036854775807 - 1, "accept": false, "reason": "outside 0..255"},
+		{"value": true, "accept": false, "reason": "non-number"},
+		{"value": "1", "accept": false, "reason": "non-number"},
+		{"value": null, "accept": false, "reason": "non-number"},
+		{"value": [1], "accept": false, "reason": "non-number"},
+		{"value": {"a": 1}, "accept": false, "reason": "non-number"},
+	]
+
+
+## The decoder's documented strictness: an accepted payload re-encodes to the
+## input padded back to its canonical form (unpadded accepts normalize), and
+## only the empty input yields zero bytes. raw_to_base64(PackedByteArray())
+## prints a native engine error, so the empty case never re-encodes here.
+func _codec_canonical_round_trip(bytes: PackedByteArray, text: String, label: String) -> void:
+	if bytes.is_empty():
+		_assert(text.is_empty(), "%s: only empty input decodes to zero bytes" % label)
+		return
+	_assert(
+		Marshalls.raw_to_base64(bytes) == _codec_canonical_base64(text),
+		(
+			"%s re-encodes to the canonical padded form (got %s)"
+			% [label, Marshalls.raw_to_base64(bytes)]
+		)
+	)
+
+
+static func _codec_canonical_base64(text: String) -> String:
+	match text.length() % 4:
+		0:
+			return text
+		2:
+			return text + "=="
+		3:
+			return text + "="
+		_:
+			return ""
+
+
+func _codec_shape(result: Dictionary, label: String) -> bool:
+	return _assert(
+		(
+			typeof(result["ok"]) == TYPE_BOOL
+			and typeof(result["error"]) == TYPE_STRING
+			and typeof(result["bytes"]) == TYPE_PACKED_BYTE_ARRAY
+		),
+		"%s result keeps {ok, bytes, error}" % label
+	)
+
+
+func _codec_refusal(result: Dictionary, label: String) -> String:
+	var error := str(result["error"])
+	_assert(not error.is_empty(), "%s refusal carries a diagnostic" % label)
+	return error
 
 
 func _test_envelope_truncation_and_mutations_fail_closed() -> void:
