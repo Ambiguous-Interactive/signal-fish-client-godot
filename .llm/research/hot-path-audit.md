@@ -98,11 +98,12 @@ latency floor is the interpreted byte scan (~0.5 us per input byte),
 linear and inside the round's bar.
 
 Session-state surfaces (roster/spectator upserts, mesh reconciliation)
-are O(session size) per event through linear scans. No validator caps
-roster or peer-array length, so a hostile relay streaming distinct
-PlayerJoined events grows client state without a bound (a server-trust
-assumption, not an enforced bound); decode inputs stay the only
-peer/hostile-input amplification surface.
+are O(session size) per event through linear scans, bounded by
+`SFTypeUtils.MAX_TRACKED_PEERS` = 256 (issue #274): roster baselines and
+plan reconciliation clamp to the cap with one diagnostic per refused
+event, so a hostile relay streaming distinct joins keeps client state
+at the cap. Decode inputs stay the only peer/hostile-input amplification
+surface.
 
 Follow-up verdicts recorded for later rounds: `SFMsgpack` map decode
 silently last-wins duplicate keys (`_read_counted_map`), while the text

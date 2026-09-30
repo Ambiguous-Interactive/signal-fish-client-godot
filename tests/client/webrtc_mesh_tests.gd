@@ -8,6 +8,7 @@ extends RefCounted
 const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFWebRTCMeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
@@ -50,6 +51,7 @@ func run_all() -> void:
 		_test_plan_opens_peers_and_reports_boundaries,
 		_test_plan_before_room_baseline_is_ignored,
 		_test_plan_replaces_fully,
+		_test_plan_peer_count_stays_bounded,
 		_test_ice_replace_and_clear,
 		_test_signal_gates,
 		_test_new_peer_event_obey_flag,
@@ -428,6 +430,28 @@ func _test_plan_replaces_fully() -> void:
 	)
 	_assert_equal(0, mesh.get_peer_count(), "non-webrtc plan with peers stays empty")
 	_assert_equal(5, multiplayer.added.size(), "no peer opened for the direct plan")
+	mesh.free()
+	client.free()
+	_done()
+
+
+## Issue #274: a hostile plan must not open an unbounded number of peer
+## connections (precedent: `MAX_MISSED_EVENTS` — cap plus one diagnostic).
+
+
+func _test_plan_peer_count_stays_bounded() -> void:
+	var cap := SFTypeUtils.MAX_TRACKED_PEERS
+	var client := _make_in_room_client()
+	var mesh := _make_mesh()
+	_attach(mesh, client)
+	var multiplayer: FakeMultiplayerPeer = _mesh_multiplayer(mesh)
+	var peers: Array[Dictionary] = []
+	for index: int in cap + 1:
+		peers.append(_peer("000000bb-0000-0000-0000-%012d" % index, index % 2 == 0))
+	_inject_plan(client, peers)
+	_assert_equal(cap, mesh.get_peer_count(), "over-cap plan opens only the cap")
+	_assert_equal(cap, _mesh_peers(mesh).size(), "one connection per retained peer")
+	_assert_equal(cap, multiplayer.added.size(), "retained peers join the multiplayer roster")
 	mesh.free()
 	client.free()
 	_done()

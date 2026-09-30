@@ -1126,7 +1126,9 @@ func _apply_room_info(info: SFTypesScript.RoomJoinedInfo) -> void:
 	# Duplicate the rosters so later presence updates never mutate the payload
 	# objects already handed to consumers.
 	_players = info.current_players.duplicate()
+	_bound_roster(_players, "current_players")
 	_spectators = info.current_spectators.duplicate()
+	_bound_roster(_spectators, "current_spectators")
 	# Retain the freshest reconnection identity for opt-in auto-reconnect.
 	# Every authoritative baseline replaces it; a baseline without a token
 	# clears it (upstream client_core.rs baseline handling).
@@ -1138,7 +1140,9 @@ func _apply_spectator_info(info: SFTypesScript.SpectatorJoinedInfo) -> void:
 	_room_code = info.room_code
 	_lobby_state = info.lobby_state
 	_players = info.current_players.duplicate()
+	_bound_roster(_players, "current_players")
 	_spectators = info.current_spectators.duplicate()
+	_bound_roster(_spectators, "current_spectators")
 	# The protocol has no spectator reconnect: drop any retained identity.
 	_capture_reconnect_context("", "", "")
 
@@ -1152,11 +1156,26 @@ func _clear_room_state() -> void:
 	_spectators = []
 
 
+func _bound_roster(roster: Array, label: String) -> void:
+	if roster.size() <= SFTypeUtils.MAX_TRACKED_PEERS:
+		return
+	var dropped: int = roster.size() - SFTypeUtils.MAX_TRACKED_PEERS
+	roster.resize(SFTypeUtils.MAX_TRACKED_PEERS)
+	_emit_protocol_error(
+		"%s exceeds %d entries; dropped %d" % [label, SFTypeUtils.MAX_TRACKED_PEERS, dropped]
+	)
+
+
 func _upsert_player(player: SFTypesScript.PlayerInfo) -> void:
 	for index: int in _players.size():
 		if _players[index].id == player.id:
 			_players[index] = player
 			return
+	if _players.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
+		_emit_protocol_error(
+			"player roster is at cap %d; PlayerJoined not tracked" % SFTypeUtils.MAX_TRACKED_PEERS
+		)
+		return
 	_players.append(player)
 
 
@@ -1183,6 +1202,14 @@ func _upsert_spectator(spectator: SFTypesScript.SpectatorInfo) -> void:
 		if _spectators[index].id == spectator.id:
 			_spectators[index] = spectator
 			return
+	if _spectators.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
+		_emit_protocol_error(
+			(
+				"spectator roster is at cap %d; NewSpectatorJoined not tracked"
+				% SFTypeUtils.MAX_TRACKED_PEERS
+			)
+		)
+		return
 	_spectators.append(spectator)
 
 
