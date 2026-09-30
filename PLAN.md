@@ -31,8 +31,6 @@ and checks within about one hour. Session cadence:
 - [ ] Round 6: algorithmic-complexity sweep of the hot paths (owner ask,
       2026-09-28): prove hostile inputs cannot drive any decoder super-
       linear, and record verdicts in `.llm/research/hot-path-audit.md`.
-      Round 5 closed the last un-fuzzed decode surface
-      (`SFBinaryCodec.decode_payload`, PR #271).
 
 ### Post-v1 (P7, each gated)
 
