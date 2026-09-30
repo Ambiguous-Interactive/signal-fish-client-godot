@@ -157,19 +157,25 @@ class SessionPlanInfo:
 		# Inner classes cannot call the outer script's static functions, so
 		# the wire labels are looked up through the shared constant tables.
 		# The peer list is wire-derived and count-bounded like every
-		# diagnostic sink (issue #284); ids are validated canonical UUIDs.
-		var peer_ids := PackedStringArray()
+		# diagnostic sink (issue #284). Ids are validated canonical UUIDs
+		# on the decode path, but the constructor is public, so each
+		# rendered id is length-bounded at the UUID width and
+		# control-escaped (issue #287).
+		var raw_ids := PackedStringArray()
 		for peer: SessionPeerInfo in peers:
-			peer_ids.append(peer.player_id)
+			raw_ids.append(peer.player_id)
+		var peer_ids := PackedStringArray()
+		for peer_id: String in SFDiagnosticsScript.bound_items(raw_ids):
+			peer_ids.append(SFDiagnosticsScript.bound_id(peer_id))
 		var topology_text: String = TOPOLOGY_TO_STRING.get(topology, "unknown")
 		var transport_text: String = TRANSPORT_KIND_TO_STRING.get(transport, "unknown")
 		return (
 			"SessionPlanInfo(generation=%s topology=%s transport=%s peers=[%s])"
 			% [
-				generation,
+				SFDiagnosticsScript.bound_id(generation),
 				topology_text,
 				transport_text,
-				", ".join(SFDiagnosticsScript.bound_items(peer_ids)),
+				", ".join(peer_ids),
 			]
 		)
 

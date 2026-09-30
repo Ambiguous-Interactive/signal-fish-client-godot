@@ -36,6 +36,7 @@ func run_all() -> void:
 		_test_truncated_missed_events_keep_the_newest,
 		_test_plan_debug_repr_count_bounds,
 		_test_ice_debug_repr_item_bounds,
+		_test_plan_debug_repr_id_bounds,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -143,6 +144,87 @@ func _test_ice_debug_repr_item_bounds() -> void:
 	var control := SFSessionTypesScript.IceServerInfo.new({"urls": ["stun:a\nb"]})
 	_assert_equal(
 		"IceServerInfo(stun:a\\x0Ab)", control._to_string(), "embedded newlines render as escapes"
+	)
+	_done()
+
+
+## Issue #287: generation and peer ids also render through the public
+## constructor path, where no validator ran, so each id is length-capped
+## at the canonical UUID width and control-escaped: a self-inflicted
+## dictionary cannot stretch one printed line or forge log lines.
+func _test_plan_debug_repr_id_bounds() -> void:
+	var hostile_plan_data := {
+		"generation": "%s\n%s" % ["5".repeat(35), "6".repeat(60000)],
+		"topology": "mesh",
+		"transport": "webrtc",
+		"fallback": "relay",
+		"peers": [],
+	}
+	var hostile_plan: SFSessionTypesScript.SessionPlanInfo = (
+		SFSessionTypesScript.make_session_plan_info(hostile_plan_data)
+	)
+	_assert_equal(
+		(
+			"SessionPlanInfo(generation=%s\\x0A topology=mesh transport=webrtc peers=[])"
+			% "5".repeat(35)
+		),
+		hostile_plan._to_string(),
+		"over-cap generation truncates at 36 chars and escapes controls"
+	)
+
+	var hostile_peers: Array = []
+	for index: int in 9:
+		var hostile_peer := {
+			"player_id": "p%d\n%s" % [index, "x".repeat(60000)],
+			"player_name": "p%d" % index,
+			"is_authority": false,
+			"initiate": true,
+		}
+		hostile_peers.append(hostile_peer)
+	var hostile_peer_plan_data := {
+		"generation": "50000000-0000-0000-0000-000000000001",
+		"topology": "mesh",
+		"transport": "webrtc",
+		"fallback": "relay",
+		"peers": hostile_peers,
+	}
+	var hostile_peer_plan: SFSessionTypesScript.SessionPlanInfo = (
+		SFSessionTypesScript.make_session_plan_info(hostile_peer_plan_data)
+	)
+	var hostile_text := hostile_peer_plan._to_string()
+	_assert(hostile_text.length() < 600, "hostile peer ids stay bounded in the repr")
+	_assert(not hostile_text.contains("\n"), "the repr stays one line")
+	_assert_string_contains(
+		hostile_text, ", and 1 more])", "the count cap still collapses the overflow"
+	)
+	_assert_string_contains(hostile_text, "p0\\x0A", "embedded newlines render as escapes")
+	_assert_string_contains(
+		hostile_text,
+		"generation=50000000-0000-0000-0000-000000000001 topology=mesh",
+		"canonical generation keeps the plain repr"
+	)
+
+	var boundary_data := {
+		"generation": "50000000-0000-0000-0000-000000000001",
+		"topology": "relay",
+		"transport": "relay",
+		"peers":
+		[
+			{
+				"player_id": "a".repeat(37),
+				"player_name": "p",
+				"is_authority": false,
+				"initiate": false,
+			},
+		],
+	}
+	var boundary_plan: SFSessionTypesScript.SessionPlanInfo = (
+		SFSessionTypesScript.make_session_plan_info(boundary_data)
+	)
+	_assert_string_contains(
+		boundary_plan._to_string(),
+		"peers=[%s])" % "a".repeat(36),
+		"over-cap ids truncate at the 36-char UUID width"
 	)
 	_done()
 

@@ -17,6 +17,12 @@ const MAX_REPORTED_KEY_CHARS := 32
 ## line; longer lists collapse into a trailing "and N more" entry.
 const MAX_REPORTED_LIST_ITEMS := 8
 
+## Id-shaped tokens (session generation, peer id) cap at the canonical
+## UUID width: legit ids render untouched, while self-inflicted
+## over-long or control-laden ids through the public constructors stay
+## bounded like any wire-derived token (issue #287).
+const MAX_REPORTED_ID_CHARS := 36
+
 
 ## Renders a wire-derived key as a bounded, single-line quoted token.
 static func render_key(key: String) -> String:
@@ -30,7 +36,7 @@ static func render_key(key: String) -> String:
 ## stretched by a hostile peer sending thousands of entries (issue #284).
 ## Returns the caller's array unchanged when already within the cap.
 ## Items stay raw: free-text members need per-item bounding, see
-## [method bound_item].
+## [method bound_item]; id-shaped members, see [method bound_id].
 static func bound_items(items: PackedStringArray) -> PackedStringArray:
 	if items.size() <= MAX_REPORTED_LIST_ITEMS:
 		return items
@@ -44,6 +50,13 @@ static func bound_items(items: PackedStringArray) -> PackedStringArray:
 ## items keep the plain repr the legit-traffic vectors pin.
 static func bound_item(text: String) -> String:
 	return _escape_controls(text.substr(0, MAX_REPORTED_KEY_CHARS))
+
+
+## Bounds one id-shaped token (issue #287): capped at the canonical UUID
+## width and control-escaped, but unquoted so canonical 36-char ids keep
+## the plain repr the legit-traffic vectors pin.
+static func bound_id(text: String) -> String:
+	return _escape_controls(text.substr(0, MAX_REPORTED_ID_CHARS))
 
 
 ## Renders a composite failure text where only the detail after the
