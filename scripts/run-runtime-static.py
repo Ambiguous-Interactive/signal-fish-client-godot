@@ -91,6 +91,14 @@ def private_helpers(files: Sequence[str] | None = None) -> Result:
     return capture([sys.executable, "scripts/check-gdscript-private-helpers.py", *args])
 
 
+def warning_pins() -> Result:
+    commands = [
+        [sys.executable, "scripts/check-gdscript-warning-pins.py", "--self-test"],
+        [sys.executable, "scripts/check-gdscript-warning-pins.py"],
+    ]
+    return parallel([partial(capture, command) for command in commands])
+
+
 def python_types() -> Result:
     files = [path for path in git_files("*.py") if Path(path).is_file()]
     if not files:
@@ -118,6 +126,7 @@ def gdscript_static() -> Result:
     return parallel(
         [
             private_helpers,
+            warning_pins,
             lambda: sharded("gdformat", ("--diff", "--check"), files, count),
             lambda: sharded("gdlint", (), files, count),
         ]
@@ -151,6 +160,8 @@ def main() -> int:
             status, output = python_types()
         elif mode == "private-helpers":
             status, output = private_helpers()
+        elif mode == "warning-pins":
+            status, output = warning_pins()
         elif mode in ("format", "lint"):
             prepare_gdtoolkit_cache()
             tool = "gdformat" if mode == "format" else "gdlint"
