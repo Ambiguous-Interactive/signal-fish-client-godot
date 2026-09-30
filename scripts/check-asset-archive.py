@@ -29,6 +29,7 @@ REQUIRED_ARCHIVE_FILES = frozenset(
         "addons/signal_fish/plugin.gd",
         "addons/signal_fish/protocol/sf_binary_codec.gd",
         "addons/signal_fish/protocol/sf_binary_frames.gd",
+        "addons/signal_fish/protocol/sf_diagnostics.gd",
         "addons/signal_fish/protocol/sf_envelope.gd",
         "addons/signal_fish/protocol/sf_error_codes.gd",
         "addons/signal_fish/protocol/sf_events.gd",
