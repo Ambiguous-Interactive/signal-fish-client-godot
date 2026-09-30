@@ -273,6 +273,11 @@ func _test_format_downgrade_diagnostics() -> void:
 			"supported": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
 			"expected": "[a, b, c, d, e, f, g, h, and 2 more]",
 		},
+		{
+			"label": "free-text tokens bound per item (issue #286)",
+			"supported": ["%s" % "x".repeat(100)],
+			"expected": "[%s]" % "x".repeat(32),
+		},
 	]
 	for case: Dictionary in cases:
 		var supported: Array = case["supported"]

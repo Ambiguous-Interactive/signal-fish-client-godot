@@ -178,9 +178,6 @@
           "*.gdshader": "gdshader",
           "AGENTS.md": "markdown",
           "CLAUDE.md": "markdown",
-          "GEMINI.md": "markdown",
-          "CHATGPT.md": "markdown",
-          "CODEX.md": "markdown",
           ".cursorrules": "markdown",
           ".windsurfrules": "markdown",
           "llms.txt": "markdown"

@@ -35,6 +35,7 @@ func run_all() -> void:
 		_test_v3_validation_and_sentinels,
 		_test_truncated_missed_events_keep_the_newest,
 		_test_plan_debug_repr_count_bounds,
+		_test_ice_debug_repr_item_bounds,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -107,6 +108,41 @@ func _test_plan_debug_repr_count_bounds() -> void:
 		"IceServerInfo(stun:a:1, stun:b:2)",
 		small_ice._to_string(),
 		"ice debug keeps the plain repr"
+	)
+	_done()
+
+
+## Issue #286: urls stay free text after validation (array shape only),
+## so each rendered item is length-capped and control-escaped: 8 hostile
+## urls cannot stretch one printed line, and embedded control
+## characters cannot forge log lines. The ninth hostile url pins both
+## caps composed: count collapse plus per-item truncation.
+func _test_ice_debug_repr_item_bounds() -> void:
+	var hostile_urls: Array = []
+	for index: int in 9:
+		hostile_urls.append("stun:%s" % "x".repeat(60000))
+	var hostile := SFSessionTypesScript.IceServerInfo.new({"urls": hostile_urls})
+	var hostile_text := hostile._to_string()
+	_assert(hostile_text.length() < 600, "hostile urls stay bounded in the repr")
+	_assert(not hostile_text.contains("\n"), "the repr stays one line")
+	_assert_string_contains(
+		hostile_text, ", and 1 more)", "the count cap still collapses the overflow"
+	)
+	_assert_string_contains(
+		hostile_text, "stun:%s, and 1 more)" % "x".repeat(27), "overflow items render truncated"
+	)
+
+	var over_cap := "stun:abc123abc123abc123abc123abc123abc123"
+	var truncated := SFSessionTypesScript.IceServerInfo.new({"urls": [over_cap]})
+	_assert_equal(
+		"IceServerInfo(stun:abc123abc123abc123abc123abc)",
+		truncated._to_string(),
+		"over-cap urls truncate at the 32-char key cap"
+	)
+
+	var control := SFSessionTypesScript.IceServerInfo.new({"urls": ["stun:a\nb"]})
+	_assert_equal(
+		"IceServerInfo(stun:a\\x0Ab)", control._to_string(), "embedded newlines render as escapes"
 	)
 	_done()
 

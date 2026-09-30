@@ -46,7 +46,7 @@ staged_paths="$(git -C "$REPO_ROOT" diff --cached --name-only)"
 llm_fast=1
 while IFS= read -r staged_path; do
   case "$staged_path" in
-    .llm/*|scripts/*|.githooks/*|.github/workflows/*|.devcontainer/*|.claude/*|AGENTS.md|CLAUDE.md|GEMINI.md|CHATGPT.md|CODEX.md|llms.txt|.cursorrules|.windsurfrules|.github/copilot-instructions.md|.cursor/rules/signal-fish-llm-context.mdc|.pre-commit-config.yaml|.gitattributes|.gitignore|.github/dependabot.yml|.github/dependabot.yaml|requirements-automation.txt)
+    .llm/*|scripts/*|.githooks/*|.github/workflows/*|.devcontainer/*|.claude/*|AGENTS.md|CLAUDE.md|llms.txt|.cursorrules|.windsurfrules|.github/copilot-instructions.md|.cursor/rules/signal-fish-llm-context.mdc|.pre-commit-config.yaml|.gitattributes|.gitignore|.github/dependabot.yml|.github/dependabot.yaml|requirements-automation.txt)
       llm_fast=0
       break
       ;;
