@@ -904,11 +904,7 @@ func _on_transport_failed(error: String) -> void:
 	_reset_session()
 	_teardown_transport()
 	SFLogScript.info(
-		(
-			"transport failed: %s"
-			% SFDiagnosticsScript.render_failure(SFLogScript.redact(error, _secrets))
-		),
-		_secrets
+		"transport failed: %s" % SFDiagnosticsScript.render_failure(error, _secrets), _secrets
 	)
 	connection_failed.emit(error)
 	if _auto_reconnect_enabled and not user_close:

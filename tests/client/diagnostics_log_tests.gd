@@ -112,6 +112,27 @@ func _test_transport_log_lines_render_bounded() -> void:
 		_assert_equal([fail_error], failures, "failure signal keeps the raw text")
 		fail_client.free()
 
+	# A secret that spans the ": " separator must not unbind the bounded
+	# tail: the split anchors on the raw text, then each part redacts.
+	# The logger's final pass then redacts the separator itself.
+	var sep_lines: Array[String] = []
+	SFLogScript.sink = func(line: String) -> void: sep_lines.append(line)
+	var sep_client: SignalFishClientScript = _runner.call("_make_in_room_client")
+	sep_client._remember_secret("before open: ")
+	var sep_fake: SFFakeTransportScript = sep_client.transport
+	sep_fake.inject_failure("WebSocket connection failed before open: " + hostile)
+	_assert_equal(
+		[
+			(
+				"[signal_fish] transport failed: WebSocket connection failed [REDACTED]"
+				+ hostile_rendered
+			)
+		],
+		sep_lines,
+		"a separator-spanning secret keeps the tail bounded"
+	)
+	sep_client.free()
+
 	# A secret the relay echoes back is redacted before the render, so no
 	# raw token characters reach the log even inside the cap window.
 	var secret_lines: Array[String] = []

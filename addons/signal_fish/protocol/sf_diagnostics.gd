@@ -1,6 +1,8 @@
 class_name SFDiagnostics
 extends RefCounted
 
+const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
+
 ## Safe rendering of hostile wire-derived text in diagnostics (issues
 ## #279, #282). Refusal text reaches the [code]protocol_error[/code]
 ## signal and the debug log, and transport close reasons and failure
@@ -24,12 +26,22 @@ static func render_key(key: String) -> String:
 ## first ": " is wire-derived: the locally generated prefix stays
 ## readable (escape-only), and the detail is bounded like a key
 ## (issue #282). Text without a ": " separator is code-owned, so it
-## stays whole and escape-only.
-static func render_failure(text: String) -> String:
+## stays whole and escape-only. The split anchors on the raw text
+## before redaction: a secret that spans the separator must not
+## unbind the bounded tail.
+static func render_failure(
+	text: String, secrets: PackedStringArray = PackedStringArray()
+) -> String:
 	var split := text.find(": ")
 	if split == -1:
-		return _escape_controls(text)
-	return "%s: %s" % [_escape_controls(text.substr(0, split)), render_key(text.substr(split + 2))]
+		return _escape_controls(SFLogScript.redact(text, secrets))
+	return (
+		"%s: %s"
+		% [
+			_escape_controls(SFLogScript.redact(text.substr(0, split), secrets)),
+			render_key(SFLogScript.redact(text.substr(split + 2), secrets)),
+		]
+	)
 
 
 static func _escape_controls(text: String) -> String:
