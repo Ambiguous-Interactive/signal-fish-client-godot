@@ -826,6 +826,28 @@ func _test_binary_codec_hardening() -> void:
 		"invalid base64 padding"
 	)
 	_assert_protocol_error_contains(invalid_padding, "base64", "invalid base64 diagnostics")
+
+	# Issue #289: a hostile wire-derived payload entry rides the
+	# protocol_error sink, so its echo stays bounded and single-line.
+	var hostile_echo: SFTypesScript.DecodedEvent = SFEventsScript.decode_envelope(
+		{
+			"type": "GameDataBinary",
+			"data":
+			{
+				"from_player": "10000000-0000-0000-0000-000000000001",
+				"encoding": "message_pack",
+				"payload": ["a\nb".repeat(20000)]
+			}
+		}
+	)
+	_assert_protocol_error_contains(hostile_echo, "non-number", "hostile payload entry refusal")
+	var hostile_message := str(hostile_echo.args[0])
+	_assert(not hostile_message.contains("\n"), "hostile payload diagnostic stays one line")
+	_assert(hostile_message.contains("a\\x0Ab"), "hostile payload newlines render as escapes")
+	_assert(
+		hostile_message.length() < 200,
+		"hostile payload diagnostic stays bounded (%d chars)" % hostile_message.length()
+	)
 	_done()
 
 
