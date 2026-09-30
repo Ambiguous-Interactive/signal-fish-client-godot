@@ -127,6 +127,8 @@ session state.
 - Repeated JSON keys in an inbound text frame are rejected with
   `protocol_error` (the engine's parser silently keeps the last one;
   upstream rejects duplicates).
+- Duplicate keys in a decoded MessagePack payload are rejected with
+  `protocol_error` (raw bytes still surface), matching the JSON rule.
 - Logs redact tokens and ids by default (`sf_log.gd`).
 
 ## The `is_connected_to_server()` rename

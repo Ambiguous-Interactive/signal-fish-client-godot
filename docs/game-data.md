@@ -79,6 +79,8 @@ MessagePack payload decoding is opt-in through
 - Opt-in: decoded values surface through `game_data_received`.
 - An undecodable payload falls back to the bytes path and adds a
   `protocol_error` diagnostic.
+- Duplicate map keys in a decoded payload are rejected with
+  `protocol_error` (raw bytes still surface).
 
 ## Rkyv
 

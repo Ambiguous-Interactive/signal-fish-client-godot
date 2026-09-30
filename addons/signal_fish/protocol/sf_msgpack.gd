@@ -16,16 +16,23 @@ const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd"
 ## map -> [code]Dictionary[/code]. Extension types are rejected (upstream
 ## game data is JSON-compatible via serde), and encode map keys must be
 ## strings because the server decodes payloads as JSON values
-## (server `websocket/sending.rs` `decode_binary_to_json`). Godot string
-## decoding is UTF-8-lenient: unlike the rust strict decoder, invalid UTF-8
-## in a hostile frame surfaces as replacement characters in decoded values
-## instead of a decode error — benign for game data, and tokens (envelope
-## keys, encoding names) still fail their exact-match checks.
+## (server `websocket/sending.rs` `decode_binary_to_json`). Duplicate map
+## keys are refused (issue #273) so a hostile frame cannot silently
+## substitute a payload value, matching the text path (issue #92) and the
+## envelope decoder. Godot string decoding is UTF-8-lenient: unlike the
+## rust strict decoder, invalid UTF-8 in a hostile frame surfaces as
+## replacement characters in decoded values instead of a decode error —
+## benign for game data, and tokens (envelope keys, encoding names) still
+## fail their exact-match checks.
 
 ## Mirrors the shared protocol nesting cap (SFTypeUtils.MAX_MESSAGE_DEPTH):
 ## a hostile payload cannot overflow the script stack during recursive
 ## decode/encode.
 const MAX_DEPTH := SFTypeUtils.MAX_MESSAGE_DEPTH
+
+## Diagnostic cap for refused duplicate map keys, mirroring
+## SFJsonGuard._MAX_REPORTED_KEY_BYTES: a hostile key cannot flood the log.
+const _MAX_REPORTED_KEY_CHARS := 32
 
 const _U64_CARRY := 18446744073709551616.0
 const _SIGNED_INT_WIDTHS := {0xD0: 1, 0xD1: 2, 0xD2: 4, 0xD3: 8}
@@ -179,11 +186,23 @@ static func _read_counted_map(
 			return null
 		if typeof(key) != TYPE_STRING:
 			return _fail(failure, "MessagePack map key is not a string")
+		var text_key: String = key
+		if entries.has(text_key):
+			return _fail(
+				failure, "MessagePack map contains duplicate key %s" % _render_key(text_key)
+			)
 		var value: Variant = _decode_value(peer, depth + 1, failure)
 		if not failure[0].is_empty():
 			return null
-		entries[key] = value
+		entries[text_key] = value
 	return entries
+
+
+static func _render_key(key: String) -> String:
+	var shown := key
+	if shown.length() > _MAX_REPORTED_KEY_CHARS:
+		shown = shown.substr(0, _MAX_REPORTED_KEY_CHARS)
+	return '"%s"' % shown
 
 
 static func _read_sized_string(
