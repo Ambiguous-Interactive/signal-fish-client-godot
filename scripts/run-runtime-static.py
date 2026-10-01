@@ -99,6 +99,10 @@ def warning_pins() -> Result:
     return parallel([partial(capture, command) for command in commands])
 
 
+def prettier() -> Result:
+    return capture([sys.executable, "scripts/check-source.py", "prettier"])
+
+
 def python_types() -> Result:
     files = [path for path in git_files("*.py") if Path(path).is_file()]
     if not files:
@@ -162,6 +166,8 @@ def main() -> int:
             status, output = private_helpers()
         elif mode == "warning-pins":
             status, output = warning_pins()
+        elif mode == "prettier":
+            status, output = prettier()
         elif mode in ("format", "lint"):
             prepare_gdtoolkit_cache()
             tool = "gdformat" if mode == "format" else "gdlint"
