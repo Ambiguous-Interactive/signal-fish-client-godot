@@ -1178,6 +1178,28 @@ func _clear_room_state() -> void:
 
 
 func _bound_roster(roster: Array, label: String) -> void:
+	# Joins and leaves stop at the first id match, so a repeated baseline id
+	# would strand stale entries (and pinned authority) forever. Keep the
+	# first occurrence of each id and refuse the rest loudly (#92, #273
+	# precedent).
+	var seen := {}
+	var write := 0
+	for index: int in roster.size():
+		var id: String = roster[index].id
+		if seen.has(id):
+			continue
+		seen[id] = true
+		if write != index:
+			roster[write] = roster[index]
+		write += 1
+	if write < roster.size():
+		_emit_protocol_error(
+			(
+				"%s contains duplicate ids; kept the first occurrence, dropped %d"
+				% [label, roster.size() - write]
+			)
+		)
+		roster.resize(write)
 	if roster.size() <= SFTypeUtils.MAX_TRACKED_PEERS:
 		return
 	var dropped: int = roster.size() - SFTypeUtils.MAX_TRACKED_PEERS

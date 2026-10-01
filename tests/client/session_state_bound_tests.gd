@@ -31,6 +31,7 @@ static func run(runner: Object) -> Array[String]:
 func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_over_cap_baseline_clamps,
+		_test_duplicate_baseline_ids_fail_closed,
 		_test_roster_growth_stays_bounded,
 		_test_secret_list_stays_bounded,
 	]
@@ -182,6 +183,74 @@ func _test_secret_list_stays_bounded() -> void:
 	_assert(not client._secrets.has("rotated-token-0-not-secret"), "the oldest token ages out")
 	client.free()
 	_done()
+
+
+## A baseline with duplicate ids must not seed the id-keyed roster: joins
+## and leaves stop at the first match, so extra entries with a repeated id
+## go stale forever and can keep a departed player holding authority.
+
+
+func _test_duplicate_baseline_ids_fail_closed() -> void:
+	var id_a := "000000bb-0000-0000-0000-000000000001"
+	var id_b := "000000bb-0000-0000-0000-000000000002"
+	for flow: String in ["players", "spectators"]:
+		var client: SignalFishClientScript = _runner.call("_make_authenticated_client")
+		var fake: SFFakeTransportScript = client.transport
+		var errors: Array[String] = _runner.call("_track_protocol_errors", client)
+		_inject_roster_baseline(
+			client,
+			flow,
+			[
+				_member(flow, id_a, "First"),
+				_member(flow, id_a, "Ghost"),
+				_member(flow, id_b, "Other")
+			]
+		)
+		var roster := _roster_of(client, flow)
+		_assert_equal(2, roster.size(), "%s duplicate baseline keeps one entry per id" % flow)
+		_assert_equal(
+			"First", roster[0].name, "%s duplicate baseline keeps the first occurrence" % flow
+		)
+		_assert_equal(1, errors.size(), "%s duplicate baseline emits one diagnostic" % flow)
+		_assert_string_contains(
+			errors[0], "duplicate", "%s diagnostic names the duplicate drop" % flow
+		)
+		_assert_string_contains(errors[0], "dropped 1", "%s diagnostic counts the drop" % flow)
+		if flow == "players":
+			fake.inject_server_message(
+				{"type": "PlayerJoined", "data": {"player": _player(id_a, "Renamed")}}
+			)
+		else:
+			fake.inject_server_message(
+				{"type": "NewSpectatorJoined", "data": {"spectator": _spectator(id_a, "Renamed")}}
+			)
+		roster = _roster_of(client, flow)
+		_assert_equal("Renamed", roster[0].name, "%s join updates the kept entry" % flow)
+		_assert_equal(2, roster.size(), "%s join adds no ghost entry" % flow)
+		if flow == "players":
+			fake.inject_server_message(
+				{
+					"type": "AuthorityChanged",
+					"data": {"authority_player": id_a, "you_are_authority": false}
+				}
+			)
+			fake.inject_server_message({"type": "PlayerLeft", "data": {"player_id": id_a}})
+			_assert_equal(
+				"", client.get_authority_player(), "%s leave cannot leave an authority ghost" % flow
+			)
+		else:
+			fake.inject_server_message(
+				{"type": "SpectatorDisconnected", "data": {"spectator_id": id_a}}
+			)
+		roster = _roster_of(client, flow)
+		_assert_equal(1, roster.size(), "%s leave removes the departed id fully" % flow)
+		_assert_equal(id_b, roster[0].id, "%s only the other member survives" % flow)
+		client.free()
+	_done()
+
+
+func _member(flow: String, id: String, display_name: String) -> Dictionary:
+	return _player(id, display_name) if flow == "players" else _spectator(id, display_name)
 
 
 func _inject_roster_baseline(client: SignalFishClientScript, flow: String, members: Array) -> void:
