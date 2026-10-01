@@ -159,7 +159,7 @@ Definition of done for the first usable client:
   copies; local copies clone a warm `.godot` import cache so boots skip the
   cold reimport (`SF_COLD=1` forces the CI-identical cold import).
   Subcommands are `all`, `static`, `gdscript-static`, `python-types`,
-  `private-helpers`, `warning-pins`, `format`, `lint`, and `godot`, plus opt-in
+  `private-helpers`, `warning-pins`, `format`, `lint`, `prettier`, `markdownlint`, and `godot`, plus opt-in
   `smoke` (real `WebSocketPeer` round-trip against a local RFC 6455 test server; never part of `all`) and `changed` (dirty-tree fast loop; issue #117).
 - `scripts/validate-github-config.py`: deterministic local validator for
   GitHub workflows and Dependabot config. It rejects duplicate YAML keys,

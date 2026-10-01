@@ -36,8 +36,8 @@ python3 -E scripts/run-runtime-checks.py all
 ```
 
 `all` runs the private-helper guard, GDScript and Python format/lint checks,
-strict Python typing, the Prettier check, and the Godot suites. Subcommands
-for targeted runs:
+strict Python typing, the Prettier and markdownlint checks, and the Godot
+suites. Subcommands for targeted runs:
 
 - `static`: private-helper guard, format/lint, and Python types. No Godot install.
 - `python-types`: Python format, lint, and strict types.
@@ -45,6 +45,7 @@ for targeted runs:
 - `format`: gdformat checks.
 - `lint`: gdlint.
 - `prettier`: the Prettier half of CI's Source formatting job. Needs `npm ci --ignore-scripts` first.
+- `markdownlint`: the markdownlint job of CI's Docs Validation. Same `npm ci` requirement. To autofix, run `python3 scripts/check-source.py markdownlint write`. The pin matches the version bundled by the `markdownlint-cli2-action` in docs-validation.yml - when bumping that action, re-pin `package.json` to its bundled version.
 - `godot`: the SceneTree suites.
 
 ### Smoke (opt-in)
