@@ -8,6 +8,15 @@ released version.
 
 ## [Unreleased]
 
+## [v0.1.1] - 2026-10-01
+
+### Changed
+
+- Sharper Asset Library description with a link to
+  [signalfish.network](https://signalfish.network).
+- README and docs mention the hosted service next to the self-hosted server
+  and link the live Asset Library listing.
+
 ## [v0.1.0] - 2026-09-27
 
 ### Added
