@@ -1198,9 +1198,21 @@ JSON
   if [[ "${endpoint}" == *"/git/ref/heads/main" ]]; then
     ref_sha="merge-abc123"
     if [[ "${scenario}" == "moved_main" ]]; then ref_sha="new-main"; fi
+    if [[ "${scenario}" == "stale_main_ref" && ! -f "${log}.ref" ]]; then
+      touch "${log}.ref"
+      ref_sha="old-main"
+    fi
     cat <<JSON
 {"object":{"sha":"${ref_sha}"}}
 JSON
+    exit 0
+  fi
+  if [[ "${endpoint}" == *"/compare/"* ]]; then
+    if [[ "${scenario}" == "moved_main" ]]; then
+      echo '{"status":"ahead","ahead_by":1,"behind_by":0}'
+    else
+      echo '{"status":"behind","ahead_by":0,"behind_by":1}'
+    fi
     exit 0
   fi
   if [[ "${endpoint}" == *"/actions/workflows/"*"/dispatches" ]]; then
@@ -1307,6 +1319,7 @@ exit 99
             [pscustomobject]@{ Scenario = 'stale_head'; ExpectMerge = $false; ExitCode = 0; DispatchCount = 0; Pattern = 'skipping stale workflow_run' },
             [pscustomobject]@{ Scenario = 'pending_checks'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 4; Pattern = 'pending checks' },
             [pscustomobject]@{ Scenario = 'moved_main'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 0; Pattern = 'newer merge owns the dispatches' },
+            [pscustomobject]@{ Scenario = 'stale_main_ref'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 4; Pattern = 'Dispatched ci.yml for merge-abc123' },
             [pscustomobject]@{ Scenario = 'dispatch_failure'; ExpectMerge = $true; ExitCode = 1; DispatchCount = 1; Pattern = 'Failed to dispatch ci.yml' },
             [pscustomobject]@{ Scenario = 'missing_run_details'; ExpectMerge = $true; ExitCode = 1; DispatchCount = 1; Pattern = 'did not return a run ID' },
             [pscustomobject]@{ Scenario = 'racing_merge'; ExpectMerge = $true; ExitCode = 0; DispatchCount = 0; Pattern = 'already merged by a racing workflow_run' }
@@ -1315,6 +1328,7 @@ exit 99
             Remove-Item -LiteralPath $fakeGhLogWin -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath "$fakeGhLogWin.pending" -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath "$fakeGhLogWin.workflow" -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "$fakeGhLogWin.ref" -Force -ErrorAction SilentlyContinue
             $env:FAKE_GH_SCENARIO = $case.Scenario
             # Invoke repoRoot-relative: WSL's bash.exe cannot open
             # Windows-style absolute script paths.
