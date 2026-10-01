@@ -25,9 +25,24 @@ PRETTIER_SUFFIXES = (
 
 def tracked(*patterns: str) -> list[str]:
     output = subprocess.check_output(  # noqa: S603
-        [tool("git"), "ls-files", "-z", "--", *patterns], cwd=ROOT
+        [
+            tool("git"),
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            *patterns,
+        ],
+        cwd=ROOT,
     )
-    return [os.fsdecode(path) for path in output.split(b"\0") if path]
+    # Deletion rule (PR #133 rounds): re-validate at the consumption
+    # boundary, so entries deleted from the worktree are dropped here and
+    # untracked new files are included via --others.
+    return [
+        path for path in map(os.fsdecode, output.split(b"\0")) if path and (ROOT / path).is_file()
+    ]
 
 
 def tool(name: str) -> str:
@@ -50,11 +65,14 @@ def run(*command: str) -> None:
     subprocess.run(command, cwd=ROOT, check=True)  # noqa: S603
 
 
-def format_sources(mode: str) -> None:
+def prettier_command(mode: str) -> list[str]:
     prettier = node_tool("prettier")
-    pwsh = tool("pwsh")
-    run(prettier, "--write" if mode == "write" else "--check", *tracked(*PRETTIER_SUFFIXES))
-    command = [pwsh, "-NoProfile", "-File", "scripts/format-powershell.ps1"]
+    return [prettier, "--write" if mode == "write" else "--check", *tracked(*PRETTIER_SUFFIXES)]
+
+
+def format_sources(mode: str) -> None:
+    run(*prettier_command(mode))
+    command = [tool("pwsh"), "-NoProfile", "-File", "scripts/format-powershell.ps1"]
     if mode == "write":
         command.append("-Write")
     run(*command)
@@ -69,7 +87,7 @@ def analyze_sources() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("format", "quality"))
+    parser.add_argument("command", choices=("format", "prettier", "quality"))
     parser.add_argument("mode", nargs="?", choices=("check", "write"), default="check")
     args = parser.parse_args()
     if args.command == "quality" and args.mode != "check":
@@ -77,6 +95,8 @@ def main() -> int:
     try:
         if args.command == "format":
             format_sources(args.mode)
+        elif args.command == "prettier":
+            run(*prettier_command(args.mode))
         else:
             analyze_sources()
     except RuntimeError as error:

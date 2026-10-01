@@ -36,13 +36,15 @@ python3 -E scripts/run-runtime-checks.py all
 ```
 
 `all` runs the private-helper guard, GDScript and Python format/lint checks,
-strict Python typing, and the Godot suites. Subcommands for targeted runs:
+strict Python typing, the Prettier check, and the Godot suites. Subcommands
+for targeted runs:
 
 - `static`: private-helper guard, format/lint, and Python types. No Godot install.
 - `python-types`: Python format, lint, and strict types.
 - `private-helpers`: the private-helper static guard.
 - `format`: gdformat checks.
 - `lint`: gdlint.
+- `prettier`: the Prettier half of CI's Source formatting job. Needs `npm ci --ignore-scripts` first.
 - `godot`: the SceneTree suites.
 
 ### Smoke (opt-in)

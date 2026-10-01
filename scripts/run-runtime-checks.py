@@ -3,6 +3,7 @@
 
 import argparse
 import contextlib
+import importlib.util
 import io
 import os
 import re
@@ -16,8 +17,9 @@ from collections import deque
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNERS = (
@@ -77,6 +79,7 @@ class Selection:
     docs: bool = False
     python: bool = False
     pins: bool = False
+    prettier: bool = False
     suites: tuple[str, ...] = ()
     static_files: tuple[str, ...] = ()
 
@@ -129,6 +132,21 @@ def is_docs(path: str) -> bool:
     )
 
 
+@cache
+def prettier_suffixes() -> tuple[str, ...]:
+    path = ROOT / "scripts" / "check-source.py"
+    spec = importlib.util.spec_from_file_location("check-source", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return tuple(pattern.removeprefix("*") for pattern in sorted(module.PRETTIER_SUFFIXES))
+
+
+def is_prettier(path: str) -> bool:
+    return path.endswith(prettier_suffixes())
+
+
 def is_python(path: str) -> bool:
     return path.endswith(".py") or path in ("ruff.toml", "requirements-python-quality.txt")
 
@@ -137,9 +155,10 @@ def select(paths: list[str], root: Path) -> Selection:
     if not paths:
         return Selection("clean")
     docs = any(map(is_docs, paths))
+    prettier = any(map(is_prettier, paths))
     docs_only = all(map(is_docs, paths))
     if docs_only:
-        return Selection("docs", docs=True)
+        return Selection("docs", docs=True, prettier=prettier)
     python = any(map(is_python, paths))
     python_only = all(is_python(path) or is_docs(path) for path in paths)
     pins = "requirements-ci.txt" in paths
@@ -157,15 +176,19 @@ def select(paths: list[str], root: Path) -> Selection:
         and (root / path).is_file()
     )
     if full:
-        return Selection("full", docs, python, pins, static_files=static_files)
+        return Selection("full", docs, python, pins, prettier=prettier, static_files=static_files)
     if python and python_only:
-        return Selection("python", docs, python)
+        return Selection("python", docs, python, prettier=prettier)
+    if prettier and all(map(is_prettier, paths)):
+        return Selection("prettier", docs=docs, prettier=True)
     suites = suites_for(tests, root)
     if suites is None:
-        return Selection("uncertain", docs, python)
+        return Selection("uncertain", docs, python, prettier=prettier)
     if not suites:
-        return Selection("unreferenced", docs, python)
-    return Selection("suites", docs, python, suites=suites, static_files=static_files)
+        return Selection("unreferenced", docs, python, prettier=prettier)
+    return Selection(
+        "suites", docs, python, prettier=prettier, suites=suites, static_files=static_files
+    )
 
 
 class SelectionTests(unittest.TestCase):
@@ -239,10 +262,17 @@ class SelectionTests(unittest.TestCase):
             (["ruff.toml", "README.md"], "python"),
             (["requirements-ci.txt"], "full"),
             (["tests/unreferenced.gd"], "unreferenced"),
+            ([".github/workflows/ci.yml"], "prettier"),
+            (["PLAN.md", ".github/workflows/ci.yml"], "prettier"),
         )
         for paths, mode in cases:
             with self.subTest(paths=paths):
                 self.assertEqual(select(paths, root).mode, mode)
+        self.assertTrue(select(["README.md"], root).prettier)
+        self.assertFalse(select(["llms.txt"], root).prettier)
+        mixed = select(["PLAN.md", "tests/client/run_client_tests.gd"], root)
+        self.assertEqual(mixed.mode, "suites")
+        self.assertTrue(mixed.prettier)
 
     def test_transitive_and_deleted_files(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -322,6 +352,50 @@ class SelectionTests(unittest.TestCase):
                     script("run-runtime-godot.py", "godot"), background
                 )
 
+    def test_all_dispatch_runs_static_and_prettier_beside_the_suites(self) -> None:
+        with (
+            patch(f"{__name__}.concurrent", return_value=0) as dispatch,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(run_all(), 0)
+        dispatch.assert_called_once_with(
+            script("run-runtime-godot.py", "godot"),
+            [
+                script("run-runtime-static.py", "static"),
+                script("run-runtime-static.py", "prettier"),
+            ],
+        )
+
+    def test_docs_and_prettier_dispatch_runs_style_and_prettier_checks(self) -> None:
+        style = script("check-docs-style.py", "--changed")
+        prettier = script("run-runtime-static.py", "prettier")
+        cases: tuple[tuple[Selection, list[object], list[object]], ...] = (
+            (Selection("docs", docs=True), [], [call(style)]),
+            (Selection("docs", docs=True, prettier=True), [call(style, [prettier])], []),
+            (Selection("prettier", docs=True, prettier=True), [call(style, [prettier])], []),
+            (Selection("prettier", prettier=True), [], [call(prettier)]),
+            (
+                Selection("suites", prettier=True, suites=("protocol",)),
+                [
+                    call(
+                        script("run-runtime-godot.py", "godot", "protocol"),
+                        [script("run-runtime-static.py", "scoped")],
+                    )
+                ],
+                [call(prettier)],
+            ),
+        )
+        for selection, fanout, direct_calls in cases:
+            with self.subTest(selection=selection):
+                with (
+                    patch(f"{__name__}.concurrent", return_value=0) as concurrent_mock,
+                    patch(f"{__name__}.direct", return_value=0) as direct_mock,
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(run_changed(selection), 0)
+                self.assertEqual(concurrent_mock.call_args_list, fanout)
+                self.assertEqual(direct_mock.call_args_list, direct_calls)
+
 
 def script(name: str, *args: str) -> list[str]:
     return [sys.executable, str(ROOT / "scripts" / name), *args]
@@ -361,18 +435,42 @@ def concurrent(primary: Sequence[str], background: Sequence[Sequence[str]]) -> i
     return int(primary_status != 0 or any(status != 0 for status, _ in results))
 
 
+def run_all() -> int:
+    return concurrent(
+        script("run-runtime-godot.py", "godot"),
+        [script("run-runtime-static.py", "static"), script("run-runtime-static.py", "prettier")],
+    )
+
+
 def run_changed(selection: Selection) -> int:
     if selection.mode == "clean":
         print("working tree clean; nothing to check")
         return 0
     docs = script("check-docs-style.py", "--changed")
+    prettier = script("run-runtime-static.py", "prettier")
     if selection.mode == "docs":
-        print(
-            "=== changed: docs-only edit -> style check (runtime suites unaffected) ===", flush=True
-        )
-        return direct(docs)
+        if not selection.prettier:
+            print(
+                "=== changed: docs-only edit -> style check (runtime suites unaffected) ===",
+                flush=True,
+            )
+            return direct(docs)
+        print("=== changed: docs-only edit -> style and prettier checks ===", flush=True)
+        return concurrent(docs, [prettier])
+    if selection.mode == "prettier":
+        if selection.docs:
+            print(
+                "=== changed: docs and prettier-covered edits -> style and prettier ===", flush=True
+            )
+            return concurrent(docs, [prettier])
+        print("=== changed: prettier-covered edit -> prettier check ===", flush=True)
+        return direct(prettier)
     if selection.docs:
         status = direct(docs)
+        if status != 0:
+            return status
+    if selection.prettier:
+        status = direct(prettier)
         if status != 0:
             return status
     python_types = script("run-runtime-static.py", "python-types")
@@ -429,10 +527,7 @@ def main() -> int:
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(SelectionTests)
         return 0 if unittest.TextTestRunner().run(suite).wasSuccessful() else 1
     if args.command == "all":
-        return concurrent(
-            script("run-runtime-godot.py", "godot"),
-            [script("run-runtime-static.py", "static")],
-        )
+        return run_all()
     if args.command in (
         "static",
         "gdscript-static",
@@ -441,6 +536,7 @@ def main() -> int:
         "warning-pins",
         "format",
         "lint",
+        "prettier",
     ):
         return direct(script("run-runtime-static.py", args.command))
     if args.command == "godot":
