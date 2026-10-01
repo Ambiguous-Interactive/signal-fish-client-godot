@@ -167,9 +167,9 @@ strings - no hand-maintained map to drift), scoped static checks run over the
 changed files only (the ~2 s analyzer self-test stays a CI/full-gate guard),
 and production-side edits escalate to the full gate loudly. Prettier-covered
 edits (`.md`, `.json`, `.yml`, ...) route to the shared Prettier check so the
-fast loop catches the Prettier half of CI's Source formatting job (issue
-#275); the suffix list imports from `scripts/check-source.py`, so the checker
-owns the scope and the router cannot drift. The full gate remains the
+fast loop catches the Prettier half of CI's Source formatting job
+(issue #275); the suffix list imports from `scripts/check-source.py`, so the
+checker owns the scope and the router cannot drift. The full gate remains the
 pre-push contract; `changed` only narrows the inner loop.
 
 Deletion rule (Bugbot round on PR #116): a path collected in one phase and
