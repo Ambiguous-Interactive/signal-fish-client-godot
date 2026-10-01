@@ -80,6 +80,7 @@ class Selection:
     python: bool = False
     pins: bool = False
     prettier: bool = False
+    markdownlint: bool = False
     suites: tuple[str, ...] = ()
     static_files: tuple[str, ...] = ()
 
@@ -147,6 +148,10 @@ def is_prettier(path: str) -> bool:
     return path.endswith(prettier_suffixes())
 
 
+def is_markdownlint(path: str) -> bool:
+    return path.endswith(".md") or path.startswith(".markdownlint")
+
+
 def is_python(path: str) -> bool:
     return path.endswith(".py") or path in ("ruff.toml", "requirements-python-quality.txt")
 
@@ -156,9 +161,10 @@ def select(paths: list[str], root: Path) -> Selection:
         return Selection("clean")
     docs = any(map(is_docs, paths))
     prettier = any(map(is_prettier, paths))
+    markdownlint = any(map(is_markdownlint, paths))
     docs_only = all(map(is_docs, paths))
     if docs_only:
-        return Selection("docs", docs=True, prettier=prettier)
+        return Selection("docs", docs=True, prettier=prettier, markdownlint=markdownlint)
     python = any(map(is_python, paths))
     python_only = all(is_python(path) or is_docs(path) for path in paths)
     pins = "requirements-ci.txt" in paths
@@ -176,18 +182,32 @@ def select(paths: list[str], root: Path) -> Selection:
         and (root / path).is_file()
     )
     if full:
-        return Selection("full", docs, python, pins, prettier=prettier, static_files=static_files)
+        return Selection(
+            "full",
+            docs,
+            python,
+            pins,
+            prettier=prettier,
+            markdownlint=markdownlint,
+            static_files=static_files,
+        )
     if python and python_only:
-        return Selection("python", docs, python, prettier=prettier)
+        return Selection("python", docs, python, prettier=prettier, markdownlint=markdownlint)
     if prettier and all(map(is_prettier, paths)):
-        return Selection("prettier", docs=docs, prettier=True)
+        return Selection("prettier", docs=docs, prettier=True, markdownlint=markdownlint)
     suites = suites_for(tests, root)
     if suites is None:
-        return Selection("uncertain", docs, python, prettier=prettier)
+        return Selection("uncertain", docs, python, prettier=prettier, markdownlint=markdownlint)
     if not suites:
-        return Selection("unreferenced", docs, python, prettier=prettier)
+        return Selection("unreferenced", docs, python, prettier=prettier, markdownlint=markdownlint)
     return Selection(
-        "suites", docs, python, prettier=prettier, suites=suites, static_files=static_files
+        "suites",
+        docs,
+        python,
+        prettier=prettier,
+        markdownlint=markdownlint,
+        suites=suites,
+        static_files=static_files,
     )
 
 
@@ -270,9 +290,21 @@ class SelectionTests(unittest.TestCase):
                 self.assertEqual(select(paths, root).mode, mode)
         self.assertTrue(select(["README.md"], root).prettier)
         self.assertFalse(select(["llms.txt"], root).prettier)
+        markdownlint_cases: tuple[tuple[list[str], bool], ...] = (
+            (["README.md"], True),
+            ([".markdownlint.json"], True),
+            ([".markdownlint-cli2.jsonc"], True),
+            (["llms.txt"], False),
+            (["LICENSE"], False),
+            ([".github/workflows/ci.yml"], False),
+        )
+        for paths, wanted in markdownlint_cases:
+            with self.subTest(paths=paths):
+                self.assertEqual(select(paths, root).markdownlint, wanted)
         mixed = select(["PLAN.md", "tests/client/run_client_tests.gd"], root)
         self.assertEqual(mixed.mode, "suites")
         self.assertTrue(mixed.prettier)
+        self.assertTrue(mixed.markdownlint)
 
     def test_transitive_and_deleted_files(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -352,7 +384,7 @@ class SelectionTests(unittest.TestCase):
                     script("run-runtime-godot.py", "godot"), background
                 )
 
-    def test_all_dispatch_runs_static_and_prettier_beside_the_suites(self) -> None:
+    def test_all_dispatch_runs_static_and_node_checks_beside_the_suites(self) -> None:
         with (
             patch(f"{__name__}.concurrent", return_value=0) as dispatch,
             contextlib.redirect_stdout(io.StringIO()),
@@ -363,16 +395,27 @@ class SelectionTests(unittest.TestCase):
             [
                 script("run-runtime-static.py", "static"),
                 script("run-runtime-static.py", "prettier"),
+                script("run-runtime-static.py", "markdownlint"),
             ],
         )
 
-    def test_docs_and_prettier_dispatch_runs_style_and_prettier_checks(self) -> None:
+    def test_docs_and_node_dispatch_runs_style_and_node_checks(self) -> None:
         style = script("check-docs-style.py", "--changed")
         prettier = script("run-runtime-static.py", "prettier")
+        markdownlint = script("run-runtime-static.py", "markdownlint")
         cases: tuple[tuple[Selection, list[object], list[object]], ...] = (
             (Selection("docs", docs=True), [], [call(style)]),
             (Selection("docs", docs=True, prettier=True), [call(style, [prettier])], []),
-            (Selection("prettier", docs=True, prettier=True), [call(style, [prettier])], []),
+            (
+                Selection("docs", docs=True, prettier=True, markdownlint=True),
+                [call(style, [prettier, markdownlint])],
+                [],
+            ),
+            (
+                Selection("prettier", docs=True, prettier=True, markdownlint=True),
+                [call(style, [prettier, markdownlint])],
+                [],
+            ),
             (Selection("prettier", prettier=True), [], [call(prettier)]),
             (
                 Selection("suites", prettier=True, suites=("protocol",)),
@@ -383,6 +426,16 @@ class SelectionTests(unittest.TestCase):
                     )
                 ],
                 [call(prettier)],
+            ),
+            (
+                Selection("suites", markdownlint=True, suites=("protocol",)),
+                [
+                    call(
+                        script("run-runtime-godot.py", "godot", "protocol"),
+                        [script("run-runtime-static.py", "scoped")],
+                    )
+                ],
+                [call(markdownlint)],
             ),
         )
         for selection, fanout, direct_calls in cases:
@@ -438,7 +491,11 @@ def concurrent(primary: Sequence[str], background: Sequence[Sequence[str]]) -> i
 def run_all() -> int:
     return concurrent(
         script("run-runtime-godot.py", "godot"),
-        [script("run-runtime-static.py", "static"), script("run-runtime-static.py", "prettier")],
+        [
+            script("run-runtime-static.py", "static"),
+            script("run-runtime-static.py", "prettier"),
+            script("run-runtime-static.py", "markdownlint"),
+        ],
     )
 
 
@@ -447,30 +504,43 @@ def run_changed(selection: Selection) -> int:
         print("working tree clean; nothing to check")
         return 0
     docs = script("check-docs-style.py", "--changed")
-    prettier = script("run-runtime-static.py", "prettier")
+    node_checks = [
+        script("run-runtime-static.py", name)
+        for name, wanted in (
+            ("prettier", selection.prettier),
+            ("markdownlint", selection.markdownlint),
+        )
+        if wanted
+    ]
     if selection.mode == "docs":
-        if not selection.prettier:
+        if not node_checks:
             print(
                 "=== changed: docs-only edit -> style check (runtime suites unaffected) ===",
                 flush=True,
             )
             return direct(docs)
-        print("=== changed: docs-only edit -> style and prettier checks ===", flush=True)
-        return concurrent(docs, [prettier])
+        names = " and ".join(check[-1] for check in node_checks)
+        print(f"=== changed: docs-only edit -> style and {names} checks ===", flush=True)
+        return concurrent(docs, node_checks)
     if selection.mode == "prettier":
         if selection.docs:
             print(
-                "=== changed: docs and prettier-covered edits -> style and prettier ===", flush=True
+                "=== changed: docs and prettier-covered edits -> style and node checks ===",
+                flush=True,
             )
-            return concurrent(docs, [prettier])
-        print("=== changed: prettier-covered edit -> prettier check ===", flush=True)
-        return direct(prettier)
+            return concurrent(docs, node_checks)
+        print("=== changed: prettier-covered edit -> node checks ===", flush=True)
+        for check in node_checks:
+            status = direct(check)
+            if status != 0:
+                return status
+        return 0
     if selection.docs:
         status = direct(docs)
         if status != 0:
             return status
-    if selection.prettier:
-        status = direct(prettier)
+    for check in node_checks:
+        status = direct(check)
         if status != 0:
             return status
     python_types = script("run-runtime-static.py", "python-types")
@@ -537,6 +607,7 @@ def main() -> int:
         "format",
         "lint",
         "prettier",
+        "markdownlint",
     ):
         return direct(script("run-runtime-static.py", args.command))
     if args.command == "godot":

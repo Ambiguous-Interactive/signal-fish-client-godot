@@ -148,13 +148,14 @@ the current scene) joining the same room to see the peer connection form.
 ## Development
 
 ```bash
-python3 -E scripts/run-runtime-checks.py all    # private-helper guard, format, lint, Prettier, 7 Godot suites
+python3 -E scripts/run-runtime-checks.py all    # private-helper guard, format, lint, Prettier, markdownlint, 7 Godot suites
 python3 -E scripts/run-runtime-checks.py smoke  # opt-in: real WebSocketPeer round-trip vs a local test server
 ```
 
 Requires Godot 4.3+ and Python 3 with `requirements-python-quality.txt`. The
-`all` gate includes the Prettier check, so run `npm ci --ignore-scripts` once
-per checkout. AI/agent context lives in [.llm/context.md](.llm/context.md).
+`all` gate includes the Prettier and markdownlint checks, so run
+`npm ci --ignore-scripts` once per checkout. AI/agent context lives in
+[.llm/context.md](.llm/context.md).
 
 Source formatting and analysis use pinned Prettier, PSScriptAnalyzer, and
 ESLint:

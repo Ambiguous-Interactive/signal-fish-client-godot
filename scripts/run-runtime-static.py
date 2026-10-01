@@ -103,6 +103,10 @@ def prettier() -> Result:
     return capture([sys.executable, "scripts/check-source.py", "prettier"])
 
 
+def markdownlint() -> Result:
+    return capture([sys.executable, "scripts/check-source.py", "markdownlint"])
+
+
 def python_types() -> Result:
     files = [path for path in git_files("*.py") if Path(path).is_file()]
     if not files:
@@ -168,6 +172,8 @@ def main() -> int:
             status, output = warning_pins()
         elif mode == "prettier":
             status, output = prettier()
+        elif mode == "markdownlint":
+            status, output = markdownlint()
         elif mode in ("format", "lint"):
             prepare_gdtoolkit_cache()
             tool = "gdformat" if mode == "format" else "gdlint"

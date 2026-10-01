@@ -70,6 +70,14 @@ def prettier_command(mode: str) -> list[str]:
     return [prettier, "--write" if mode == "write" else "--check", *tracked(*PRETTIER_SUFFIXES)]
 
 
+def markdownlint_command(mode: str) -> list[str]:
+    markdownlint = node_tool("markdownlint-cli2")
+    # Same glob as the docs-validation.yml job; explicit paths would be read
+    # as glob patterns, so files with glob magic could be skipped silently.
+    command = [markdownlint, "--fix"] if mode == "write" else [markdownlint]
+    return [*command, "**/*.md"]
+
+
 def format_sources(mode: str) -> None:
     run(*prettier_command(mode))
     command = [tool("pwsh"), "-NoProfile", "-File", "scripts/format-powershell.ps1"]
@@ -87,7 +95,7 @@ def analyze_sources() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("format", "prettier", "quality"))
+    parser.add_argument("command", choices=("format", "prettier", "markdownlint", "quality"))
     parser.add_argument("mode", nargs="?", choices=("check", "write"), default="check")
     args = parser.parse_args()
     if args.command == "quality" and args.mode != "check":
@@ -97,6 +105,8 @@ def main() -> int:
             format_sources(args.mode)
         elif args.command == "prettier":
             run(*prettier_command(args.mode))
+        elif args.command == "markdownlint":
+            run(*markdownlint_command(args.mode))
         else:
             analyze_sources()
     except RuntimeError as error:

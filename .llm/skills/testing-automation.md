@@ -143,11 +143,11 @@ release flow is dispatch-only and documented in
 
 `scripts/run-runtime-checks.py` prepares `HOME` and `.venv-ci` for local and CI
 checks. The shell launcher remains for existing callers. The dispatcher exposes
-`private-helpers`, `format`, `lint`, `prettier`, `godot`, `all`, `changed`, and
-`smoke` subcommands so CI can keep separate step names without drifting from
-local reproduction commands. The `all` subcommand runs the static checks, the
-Prettier check, and the godot suites concurrently - the gate wall is the slower
-half, not the sum.
+`private-helpers`, `format`, `lint`, `prettier`, `markdownlint`, `godot`,
+`all`, `changed`, and `smoke` subcommands so CI can keep separate step names
+without drifting from local reproduction commands. `all` runs the static
+checks, the Prettier and markdownlint checks, and the godot suites
+concurrently - the gate wall is the slower half, not the sum.
 The `godot` subcommand accepts suite names (`protocol transport
 client binary reconnect demo_boot p2p_boot`); one explicit suite runs warm
 in-tree against the live `.godot` cache for fast local iteration, while
@@ -169,8 +169,10 @@ and production-side edits escalate to the full gate loudly. Prettier-covered
 edits (`.md`, `.json`, `.yml`, ...) route to the shared Prettier check so the
 fast loop catches the Prettier half of CI's Source formatting job
 (issue #275); the suffix list imports from `scripts/check-source.py`, so the
-checker owns the scope and the router cannot drift. The full gate remains the
-pre-push contract; `changed` only narrows the inner loop.
+checker owns the scope and the router cannot drift. Markdown and markdownlint config
+edits route to the markdownlint check (issue #295) - CI's Docs Validation lint job with
+the same `**/*.md` glob; the pin tracks the version bundled by `markdownlint-cli2-action`.
+The full gate remains the pre-push contract; `changed` only narrows the inner loop.
 
 Deletion rule (Bugbot round on PR #116): a path collected in one phase and
 consumed in another must be re-validated at the consumption boundary - deletions and renames are the classic divergence. `changed` therefore still
