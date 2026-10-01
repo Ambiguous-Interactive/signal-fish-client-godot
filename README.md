@@ -13,6 +13,8 @@
 A pure-GDScript client for the [Signal Fish](https://github.com/Ambiguous-Interactive/signal-fish-server)
 protocol. Drop the `addons/signal_fish` folder into any Godot 4 project - no C#, no
 GDExtension, no compilation - and it runs everywhere Godot runs, including web exports.
+Run the open-source server yourself, or let [Signal Fish Cloud](https://signalfish.network)
+host it for you.
 
 > **AI disclosure:** This project was developed with substantial assistance
 > from Claude and Codex. Humans created the protocol concepts and core design
@@ -57,8 +59,8 @@ covers everything from first connection to the P2P mesh:
 tag ships only `addons/` as a downloadable archive. Asset Library downloads
 use the same addon-only layout; demos and full docs remain in this repository.
 
-Asset Library listing: planned for the v1 release (one-time human submission;
-the repo automates updates after that).
+Asset Library listing: [entry #5489](https://godotengine.org/asset-library/asset/5489);
+release tags update it automatically.
 
 ## Authentication primer
 

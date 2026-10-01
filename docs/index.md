@@ -28,8 +28,9 @@ runs everywhere Godot runs, including web exports.
 
     Work in progress toward v1. The full v2 protocol surface and the v3
     session-plan signaling are shipped and covered by deterministic fixture
-    tests. An Asset Library listing is planned for the v1 release; until
-    then, install with a manual copy.
+    tests. The addon is on the
+    [Godot Asset Library](https://godotengine.org/asset-library/asset/5489);
+    releases update that listing automatically.
 
 ## Get connected
 

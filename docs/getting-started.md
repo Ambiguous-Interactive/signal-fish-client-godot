@@ -34,6 +34,9 @@ Create a `SignalFishConfig` resource and set the fields you need:
 - `game_data_format`: optional. Leave it unset (`""`) for JSON game data,
   or request `message_pack` for binary game data.
 
+Need a server? Run the open-source one, or use the hosted service at
+[signalfish.network](https://signalfish.network).
+
 See [Client API Reference](client.md) for the full field list.
 
 ## Quick start
