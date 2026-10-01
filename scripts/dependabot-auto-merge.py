@@ -73,14 +73,30 @@ def dispatch_workflow(repo: str, target: str, merge_sha: str, workflow: str, **i
     return run_id
 
 
+def tip_is_descendant(repo: str, merge_sha: str, observed: str) -> bool:
+    # Compare "ahead" means the observed tip is a strict descendant of the
+    # merge SHA (issue #298): only then does a newer merge own the dispatches.
+    comparison = record(gh_json("api", f"/repos/{repo}/compare/{merge_sha}...{observed}"))
+    return comparison.get("status") == "ahead"
+
+
 def dispatch_main_checks(repo: str, target: str, merge_sha: str) -> None:
     current = field(gh_json("api", f"/repos/{repo}/git/ref/heads/{target}"), "object")
-    if field(current, "sha") != merge_sha:
-        print(
-            f"{target} moved to {field(current, 'sha')} before CI dispatch; "
-            "the newer merge owns the dispatches for the tip."
-        )
-        return
+    observed = field(current, "sha")
+    if isinstance(observed, str) and observed != merge_sha:
+        try:
+            newer_tip = tip_is_descendant(repo, merge_sha, observed)
+        except RuntimeError:
+            # A failed compare defers to dispatch_workflow's own ref re-check:
+            # it dispatches only while main still holds the merge SHA and
+            # fails loudly otherwise (issue #298).
+            newer_tip = False
+        if newer_tip:
+            print(
+                f"{target} moved to {observed} before CI dispatch; "
+                "the newer merge owns the dispatches for the tip."
+            )
+            return
     dispatch_workflow(repo, target, merge_sha, "ci.yml")
     dispatch_workflow(repo, target, merge_sha, "llm-harness.yml")
     docs_run_id = dispatch_workflow(repo, target, merge_sha, "docs-validation.yml")

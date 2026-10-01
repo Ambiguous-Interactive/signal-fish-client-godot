@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
@@ -124,13 +125,25 @@ class DispatchSequenceTests(unittest.TestCase):
     SHA = "a" * 40
 
     @staticmethod
-    def fake_gh_json(dispatches: list[tuple[str, tuple[str, ...], int]], ref_sha: str) -> object:
+    def fake_gh_json(
+        dispatches: list[tuple[str, tuple[str, ...], int]],
+        ref_reads: list[str],
+        compare_status: str = "ahead",
+        compare_error: str | None = None,
+    ) -> Callable[[str], object]:
         counter = iter(range(1000, 2000))
+        state = {"read": 0}
 
         def fake(*args: str) -> object:
             joined = " ".join(args)
             if "/git/ref/heads/" in joined:
-                return {"object": {"sha": ref_sha}}
+                index = min(state["read"], len(ref_reads) - 1)
+                state["read"] += 1
+                return {"object": {"sha": ref_reads[index]}}
+            if "/compare/" in joined:
+                if compare_error is not None:
+                    raise RuntimeError(compare_error)
+                return {"status": compare_status}
             if "/dispatches" in joined:
                 workflow = args[3].rsplit("/", 2)[-2]
                 run_id = next(counter)
@@ -142,7 +155,7 @@ class DispatchSequenceTests(unittest.TestCase):
 
     def test_dispatch_order_and_validated_run_handoff(self) -> None:
         dispatches: list[tuple[str, tuple[str, ...], int]] = []
-        with patch.object(merge, "gh_json", side_effect=self.fake_gh_json(dispatches, self.SHA)):
+        with patch.object(merge, "gh_json", side_effect=self.fake_gh_json(dispatches, [self.SHA])):
             merge.dispatch_main_checks("owner/repo", "main", self.SHA)
         self.assertEqual(
             [name for name, _, _ in dispatches],
@@ -161,14 +174,48 @@ class DispatchSequenceTests(unittest.TestCase):
 
     def test_displaced_merge_defers_dispatch_to_newer_tip(self) -> None:
         dispatches: list[tuple[str, tuple[str, ...], int]] = []
-        with patch.object(merge, "gh_json", side_effect=self.fake_gh_json(dispatches, "b" * 40)):
+        with patch.object(merge, "gh_json", side_effect=self.fake_gh_json(dispatches, ["b" * 40])):
             merge.dispatch_main_checks("owner/repo", "main", self.SHA)
         self.assertEqual(dispatches, [])
+
+    def test_stale_ref_read_redispatches_for_the_merge_tip(self) -> None:
+        dispatches: list[tuple[str, tuple[str, ...], int]] = []
+        stale = self.fake_gh_json(dispatches, ["c" * 40, self.SHA], compare_status="behind")
+        with patch.object(merge, "gh_json", side_effect=stale):
+            merge.dispatch_main_checks("owner/repo", "main", self.SHA)
+        self.assertEqual(
+            [name for name, _, _ in dispatches],
+            ["ci.yml", "llm-harness.yml", "docs-validation.yml", "docs-deploy.yml"],
+        )
+
+    def test_failed_compare_redispatches_through_the_ref_recheck(self) -> None:
+        dispatches: list[tuple[str, tuple[str, ...], int]] = []
+        stale = self.fake_gh_json(
+            dispatches, ["c" * 40, self.SHA], compare_error="gh api compare failed (exit 500)"
+        )
+        with patch.object(merge, "gh_json", side_effect=stale):
+            merge.dispatch_main_checks("owner/repo", "main", self.SHA)
+        self.assertEqual(
+            [name for name, _, _ in dispatches],
+            ["ci.yml", "llm-harness.yml", "docs-validation.yml", "docs-deploy.yml"],
+        )
+
+    def test_non_descendant_tips_never_skip_silently(self) -> None:
+        for compare_status in ("behind", "diverged", "identical"):
+            with self.subTest(compare_status=compare_status):
+                dispatches: list[tuple[str, tuple[str, ...], int]] = []
+                moved = self.fake_gh_json(dispatches, ["b" * 40], compare_status=compare_status)
+                with (
+                    patch.object(merge, "gh_json", side_effect=moved),
+                    self.assertRaisesRegex(RuntimeError, "moved before CI dispatch"),
+                ):
+                    merge.dispatch_main_checks("owner/repo", "main", self.SHA)
+                self.assertEqual(dispatches, [])
 
     def test_dispatch_rejects_moved_branch_and_missing_run_id(self) -> None:
         dispatches: list[tuple[str, tuple[str, ...], int]] = []
         with (
-            patch.object(merge, "gh_json", side_effect=self.fake_gh_json(dispatches, "b" * 40)),
+            patch.object(merge, "gh_json", side_effect=self.fake_gh_json(dispatches, ["b" * 40])),
             self.assertRaisesRegex(RuntimeError, "moved before CI dispatch"),
         ):
             merge.dispatch_workflow("owner/repo", "main", self.SHA, "ci.yml")
