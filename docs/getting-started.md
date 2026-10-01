@@ -10,10 +10,9 @@ including web exports.
 
 ## Install
 
-Copy `addons/signal_fish/` into your project's `addons/` folder.
-
-An Asset Library listing is planned for the v1 release; until then, use a
-manual copy.
+Copy `addons/signal_fish/` into your project's `addons/` folder, or grab the
+addon from the
+[Godot Asset Library](https://godotengine.org/asset-library/asset/5489).
 
 !!! note "Enabling the plugin is optional"
 
@@ -34,7 +33,7 @@ Create a `SignalFishConfig` resource and set the fields you need:
 - `game_data_format`: optional. Leave it unset (`""`) for JSON game data,
   or request `message_pack` for binary game data.
 
-Need a server? Run the open-source one, or use the hosted service at
+Need a server? Run the open-source one, or try the hosted service at
 [signalfish.network](https://signalfish.network).
 
 See [Client API Reference](client.md) for the full field list.

@@ -13,8 +13,8 @@
 A pure-GDScript client for the [Signal Fish](https://github.com/Ambiguous-Interactive/signal-fish-server)
 protocol. Drop the `addons/signal_fish` folder into any Godot 4 project - no C#, no
 GDExtension, no compilation - and it runs everywhere Godot runs, including web exports.
-Run the open-source server yourself, or let [Signal Fish Cloud](https://signalfish.network)
-host it for you.
+Run the open-source server yourself, or try [Signal Fish Cloud](https://signalfish.network)
+hosting (beta).
 
 > **AI disclosure:** This project was developed with substantial assistance
 > from Claude and Codex. Humans created the protocol concepts and core design
