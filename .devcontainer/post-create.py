@@ -113,6 +113,9 @@ def main() -> int:
     print("==> Installing direct git hooks", flush=True)
     run("pwsh", "-NoProfile", "-File", "scripts/install-git-hooks.ps1", "-Force")
 
+    print("==> Installing npm source tools (Prettier for the local gate)", flush=True)
+    run("npm", "ci", "--ignore-scripts")
+
     print("==> Verifying image agent CLIs (codex, opencode, nanocoder, claude)", flush=True)
     run("python3", str(CONTAINER / "install-agent-tools.py"), "--verify")
     for cli in ("codex", "opencode", "nanocoder", "claude"):

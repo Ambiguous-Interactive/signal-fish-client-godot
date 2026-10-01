@@ -94,6 +94,7 @@ class Portability(unittest.TestCase):
         self.assertIn(
             ("pwsh", "-NoProfile", "-File", "scripts/install-git-hooks.ps1", "-Force"), commands
         )
+        self.assertIn(("npm", "ci", "--ignore-scripts"), commands)
         self.assertIn(("python3", str(ROOT / "install-agent-tools.py"), "--verify"), commands)
         mcp = next(env for args, env in calls if "install-mcp-servers.py" in args[1])
         if mcp is None:
