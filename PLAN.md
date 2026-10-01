@@ -28,10 +28,6 @@ and checks within about one hour. Session cadence:
       back-to-back merges. Blocked until the next scheduled Dependabot pass
       (Monday 2026-10-05, 03:00 America/Los_Angeles).
 
-### Open issues (correctness first)
-
-- [ ] #275: Add the Prettier check to the local runtime gate.
-
 ### Post-v1 (P7, each gated)
 
 - [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke
