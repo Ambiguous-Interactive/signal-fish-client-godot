@@ -19,13 +19,6 @@ Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:
 `.llm/skills/architectural-planning.md`.
 
-### Automation
-
-- [ ] #307: Stop the red auto-merge job that back-to-back Dependabot merges
-      leave behind (first observed live 2026-10-05). Bounded retry on the
-      racing-merge recheck in `scripts/dependabot-auto-merge.py`, pinned by
-      a test.
-
 ### Post-v1 (P7, each gated)
 
 - [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke

@@ -122,6 +122,45 @@ def pr_is_current(number: str, sha: str) -> bool:
     return current.get("state") == "OPEN" and current.get("headRefOid") == sha
 
 
+MERGED_RECHECK_ATTEMPTS = 6
+MERGED_RECHECK_SECONDS = 5.0
+
+
+def merge_snapshot_complete(merged: dict[str, object]) -> bool:
+    oid = field(merged.get("mergeCommit"), "oid")
+    head = merged.get("headRefOid")
+    return (
+        merged.get("state") == "MERGED"
+        and isinstance(head, str)
+        and bool(head)
+        and isinstance(oid, str)
+        and bool(oid)
+    )
+
+
+def merged_state(number: str) -> dict[str, object] | None:
+    # Back-to-back merges race this script against itself: the API can serve
+    # a pre-merge snapshot for seconds after a merge lands (issue #307).
+    for attempt in range(1, MERGED_RECHECK_ATTEMPTS + 1):
+        result = gh("pr", "view", number, "--json", "state,headRefOid,mergeCommit")
+        merged = record(json.loads(result.stdout)) if result.returncode == 0 else None
+        if merged is not None and merge_snapshot_complete(merged):
+            return merged
+        if merged is None:
+            reason = result.stderr.strip()
+            detail = f"gh exit {result.returncode}" + (f": {reason}" if reason else "")
+        else:
+            detail = (
+                f"state={merged.get('state', 'unreadable')},"
+                f" head={merged.get('headRefOid') or 'missing'},"
+                f" mergeCommit={field(merged.get('mergeCommit'), 'oid') or 'missing'}"
+            )
+        print(f"PR #{number} merge recheck {attempt}/{MERGED_RECHECK_ATTEMPTS}: {detail}")
+        if attempt < MERGED_RECHECK_ATTEMPTS:
+            time.sleep(MERGED_RECHECK_SECONDS)
+    return None
+
+
 def main() -> int:
     if shutil.which("gh") is None:
         print("::error::Required command 'gh' was not found on PATH.")
@@ -252,23 +291,20 @@ def main() -> int:
             return 0
 
     result = gh("pr", "merge", number, "--squash", "--delete-branch", "--match-head-commit", sha)
-    if result.returncode == 0:
-        merged = record(gh_json("pr", "view", number, "--json", "state,mergeCommit"))
-        merge_sha = field(merged.get("mergeCommit"), "oid")
-        if merged.get("state") != "MERGED" or not isinstance(merge_sha, str) or not merge_sha:
-            raise RuntimeError(f"PR #{number} merged but its merge commit was not available")
-        dispatch_main_checks(repo, target, merge_sha)
-        return 0
-    recheck = gh("pr", "view", number, "--json", "state,headRefOid")
-    state: object = "UNKNOWN"
-    if recheck.returncode == 0:
-        merged = record(json.loads(recheck.stdout))
-        state = merged.get("state", "UNKNOWN")
-        if state == "MERGED" and merged.get("headRefOid") == sha:
+    merged = merged_state(number)
+    if result.returncode != 0:
+        if merged is not None and merged.get("headRefOid") == sha:
             print(f"PR #{number} was already merged by a racing workflow_run; treating as success.")
             return 0
-    print(f"gh pr merge failed for #{number} (exit {result.returncode}, state {state}).")
-    return result.returncode
+        print(f"gh pr merge failed for #{number} (exit {result.returncode}).")
+        return result.returncode
+    if merged is None:
+        raise RuntimeError(f"PR #{number} merged but its merge snapshot never completed")
+    merge_sha = field(merged.get("mergeCommit"), "oid")
+    if not isinstance(merge_sha, str) or not merge_sha:
+        raise RuntimeError(f"PR #{number} merged but its merge commit was not available")
+    dispatch_main_checks(repo, target, merge_sha)
+    return 0
 
 
 if __name__ == "__main__":
