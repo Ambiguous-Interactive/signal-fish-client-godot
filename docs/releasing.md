@@ -15,15 +15,15 @@ Each store edit waits for moderation.
 - Admin access to this repository (to add secrets and run workflows).
 - A merged `vMAJOR.MINOR.PATCH` section in [`CHANGELOG.md`](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/main/CHANGELOG.md).
 
-## `v0.1.0` listing
+## `v0.1.1` listing
 
-Entry #5489 points to this repository. Edit #24434 was submitted on
-September 28, 2026, and the `v0.1.0` listing went live on September 29.
+Entry #5489 points to this repository. Edit #24491 was submitted on
+October 1, 2026, and the `v0.1.1` listing went live on October 2.
 Use this entry for later releases.
 
-The [`v0.1.0` GitHub Release](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases/tag/v0.1.0)
+The [`v0.1.1` GitHub Release](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases/tag/v0.1.1)
 is published. Its tag points to
-`b4441936057628a71b730c3338f0183b4cdc03e2`.
+`5a0b00d3e78edac16e41f2bff978b500eeb2c4d6`.
 
 The live entry has these values:
 
@@ -32,16 +32,16 @@ The live entry has these values:
 | Title             | `Signal Fish Client`                                                                                             |
 | Category          | Scripts                                                                                                          |
 | Godot version     | `4.3`                                                                                                            |
-| Version           | `0.1.0`                                                                                                          |
+| Version           | `0.1.1`                                                                                                          |
 | License           | MIT                                                                                                              |
 | Download provider | GitHub                                                                                                           |
 | Repository URL    | `https://github.com/Ambiguous-Interactive/signal-fish-client-godot`                                              |
 | Issues URL        | repository URL + `/issues`                                                                                       |
 | Icon URL          | `https://raw.githubusercontent.com/Ambiguous-Interactive/signal-fish-client-godot/main/docs/assets/icon-256.png` |
-| Download commit   | `b4441936057628a71b730c3338f0183b4cdc03e2`                                                                       |
+| Download commit   | `5a0b00d3e78edac16e41f2bff978b500eeb2c4d6`                                                                       |
 
 The live download contains only `addons/` and loads in Godot 4.3. The
-[release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36364292644)
+[release workflow run](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/36928406066)
 contains the submission job and its logs.
 
 ## Repository settings
