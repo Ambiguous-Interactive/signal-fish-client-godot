@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
 import os
 import unittest
 from collections.abc import Callable
+from contextlib import redirect_stdout
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
@@ -64,8 +67,6 @@ class AutoMergeTests(unittest.TestCase):
                             }
                         ]
                     if args[:2] == ("pr", "view"):
-                        if "mergeCommit" in joined:
-                            return {"state": "MERGED", "mergeCommit": {"oid": "b" * 40}}
                         return {
                             "state": "OPEN",
                             "baseRefName": "main",
@@ -95,6 +96,13 @@ class AutoMergeTests(unittest.TestCase):
                     if args[:2] == ("pr", "merge"):
                         merged = True
                         return CompletedProcess(args, 0, "", "")
+                    if args[:2] == ("pr", "view"):
+                        body = {
+                            "state": "MERGED",
+                            "headRefOid": SHA,
+                            "mergeCommit": {"oid": "b" * 40},
+                        }
+                        return CompletedProcess(args, 0, json.dumps(body), "")
                     raise AssertionError(args)
 
                 def fake_dispatch(*_args: str) -> None:
@@ -119,6 +127,156 @@ class AutoMergeTests(unittest.TestCase):
                 self.assertEqual(calls, 1 if last == "Head moved" else 2)
                 self.assertEqual(merged, last != "Head moved")
                 self.assertEqual(dispatched, last != "Head moved")
+
+
+MERGED_BODY = {"state": "MERGED", "headRefOid": SHA, "mergeCommit": {"oid": "b" * 40}}
+OPEN_BODY = {"state": "OPEN", "headRefOid": SHA, "mergeCommit": {}}
+
+
+class RecheckScript:
+    """Fake ``gh`` merged-state reader; a None response is a gh failure."""
+
+    def __init__(self, *responses: object) -> None:
+        self.responses = responses
+        self.reads = 0
+
+    def __call__(self, *args: str) -> CompletedProcess[str]:
+        if args[:2] != ("pr", "view"):
+            raise AssertionError(args)
+        response = self.responses[self.reads]
+        self.reads += 1
+        if response is None:
+            return CompletedProcess(args, 1, "", "gh: view failed")
+        return CompletedProcess(args, 0, json.dumps(response), "")
+
+
+class MergedStateTests(unittest.TestCase):
+    def test_merged_state_retries_incomplete_snapshots(self) -> None:
+        empty_head = {"state": "MERGED", "headRefOid": "", "mergeCommit": {"oid": "b" * 40}}
+        lagging = {"state": "MERGED", "headRefOid": SHA, "mergeCommit": {}}
+        scenarios: tuple[tuple[str, tuple[object, ...], object], ...] = (
+            ("complete on first read", (MERGED_BODY,), MERGED_BODY),
+            ("open then merged", (OPEN_BODY, MERGED_BODY), MERGED_BODY),
+            ("gh blip then merged", (None, MERGED_BODY), MERGED_BODY),
+            ("empty head lags state", (empty_head, MERGED_BODY), MERGED_BODY),
+            ("merge commit lags state", (lagging, MERGED_BODY), MERGED_BODY),
+            (
+                "still open after bounded retries",
+                (OPEN_BODY,) * merge.MERGED_RECHECK_ATTEMPTS,
+                None,
+            ),
+        )
+        for name, responses, expected in scenarios:
+            with self.subTest(name=name):
+                read = RecheckScript(*responses)
+                with (
+                    patch.object(merge, "gh", side_effect=read),
+                    patch.object(merge.time, "sleep"),
+                ):
+                    self.assertEqual(merge.merged_state("12"), expected)
+                self.assertEqual(read.reads, len(responses))
+
+    def test_merged_state_is_silent_on_a_clean_read(self) -> None:
+        read = RecheckScript(MERGED_BODY)
+        with (
+            patch.object(merge, "gh", side_effect=read),
+            patch.object(merge.time, "sleep"),
+            redirect_stdout(io.StringIO()) as out,
+        ):
+            self.assertEqual(merge.merged_state("12"), MERGED_BODY)
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(read.reads, 1)
+
+
+class MergeRaceTests(unittest.TestCase):
+    def test_lost_merge_race_rechecks_merged_state(self) -> None:
+        wrong_head = {"state": "MERGED", "headRefOid": "c" * 40, "mergeCommit": {"oid": "d" * 40}}
+        scenarios: tuple[tuple[str, tuple[object, ...], int, int], ...] = (
+            # (name, merged-state recheck script, exit code, expected reads)
+            ("merged on first read", (MERGED_BODY,), 0, 1),
+            ("stale open reads then merged", (OPEN_BODY, OPEN_BODY, MERGED_BODY), 0, 3),
+            ("gh blip then merged", (None, MERGED_BODY), 0, 2),
+            (
+                "never merged",
+                (OPEN_BODY,) * merge.MERGED_RECHECK_ATTEMPTS,
+                1,
+                merge.MERGED_RECHECK_ATTEMPTS,
+            ),
+            ("merged at another head", (wrong_head,), 1, 1),
+        )
+        for name, responses, expected, expected_reads in scenarios:
+            with self.subTest(name=name):
+                sleeps = 0
+                merged = False
+                dispatched = False
+
+                def fake_json(*args: str) -> object:
+                    joined = " ".join(args)
+                    if "/commits/" in joined:
+                        return [
+                            {
+                                "number": 12,
+                                "state": "open",
+                                "user": {"login": "dependabot[bot]"},
+                                "base": {"ref": "main"},
+                                "head": {"repo": {"full_name": REPO}, "sha": SHA},
+                            }
+                        ]
+                    if args[:2] == ("pr", "view"):
+                        return {
+                            "state": "OPEN",
+                            "baseRefName": "main",
+                            "headRefOid": SHA,
+                            "isDraft": False,
+                            "files": [],
+                        }
+                    if "/actions/runs?" in joined:
+                        runs = [
+                            workflow_run("Runtime CI"),
+                            workflow_run("LLM Harness"),
+                            workflow_run("Docs Validation"),
+                        ]
+                        return [{"workflow_runs": runs}]
+                    raise AssertionError(args)
+
+                def fake_sleep(_seconds: float) -> None:
+                    nonlocal sleeps
+                    sleeps += 1
+
+                def fake_dispatch(*_args: str) -> None:
+                    nonlocal dispatched
+                    dispatched = True
+
+                read = RecheckScript(*responses)
+
+                def fake_gh(*args: str, read: RecheckScript = read) -> CompletedProcess[str]:
+                    nonlocal merged
+                    if args[:2] == ("pr", "checks"):
+                        return CompletedProcess(args, 0, '[{"bucket":"pass"}]', "")
+                    if args[:2] == ("pr", "merge"):
+                        merged = True
+                        return CompletedProcess(args, 1, "", "already merged by a racing run")
+                    return read(*args)
+
+                env = {
+                    "GITHUB_REPOSITORY": REPO,
+                    "GH_TOKEN": "test-token",
+                    "HEAD_SHA": SHA,
+                    "REQUIRED_WORKFLOWS": "Runtime CI|LLM Harness|Docs Validation",
+                }
+                with (
+                    patch.dict(os.environ, env),
+                    patch.object(merge.shutil, "which", return_value="/usr/bin/gh"),
+                    patch.object(merge, "gh_json", side_effect=fake_json),
+                    patch.object(merge, "gh", side_effect=fake_gh),
+                    patch.object(merge, "dispatch_main_checks", side_effect=fake_dispatch),
+                    patch.object(merge.time, "sleep", side_effect=fake_sleep),
+                ):
+                    self.assertEqual(merge.main(), expected)
+                self.assertEqual(read.reads, expected_reads)
+                self.assertEqual(sleeps, read.reads - 1)
+                self.assertTrue(merged)
+                self.assertFalse(dispatched)
 
 
 class DispatchSequenceTests(unittest.TestCase):
