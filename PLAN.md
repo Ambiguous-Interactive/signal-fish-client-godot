@@ -21,12 +21,10 @@ and checks within about one hour. Session cadence:
 
 ### Automation
 
-- [ ] #234: Record the next Dependabot auto merge in the issue (main SHA plus
-      Runtime CI, LLM Harness, Docs Validation, and Docs Deploy run links),
-      confirm the deploy used the validated artifact, then close it. The
-      dispatch chain is pinned by tests; deferred-dispatch behavior covers
-      back-to-back merges. Blocked until the next scheduled Dependabot pass
-      (Monday 2026-10-05, 03:00 America/Los_Angeles).
+- [ ] #307: Stop the red auto-merge job that back-to-back Dependabot merges
+      leave behind (first observed live 2026-10-05). Bounded retry on the
+      racing-merge recheck in `scripts/dependabot-auto-merge.py`, pinned by
+      a test.
 
 ### Post-v1 (P7, each gated)
 
