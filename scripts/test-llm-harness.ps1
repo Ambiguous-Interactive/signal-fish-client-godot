@@ -1225,15 +1225,9 @@ JSON
 fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
-  if [[ "$*" == *"state,mergeCommit"* ]]; then
-    cat <<'JSON'
-{"state":"MERGED","mergeCommit":{"oid":"merge-abc123"}}
-JSON
-    exit 0
-  fi
-  if [[ "${scenario}" == "racing_merge" && "$*" == *"state,headRefOid"* ]]; then
+  if [[ "$*" == *"state,headRefOid,mergeCommit"* ]]; then
     cat <<JSON
-{"state":"MERGED","headRefOid":"${HEAD_SHA}"}
+{"state":"MERGED","headRefOid":"${HEAD_SHA}","mergeCommit":{"oid":"merge-abc123"}}
 JSON
     exit 0
   fi
