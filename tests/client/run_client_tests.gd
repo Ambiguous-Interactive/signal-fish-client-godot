@@ -125,13 +125,14 @@ func _test_configure_validation() -> void:
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "unknown format rejected")
 	config.game_data_format = "message_pack"
 	_assert_equal(OK, client.configure(config), "message_pack format accepted")
-	# rkyv is reserved server-side and never negotiated (issue #146): refusing
-	# it at configure keeps the silent json downgrade + dead binary sends off
-	# shipped games. The diagnostic must name the supported format.
+	# rkyv/protobuf negotiate as opaque pass-through encodings now that the
+	# server makes them requestable behind opt-in knobs (server issue #627);
+	# unadvertised requests downgrade to JSON at negotiation (issue #146's
+	# refusal is stale).
 	config.game_data_format = "rkyv"
-	_assert_equal(ERR_INVALID_DATA, client.configure(config), "rkyv format refused")
-	var rkyv_refusal: String = errors[errors.size() - 1]
-	_assert_string_contains(rkyv_refusal, "use message_pack", "rkyv refusal names message_pack")
+	_assert_equal(OK, client.configure(config), "rkyv format accepted")
+	config.game_data_format = "protobuf"
+	_assert_equal(OK, client.configure(config), "protobuf format accepted")
 	config.game_data_format = "json"
 	config.max_buffered_bytes = 0
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "zero cap rejected")

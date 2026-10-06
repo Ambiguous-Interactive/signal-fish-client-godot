@@ -9,6 +9,15 @@ extends RefCounted
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
 
+## The encodings the client refuses below v3: `message_pack` keeps the v2
+## three-field map with sender attribution, while `rkyv`/`protobuf` relay as
+## raw unattributed bytes on v2, which the attributed receive API cannot
+## surface (server `docs/protocol.md`, issue #627).
+const _OPAQUE_V3_ENCODINGS: Array[int] = [
+	SFTypesScript.GameDataEncoding.RKYV,
+	SFTypesScript.GameDataEncoding.PROTOBUF,
+]
+
 
 ## The requested format drives the wire until the server says otherwise: an
 ## unsupported preference is downgraded to JSON at Authenticate (an
@@ -18,6 +27,22 @@ static func negotiated(config_format: String, effective: int) -> int:
 	if effective != SFTypesScript.GameDataEncoding.UNKNOWN:
 		return effective
 	return SFTypesScript.game_data_encoding_from_string(config_format)
+
+
+## Returns the downgrade reason when the negotiated opaque encoding cannot run
+## on the negotiated protocol version, or "" when it can. The opaque wire
+## shapes are v3-only: a v2 negotiation carries no sender attribution (rust
+## client `negotiated_version_from`, server issue #627), so `rkyv`/`protobuf`
+## requests must fall back to JSON the way an unadvertised format does.
+## ProtocolInfo omits `protocol_version` exactly when the server negotiates
+## v2 (frozen v2 wire shape), so every value below 3 is a v2 statement and
+## the diagnostic names v2 like the rust client does.
+static func version_downgrade_reason(encoding: int, protocol_version: int) -> String:
+	if encoding in _OPAQUE_V3_ENCODINGS and protocol_version < 3:
+		return (
+			"%s game data requires protocol version 3; the server negotiated v2" % label(encoding)
+		)
+	return ""
 
 
 ## Wire label used in diagnostics; UNKNOWN means "server-default json".

@@ -2,7 +2,7 @@ class_name SFBinaryFrames
 extends RefCounted
 
 ## Strict decoder for the binary game-data envelope frames the server sends
-## when a [code]message_pack[/code] format is negotiated (PLAN §4.6, P2).
+## when a binary game-data format is negotiated (upstream pins below).
 ##
 ## Wire contract, pinned to upstream:
 ## - v2 (server `websocket/sending.rs` `LegacyBinaryGameDataFrame` / rust
@@ -12,8 +12,8 @@ extends RefCounted
 ##   (string, [code]"message_pack"[/code] only), [code]payload[/code] (binary).
 ## - v3 (`V3BinaryGameDataFrame`, v3 WebSocket route only): the same shape plus
 ##   mandatory non-zero [code]seq[/code] (u64) and [code]epoch[/code] (u32)
-##   delivery stamps; [code]encoding[/code] may also be [code]json[/code] or
-##   [code]rkyv[/code].
+##   delivery stamps; [code]encoding[/code] may also be [code]json[/code],
+##   [code]rkyv[/code], or [code]protobuf[/code] (server issue #627).
 ## - Strictness matches the rust client: map keys are strings, fields must
 ##   appear at most once, unknown fields are rejected, integer stamps may use
 ##   any marker width that carries the value, and trailing bytes are malformed.
@@ -135,6 +135,12 @@ static func _encoding_token(value: Variant, allow_v3_tokens: bool) -> int:
 		"rkyv":
 			return (
 				SFTypesScript.GameDataEncoding.RKYV
+				if allow_v3_tokens
+				else SFTypesScript.GameDataEncoding.UNKNOWN
+			)
+		"protobuf":
+			return (
+				SFTypesScript.GameDataEncoding.PROTOBUF
 				if allow_v3_tokens
 				else SFTypesScript.GameDataEncoding.UNKNOWN
 			)

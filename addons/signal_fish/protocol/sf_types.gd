@@ -1,7 +1,7 @@
 class_name SFTypes
 extends RefCounted
 
-enum GameDataEncoding { UNKNOWN = -1, JSON, MESSAGE_PACK, RKYV }
+enum GameDataEncoding { UNKNOWN = -1, JSON, MESSAGE_PACK, RKYV, PROTOBUF }
 enum LobbyState { UNKNOWN = -1, WAITING, LOBBY, FINALIZED }
 enum RelayTransport { UNKNOWN = -1, TCP, UDP, WEBSOCKET, AUTO }
 enum SpectatorReason { UNKNOWN = -1, JOINED, VOLUNTARY_LEAVE, DISCONNECTED, REMOVED, ROOM_CLOSED }
@@ -37,11 +37,13 @@ const GAME_DATA_ENCODING_TO_STRING: Dictionary = {
 	GameDataEncoding.JSON: "json",
 	GameDataEncoding.MESSAGE_PACK: "message_pack",
 	GameDataEncoding.RKYV: "rkyv",
+	GameDataEncoding.PROTOBUF: "protobuf",
 }
 const GAME_DATA_ENCODING_FROM_STRING: Dictionary = {
 	"json": GameDataEncoding.JSON,
 	"message_pack": GameDataEncoding.MESSAGE_PACK,
 	"rkyv": GameDataEncoding.RKYV,
+	"protobuf": GameDataEncoding.PROTOBUF,
 }
 const LOBBY_STATE_TO_STRING: Dictionary = {
 	LobbyState.WAITING: "waiting",

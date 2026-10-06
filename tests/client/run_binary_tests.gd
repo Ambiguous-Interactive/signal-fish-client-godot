@@ -45,6 +45,7 @@ func _run() -> void:
 		_test_send_guards_and_wire_bytes,
 		_test_envelope_receive_paths,
 		_test_rkyv_pass_through,
+		_test_opaque_format_negotiation,
 		_test_server_format_downgrade,
 	]
 	CompletionGuard.self_check(self, _failures)
@@ -69,7 +70,9 @@ func _test_send_guards_and_wire_bytes() -> void:
 		"binary send refused under json negotiation"
 	)
 	var refusal_message: String = json_errors[json_errors.size() - 1]
-	_assert_string_contains(refusal_message, "message_pack game_data_format", "refusal message")
+	_assert_string_contains(
+		refusal_message, "requires a binary game_data_format", "refusal message"
+	)
 	json_client.free()
 
 	var config := _make_config()
@@ -163,29 +166,34 @@ func _test_envelope_receive_paths() -> void:
 
 
 func _test_rkyv_pass_through() -> void:
-	# rkyv is reserved server-side and never negotiated (issue #146), so
-	# `game_data_format = "rkyv"` is refused at configure. A v3 envelope whose
-	# `encoding` token is rkyv still decodes as raw bytes under message_pack
-	# negotiation: the token stays a valid envelope encoding, and the payload
-	# passes through untouched with the sender identity attached.
-	var config := _make_config()
-	config.game_data_format = "message_pack"
-	var client := _make_in_room_client_with(config)
-	var transport: SFFakeTransportScript = client.transport
-	var events: Array[Array] = []
-	client.game_data_binary_received.connect(
-		func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
-			events.append(["binary", from_player, encoding, payload])
-	)
-	transport.inject_binary(_v3_binary_frame(PLAYER_B, "rkyv", PackedByteArray([0xDE, 0xAD])))
-	_assert_equal(
-		[["binary", PLAYER_B, SFTypesScript.GameDataEncoding.RKYV, PackedByteArray([0xDE, 0xAD])]],
-		events,
-		"rkyv envelope token passes through raw"
-	)
-	client.free()
+	# Opaque envelope tokens (rkyv, server issue #627) decode as raw bytes
+	# under message_pack negotiation: the token stays a valid v3 envelope
+	# encoding, and the payload passes through untouched with the sender
+	# identity attached. Data-driven over both opaque tokens.
+	for case: Dictionary in [
+		{"token": "rkyv", "encoding": SFTypesScript.GameDataEncoding.RKYV},
+		{"token": "protobuf", "encoding": SFTypesScript.GameDataEncoding.PROTOBUF},
+	]:
+		var token: String = case["token"]
+		var encoding: int = case["encoding"]
+		var config := _make_config()
+		config.game_data_format = "message_pack"
+		var client := _make_in_room_client_with(config)
+		var transport: SFFakeTransportScript = client.transport
+		var events: Array[Array] = []
+		client.game_data_binary_received.connect(
+			func(from_player: String, frame_encoding: int, payload: PackedByteArray) -> void:
+				events.append(["binary", from_player, frame_encoding, payload])
+		)
+		transport.inject_binary(_v3_binary_frame(PLAYER_B, token, PackedByteArray([0xDE, 0xAD])))
+		_assert_equal(
+			[["binary", PLAYER_B, encoding, PackedByteArray([0xDE, 0xAD])]],
+			events,
+			"%s envelope token passes through raw" % token
+		)
+		client.free()
 
-	# Even with opt-in decode on, an rkyv token is not MessagePack: the
+	# Even with opt-in decode on, an opaque token is not MessagePack: the
 	# decode branch is message_pack-only and the payload stays raw bytes.
 	var decode_config := _make_config()
 	decode_config.game_data_format = "message_pack"
@@ -207,6 +215,167 @@ func _test_rkyv_pass_through() -> void:
 	)
 	decode_client.free()
 	_done()
+
+
+func _test_opaque_format_negotiation() -> void:
+	# Opaque requests (rkyv/protobuf, server issue #627) negotiate like
+	# message_pack when the deployment advertises them on v3, and fall back
+	# to JSON otherwise. Data-driven over both tokens.
+	for token: String in ["rkyv", "protobuf"]:
+		# Advertised on v3: the request stands and binary flows both ways.
+		var client := _make_in_room_client_with(_opaque_config(token))
+		var transport: SFFakeTransportScript = client.transport
+		var events: Array[Array] = []
+		client.game_data_binary_received.connect(
+			func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
+				events.append(["binary", from_player, encoding, payload])
+		)
+		var advertised := _protocol_info()
+		advertised["protocol_version"] = 3
+		advertised["game_data_formats"] = ["json", "message_pack", token]
+		transport.inject_server_message({"type": "ProtocolInfo", "data": advertised})
+		_assert_equal(
+			OK, client.send_game_data_binary(PackedByteArray([0x01])), "%s send on v3" % token
+		)
+		transport.inject_binary(_v3_binary_frame(PLAYER_B, token, PackedByteArray([0x02])))
+		var expected: Array = [
+			[
+				"binary",
+				PLAYER_B,
+				SFTypesScript.game_data_encoding_from_string(token),
+				PackedByteArray([0x02])
+			],
+		]
+		_assert_equal(expected, events, "%s envelope delivers on v3" % token)
+		client.free()
+
+		# Advertised but negotiated v2: the opaque wire shape has no sender
+		# attribution on v2 (issue #627), so the request downgrades to JSON.
+		var v2_client := _make_in_room_client_with(_opaque_config(token))
+		var v2_transport: SFFakeTransportScript = v2_client.transport
+		var v2_events: Array[Array] = []
+		v2_client.game_data_binary_received.connect(
+			func(from_player: String, encoding: int, payload: PackedByteArray) -> void:
+				v2_events.append(["binary", from_player, encoding, payload])
+		)
+		var v2_info := _protocol_info()
+		v2_info["game_data_formats"] = ["json", "message_pack", token]
+		v2_transport.inject_server_message({"type": "ProtocolInfo", "data": v2_info})
+		_assert_equal(
+			ERR_UNAVAILABLE,
+			v2_client.send_game_data_binary(PackedByteArray([0x01])),
+			"%s request refuses on v2" % token
+		)
+		# The downgrade is receive-side too: the negotiated format is json, so
+		# a v3-shaped frame drops instead of delivering (pins the event-path
+		# downgrade, not just the send gate).
+		v2_transport.inject_binary(_v3_binary_frame(PLAYER_B, token, PackedByteArray([0x03])))
+		_assert_equal(0, v2_events.size(), "%s v2 downgrade drops binary frames" % token)
+		v2_client.free()
+
+	# The pinned pre-auth downgrade notice (server issue #742): the server
+	# answers an opaque request with Error{UNSUPPORTED_GAME_DATA_FORMAT}
+	# BEFORE Authenticated; the notice downgrades the session to JSON and the
+	# handshake continues instead of failing a viable session.
+	var notice_client := SignalFishClientScript.new()
+	_track_protocol_errors(notice_client)
+	_assert_equal(OK, notice_client.configure(_opaque_config("rkyv")), "configure for notice")
+	notice_client.transport = SFFakeTransportScript.new()
+	var notice_transport: SFFakeTransportScript = notice_client.transport
+	_assert_equal(OK, notice_client.connect_to_server("ws://example.test/socket"), "dial")
+	notice_transport.inject_open()
+	(
+		notice_transport
+		. inject_server_message(
+			{
+				"type": "Error",
+				"data": {"message": "unsupported", "error_code": "UNSUPPORTED_GAME_DATA_FORMAT"},
+			}
+		)
+	)
+	notice_transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	# The v3+advertised statement after the notice proves the JSON latch:
+	# without the notice handler the rkyv request would stand and the send
+	# below would succeed.
+	var notice_info := _protocol_info()
+	notice_info["protocol_version"] = 3
+	notice_info["game_data_formats"] = ["json", "message_pack", "rkyv"]
+	notice_transport.inject_server_message({"type": "ProtocolInfo", "data": notice_info})
+	notice_transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		notice_client.send_game_data_binary(PackedByteArray([0x01])),
+		"pre-auth notice downgrades to json"
+	)
+	notice_client.free()
+
+	# A fresh dial must not honor the previous dial's negotiation: until the
+	# new dial's ProtocolInfo arrives, the opaque version floor is unknown and
+	# opaque sends refuse. This pins the per-dial reset in _open_transport;
+	# configure()'s matching reset is symmetry hygiene (dial flows always
+	# re-reset, so no dial-flow assertion can observe it).
+	var redialed := SignalFishClientScript.new()
+	_track_protocol_errors(redialed)
+	_assert_equal(OK, redialed.configure(_opaque_config("rkyv")), "configure for redial")
+	redialed.transport = SFFakeTransportScript.new()
+	var redial_transport: SFFakeTransportScript = redialed.transport
+	_assert_equal(OK, redialed.connect_to_server("ws://example.test/socket"), "redial")
+	redial_transport.inject_open()
+	redial_transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	var v3_info := _protocol_info()
+	v3_info["protocol_version"] = 3
+	v3_info["game_data_formats"] = ["json", "message_pack", "rkyv"]
+	redial_transport.inject_server_message({"type": "ProtocolInfo", "data": v3_info})
+	redial_transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	_assert_equal(OK, redialed.send_game_data_binary(PackedByteArray([0x01])), "v3 redial send")
+	# Close like the transport-closed cascade does, then dial again on the
+	# same client: the fresh dial must not inherit the previous negotiation.
+	redialed._connection_state = SignalFishClientScript.ConnectionState.CLOSED
+	redialed._reset_session()
+	redialed._teardown_transport()
+	redialed.transport = SFFakeTransportScript.new()
+	redial_transport = redialed.transport
+	_assert_equal(OK, redialed.connect_to_server("ws://example.test/socket"), "second dial")
+	redial_transport.inject_open()
+	redial_transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	redial_transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	var stale_errors := _track_protocol_errors(redialed)
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		redialed.send_game_data_binary(PackedByteArray([0x01])),
+		"stale version refuses pre-ProtocolInfo"
+	)
+	_assert_string_contains(
+		stale_errors[stale_errors.size() - 1], "no v3 negotiation seen", "stale version message"
+	)
+	# Promote dial two to v3, then reconfigure before dial three: dial three
+	# exercises the configure()-plus-dial reset path end to end (the per-dial
+	# reset alone is what the dial-two refusal above pins).
+	redial_transport.inject_server_message({"type": "ProtocolInfo", "data": v3_info})
+	_assert_equal(OK, redialed.send_game_data_binary(PackedByteArray([0x01])), "dial two v3 send")
+	redialed._connection_state = SignalFishClientScript.ConnectionState.CLOSED
+	redialed._reset_session()
+	redialed._teardown_transport()
+	redialed.transport = SFFakeTransportScript.new()
+	redial_transport = redialed.transport
+	_assert_equal(OK, redialed.configure(_opaque_config("rkyv")), "reconfigure for third dial")
+	_assert_equal(OK, redialed.connect_to_server("ws://example.test/socket"), "third dial")
+	redial_transport.inject_open()
+	redial_transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	redial_transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		redialed.send_game_data_binary(PackedByteArray([0x01])),
+		"reconfigured dial refuses pre-ProtocolInfo"
+	)
+	redialed.free()
+	_done()
+
+
+func _opaque_config(token: String) -> SignalFishConfigScript:
+	var config := _make_config()
+	config.game_data_format = token
+	return config
 
 
 func _test_server_format_downgrade() -> void:
@@ -375,7 +544,7 @@ func _uuid_bytes(uuid: String) -> PackedByteArray:
 
 
 ## Builds the v3 binary game-data envelope: adds the mandatory non-zero
-## seq/epoch stamps and unlocks the json/rkyv encoding tokens.
+## seq/epoch stamps and unlocks the json/rkyv/protobuf encoding tokens.
 func _v3_binary_frame(
 	from_player: String, encoding: String, payload: PackedByteArray
 ) -> PackedByteArray:
