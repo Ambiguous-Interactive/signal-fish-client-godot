@@ -24,17 +24,17 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## Optional platform identifier reported to the server. Empty = omitted.
 @export var platform: String = ""
 
-## Game data format preference sent with [code]Authenticate[/code].
-## Empty = server-default JSON. [code]message_pack[/code] negotiates binary
-## game-data frames (PLAN P2): received frames surface as bytes through
-## [signal SignalFishClient.game_data_binary_received], or decoded through
-## [signal SignalFishClient.game_data_received] when
-## [member decode_msgpack_payloads] is on. Raw-byte games keep
-## [member decode_msgpack_payloads] off: the payload crosses the envelope
-## untouched and the frame still carries [code]from_player[/code].
-## [code]rkyv[/code] is refused here: the server reserves it and never
-## negotiates it (issue #146), so a request would silently downgrade to
-## JSON and every binary send would fail.
+## Game data format preference sent with [code]Authenticate[/code]:
+## empty/`json` (server default), `message_pack`, or the opaque
+## [code]rkyv[/code]/[code]protobuf[/code] pass-through encodings (server
+## issue #627; deployments negotiate them only with their opt-in knobs on).
+## Binary formats surface received payloads through
+## [signal SignalFishClient.game_data_binary_received] — decoded values for
+## [code]message_pack[/code] through [signal SignalFishClient.game_data_received]
+## when [member decode_msgpack_payloads] is on; opaque payloads always stay
+## bytes. The opaque encodings are v3-only (a v2 negotiation has no sender
+## attribution), so the client falls back to JSON when the server negotiates
+## v2 or does not advertise the requested format (see [signal protocol_info]).
 @export var game_data_format: String = ""
 
 ## Opt-in MessagePack payload decode: with [code]message_pack[/code] game data
@@ -179,12 +179,4 @@ func _game_data_format_error() -> String:
 	var encoding := SFTypesScript.game_data_encoding_from_string(game_data_format)
 	if encoding == SFTypesScript.GameDataEncoding.UNKNOWN:
 		return "game_data_format is unknown: %s" % game_data_format
-	if encoding == SFTypesScript.GameDataEncoding.RKYV:
-		# The server never negotiates rkyv (issue #146): a request would
-		# downgrade to JSON and every binary send would fail. Point at the
-		# supported path instead.
-		return (
-			"game_data_format rkyv is reserved server-side and never negotiated;"
-			+ " use message_pack for binary game data"
-		)
 	return ""

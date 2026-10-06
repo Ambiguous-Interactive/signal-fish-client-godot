@@ -126,6 +126,14 @@ const _PLAYER_ROOM_STATES: Array[SessionState] = [
 	SessionState.IN_ROOM_FINALIZED,
 ]
 
+## The negotiated formats under which WebSocket binary frames carry game
+## data; anything else (json / server-default) drops binary upstream.
+const _BINARY_GAME_DATA_FORMATS: Array[int] = [
+	SFTypesScript.GameDataEncoding.MESSAGE_PACK,
+	SFTypesScript.GameDataEncoding.RKYV,
+	SFTypesScript.GameDataEncoding.PROTOBUF,
+]
+
 ## Active transport adapter. Tests may inject an [code]SFTransport[/code]
 ## before [method connect_to_server]; otherwise the client builds an
 ## [code]SFWebSocketTransport[/code].
@@ -194,6 +202,10 @@ var _beat_in_flight := false
 # from `ProtocolInfo.game_data_formats`), and binary sends/receives must
 # follow the effective format, not the request.
 var _effective_game_data_format: int = SFTypesScript.GameDataEncoding.UNKNOWN
+# Protocol version the server negotiated (v3+ only; 0 = v2 or not yet seen).
+# Gates the v3-only opaque wire shapes (rkyv/protobuf) on the version the
+# server actually picked, not the one the config requested.
+var _negotiated_protocol_version := 0
 
 
 func configure(config: SignalFishConfigScript) -> Error:
@@ -214,6 +226,7 @@ func configure(config: SignalFishConfigScript) -> Error:
 	_secrets = PackedStringArray()
 	_pinned_secrets = 0
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
+	_negotiated_protocol_version = 0
 	_remember_secret(config.credential, true)
 	# Retained reconnect identities may outlive configure() (it is allowed
 	# whenever no connection is active); keep them on the redaction list.
@@ -442,9 +455,9 @@ func send_game_data(data: Variant) -> Error:
 ## semantics: the server tags inbound binary with the negotiated format and
 ## drops binary on [code]json[/code] connections
 ## (server `websocket/connection.rs`), so the client refuses that case
-## locally. Pair with [member SignalFishConfig.game_data_format] =
-## [code]"message_pack"[/code] (build payloads with [code]SFMsgpack.encode
-## [/code]; raw bytes ride the same frame). If the server
+## locally. Pair with [member SignalFishConfig.game_data_format] set to
+## [code]message_pack[/code] or an opaque [code]rkyv[/code]/[code]protobuf[/code]
+## request (server issue #627; opaque encodings are v3-only). If the server
 ## downgraded the requested format (see [signal protocol_info]), the
 ## effective negotiation rules.
 func send_game_data_binary(bytes: PackedByteArray) -> Error:
@@ -455,11 +468,26 @@ func send_game_data_binary(bytes: PackedByteArray) -> Error:
 		_emit_protocol_error("send_game_data_binary requires non-empty bytes")
 		return ERR_INVALID_PARAMETER
 	var negotiated := _negotiated_game_data_format()
-	if negotiated != SFTypesScript.GameDataEncoding.MESSAGE_PACK:
+	if not _BINARY_GAME_DATA_FORMATS.has(negotiated):
 		_emit_protocol_error(
 			(
-				"send_game_data_binary requires a message_pack game_data_format;"
-				+ " this connection negotiates %s" % _game_data_format_label(negotiated)
+				"send_game_data_binary requires a binary game_data_format"
+				+ " (message_pack, rkyv, or protobuf); this connection"
+				+ " negotiates %s" % _game_data_format_label(negotiated)
+			)
+		)
+		return ERR_UNAVAILABLE
+	if (
+		negotiated != SFTypesScript.GameDataEncoding.MESSAGE_PACK
+		and _negotiated_protocol_version < 3
+	):
+		# Defense in depth: ProtocolInfo already downgraded a v2-opaque
+		# request; without that statement the version is unknown, and the
+		# opaque v2 pass-through carries no sender attribution (issue #627).
+		_emit_protocol_error(
+			(
+				"%s game data requires protocol version 3; no v3 negotiation seen"
+				% _game_data_format_label(negotiated)
 			)
 		)
 		return ERR_UNAVAILABLE
@@ -688,6 +716,7 @@ func _open_transport(target: String) -> Error:
 	_protocol_info_seen = false
 	_reconnect_dial = not _reconnect_auth_token.is_empty()
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
+	_negotiated_protocol_version = 0
 	# A fresh dial supersedes any armed retry timer. The retry budget is NOT
 	# reset here: it resets only when a session actually re-establishes (a
 	# RoomJoined/Reconnected baseline), so exhaustion can terminate.
@@ -812,7 +841,7 @@ func _handle_binary_frame(payload: PackedByteArray) -> void:
 		# re-arm anything) after a user close.
 		return
 	var negotiated := _negotiated_game_data_format()
-	if negotiated == SFTypesScript.GameDataEncoding.MESSAGE_PACK:
+	if negotiated in _BINARY_GAME_DATA_FORMATS:
 		var frame: Dictionary = SFBinaryFramesScript.decode_envelope(payload)
 		if not frame["ok"]:
 			var frame_error: String = frame["error"]
@@ -947,7 +976,16 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			if not _protocol_info_seen:
 				_protocol_info_seen = true
 				var info: SFTypesScript.ProtocolInfo = event.args[0]
+				_negotiated_protocol_version = info.protocol_version
 				_reconcile_game_data_format(info.game_data_formats)
+				# The opaque wire shapes are v3-only (server issue #627): a
+				# v2 negotiation has no sender attribution, so an opaque
+				# request falls back to JSON like any unsupported preference.
+				var reason := SFGameDataFormatScript.version_downgrade_reason(
+					_negotiated_game_data_format(), info.protocol_version
+				)
+				if not reason.is_empty():
+					_downgrade_game_data_format(reason)
 				protocol_info.emit(info)
 		&"authentication_error":
 			_session_state = SessionState.UNAUTHENTICATED

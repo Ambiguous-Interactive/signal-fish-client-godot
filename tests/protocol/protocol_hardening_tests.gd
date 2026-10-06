@@ -299,6 +299,45 @@ func _test_format_downgrade_diagnostics() -> void:
 	_assert_equal(
 		"", SFGameDataFormatScript.downgrade_reason("message_pack", []), "empty statement silent"
 	)
+	# Opaque encodings are v3-only (server issue #627): the version reason
+	# fires only for rkyv/protobuf below the negotiated v3 floor.
+	var version_cases := [
+		{"encoding": SFTypesScript.GameDataEncoding.RKYV, "version": 0},
+		{"encoding": SFTypesScript.GameDataEncoding.PROTOBUF, "version": 0},
+		{"encoding": SFTypesScript.GameDataEncoding.PROTOBUF, "version": 2},
+	]
+	for case: Dictionary in version_cases:
+		var encoding: int = case["encoding"]
+		var version: int = case["version"]
+		var reason := SFGameDataFormatScript.version_downgrade_reason(encoding, version)
+		_assert_string_contains(reason, "requires protocol version 3", "version reason %s" % case)
+		_assert_string_contains(
+			reason,
+			SFTypesScript.game_data_encoding_to_string(encoding),
+			"version reason names %s" % encoding
+		)
+	_assert_equal(
+		"",
+		SFGameDataFormatScript.version_downgrade_reason(SFTypesScript.GameDataEncoding.RKYV, 3),
+		"v3 opaque stands"
+	)
+	_assert_equal(
+		"",
+		SFGameDataFormatScript.version_downgrade_reason(SFTypesScript.GameDataEncoding.PROTOBUF, 4),
+		"post-v3 opaque stands"
+	)
+	_assert_equal(
+		"",
+		SFGameDataFormatScript.version_downgrade_reason(
+			SFTypesScript.GameDataEncoding.MESSAGE_PACK, 0
+		),
+		"v2 message_pack stands"
+	)
+	_assert_equal(
+		"",
+		SFGameDataFormatScript.version_downgrade_reason(SFTypesScript.GameDataEncoding.JSON, 0),
+		"v2 json stands"
+	)
 	_done()
 
 

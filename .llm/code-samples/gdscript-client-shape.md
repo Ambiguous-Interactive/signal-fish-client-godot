@@ -37,8 +37,9 @@ client.authenticated.connect(func(_app, _org, _limits) -> void:
 
 - Identity: `app_id` (required), `sdk_version`, `platform`.
 - Transport: `endpoint_url` (optional override), `auto_poll` (default true).
-- Game data: `game_data_format` (`""`/`json`/`message_pack`; `rkyv` is
-  refused: server-reserved, never negotiated),
+- Game data: `game_data_format` (`""`/`json`/`message_pack`/`rkyv`/
+  `protobuf`; the opaque encodings are v3-only pass-through and fall back
+  to JSON when unadvertised or when the server negotiates v2),
   `decode_msgpack_payloads` (default false).
 - Limits: `max_inbound_frame_bytes`, `max_buffered_bytes` (backpressure),
   `max_inbound_packets_per_poll` (all default ~256 KiB / 64).

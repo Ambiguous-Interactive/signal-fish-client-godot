@@ -206,12 +206,20 @@ blank lines and lines beginning with `#`.
     JSON at Authenticate (`Error{UnsupportedGameDataFormat}` and/or the
     requested format missing from `ProtocolInfo.game_data_formats`); the
     client tracks the effective format and gates binary send/receive on it.
-    `rkyv` is reserved upstream and never negotiated (server docs/CHANGELOG),
-    so the Godot client refuses it at `configure()` (issue #146); the v3
-    `rkyv` envelope token below still decodes as raw bytes.
+    Server main (issue #742, commit `24605cde`) pins the wire order: the
+    budget-charged error frame arrives BEFORE `Authenticated`, and the
+    reference clients adopt exactly one notice, run JSON for every
+    post-handshake decision, and stay fatal for repeat notices. The Godot
+    client keeps every notice informational (repo precedent issues #24,
+    #106): each notice latches JSON, and none is fatal.
+    `rkyv`/`protobuf` are requestable opaque pass-through encodings behind
+    the opt-in `enable_rkyv_game_data`/`enable_protobuf_game_data` knobs
+    (server main, issue #627; unreleased at pin time), so the Godot client
+    accepts them and falls back to JSON when unadvertised or negotiated
+    below v3 (the opaque v2 pass-through carries no sender attribution).
   - v3 (separate v3 WebSocket route only) adds mandatory non-zero `seq` (u64)
-    and `epoch` (u32) stamps and allows `json`/`message_pack`/`rkyv` encoding
-    tokens (`V3BinaryGameDataFrame`).
+    and `epoch` (u32) stamps and allows `json`/`message_pack`/`rkyv`/
+    `protobuf` encoding tokens (`V3BinaryGameDataFrame`).
   - Strictness (rust `decode_v2/v3_binary_game_data` parity): map keys are
     strings, fields appear at most once, unknown fields and trailing bytes are
     rejected, and integer stamps may use any unsigned marker width. The

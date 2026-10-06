@@ -24,8 +24,6 @@ and checks within about one hour. Session cadence:
 - [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke
       tests) - only after the separate compatibility decision (context.md
       MVP rule).
-- [ ] Revisit Rkyv (stays pass-through unless upstream offers a
-      JSON-equivalent).
 
 ## Definition of done (v1)
 

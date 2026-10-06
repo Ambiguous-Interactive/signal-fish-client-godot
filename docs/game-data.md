@@ -39,7 +39,8 @@ the inbound decode bound measured from the message envelope.
 ## Binary game data
 
 The `game_data_format` config field negotiates the format with the server.
-Accepted values are `""` (JSON), `json`, and `message_pack`.
+Accepted values are `""` (JSON), `json`, `message_pack`, and the opaque
+`rkyv`/`protobuf` pass-through encodings.
 
 `send_game_data_binary(bytes)` sends one raw binary frame:
 
@@ -82,16 +83,29 @@ MessagePack payload decoding is opt-in through
 - Duplicate map keys in a decoded payload are rejected with
   `protocol_error` (raw bytes still surface).
 
-## Rkyv
+## Opaque encodings (rkyv, protobuf)
 
-The server reserves `rkyv` as an internal format and never negotiates it,
-so `game_data_format = "rkyv"` is refused at `configure()` (issue #146):
-requesting it would downgrade to JSON and every binary send would fail.
+`rkyv` and `protobuf` are opaque pass-through encodings: the server relays
+their payloads as raw bytes and never decodes them. Deployments negotiate
+them only with the opt-in `enable_rkyv_game_data` /
+`enable_protobuf_game_data` knobs on (server issue #627).
 
-For raw bytes, use `message_pack` with `decode_msgpack_payloads = false`
-(see [Raw-byte pass-through](#raw-byte-pass-through)). A v3 frame whose
-envelope `encoding` token is `rkyv` still decodes - the token remains a
-reserved wire encoding, and its payload surfaces as bytes.
+Request one with `game_data_format = "rkyv"` or `"protobuf"`:
+
+- Binary sends carry your encoded bytes; received frames surface through
+  `game_data_binary_received` with the frame's `encoding` label.
+- The opaque wire shapes are v3-only (a v2 negotiation has no sender
+  attribution). The client falls back to JSON - logged at WARN - when the
+  server does not advertise the requested format or negotiates v2.
+- The server cannot convert between formats: delivering opaque bytes to a
+  recipient on another format reports `unsupported_format` upstream, so
+  every peer needs the same negotiated encoding.
+
+For raw bytes without a deployment knob, use `message_pack` with
+`decode_msgpack_payloads = false` (see
+[Raw-byte pass-through](#raw-byte-pass-through)). A v3 frame whose envelope
+`encoding` token is an opaque format still decodes - the payload surfaces
+as bytes with the sender identity attached.
 
 ## Strict binary-frame decode
 

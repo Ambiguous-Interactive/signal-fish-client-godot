@@ -566,6 +566,10 @@ func _test_envelope_hostile_matrix() -> void:
 			"bytes": _envelope([_uuid_field(), _encoding_field("rkyv"), _payload_field([])]),
 		},
 		{
+			"label": "v2 protobuf encoding",
+			"bytes": _envelope([_uuid_field(), _encoding_field("protobuf"), _payload_field([])]),
+		},
+		{
 			"label": "unknown encoding",
 			"bytes": _envelope([_uuid_field(), _encoding_field("proto"), _payload_field([])]),
 		},
@@ -693,6 +697,7 @@ func _test_v3_envelope_matrix() -> void:
 		},
 		{"label": "fixint seq", "encoding": "json", "seq": _raw([0x05])},
 		{"label": "uint8 seq", "encoding": "rkyv", "seq": _raw([0xCC, 0x09])},
+		{"label": "protobuf token", "encoding": "protobuf", "seq": _raw([0x07])},
 		{"label": "uint32 seq", "encoding": "message_pack", "seq": _raw([0xCE, 0, 0, 0x10, 0x00])},
 	]
 	for case: Dictionary in cases:

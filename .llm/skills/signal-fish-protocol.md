@@ -42,11 +42,13 @@ Never invent protocol details; re-verify against the pinned commits before use.
   `Signal`, `PeerTransportStatus`).
 - Game data encodings: `json` (default/fallback), `message_pack` (opt-in
   decode; with decode off the payload passes through raw and the frame
-  still carries `from_player`). `rkyv` is server-reserved and never
-  negotiated: `configure()` refuses it (issue #146), while a v3 envelope
-  `encoding: rkyv` token still decodes as raw bytes. An unsupported
-  preference is downgraded to JSON by the server (logged at WARN); binary
-  send/receive gates on the **effective** format.
+  still carries `from_player`), and the opaque `rkyv`/`protobuf`
+  pass-through encodings (server issue #627; deployments negotiate them
+  only behind opt-in knobs, and the opaque wire shape is v3-only, so the
+  client falls back to JSON when the format is unadvertised or the server
+  negotiates v2). An unsupported preference is downgraded to JSON by the
+  server (logged at WARN); binary send/receive gates on the **effective**
+  format.
 - Room state machine: `Waiting -> Lobby -> Finalized`; `PlayerReady` toggles;
   single-player rooms skip Lobby; authority is requested, not auto-assigned;
   leaving drops `Lobby -> Waiting`.
