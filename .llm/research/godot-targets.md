@@ -68,18 +68,25 @@ revisit trigger.
 
 ### Method
 
-- Parse probe: gdtoolkit 3.6.0 (Godot 3 GDScript grammar, Python 3.12)
-  over every runtime and test `.gd` file at `e1a63df`.
+- Engine probe: Godot 3.6.3-stable (official Linux ARM64 build) run
+  headless with `--check-only -s` over every runtime and test `.gd` file
+  at `e1a63df`, counting per-file parse errors.
+- Cross-check: gdtoolkit 3.6.0 (Godot 3 GDScript grammar, Python 3.12).
 - Grep sweep for Godot 4-only constructs over `addons/`.
 - Upstream facts: Godot release history; the Godot 4.0 Dictionary
   ordering change.
 
 ### Data (at `e1a63df`)
 
-- Runtime (`addons/signal_fish`, 23 files, 7,809 lines): 21 files fail the
-  Godot 3 grammar. The 2 passing files (transport layer) reference
-  `WebSocketPeer`, which does not exist in Godot 3, so nothing runs.
-- Tests (29 files, 17,394 lines): 0 files parse.
+- Runtime (`addons/signal_fish`, 23 files, 7,809 lines): 23 of 23 files
+  fail the Godot 3.6.3 engine parser. First failures include
+  `Unexpected '@'` (Godot 4 annotations), `Unknown class: "RefCounted"`
+  (Godot 3 names the base class `Reference`), typed `signal` parameters,
+  typed `const` arrays, and typed for-loop variables.
+- Cross-check: under the gdtoolkit 3.6.0 grammar, 21 of 23 runtime files
+  fail; the 2 survivors (transport layer) still fail the engine on
+  `RefCounted`, and they reference `WebSocketPeer`, which Godot 3 lacks.
+- Tests (29 files, 17,394 lines): 0 of 29 load under the engine probe.
 - Godot 4-only constructs in runtime code: 464 typed return annotations,
   108 typed for-loop variables, 37 typed signal parameters, typed arrays
   in 11 files, 63 StringName literals (`&"..."`), 23 Godot 4 annotations
@@ -89,19 +96,22 @@ revisit trigger.
   `to_utf8_buffer()`, and `Engine.get_singleton()` call sites.
 - No `await` in runtime code (polling design); that port cost is zero.
 - Godot 4.0 made Dictionaries insertion-ordered; Godot 3.x iteration order
-  is unspecified. `sf_msgpack.gd` and the JSON envelope encode iterate
-  dictionaries directly, and the suite pins encode bytes (upstream
-  samples, byte-identity tests, float wire-text memo). On 3.x the encoder
-  output order would be unstable, so the byte-pin verification strategy
-  would need a redesign (key canonicalization or per-generation
-  fixtures).
+  is unspecified. `sf_envelope.gd` and `sf_msgpack.gd` iterate
+  dictionaries during encode, and the suite asserts encoder output
+  against pinned fixture lines (`run_protocol_tests.gd`,
+  `v3_protocol_tests.gd` vs the `tests/fixtures/*_messages.jsonl` sets).
+  Unspecified 3.x order makes those pins unverifiable; the
+  encode-vs-encode byte-identity checks would keep passing on 3.x while
+  proving little. The byte-pin strategy would need key
+  canonicalization or per-generation fixtures.
 - The dialects cannot share files: Godot 3 keywords (`export`, `onready`,
   `tool`, `yield`) were removed in Godot 4, and Godot 4 syntax fails to
   parse on Godot 3. One addon folder serves one engine generation.
-- Godot 3.6 remains in maintenance (3.6.3, Aug 2026) and ships no
-  official Linux ARM64 build (4.3+ does). GodotSteam 3.x is a separate
-  branch with an API shape different from the GodotSteam 4.x GDExtension
-  the Steam bootstrap maps.
+- Godot 3.6 remains in maintenance (3.6.3, Aug 2026); official Linux
+  ARM64 builds exist for both lines (3.x since 3.6.2), so platform
+  coverage is not a differentiator, and this probe ran on the arm64
+  build. GodotSteam 3.x is a separate branch with an API shape different
+  from the GodotSteam 4.x GDExtension the Steam bootstrap maps.
 
 ### Verdict
 
@@ -109,7 +119,11 @@ Godot 3.6 support is a permanent parallel fork: a full runtime and test
 dialect port, a `WebSocketClient` adapter, a 3.x smoke suite, a toolchain
 split (gdtoolkit 3.x vs 4.x format and lint), per-generation warning
 pins, a wider CI matrix, and re-validation of every issue #161 hot-path
-verdict per engine. The demand signal is currently zero. Defer.
+verdict per engine. Cheaper shapes die on the same rocks: a godot-3
+release branch still carries the full dialect port and split toolchain,
+and a syntax-transpile step still has to bridge the API renames
+(`Reference`, `Pool*` arrays, `WebSocketClient`) plus the unordered
+Dictionary hazard. The demand signal is currently zero. Defer.
 
 ### Revisit triggers
 

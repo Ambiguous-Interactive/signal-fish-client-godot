@@ -291,8 +291,8 @@ integration tests:
   `python3 -E scripts/run-runtime-checks.py smoke`).
 - Browser export manual check covering HTTPS hosting, `wss://`, WebSocket
   `Origin`, mixed-content rejection, and no native-only socket assumptions.
-- Godot 3 smoke tests only after a separate compatibility decision, focused on
-  the `WebSocketClient` adapter path.
+- Godot 3 smoke tests are not planned; the Godot 3.6 compatibility decision
+  (2026-10-06) deferred support (`.llm/research/godot-targets.md`).
 
 ## CI Guidance
 
