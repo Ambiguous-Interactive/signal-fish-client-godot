@@ -35,10 +35,17 @@ channel)` establishes sessions implicitly; `getAvailableP2PPacketSize`
 - Callbacks: `run_callbacks()` per frame, or `steamInit(..., embed_callbacks=
 true)`. Embedding was broken in 4.14/3.29 and fixed later; auto-init plus
   embed landed together only in 4.23. The bootstrap pumps nothing itself.
-- Versions: current GDExtension `v4.23-gde` needs Godot 4.4+
-  (`compatibility_minimum = "4.4"`); Godot 4.3 users need GodotSteam <= 4.21.
-  Web export: none (`godotsteam.gdextension` ships no `web.*` libraries; the
-  Steamworks SDK has no browser build).
+- Versions (measured 2026-10-06, issue #317): every GDExtension build from
+  4.16 on pins `compatibility_minimum = "4.4"` - including 4.21-gde, whose
+  release page says "Godot 4.4+". The last Godot-4.3-compatible GDE is 4.15
+  (`4.1-4.3` flavor), and it ships no linux arm64 libraries, so arm64
+  machines need the 4.21-gde extension plus a Godot 4.4.1 engine; the
+  opt-in `steam-ext` lane pins exactly that pair (checksum-verified).
+  Observed without a Steam client: `steamInit` returns false, `steamInitEx`
+  returns `{"status": 1, "verbal": ...}`, and `getSteamID()` returns 0 with
+  an engine error line - all without crashing. Web export: none
+  (`godotsteam.gdextension` ships no `web.*` libraries; the Steamworks SDK
+  has no browser build).
 
 ## Wire contract (shared with the dotnet adapter)
 
@@ -65,10 +72,11 @@ true)`. Embedding was broken in 4.14/3.29 and fixed later; auto-init plus
 ## Open items
 
 - Live two-client validation with the Steam client running - tracked as
-  #317 (real-extension seam groundwork), #318 (drill harness), #321
-  (dual-seat loopback), #322 (two-machine run + verdict; closes #315).
-  No Steam seat in CI; #319 explores one. The dotnet adapter shipped
-  under the same honest status.
+  #318 (drill harness), #321 (dual-seat loopback), #322 (two-machine run +
+  verdict; closes #315). The real-extension seam groundwork shipped as the
+  opt-in `steam-ext` lane (issue #317, 2026-10-06). No Steam seat in CI;
+  #319 explores one. The dotnet adapter shipped under the same honest
+  status.
 - Valve deprecated the classic P2P API (ISteamNetworking; still shipped
   in Steamworks 1.65). Migration evaluation: #320.
 - GodotSteam version pin guidance for the demo project if a demo integration

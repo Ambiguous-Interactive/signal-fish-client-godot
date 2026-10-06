@@ -614,6 +614,8 @@ def main() -> int:
         return direct(script("run-runtime-godot.py", "godot", *args.suites))
     if args.command == "smoke":
         return direct(script("run-runtime-godot.py", "smoke"))
+    if args.command == "steam-ext":
+        return direct(script("run-runtime-godot.py", "steam-ext"))
     if args.command == "changed":
         return run_changed(select(dirty_files(ROOT), ROOT))
     parser.print_help(sys.stderr)
