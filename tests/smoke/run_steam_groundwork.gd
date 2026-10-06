@@ -13,35 +13,20 @@ const SFSteamIdentityBootstrapScript = preload(
 )
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 
-const WATCHDOG_MS := 30000
-
 var _failures: Array[String] = []
-var _done := false
-var _started_ms := 0
+# Completion sentinel: an abort inside _run() skips quit() and would
+# otherwise hang CI instead of reporting a red result.
+var _run_completed := false
 
 
 func _initialize() -> void:
-	_started_ms = Time.get_ticks_msec()
 	_run()
-
-
-func _process(_delta: float) -> bool:
-	if not _done and Time.get_ticks_msec() - _started_ms > WATCHDOG_MS:
-		_done = true
-		push_error(
-			"steam groundwork watchdog timeout after %dms" % (Time.get_ticks_msec() - _started_ms)
-		)
+	if not _run_completed:
+		push_error("steam groundwork aborted before completion")
 		for failure: String in _failures:
 			push_error(failure)
 		quit(1)
-	return false
-
-
-func _run() -> void:
-	_phase_singleton_surface()
-	_phase_init_without_client()
-	_phase_bootstrap_start()
-	_done = true
+		return
 	if _failures.is_empty():
 		print("steam groundwork passed")
 		quit(0)
@@ -50,6 +35,13 @@ func _run() -> void:
 	for failure: String in _failures:
 		push_error(failure)
 	quit(1)
+
+
+func _run() -> void:
+	_phase_singleton_surface()
+	_phase_init_without_client()
+	_phase_bootstrap_start()
+	_run_completed = true
 
 
 func _phase_singleton_surface() -> void:

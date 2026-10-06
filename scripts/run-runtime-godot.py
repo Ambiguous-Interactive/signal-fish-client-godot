@@ -51,7 +51,6 @@ STEAM_ENGINE_ARCHIVES = {
         "07e170b208f91a5bd663fae40f2731fdba1ee3380e4fea90a0d0131e0d3522df",
     ),
 }
-STEAM_GDE_DIR = "godotsteam-4.21-gde"
 STEAM_GDE_ARCHIVE = (
     "https://codeberg.org/godotsteam/godotsteam/releases/download/v4.21-gde/"
     "godotsteam-4.21-gdextension-plugin-4.4.zip",
@@ -245,21 +244,29 @@ def fetch_pinned(url: str, checksum: str, target: Path) -> Path:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     print(f"steam-ext: downloading {url}")
+    partial = target.with_name(target.name + ".part")
     with (
-        urllib.request.urlopen(url) as response,  # noqa: S310 - the URL is a repo-pinned constant
-        target.open("wb") as sink,
+        urllib.request.urlopen(url, timeout=60) as response,  # noqa: S310 - pinned constant
+        partial.open("wb") as sink,
     ):
         shutil.copyfileobj(response, sink)
-    if file_sha256(target) != checksum:
-        target.unlink()
+    if file_sha256(partial) != checksum:
+        partial.unlink()
         raise RuntimeError(f"{target.name} does not match the pinned sha256")
+    os.replace(partial, target)
     return target
 
 
 def unzip(archive: Path, target: Path) -> None:
-    target.mkdir(parents=True, exist_ok=True)
+    # Extract beside the target and swap, so an interrupted run can never
+    # leave a half-extracted dir that a later run would reuse.
+    staging = target.with_name(target.name + ".partial")
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
     with zipfile.ZipFile(archive) as bundle:
-        bundle.extractall(target)
+        bundle.extractall(staging)
+    shutil.rmtree(target, ignore_errors=True)
+    staging.rename(target)
 
 
 def steam_engine(toolchain: Path) -> Path:
@@ -268,7 +275,9 @@ def steam_engine(toolchain: Path) -> Path:
         raise RuntimeError(f"no pinned GodotSteam engine for {machine}")
     flavor, url, checksum = STEAM_ENGINE_ARCHIVES[machine]
     archive = fetch_pinned(url, checksum, toolchain / "downloads" / url.rsplit("/", 1)[-1])
-    engine_dir = toolchain / f"engine-{STEAM_ENGINE_VERSION}-{machine}"
+    # The extract dirs carry the verified checksum so a corrected pin can
+    # never run stale bytes (cache-stamp rule).
+    engine_dir = toolchain / f"engine-{STEAM_ENGINE_VERSION}-{machine}-{checksum[:12]}"
     binary = engine_dir / f"Godot_v{STEAM_ENGINE_VERSION}_linux.{flavor}"
     if not binary.is_file():
         unzip(archive, engine_dir)
@@ -282,7 +291,9 @@ def steam_engine(toolchain: Path) -> Path:
 def steam_gde(toolchain: Path) -> Path:
     url, checksum = STEAM_GDE_ARCHIVE
     archive = fetch_pinned(url, checksum, toolchain / "downloads" / url.rsplit("/", 1)[-1])
-    gde_root = toolchain / STEAM_GDE_DIR
+    # Checksum-stamped like the engine dirs: a corrected pin never runs
+    # stale bytes (cache-stamp rule).
+    gde_root = toolchain / f"godotsteam-gde-{checksum[:12]}"
     marker = gde_root / "addons" / "godotsteam" / "godotsteam.gdextension"
     if not marker.is_file():
         unzip(archive, gde_root)
