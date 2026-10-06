@@ -148,6 +148,10 @@ checks. The shell launcher remains for existing callers. The dispatcher exposes
 without drifting from local reproduction commands. `all` runs the static
 checks, the Prettier and markdownlint checks, and the godot suites
 concurrently - the gate wall is the slower half, not the sum.
+The dispatcher also exposes the opt-in `steam-ext` lane (issue #317): pinned
+Godot 4.4.1 + GodotSteam 4.21 GDExtension in fresh copies (4.4+ only; no 4.3
+build ships linux arm64), running `run_steam_groundwork.gd` and every suite
+with the extension present. Never part of `all`.
 The `godot` subcommand accepts suite names (`protocol transport
 client binary reconnect demo_boot p2p_boot`); one explicit suite runs warm
 in-tree against the live `.godot` cache for fast local iteration, while
@@ -235,11 +239,9 @@ archive preparation fails. Gate on exit status, not captured stderr text.
 
 The `smoke` subcommand is opt-in (never part of `all`) and runs
 `tests/smoke/run_websocket_smoke.gd`: a local RFC 6455 server
-(`tests/smoke/ws_test_server.gd`, text/binary echo plus close handshakes in
-both directions) driven from a `SceneTree` `_process` loop, exercising the real
-`SFWebSocketTransport` open/echo/close paths and a refused dial. Frame pumping
-lives in `SceneTree._process` with per-wait timeouts and a watchdog, so a
-broken phase fails loudly instead of hanging.
+(`tests/smoke/ws_test_server.gd`) in a `SceneTree` `_process` loop exercising
+the real `SFWebSocketTransport` open/echo/close paths and a refused dial;
+timeouts plus a watchdog keep a broken phase loud instead of hanging.
 
 `scripts/check-gdscript-private-helpers.py` uses gdtoolkit's parser and treats
 public methods, constructors, Godot callbacks, and `_on_*` handlers as
@@ -287,12 +289,10 @@ integration tests:
   paths and commits before runtime semantics are implemented.
 - Fake transport adapter tests covering connect, receive, send, close, error,
   reconnect, and backpressure before live network tests.
-- Godot 4 smoke test for the `WebSocketPeer` adapter path (landed:
-  `python3 -E scripts/run-runtime-checks.py smoke`).
+- Godot 4 smoke test for the `WebSocketPeer` adapter path (landed: `python3 -E scripts/run-runtime-checks.py smoke`).
 - Browser export manual check covering HTTPS hosting, `wss://`, WebSocket
   `Origin`, mixed-content rejection, and no native-only socket assumptions.
-- Godot 3 smoke tests are not planned; the Godot 3.6 compatibility decision
-  (2026-10-06) deferred support (`.llm/research/godot-targets.md`).
+- Godot 3 smoke tests are not planned; the Godot 3.6 deferral (2026-10-06, `.llm/research/godot-targets.md`) stands.
 
 ## CI Guidance
 

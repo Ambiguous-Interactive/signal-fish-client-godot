@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import platform
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
+import zipfile
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -27,6 +31,33 @@ SUITES = {
     "p2p_boot": "@p2p",
 }
 Result = tuple[int, str]
+
+# Issue #317 groundwork: the real GodotSteam GDExtension needs Godot 4.4+
+# (GDE 4.16+ dropped the 4.1-4.3 libraries, and no 4.3-compatible build ships
+# linux arm64), so the lane pins the CI matrix's 4.4.1 engine instead of the
+# PATH godot. Checksums pin the downloads; the GDE zip carries linux64 and
+# linuxarm64 libraries.
+STEAM_ENGINE_VERSION = "4.4.1-stable"
+STEAM_ENGINE_BASE_URL = "https://github.com/godotengine/godot/releases/download/4.4.1-stable"
+STEAM_ENGINE_ARCHIVES = {
+    "x86_64": (
+        "x86_64",
+        f"{STEAM_ENGINE_BASE_URL}/Godot_v4.4.1-stable_linux.x86_64.zip",
+        "d6e382fb531019f85630c1f485a561a0d20c4a2344b6c3847735cfee7da812aa",
+    ),
+    "aarch64": (
+        "arm64",
+        f"{STEAM_ENGINE_BASE_URL}/Godot_v4.4.1-stable_linux.arm64.zip",
+        "07e170b208f91a5bd663fae40f2731fdba1ee3380e4fea90a0d0131e0d3522df",
+    ),
+}
+STEAM_GDE_DIR = "godotsteam-4.21-gde"
+STEAM_GDE_ARCHIVE = (
+    "https://codeberg.org/godotsteam/godotsteam/releases/download/v4.21-gde/"
+    "godotsteam-4.21-gdextension-plugin-4.4.zip",
+    "288c41f9f9cf974d9da0566c54be8a14b849777aae88571f874b7390c3fb98bf",
+)
+STEAM_GROUNDWORK = "tests/smoke/run_steam_groundwork.gd"
 
 
 def capture(command: Sequence[str], data: bytes | None = None) -> Result:
@@ -123,8 +154,9 @@ def copy_project(parent: Path, archive: Path | None, snapshot: Path | None) -> P
     return project
 
 
-def godot_command(script: str, project: Path) -> list[str]:
-    command = [GODOT, "--headless", "--path", str(project)]
+def godot_command(script: str, project: Path, engine: Path | None = None) -> list[str]:
+    binary = str(engine) if engine is not None else GODOT
+    command = [binary, "--headless", "--path", str(project)]
     if script == "@demo":
         return [*command, "--quit-after", "3"]
     if script == "@p2p":
@@ -140,6 +172,30 @@ def run_worker(script: str, archive: Path | None, snapshot: Path | None) -> Resu
         ) as parent:
             project = copy_project(Path(parent), archive, snapshot)
             return capture(godot_command(script, project))
+    except (OSError, RuntimeError) as exc:
+        return 1, f"godot project setup failed: {exc}\n"
+
+
+def install_steam_gde(project: Path, gde_root: Path) -> None:
+    shutil.copytree(gde_root / "addons" / "godotsteam", project / "addons" / "godotsteam")
+
+
+def run_steam_worker(script: str, archive: Path, engine: Path, gde_root: Path) -> Result:
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="signal-fish-steam-ext.",
+            dir=os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(),
+        ) as parent:
+            project = copy_project(Path(parent), archive, None)
+            install_steam_gde(project, gde_root)
+            # The .gdextension only registers after an import scan, so a
+            # successful pass is what makes the singleton appear at all.
+            import_status, import_output = capture(
+                [str(engine), "--headless", "--path", str(project), "--import"]
+            )
+            if import_status != 0:
+                return import_status, f"steam-ext import pass failed:\n{import_output}"
+            return capture(godot_command(script, project, engine))
     except (OSError, RuntimeError) as exc:
         return 1, f"godot project setup failed: {exc}\n"
 
@@ -164,6 +220,112 @@ def report(output: str, status: int) -> int:
         if len(diagnostics) > 10:
             print(f"... {len(diagnostics) - 10} more diagnostics")
     return status
+
+
+def steam_cache() -> Path:
+    override = os.environ.get("SF_STEAM_EXT_CACHE")
+    if override:
+        return Path(override)
+    runner_temp = os.environ.get("RUNNER_TEMP")
+    if runner_temp:
+        return Path(runner_temp) / "signal-fish-steam-ext"
+    return Path(tempfile.gettempdir()) / "signal-fish-steam-ext"
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def fetch_pinned(url: str, checksum: str, target: Path) -> Path:
+    if target.is_file() and file_sha256(target) == checksum:
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    print(f"steam-ext: downloading {url}")
+    with (
+        urllib.request.urlopen(url) as response,  # noqa: S310 - the URL is a repo-pinned constant
+        target.open("wb") as sink,
+    ):
+        shutil.copyfileobj(response, sink)
+    if file_sha256(target) != checksum:
+        target.unlink()
+        raise RuntimeError(f"{target.name} does not match the pinned sha256")
+    return target
+
+
+def unzip(archive: Path, target: Path) -> None:
+    target.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive) as bundle:
+        bundle.extractall(target)
+
+
+def steam_engine(toolchain: Path) -> Path:
+    machine = platform.machine()
+    if machine not in STEAM_ENGINE_ARCHIVES:
+        raise RuntimeError(f"no pinned GodotSteam engine for {machine}")
+    flavor, url, checksum = STEAM_ENGINE_ARCHIVES[machine]
+    archive = fetch_pinned(url, checksum, toolchain / "downloads" / url.rsplit("/", 1)[-1])
+    engine_dir = toolchain / f"engine-{STEAM_ENGINE_VERSION}-{machine}"
+    binary = engine_dir / f"Godot_v{STEAM_ENGINE_VERSION}_linux.{flavor}"
+    if not binary.is_file():
+        unzip(archive, engine_dir)
+    if not binary.is_file():
+        raise RuntimeError(f"engine archive has no {binary.name}")
+    mode = binary.stat().st_mode | 0o111
+    binary.chmod(mode)
+    return binary
+
+
+def steam_gde(toolchain: Path) -> Path:
+    url, checksum = STEAM_GDE_ARCHIVE
+    archive = fetch_pinned(url, checksum, toolchain / "downloads" / url.rsplit("/", 1)[-1])
+    gde_root = toolchain / STEAM_GDE_DIR
+    marker = gde_root / "addons" / "godotsteam" / "godotsteam.gdextension"
+    if not marker.is_file():
+        unzip(archive, gde_root)
+    if not marker.is_file():
+        raise RuntimeError("the GDExtension archive layout changed")
+    return gde_root
+
+
+def steam_ext() -> int:
+    if not sys.platform.startswith("linux"):
+        print(
+            "steam-ext: only linux is pinned today; extend STEAM_ENGINE_ARCHIVES for more",
+            file=sys.stderr,
+        )
+        return 2
+    toolchain = steam_cache()
+    try:
+        engine = steam_engine(toolchain)
+        gde_root = steam_gde(toolchain)
+    except (OSError, RuntimeError) as exc:
+        print(f"steam-ext toolchain failed: {exc}", file=sys.stderr)
+        return 1
+    stages: list[tuple[str, str]] = [("groundwork", STEAM_GROUNDWORK), *SUITES.items()]
+    with tempfile.TemporaryDirectory(
+        prefix="signal-fish-steam-ext-prep.",
+        dir=os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(),
+    ) as prep_name:
+        archive = Path(prep_name) / "proj.tar"
+        status, output = make_archive(archive)
+        if status != 0:
+            print(output, end="", file=sys.stderr)
+            return status
+        with ThreadPoolExecutor(max_workers=min(4, len(stages))) as pool:
+            futures = [
+                (name, pool.submit(run_steam_worker, script, archive, engine, gde_root))
+                for name, script in stages
+            ]
+            results = [(name, future.result()) for name, future in futures]
+    failed = 0
+    for name, (stage_status, stage_output) in results:
+        print(f"=== steam-ext: {name} ===")
+        failed |= int(report(stage_output, stage_status) != 0)
+    return failed
 
 
 def run_suites(names: Sequence[str]) -> int:
@@ -208,14 +370,16 @@ def run_suites(names: Sequence[str]) -> int:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("usage: run-runtime-godot.py [godot [suites...]|smoke]", file=sys.stderr)
+        print("usage: run-runtime-godot.py [godot [suites...]|smoke|steam-ext]", file=sys.stderr)
         return 2
     if sys.argv[1] == "godot":
         return run_suites(sys.argv[2:])
     if sys.argv[1] == "smoke" and len(sys.argv) == 2:
         status, output = run_worker("tests/smoke/run_websocket_smoke.gd", None, None)
         return report(output, status)
-    print("usage: run-runtime-godot.py [godot [suites...]|smoke]", file=sys.stderr)
+    if sys.argv[1] == "steam-ext" and len(sys.argv) == 2:
+        return steam_ext()
+    print("usage: run-runtime-godot.py [godot [suites...]|smoke|steam-ext]", file=sys.stderr)
     return 2
 
 

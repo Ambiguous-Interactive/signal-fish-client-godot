@@ -24,9 +24,9 @@ and checks within about one hour. Session cadence:
 ### Post-v1 (P7, gated)
 
 Steam live-validation path (2026-10-06 feasibility research; the issues
-carry the full data-backed plan):
+carry the full data-backed plan; the real-extension groundwork lane shipped
+2026-10-06, closing #317):
 
-- [ ] Real-extension seam groundwork: GDE present, Steam absent (#317).
 - [ ] Scripted live-drill harness: the #315 checklist, executable (#318).
 - [ ] Live drills: dual-seat loopback (#321), then two machines and the
       recorded verdict closing #315 (#322).
