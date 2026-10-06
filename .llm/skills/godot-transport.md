@@ -16,8 +16,8 @@ Godot networking APIs.
 
 - Build the Signal Fish service client on a thin WebSocket adapter first.
 - Keep public client API, protocol encoding, and transport I/O separate.
-- Implement Godot 4 first. Add Godot 3 only after a separate compatibility
-  decision and smoke tests prove the `WebSocketClient` path.
+- Implement Godot 4. The Godot 3.6 compatibility decision (2026-10-06)
+  deferred support; see `.llm/research/godot-targets.md`.
 - Treat WebRTC as optional peer-to-peer research, not the default client-server
   Signal Fish transport.
 
@@ -50,8 +50,8 @@ Godot networking APIs.
   through its connection lifecycle.
 - Isolate API deltas in small adapter files instead of scattering version
   checks through the public client.
-- Keep examples labeled by engine version when syntax differs, especially
-  `await` versus `yield`, `@export` versus `export`, and packed array names.
+- Keep examples Godot 4-only; label anything that differs across the CI
+  matrix (4.3/4.4.1/4.7.2), such as 4.4+ typed dictionaries.
 
 ## WebRTC Guidance
 
@@ -68,4 +68,4 @@ Godot networking APIs.
 - Does every connection path require bounded polling instead of blocking?
 - Are close code, close reason, timeout, and failed states surfaced?
 - Are browser limitations from `.llm/skills/web-export.md` respected?
-- Are Godot 3 and Godot 4 APIs separated cleanly?
+- Is engine-specific API confined to adapter files?

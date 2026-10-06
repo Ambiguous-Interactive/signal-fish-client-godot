@@ -12,8 +12,8 @@ point here unless a tool requires a tiny wrapper format.
 
 ## Project Intent
 
-- Build a GDScript-first Signal Fish client intended to work across major
-  Godot versions once compatibility is validated.
+- Build a GDScript-first Signal Fish client for Godot 4.x; Godot 3.6 is
+  deferred (see `.llm/research/godot-targets.md`).
 - Prioritize Godot 4 and web exports, where C# is not available.
 - Keep protocol behavior aligned with:
   - <https://github.com/Ambiguous-Interactive/signal-fish-cloud>
@@ -73,7 +73,7 @@ point here unless a tool requires a tiny wrapper format.
 | 2 | Public API | Rich, typed, idiomatic API mirroring the Rust client: per-message methods + one snake_case signal per event, typed payload objects - not a thin `send_message(Dictionary)`. |
 | 3 | v1 scope | Everything: core + authority + spectators + reconnection/replay + MessagePack binary game data + an optional WebRTC P2P helper. |
 | 4 | Test framework | Deterministic custom `SceneTree` runners (`godot --headless --script`) with byte-pinned fixtures, injected clocks, and fake transports; no gdUnit4 (extra dependency + async harness without added coverage). |
-| 5 | Engine target | Godot 4 first (MVP rule below). Godot 3.6 only post-v1 behind a separate compatibility decision. |
+| 5 | Engine target | Godot 4 only. Godot 3.6 evaluated and deferred (2026-10-06, `.llm/research/godot-targets.md`). |
 
 Hard constraint: the `.llm/` + PowerShell harness and `llm-harness.yml` CI
 stay green and untouched; runtime code lives outside the harness's path scope
@@ -98,8 +98,8 @@ Before coding the first runtime client:
 - Use `.llm/skills/security-privacy.md` before handling tokens, secrets, logs,
   persistence, or browser-visible identifiers.
 
-MVP rule: implement Godot 4 first. Add Godot 3 only after a separate
-compatibility decision and smoke tests for the `WebSocketClient` adapter path.
+MVP rule: Godot 4 only. The Godot 3.6 compatibility decision (2026-10-06)
+deferred support; data and revisit triggers: `.llm/research/godot-targets.md`.
 
 Definition of done for the first usable client:
 
@@ -291,7 +291,7 @@ Do not edit the section below manually. Regenerate it with
 - [LLM Context Organization](README.md) - Organization guide for repo-specific AI context files.
 - [GDScript Typing Boundaries](research/gdscript-typing-boundaries.md) - Why Signal Fish wire and event boundaries retain dynamic GDScript values on Godot 4.3.
 - [Godot Networking And Web Notes](research/godot-networking-web.md) - Source-backed notes for Godot WebSocket, WebRTC, browser export, and cross-platform networking decisions.
-- [Godot Target Notes](research/godot-targets.md) - Compatibility notes for targeting major Godot versions from a GDScript Signal Fish addon.
+- [Godot Target Notes](research/godot-targets.md) - Godot 4.x target notes for the GDScript Signal Fish addon, with the recorded Godot 3.6 compatibility deferral.
 - [GStack Adaptation Notes](research/gstack-adaptations.md) - Practical gstack practices adapted for this repo's lightweight LLM harness.
 - [Hot-Path Audit Verdicts (issue #161)](research/hot-path-audit.md) - Measured verdicts for issue #161 hot-path audit ideas (allocations, value-typed cursor decoders, float wire-text memo) so no session repeats them without new engine capabilities.
 - [Signal Fish Protocol Fixtures](research/protocol-fixtures.md) - Pinned upstream sources used to build Signal Fish v2 protocol fixtures for the Godot client.

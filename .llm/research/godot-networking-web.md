@@ -9,8 +9,8 @@ category: Research
 ## Sources Checked
 
 The `stable` Godot links below are drifting references for the current stable
-docs. When pinning implementation behavior, cite versioned docs for the target
-engine line, such as Godot 4.x `WebSocketPeer` or Godot 3.6 `WebSocketClient`.
+docs. When pinning implementation behavior, cite versioned docs for Godot 4.x,
+such as the `WebSocketPeer` page.
 
 - Godot high-level multiplayer:
   <https://docs.godotengine.org/en/stable/tutorials/networking/high_level_multiplayer.html>
@@ -37,8 +37,8 @@ engine line, such as Godot 4.x `WebSocketPeer` or Godot 3.6 `WebSocketClient`.
 
 - Use `WebSocketPeer` as the primary Godot 4 transport for a custom Signal Fish
   client protocol.
-- Implement Godot 4 first. Add Godot 3 support only after a separate
-  compatibility decision and smoke tests against `WebSocketClient`.
+- Implement Godot 4. The Godot 3.6 compatibility decision (2026-10-06)
+  deferred support; see `.llm/research/godot-targets.md`.
 - Use `WebSocketMultiplayerPeer` only for Godot high-level multiplayer/RPC
   features, not for the default protocol client abstraction.
 - Avoid old third-party WebSocket implementations for new Godot 4 code; built-in

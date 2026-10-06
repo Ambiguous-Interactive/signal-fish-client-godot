@@ -11,7 +11,9 @@ upstream v0.9.1), transport seam, core client/config/state machines,
 authority, spectators, reconnection + replay, MessagePack/binary game data,
 v3 session-plan signaling + WebRTC mesh, demo + Web export smoke, MkDocs
 docs site, CI matrix (Godot 4.3/4.4.1/4.7.2), and release automation.
-Per-session history: local `progress/session-NNN-*.md` notes (git-ignored).
+Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
+`.llm/research/godot-targets.md`). Per-session history: local
+`progress/session-NNN-*.md` notes (git-ignored).
 
 ## Next work
 
@@ -19,11 +21,10 @@ Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:
 `.llm/skills/architectural-planning.md`.
 
-### Post-v1 (P7, each gated)
+### Post-v1 (P7, gated)
 
-- [ ] Godot 3.6 compat (`WebSocketClient` adapter behind the seam + smoke
-      tests) - only after the separate compatibility decision (context.md
-      MVP rule).
+- [ ] Steam P2P live two-client drill (#315) - needs two real Steam seats;
+      the drill checklist lives in the issue.
 
 ## Definition of done (v1)
 

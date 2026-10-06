@@ -14,10 +14,9 @@ GDScript API design, and examples.
 ## Goals
 
 - Prefer GDScript-first APIs so the client works on Godot web exports.
-- Support major Godot versions intentionally; do not assume one version unless
-  the task says so.
-- Follow the MVP rule: implement Godot 4 first, then add Godot 3 only after a
-  separate compatibility decision and `WebSocketClient` smoke tests.
+- Target Godot 4; the version matrix lives in `.llm/research/godot-targets.md`.
+- Follow the MVP rule: Godot 4 only; the Godot 3.6 decision (2026-10-06)
+  deferred support (`.llm/research/godot-targets.md`).
 - Keep public API names idiomatic for Godot users.
 - Avoid C#-only guidance for runtime behavior.
 
@@ -27,8 +26,7 @@ GDScript API design, and examples.
 - GDScript and engine APIs differ between Godot 3.x and 4.x.
 - Isolate version-specific logic behind small adapter files when practical.
 - Avoid engine features that are unavailable or restricted on HTML5 exports.
-- Prefer Godot 4 syntax in new examples unless a Godot 3 compatibility example
-  is explicitly labeled.
+- Prefer Godot 4 syntax in all examples.
 
 ## Expected Addon Shape
 
@@ -48,8 +46,8 @@ addons/signal_fish/
 - Emit Godot signals for connection, message, error, and close events.
 - Keep async behavior explicit; document whether callbacks run in `_process`,
   signal callbacks, or awaited coroutines.
-- Use typed GDScript where supported, but avoid breaking older target versions
-  unless the compatibility plan says so.
+- Use typed GDScript; the CI matrix (4.3/4.4.1/4.7.2) is the compatibility
+  floor.
 - Keep serialization boundaries narrow and testable.
 - Keep transport adapters byte-oriented; public client code should not reach
   directly into `WebSocketPeer` unless the adapter is the public surface.
@@ -75,7 +73,7 @@ addons/signal_fish/
 
 - Does the code run without C#?
 - Is web export behavior considered?
-- Are Godot 3 and Godot 4 differences called out?
+- Are CI-matrix (4.3/4.4.1/4.7.2) differences called out?
 - Are public names stable and easy for GDScript users?
 - Is transport lifecycle delegated to `.llm/skills/godot-transport.md` guidance?
 
