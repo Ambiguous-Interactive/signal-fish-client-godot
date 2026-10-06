@@ -112,10 +112,10 @@ var _advertised_peers: Dictionary = {}
 var _pending_requests: Dictionary = {}
 var _connected_peers: Dictionary = {}
 # Sessions report connecting/inactive while Steam sets the channel up, so a
-# drop is only reported for a session that was seen active (or that Steam
-# failed through p2p_session_connect_fail).
+# peer drop is only reported for a session that was seen active (or that
+# Steam failed through p2p_session_connect_fail). The peer's host session
+# needs no such grace: the ack proves it was established.
 var _ever_active_peers: Dictionary = {}
-var _host_ever_active := false
 
 
 ## Starts consuming a client's session events. Attach before [method start].
@@ -508,13 +508,13 @@ func _is_connecting(state: Dictionary) -> bool:
 
 
 func _host_session_alive() -> bool:
+	# The ack already proved the session was established, so a state that is
+	# no longer active (and not connecting) is a real drop; Steam raises no
+	# connect fail for a session that dies after the handshake.
 	var state: Dictionary = _session_state(_host_id.to_int())
 	if not state.is_empty() and _is_active(state):
-		_host_ever_active = true
 		return true
-	if _is_connecting(state):
-		return true
-	return not _host_ever_active
+	return _is_connecting(state)
 
 
 func _drop_peer(peer_id: String, why: String) -> void:
@@ -559,7 +559,6 @@ func _reset_coordination() -> void:
 	_awaiting_host_id = false
 	_awaiting_ack = false
 	_host_connected = false
-	_host_ever_active = false
 	_host_id = ""
 	_local_id = ""
 	_elapsed_sec = 0.0
