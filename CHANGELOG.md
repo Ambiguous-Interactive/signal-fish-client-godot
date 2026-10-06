@@ -8,6 +8,14 @@ released version.
 
 ## [Unreleased]
 
+### Added
+
+- Optional `SFSteamIdentityBootstrap`: puts Steam P2P relay traffic on a
+  Signal Fish room. The room is the membership fence; the bootstrap exchanges
+  role-scoped SteamId64s on the game-data lane, fences the host's Steam
+  accepts behind that exchange, and hands established sessions to the game.
+  Requires the GodotSteam GDExtension; the relay-only client stays unchanged.
+
 ## [v0.1.1] - 2026-10-01
 
 ### Changed

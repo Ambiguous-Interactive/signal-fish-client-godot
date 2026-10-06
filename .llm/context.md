@@ -53,8 +53,7 @@ point here unless a tool requires a tiny wrapper format.
   extremely short, simple, and to the point (STE style). Omit internal-only
   detail; changelogs list user-relevant changes only.
 - Docs (tracked Markdown + `llms.txt`) stay ASCII-only and skip contrast
-  constructions; `scripts/check-docs-style.py` enforces this in CI and in
-  `run-runtime-checks.py changed`.
+  constructions; `scripts/check-docs-style.py` enforces this (CI + `changed`).
 - Keep code comments minimal: comments carry only non-inferable rationale
   (upstream/issue citations, behavioral "why"). No comments on internal
   helpers; keep `##` docs on public API; naming and structure carry the rest.
@@ -297,4 +296,5 @@ Do not edit the section below manually. Regenerate it with
 - [Hot-Path Audit Verdicts (issue #161)](research/hot-path-audit.md) - Measured verdicts for issue #161 hot-path audit ideas (allocations, value-typed cursor decoders, float wire-text memo) so no session repeats them without new engine capabilities.
 - [Signal Fish Protocol Fixtures](research/protocol-fixtures.md) - Pinned upstream sources used to build Signal Fish v2 protocol fixtures for the Godot client.
 - [Signal Fish Upstream References](research/protocol-links.md) - Curated upstream references for Signal Fish protocol and client compatibility work.
+- [Steam Identity Bootstrap Notes (issue #312)](research/steam-identity.md) - GodotSteam P2P facts behind the SFSteamIdentityBootstrap design (versions, singleton access, callback pumping, wire keys).
 <!-- LLM-INDEX:END -->
