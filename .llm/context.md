@@ -291,7 +291,7 @@ Do not edit the section below manually. Regenerate it with
 - [LLM Context Organization](README.md) - Organization guide for repo-specific AI context files.
 - [GDScript Typing Boundaries](research/gdscript-typing-boundaries.md) - Why Signal Fish wire and event boundaries retain dynamic GDScript values on Godot 4.3.
 - [Godot Networking And Web Notes](research/godot-networking-web.md) - Source-backed notes for Godot WebSocket, WebRTC, browser export, and cross-platform networking decisions.
-- [Godot Target Notes](research/godot-targets.md) - Compatibility notes for targeting major Godot versions from a GDScript Signal Fish addon.
+- [Godot Target Notes](research/godot-targets.md) - Godot 4.x target notes for the GDScript Signal Fish addon, with the recorded Godot 3.6 compatibility deferral.
 - [GStack Adaptation Notes](research/gstack-adaptations.md) - Practical gstack practices adapted for this repo's lightweight LLM harness.
 - [Hot-Path Audit Verdicts (issue #161)](research/hot-path-audit.md) - Measured verdicts for issue #161 hot-path audit ideas (allocations, value-typed cursor decoders, float wire-text memo) so no session repeats them without new engine capabilities.
 - [Signal Fish Protocol Fixtures](research/protocol-fixtures.md) - Pinned upstream sources used to build Signal Fish v2 protocol fixtures for the Godot client.

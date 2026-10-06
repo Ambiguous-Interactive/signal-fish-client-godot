@@ -73,7 +73,7 @@ addons/signal_fish/
 
 - Does the code run without C#?
 - Is web export behavior considered?
-- Are 4.x matrix-version differences called out?
+- Are CI-matrix (4.3/4.4.1/4.7.2) differences called out?
 - Are public names stable and easy for GDScript users?
 - Is transport lifecycle delegated to `.llm/skills/godot-transport.md` guidance?
 

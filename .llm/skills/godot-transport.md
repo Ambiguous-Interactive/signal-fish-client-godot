@@ -50,8 +50,8 @@ Godot networking APIs.
   through its connection lifecycle.
 - Isolate API deltas in small adapter files instead of scattering version
   checks through the public client.
-- Keep examples labeled when 4.x matrix-version syntax differs, such as
-  packed array names.
+- Keep examples Godot 4-only; label anything that differs across the CI
+  matrix (4.3/4.4.1/4.7.2), such as 4.4+ typed dictionaries.
 
 ## WebRTC Guidance
 

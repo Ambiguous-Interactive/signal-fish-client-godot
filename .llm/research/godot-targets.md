@@ -1,5 +1,5 @@
 ---
-description: Compatibility notes for targeting major Godot versions from a GDScript Signal Fish addon.
+description: Godot 4.x target notes for the GDScript Signal Fish addon, with the recorded Godot 3.6 compatibility deferral.
 triggers: godot 3, Godot 3, godot 4, Godot 4, compatibility, gdscript, client, runtime client, SignalFishClient, connect, connection, browser export, web export, WebSocketPeer, WebSocketClient, addon
 category: Research
 ---
@@ -85,15 +85,19 @@ revisit trigger.
   typed `const` arrays, and typed for-loop variables.
 - Cross-check: under the gdtoolkit 3.6.0 grammar, 21 of 23 runtime files
   fail; the 2 survivors (transport layer) still fail the engine on
-  `RefCounted`, and they reference `WebSocketPeer`, which Godot 3 lacks.
+  `RefCounted`, and they use the standalone `WebSocketPeer` API
+  (`connect_to_url`, `poll`, ready-state constants), which Godot 3 does
+  not expose (3.x peers are handles from `WebSocketClient` and
+  `WebSocketServer`).
 - Tests (29 files, 17,394 lines): 0 of 29 load under the engine probe.
 - Godot 4-only constructs in runtime code: 464 typed return annotations,
   108 typed for-loop variables, 37 typed signal parameters, typed arrays
   in 11 files, 63 StringName literals (`&"..."`), 23 Godot 4 annotations
   (`@tool`/`@export`/`@warning_ignore`), 4 `static var`
   (Godot 3 has no static variables), and 9 `Callable` uses, plus
-  `WebSocketPeer`, `JSON.parse_string`, and `to_utf8_buffer()` call
-  sites (checked against the 3.6.3 engine's `ClassDB`).
+  standalone `WebSocketPeer` usage, `JSON.parse_string`, and
+  `to_utf8_buffer()` call sites (checked against the 3.6.3 engine's
+  `ClassDB`).
 - No `await` in runtime code (polling design); that port cost is zero.
 - Godot 4.0 made Dictionaries insertion-ordered; Godot 3.x iteration order
   is unspecified. `sf_envelope.gd` and `sf_msgpack.gd` iterate
