@@ -79,24 +79,24 @@ the bootstrap channel.
 
 ## Signals
 
-| Signal | Meaning |
-| --- | --- |
-| `steam_host_id_received(steam_id)` | The published host id arrived (peer side). Informational; the bootstrap dials by itself. |
-| `steam_host_connected(steam_id)` | The peer's session to the host is up. |
-| `steam_peer_connected(steam_id)` | The host accepted a fenced peer. |
-| `steam_peer_disconnected(steam_id)` | A fenced peer's session went down (best effort). |
-| `coordination_failed(reason)` | A live-session failure stopped the coordination. |
+| Signal                              | Meaning                                                                                  |
+| ----------------------------------- | ---------------------------------------------------------------------------------------- |
+| `steam_host_id_received(steam_id)`  | The published host id arrived (peer side). Informational; the bootstrap dials by itself. |
+| `steam_host_connected(steam_id)`    | The peer's session to the host is up.                                                    |
+| `steam_peer_connected(steam_id)`    | The host accepted a fenced peer.                                                         |
+| `steam_peer_disconnected(steam_id)` | A fenced peer's session went down (best effort).                                         |
+| `coordination_failed(reason)`       | A live-session failure stopped the coordination.                                         |
 
 ## Configuration
 
-| Member | Meaning |
-| --- | --- |
-| `role` | `HOST` fences the accepts; `PEER` dials the published host id. |
-| `accept_grace_sec` | How long the host waits for an unknown requester's lane advertisement. Zero refuses immediately. |
-| `host_id_timeout_sec` | How long a peer waits for the host id before failing. Zero waits forever. |
-| `steam_connect_timeout_sec` | How long the dial may take before failing. Zero waits forever. |
-| `steam_channel` | The P2P channel the handshake uses. The game owns the rest. |
-| `steam` | Injectable Steam seam; tests substitute a fake, games leave it null. |
+| Member                      | Meaning                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `role`                      | `HOST` fences the accepts; `PEER` dials the published host id.                                   |
+| `accept_grace_sec`          | How long the host waits for an unknown requester's lane advertisement. Zero refuses immediately. |
+| `host_id_timeout_sec`       | How long a peer waits for the host id before failing. Zero waits forever.                        |
+| `steam_connect_timeout_sec` | How long the dial may take before failing. Zero waits forever.                                   |
+| `steam_channel`             | The P2P channel the handshake uses. The game owns the rest.                                      |
+| `steam`                     | Injectable Steam seam; tests substitute a fake, games leave it null.                             |
 
 ## Failure modes
 

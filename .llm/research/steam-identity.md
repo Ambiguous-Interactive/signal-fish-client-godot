@@ -22,7 +22,7 @@ branch `godot4`) and the dotnet client's Steamworks.NET adapter
 - `getSteamID()` returns a plain 64-bit int (GDNative's dictionary-wrapped
   `{"id": ...}` shape is 3.x-only). Id 0 means uninitialized.
 - Classic P2P API (session-less): `sendP2PPacket(remote, data, send_type,
-  channel)` establishes sessions implicitly; `getAvailableP2PPacketSize`
+channel)` establishes sessions implicitly; `getAvailableP2PPacketSize`
   (NOT `isP2PPacketAvailable`, unbound in 4.x); `readP2PPacket(size, channel)`
   returns `{"data": PackedByteArray, "remote_steam_id": int}` - the public
   docs page still says `steam_id_remote`, so the bootstrap reads both keys.
@@ -33,7 +33,7 @@ branch `godot4`) and the dotnet client's Steamworks.NET adapter
 - `P2P_SEND_RELIABLE == 2` (Steamworks `k_EP2PSendReliable`), pinned as an
   addon const so the duck-typed seam needs no constant lookup.
 - Callbacks: `run_callbacks()` per frame, or `steamInit(..., embed_callbacks=
-  true)`. Embedding was broken in 4.14/3.29 and fixed later; auto-init plus
+true)`. Embedding was broken in 4.14/3.29 and fixed later; auto-init plus
   embed landed together only in 4.23. The bootstrap pumps nothing itself.
 - Versions: current GDExtension `v4.23-gde` needs Godot 4.4+
   (`compatibility_minimum = "4.4"`); Godot 4.3 users need GodotSteam <= 4.21.
