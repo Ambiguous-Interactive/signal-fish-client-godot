@@ -176,6 +176,9 @@ def run_worker(script: str, archive: Path | None, snapshot: Path | None) -> Resu
 
 
 def install_steam_gde(project: Path, gde_root: Path) -> None:
+    # Replace, never merge: an untracked local GodotSteam checkout must not
+    # leak other-version files into the pinned install.
+    shutil.rmtree(project / "addons" / "godotsteam", ignore_errors=True)
     shutil.copytree(gde_root / "addons" / "godotsteam", project / "addons" / "godotsteam")
 
 
