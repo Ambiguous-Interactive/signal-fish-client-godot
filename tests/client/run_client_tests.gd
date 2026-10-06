@@ -17,6 +17,7 @@ const SessionStateBoundTestsScript = preload("res://tests/client/session_state_b
 const SessionGuardTestsScript = preload("res://tests/client/session_guard_tests.gd")
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
 const WebrtcMeshTestsScript = preload("res://tests/client/webrtc_mesh_tests.gd")
+const SteamIdentityTestsScript = preload("res://tests/client/steam_identity_tests.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const FuzzDecodeTestsScript = preload("res://tests/protocol/fuzz_decode_tests.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
@@ -64,6 +65,9 @@ func _helper_suites_are_loadable() -> bool:
 	if not (WebrtcMeshTestsScript as Script).has_method("run"):
 		push_error("helper suite failed to load: webrtc_mesh_tests")
 		return false
+	if not (SteamIdentityTestsScript as Script).has_method("run"):
+		push_error("helper suite failed to load: steam_identity_tests")
+		return false
 	if not (SFPluginScript as Script).can_instantiate():
 		push_error("addon script failed to load: plugin")
 		return false
@@ -109,6 +113,7 @@ func _run() -> void:
 	_failures.append_array(SessionStateBoundTestsScript.run(self))
 	_failures.append_array(SessionGuardTestsScript.run(self))
 	_failures.append_array(WebrtcMeshTestsScript.run(self))
+	_failures.append_array(SteamIdentityTestsScript.run(self))
 	_run_completed = true
 
 

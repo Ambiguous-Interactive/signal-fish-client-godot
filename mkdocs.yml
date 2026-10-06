@@ -128,6 +128,7 @@ nav:
       - Deterministic Testing: testing.md
   - Multiplayer Choices:
       - Mesh (v3): mesh-guide.md
+      - Steam P2P: steam-guide.md
   - Advanced Reference:
       - Release Operations: releasing.md
       - Brand & Font Attribution: attributions.md

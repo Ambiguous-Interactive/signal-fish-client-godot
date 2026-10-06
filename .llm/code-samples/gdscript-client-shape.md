@@ -156,6 +156,28 @@ peer_transport_status(peer_id, transport, connected)
   -> `SFErrorCodes.Code.NONE`.
 - User game data stays `Variant`; binary is `PackedByteArray`.
 
+## Optional Steam bootstrap
+
+`SFSteamIdentityBootstrap` (Node, `addons/signal_fish/steam/`) puts Steam P2P
+on a room: the room is the membership fence, Steam carries the game. Wire
+keys `signal_fish_steam_host` / `signal_fish_steam_peer` mirror the dotnet
+adapter (decimal-id strings, malformed lane payloads decode as absent).
+
+```gdscript
+var steam := SFSteamIdentityBootstrap.new()
+add_child(steam)
+steam.role = SFSteamIdentityBootstrap.Role.HOST  # or PEER
+steam.attach(client)                             # Error; ERR_BUSY on double attach
+steam.start()                                    # Error; ERR_UNAVAILABLE without GodotSteam
+steam.poll()                                     # or leave _process to drive it
+steam.stop()
+# Config: accept_grace_sec (5), host_id_timeout_sec (30),
+# steam_connect_timeout_sec (30), steam_channel (1), steam (injectable seam).
+# Signals: steam_host_id_received(steam_id), steam_host_connected(steam_id),
+# steam_peer_connected(steam_id), steam_peer_disconnected(steam_id),
+# coordination_failed(reason).
+```
+
 ## Behavior notes
 
 - Sends are backpressured: over `max_buffered_bytes` -> `ERR_BUSY` +

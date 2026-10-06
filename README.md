@@ -30,6 +30,8 @@ hosting (beta).
   API with one snake_case signal per server event. Polling model - no threads, web-safe.
 - **Optional `SFWebRTCMesh`** (`Node`): v3 session plans in, `WebRTCMultiplayerPeer`
   mesh out - server-assigned offerer roles, ICE replacement, and teardown handled.
+- **Optional `SFSteamIdentityBootstrap`** (`Node`): puts Steam P2P relay traffic on
+  a room - the room is the membership fence, Steam carries the game.
 
 |          |                                                                                                |
 | -------- | ---------------------------------------------------------------------------------------------- |
@@ -50,6 +52,7 @@ covers everything from first connection to the P2P mesh:
   and [reconnection + replay](https://ambiguous-interactive.github.io/signal-fish-client-godot/reconnection/)
 - [Web export](https://ambiguous-interactive.github.io/signal-fish-client-godot/web-export/)
   and the [mesh guide](https://ambiguous-interactive.github.io/signal-fish-client-godot/mesh-guide/)
+- [Steam P2P](https://ambiguous-interactive.github.io/signal-fish-client-godot/steam-guide/)
 
 ## Installation
 
