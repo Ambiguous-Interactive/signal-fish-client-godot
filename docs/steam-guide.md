@@ -102,7 +102,8 @@ the bootstrap channel.
 
 `coordination_failed` fires and the coordination stops when the room
 connection closes, the room session ends, the authority leaves the host, the
-published host id changes mid-session, or a dial times out or fails. A dial
+published host id changes mid-session, the host Steam session closes, or a
+dial times out or fails. A dial
 that never completed closes its half-open session; an established session
 always belongs to the game. `stop()` closes every session the bootstrap
 established. Membership enforcement beyond the accept fence (room leave and

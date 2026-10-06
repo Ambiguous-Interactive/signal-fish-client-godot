@@ -48,8 +48,9 @@ signal steam_peer_connected(steam_id: String)
 ## A fenced peer's Steam session went down (best-effort detection).
 signal steam_peer_disconnected(steam_id: String)
 ## A live-session failure stopped the coordination: the room connection
-## closed, the authority left the host, the published host id changed
-## mid-session, or a Steam dial timed out or failed.
+## closed, the room session ended, the authority left the host, the published
+## host id changed mid-session, the host Steam session closed, or a Steam
+## dial timed out or failed.
 signal coordination_failed(reason: String)
 
 ## Who this node coordinates as: the [enum Role.HOST] fences Steam accepts
@@ -249,8 +250,8 @@ func _on_session_live() -> void:
 		return
 	_publish(SFSteamIdentityScript.PEER_LANE_KEY)
 	# The client re-emits room_joined on every RoomJoined baseline (issue
-	# 107); only the first one arms the host-id wait.
-	if host_id_timeout_sec > 0.0 and _host_id.is_empty():
+	# 107); the host-id wait arms exactly once, on the first one.
+	if host_id_timeout_sec > 0.0 and _host_id.is_empty() and not _awaiting_host_id:
 		_awaiting_host_id = true
 		_host_id_deadline_sec = _elapsed_sec + host_id_timeout_sec
 

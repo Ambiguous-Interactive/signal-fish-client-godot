@@ -572,7 +572,8 @@ func _test_host_id_wait_closes_on_arrival() -> void:
 
 func _test_duplicate_room_baseline_does_not_rearm() -> void:
 	# Regression: the client re-emits room_joined on every RoomJoined
-	# baseline (issue #107); a duplicate must not re-arm the host-id wait.
+	# baseline (issue #107); a duplicate must not re-arm or slide the
+	# host-id wait, before or after the id arrives.
 	var steam := FakeSteam.new(PEER_ID)
 	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
 		SFSteamIdentityBootstrapScript.Role.PEER, PEER_ID, steam
@@ -580,11 +581,34 @@ func _test_duplicate_room_baseline_does_not_rearm() -> void:
 	var client := _in_room_client()
 	_assert_equal(OK, bootstrap.attach(client), "attach")
 	_assert_equal(OK, bootstrap.start(), "start")
+	var transport: SFFakeTransportScript = client.transport
+	var baseline: Dictionary = _runner.call("_room_joined_data")
+	# A duplicate baseline while the id is still pending must not slide the
+	# deadline: the wait fails at 30 s, not at 30 s from the last baseline.
+	bootstrap._process(10.0)
+	transport.inject_server_message({"type": "RoomJoined", "data": baseline})
+	client.poll()
+	bootstrap._process(19.9)
+	_assert_equal([], _captured(bootstrap, "coordination_failed"), "alive inside the window")
+	bootstrap._process(0.2)
+	_assert_equal(
+		["the host id did not arrive in time"],
+		_captured(bootstrap, "coordination_failed"),
+		"deadline held at the first baseline"
+	)
+	bootstrap.free()
+	client.free()
+
+	steam = FakeSteam.new(PEER_ID)
+	bootstrap = _make_bootstrap(SFSteamIdentityBootstrapScript.Role.PEER, PEER_ID, steam)
+	client = _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach 2")
+	_assert_equal(OK, bootstrap.start(), "start 2")
 	_advertise_host(client, PLAYER_A, HOST_ID)
 	steam.queue_packet(int(HOST_ID), PackedByteArray([0x41]))
 	bootstrap.poll()
-	var transport: SFFakeTransportScript = client.transport
-	var baseline: Dictionary = _runner.call("_room_joined_data")
+	transport = client.transport
+	baseline = _runner.call("_room_joined_data")
 	transport.inject_server_message({"type": "RoomJoined", "data": baseline})
 	client.poll()
 	bootstrap._process(31.0)
