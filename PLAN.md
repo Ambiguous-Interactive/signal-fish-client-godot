@@ -26,9 +26,8 @@ and checks within about one hour. Session cadence:
 Steam live-validation path (2026-10-06 feasibility research; the issues
 carry the full data-backed plan):
 
-- [ ] Scripted live-drill harness: the #315 checklist, executable (#318).
 - [ ] Live drills: dual-seat loopback (#321), then two machines and the
-      recorded verdict closing #315 (#322).
+      recorded verdict closing #315 (#322), driven by the #318 harness.
 - [ ] Gated follow-ups: CI Steam seat exploration (#319); evaluation of
       the post-deprecation P2P surface (#320).
 

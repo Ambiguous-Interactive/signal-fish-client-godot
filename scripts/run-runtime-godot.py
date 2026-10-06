@@ -57,6 +57,7 @@ STEAM_GDE_ARCHIVE = (
     "288c41f9f9cf974d9da0566c54be8a14b849777aae88571f874b7390c3fb98bf",
 )
 STEAM_GROUNDWORK = "tests/smoke/run_steam_groundwork.gd"
+STEAM_LIVE_DRILL = "tests/smoke/run_steam_live_drill.gd"
 
 
 def capture(command: Sequence[str], data: bytes | None = None) -> Result:
@@ -387,16 +388,27 @@ def run_suites(names: Sequence[str]) -> int:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("usage: run-runtime-godot.py [godot [suites...]|smoke|steam-ext]", file=sys.stderr)
+        print(
+            "usage: run-runtime-godot.py [godot [suites...]|smoke|steam-drill|steam-ext]",
+            file=sys.stderr,
+        )
         return 2
     if sys.argv[1] == "godot":
         return run_suites(sys.argv[2:])
     if sys.argv[1] == "smoke" and len(sys.argv) == 2:
         status, output = run_worker("tests/smoke/run_websocket_smoke.gd", None, None)
         return report(output, status)
+    if sys.argv[1] == "steam-drill" and len(sys.argv) == 2:
+        # Fake-seam loopback self-test: the CI-green mode of the drill
+        # harness (issue #318); live seats run it manually with ++ args.
+        status, output = run_worker(STEAM_LIVE_DRILL, None, None)
+        return report(output, status)
     if sys.argv[1] == "steam-ext" and len(sys.argv) == 2:
         return steam_ext()
-    print("usage: run-runtime-godot.py [godot [suites...]|smoke|steam-ext]", file=sys.stderr)
+    print(
+        "usage: run-runtime-godot.py [godot [suites...]|smoke|steam-drill|steam-ext]",
+        file=sys.stderr,
+    )
     return 2
 
 
