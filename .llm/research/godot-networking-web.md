@@ -37,8 +37,8 @@ engine line, such as Godot 4.x `WebSocketPeer` or Godot 3.6 `WebSocketClient`.
 
 - Use `WebSocketPeer` as the primary Godot 4 transport for a custom Signal Fish
   client protocol.
-- Implement Godot 4 first. Add Godot 3 support only after a separate
-  compatibility decision and smoke tests against `WebSocketClient`.
+- Implement Godot 4 first. The Godot 3.6 compatibility decision (2026-10-06)
+  deferred support; see `.llm/research/godot-targets.md`.
 - Use `WebSocketMultiplayerPeer` only for Godot high-level multiplayer/RPC
   features, not for the default protocol client abstraction.
 - Avoid old third-party WebSocket implementations for new Godot 4 code; built-in

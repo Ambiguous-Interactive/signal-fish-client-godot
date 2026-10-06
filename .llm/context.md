@@ -73,7 +73,7 @@ point here unless a tool requires a tiny wrapper format.
 | 2 | Public API | Rich, typed, idiomatic API mirroring the Rust client: per-message methods + one snake_case signal per event, typed payload objects - not a thin `send_message(Dictionary)`. |
 | 3 | v1 scope | Everything: core + authority + spectators + reconnection/replay + MessagePack binary game data + an optional WebRTC P2P helper. |
 | 4 | Test framework | Deterministic custom `SceneTree` runners (`godot --headless --script`) with byte-pinned fixtures, injected clocks, and fake transports; no gdUnit4 (extra dependency + async harness without added coverage). |
-| 5 | Engine target | Godot 4 first (MVP rule below). Godot 3.6 only post-v1 behind a separate compatibility decision. |
+| 5 | Engine target | Godot 4 only. Godot 3.6 evaluated and deferred (2026-10-06, `.llm/research/godot-targets.md`). |
 
 Hard constraint: the `.llm/` + PowerShell harness and `llm-harness.yml` CI
 stay green and untouched; runtime code lives outside the harness's path scope
@@ -98,8 +98,8 @@ Before coding the first runtime client:
 - Use `.llm/skills/security-privacy.md` before handling tokens, secrets, logs,
   persistence, or browser-visible identifiers.
 
-MVP rule: implement Godot 4 first. Add Godot 3 only after a separate
-compatibility decision and smoke tests for the `WebSocketClient` adapter path.
+MVP rule: Godot 4 only. The Godot 3.6 compatibility decision (2026-10-06)
+deferred support; data and revisit triggers: `.llm/research/godot-targets.md`.
 
 Definition of done for the first usable client:
 

@@ -16,8 +16,8 @@ GDScript API design, and examples.
 - Prefer GDScript-first APIs so the client works on Godot web exports.
 - Support major Godot versions intentionally; do not assume one version unless
   the task says so.
-- Follow the MVP rule: implement Godot 4 first, then add Godot 3 only after a
-  separate compatibility decision and `WebSocketClient` smoke tests.
+- Follow the MVP rule: Godot 4 only; the Godot 3.6 decision (2026-10-06)
+  deferred support (`.llm/research/godot-targets.md`).
 - Keep public API names idiomatic for Godot users.
 - Avoid C#-only guidance for runtime behavior.
 
