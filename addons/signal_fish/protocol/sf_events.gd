@@ -496,7 +496,8 @@ static func _decode_game_data_binary(
 	# canonical lowercase hyphenated text, so the text-form frame must be the
 	# same shape (empty collided with the "" sender-unknowable sentinel of the
 	# envelope-less pre-#627 negotiated-rkyv path; rkyv returned v3-only with
-	# a real UUID sender, server issue #627 - issue #149; shape, issue #151).
+	# a real UUID sender, server issue #627; sentinel, issue #149; shape,
+	# issue #151).
 	if not SFTypeUtils.is_canonical_uuid_text(data["from_player"]):
 		return _protocol_error(
 			"GameDataBinary from_player must be a lowercase hyphenated UUID", envelope

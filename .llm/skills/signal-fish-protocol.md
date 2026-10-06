@@ -72,7 +72,7 @@ Never invent protocol details; re-verify against the pinned commits before use.
 - Identifiers are UUIDs upstream (`PlayerId`, `RoomId`, `SessionGeneration`).
   On the text path a present id must be canonical lowercase hyphenated UUID
   text (`TypeUtils.is_canonical_uuid_text`, one shared gate): empty cannot
-  deserialize upstream and collides with the "" sender-unknowable sentinel
+  deserialize upstream and collided with the "" sender-unknowable sentinel
   of the envelope-less pre-#627 negotiated-rkyv path; negotiated rkyv
   returned v3-only with a real UUID sender (server issue #627), so the
   sentinel stays retired (issue #149). No other serde spelling is
