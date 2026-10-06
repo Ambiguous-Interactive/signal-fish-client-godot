@@ -26,8 +26,7 @@ GDScript API design, and examples.
 - GDScript and engine APIs differ between Godot 3.x and 4.x.
 - Isolate version-specific logic behind small adapter files when practical.
 - Avoid engine features that are unavailable or restricted on HTML5 exports.
-- Prefer Godot 4 syntax in new examples unless a Godot 3 compatibility example
-  is explicitly labeled.
+- Prefer Godot 4 syntax in all examples.
 
 ## Expected Addon Shape
 
@@ -47,8 +46,8 @@ addons/signal_fish/
 - Emit Godot signals for connection, message, error, and close events.
 - Keep async behavior explicit; document whether callbacks run in `_process`,
   signal callbacks, or awaited coroutines.
-- Use typed GDScript where supported, but avoid breaking older target versions
-  unless the compatibility plan says so.
+- Use typed GDScript; the CI matrix (4.3/4.4.1/4.7.2) is the compatibility
+  floor.
 - Keep serialization boundaries narrow and testable.
 - Keep transport adapters byte-oriented; public client code should not reach
   directly into `WebSocketPeer` unless the adapter is the public surface.
@@ -74,7 +73,7 @@ addons/signal_fish/
 
 - Does the code run without C#?
 - Is web export behavior considered?
-- Are Godot 3 and Godot 4 differences called out?
+- Are 4.x matrix-version differences called out?
 - Are public names stable and easy for GDScript users?
 - Is transport lifecycle delegated to `.llm/skills/godot-transport.md` guidance?
 

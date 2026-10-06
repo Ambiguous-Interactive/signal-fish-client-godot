@@ -6,12 +6,12 @@ category: Research
 
 # Godot Target Notes
 
-The repo targets major Godot versions with a GDScript-first client. Keep this
-file updated as the supported version matrix becomes explicit.
+The repo targets Godot 4.x with a GDScript-first client; Godot 3.6
+support is deferred (decision below).
 
 ## Target Posture
 
-- Godot 4 is the primary target for modern users and browser exports.
+- Godot 4 is the target for modern users and browser exports.
 - Godot 3.6 compatibility was evaluated and deferred on 2026-10-06; see the
   decision below.
 - C# should not be required for runtime use because Godot 4 web exports do not
@@ -25,7 +25,7 @@ for the data and the revisit triggers.
 
 ## Version Matrix
 
-- Godot 4.x: primary target. Prefer `WebSocketPeer`, `PackedByteArray`,
+- Godot 4.x: the target. Prefer `WebSocketPeer`, `PackedByteArray`,
   `@export`, `@onready`, `await`, typed GDScript, and signal objects.
 - Godot 3.6: deferred (see the decision below). Expect `WebSocketClient`,
   `PoolByteArray`, `export`, `onready`, `yield`, unordered Dictionaries, and
@@ -34,6 +34,8 @@ for the data and the revisit triggers.
   browser-supported transports, and production `wss://` endpoints.
 
 ## Areas Likely To Need Version Adapters
+
+Pre-decision notes, kept for context; the decision below answers them.
 
 - WebSocket APIs and connection lifecycle.
 - Typed GDScript syntax.
@@ -54,8 +56,6 @@ for the data and the revisit triggers.
 ## Validation Ideas
 
 - Add a minimal Godot 4 smoke project when runtime code exists.
-- Add a Godot 3 compatibility smoke project only if the codebase commits to
-  supporting it.
 - Add browser export smoke tests for WebSocket behavior once CI can run them.
 - Add fake transport tests before live networking so adapter behavior is
   deterministic.
@@ -90,10 +90,10 @@ revisit trigger.
 - Godot 4-only constructs in runtime code: 464 typed return annotations,
   108 typed for-loop variables, 37 typed signal parameters, typed arrays
   in 11 files, 63 StringName literals (`&"..."`), 23 Godot 4 annotations
-  (`@tool`/`@export`/`@onready`/`@warning_ignore`), 4 `static var`
+  (`@tool`/`@export`/`@warning_ignore`), 4 `static var`
   (Godot 3 has no static variables), and 9 `Callable` uses, plus
-  `WebSocketPeer`, `Time.get_ticks_usec`, `JSON.parse_string`,
-  `to_utf8_buffer()`, and `Engine.get_singleton()` call sites.
+  `WebSocketPeer`, `JSON.parse_string`, and `to_utf8_buffer()` call
+  sites (checked against the 3.6.3 engine's `ClassDB`).
 - No `await` in runtime code (polling design); that port cost is zero.
 - Godot 4.0 made Dictionaries insertion-ordered; Godot 3.x iteration order
   is unspecified. `sf_envelope.gd` and `sf_msgpack.gd` iterate

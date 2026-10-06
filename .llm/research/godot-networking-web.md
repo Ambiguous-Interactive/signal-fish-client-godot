@@ -9,8 +9,8 @@ category: Research
 ## Sources Checked
 
 The `stable` Godot links below are drifting references for the current stable
-docs. When pinning implementation behavior, cite versioned docs for the target
-engine line, such as Godot 4.x `WebSocketPeer` or Godot 3.6 `WebSocketClient`.
+docs. When pinning implementation behavior, cite versioned docs for Godot 4.x,
+such as the `WebSocketPeer` page.
 
 - Godot high-level multiplayer:
   <https://docs.godotengine.org/en/stable/tutorials/networking/high_level_multiplayer.html>

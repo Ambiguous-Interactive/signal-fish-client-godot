@@ -50,8 +50,8 @@ Godot networking APIs.
   through its connection lifecycle.
 - Isolate API deltas in small adapter files instead of scattering version
   checks through the public client.
-- Keep examples labeled by engine version when syntax differs, especially
-  `await` versus `yield`, `@export` versus `export`, and packed array names.
+- Keep examples labeled when 4.x matrix-version syntax differs, such as
+  packed array names.
 
 ## WebRTC Guidance
 
@@ -68,4 +68,4 @@ Godot networking APIs.
 - Does every connection path require bounded polling instead of blocking?
 - Are close code, close reason, timeout, and failed states surfaced?
 - Are browser limitations from `.llm/skills/web-export.md` respected?
-- Are Godot 3 and Godot 4 APIs separated cleanly?
+- Is engine-specific API confined to adapter files?
