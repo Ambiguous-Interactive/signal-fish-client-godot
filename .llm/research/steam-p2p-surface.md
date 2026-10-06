@@ -41,7 +41,8 @@ the research.
   deprecated, and may be removed in a future version of the Steamworks
   SDK. See ISteamNetworkingMessages." `AllowP2PPacketRelay` is deprecated
   separately; Steam may relay traffic regardless of a `false` argument
-  for privacy reasons.
+  ("for security purposes... to prevent revealing the client's IP
+  address").
 - Messages intent (`isteamnetworkingmessages.h`): "non-connection-oriented
   interface... more like UDP... The underlying connections are established
   implicitly"; it "works on top of the ISteamNetworkingSockets code, so
@@ -108,9 +109,13 @@ host-side fence maps directly onto
 - Constants: the addon pin moves `P2P_SEND_RELIABLE` (2) to
   `NETWORKING_SEND_RELIABLE` (8). Keep pinning ints for the duck-typed
   seam, as `addons/signal_fish/steam` does today.
-- Packet ceiling: classic caps a packet at 1200 bytes; Messages rides the
-  Sockets stack with fragmentation and reassembly. Keep the addon's
-  max-packet guard for decode safety regardless.
+- Send ceiling: the 1200-byte cap binds only classic unreliable sends;
+  reliable sends (`P2P_SEND_RELIABLE`, the bootstrap's mode) allow about
+  1 MB and fragment and reassemble under the hood
+  (`isteamnetworking.h`). Messages rides the Sockets stack, whose send
+  cap is 512 KB (`k_cbMaxSteamNetworkingSocketsMessageSizeSend`) - the
+  move tightens the ceiling on this path. Keep the addon's
+  max-inbound-frame guard for decode safety regardless.
 - Unchanged: wire keys `signal_fish_steam_host` / `signal_fish_steam_peer`
   travel over the game data lane, so the transport swap is invisible to
   the identity contract. Version landmines carry over (4.23-gde needs
