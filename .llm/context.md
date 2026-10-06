@@ -12,8 +12,8 @@ point here unless a tool requires a tiny wrapper format.
 
 ## Project Intent
 
-- Build a GDScript-first Signal Fish client intended to work across major
-  Godot versions once compatibility is validated.
+- Build a GDScript-first Signal Fish client for Godot 4.x; Godot 3.6 is
+  deferred (see `.llm/research/godot-targets.md`).
 - Prioritize Godot 4 and web exports, where C# is not available.
 - Keep protocol behavior aligned with:
   - <https://github.com/Ambiguous-Interactive/signal-fish-cloud>

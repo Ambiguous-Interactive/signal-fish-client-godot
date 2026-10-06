@@ -21,7 +21,7 @@ Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:
 `.llm/skills/architectural-planning.md`.
 
-### Post-v1 (P7, each gated)
+### Post-v1 (P7, gated)
 
 - [ ] Steam P2P live two-client drill (#315) - needs two real Steam seats;
       the drill checklist lives in the issue.

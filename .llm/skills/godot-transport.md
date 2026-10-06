@@ -16,7 +16,7 @@ Godot networking APIs.
 
 - Build the Signal Fish service client on a thin WebSocket adapter first.
 - Keep public client API, protocol encoding, and transport I/O separate.
-- Implement Godot 4 first. The Godot 3.6 compatibility decision (2026-10-06)
+- Implement Godot 4. The Godot 3.6 compatibility decision (2026-10-06)
   deferred support; see `.llm/research/godot-targets.md`.
 - Treat WebRTC as optional peer-to-peer research, not the default client-server
   Signal Fish transport.

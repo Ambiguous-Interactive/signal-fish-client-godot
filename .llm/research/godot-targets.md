@@ -108,10 +108,10 @@ revisit trigger.
   `tool`, `yield`) were removed in Godot 4, and Godot 4 syntax fails to
   parse on Godot 3. One addon folder serves one engine generation.
 - Godot 3.6 remains in maintenance (3.6.3, Aug 2026); official Linux
-  ARM64 builds exist for both lines (3.x since 3.6.2), so platform
-  coverage is not a differentiator, and this probe ran on the arm64
-  build. GodotSteam 3.x is a separate branch with an API shape different
-  from the GodotSteam 4.x GDExtension the Steam bootstrap maps.
+  ARM64 builds exist for both engine lines, so platform coverage is not
+  a differentiator, and this probe ran on the arm64 build. GodotSteam
+  3.x is a separate branch with an API shape different from the
+  GodotSteam 4.x GDExtension the Steam bootstrap maps.
 
 ### Verdict
 
