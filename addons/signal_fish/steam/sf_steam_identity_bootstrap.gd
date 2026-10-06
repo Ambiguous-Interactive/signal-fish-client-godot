@@ -92,11 +92,6 @@ var steam: Object = null
 var role: Role = Role.PEER
 
 var _client: SignalFishClientScript = null
-# Distinguishes "never attached / detached" from "the attached client node
-# was freed": Godot reads a freed object held by a script-typed variable as
-# null, so the vanished-client case must be detected by the flag (mesh
-# parity, issue #86).
-var _attached := false
 var _coordinating := false
 var _local_id := ""
 var _host_id := ""
@@ -122,7 +117,6 @@ func attach(client: SignalFishClientScript) -> Error:
 	if _client != null:
 		return ERR_BUSY
 	_client = client
-	_attached = true
 	client.room_joined.connect(_on_client_room_joined)
 	client.room_left.connect(_on_client_room_left)
 	client.player_joined.connect(_on_client_player_joined)
@@ -135,7 +129,6 @@ func attach(client: SignalFishClientScript) -> Error:
 ## Stops consuming events and tears the coordination down.
 func detach() -> void:
 	if _client == null:
-		_attached = false
 		return
 	_client_is_live()
 	if _client == null:
@@ -147,7 +140,6 @@ func detach() -> void:
 	_client.authority_changed.disconnect(_on_client_authority_changed)
 	_client.disconnected.disconnect(_on_client_disconnected)
 	_client = null
-	_attached = false
 	stop()
 
 
@@ -196,11 +188,6 @@ func start() -> Error:
 ## Stops coordinating and closes every Steam session the bootstrap
 ## established. No further signals fire after this.
 func stop() -> void:
-	if steam != null and steam.has_signal("p2p_session_request"):
-		if steam.is_connected("p2p_session_request", _on_steam_session_request):
-			steam.disconnect("p2p_session_request", _on_steam_session_request)
-		if steam.is_connected("p2p_session_connect_fail", _on_steam_connect_fail):
-			steam.disconnect("p2p_session_connect_fail", _on_steam_connect_fail)
 	_close_tracked_sessions()
 	_reset_coordination()
 
@@ -212,8 +199,14 @@ func poll() -> void:
 	if not _coordinating:
 		return
 	_expire_pending_requests()
+	if not _coordinating:
+		return
 	_pump_handshake_channel()
+	if not _coordinating:
+		return
 	_check_dial_deadlines()
+	if not _coordinating:
+		return
 	_detect_session_drops()
 
 
@@ -255,7 +248,9 @@ func _on_session_live() -> void:
 		_publish(SFSteamIdentityScript.HOST_LANE_KEY)
 		return
 	_publish(SFSteamIdentityScript.PEER_LANE_KEY)
-	if host_id_timeout_sec > 0.0:
+	# The client re-emits room_joined on every RoomJoined baseline (issue
+	# 107); only the first one arms the host-id wait.
+	if host_id_timeout_sec > 0.0 and _host_id.is_empty():
 		_awaiting_host_id = true
 		_host_id_deadline_sec = _elapsed_sec + host_id_timeout_sec
 
@@ -354,6 +349,12 @@ func _consume_host_id(host_id: String) -> void:
 	if _host_id.is_empty():
 		_host_id = host_id
 		steam_host_id_received.emit(_host_id)
+		# A handler may have stopped the coordination inside the signal; the
+		# dial must not outlive it.
+		if not _coordinating:
+			return
+		_awaiting_host_id = false
+		_host_id_deadline_sec = 0.0
 		_dial_host()
 		return
 	if _host_id != host_id:
@@ -433,10 +434,16 @@ func _pump_handshake_channel() -> void:
 		var from: Variant = frame.get("remote_steam_id", frame.get("steam_id_remote", 0))
 		if role == Role.HOST:
 			continue
-		if _awaiting_ack and str(from) == _host_id:
+		if (
+			_awaiting_ack
+			and str(from) == _host_id
+			and frame["data"] == PackedByteArray([_ACK_BYTE])
+		):
 			_awaiting_ack = false
 			_host_connected = true
 			steam_host_connected.emit(_host_id)
+		if not _coordinating:
+			return
 
 
 func _check_dial_deadlines() -> void:
@@ -453,6 +460,10 @@ func _detect_session_drops() -> void:
 			continue
 		_connected_peers.erase(peer_id)
 		steam_peer_disconnected.emit(peer_id)
+		# A handler may have stopped the coordination inside the signal; the
+		# documented contract is that no signals follow stop().
+		if not _coordinating:
+			return
 	if _host_connected and not _session_is_active(_host_id.to_int()):
 		_host_connected = false
 		_fail_coordination("the host Steam session closed")
@@ -494,6 +505,13 @@ func _close_tracked_sessions() -> void:
 
 func _reset_coordination() -> void:
 	_coordinating = false
+	# Steam listeners stop with the coordination: a failed session must not
+	# keep answering requests, and the next start() reconnects them cleanly.
+	if steam != null and steam.has_signal("p2p_session_request"):
+		if steam.is_connected("p2p_session_request", _on_steam_session_request):
+			steam.disconnect("p2p_session_request", _on_steam_session_request)
+		if steam.is_connected("p2p_session_connect_fail", _on_steam_connect_fail):
+			steam.disconnect("p2p_session_connect_fail", _on_steam_connect_fail)
 	_awaiting_host_id = false
 	_awaiting_ack = false
 	_host_connected = false
@@ -507,10 +525,8 @@ func _reset_coordination() -> void:
 
 func _client_is_live() -> bool:
 	if _client == null:
-		_attached = false
 		return false
 	if not is_instance_valid(_client):
-		_attached = false
 		_client = null
 		return false
 	return true

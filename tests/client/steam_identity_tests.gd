@@ -57,6 +57,10 @@ func run_all() -> void:
 		_test_session_drop_detection,
 		_test_requests_while_not_hosting_refused,
 		_test_stop_closes_sessions,
+		_test_host_id_wait_closes_on_arrival,
+		_test_duplicate_room_baseline_does_not_rearm,
+		_test_stop_inside_signal_silences_followups,
+		_test_restart_after_failure_rewires,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -537,6 +541,106 @@ func _test_stop_closes_sessions() -> void:
 	_assert_equal([int(PEER_ID)], steam.closes, "stop closes fenced sessions")
 	_assert_equal(false, bootstrap.is_coordinating(), "stop ends coordination")
 	_assert_equal("", bootstrap.get_local_steam_id(), "state cleared")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+func _test_host_id_wait_closes_on_arrival() -> void:
+	# Regression: the armed host-id wait must close when the id arrives, or
+	# every default-config peer session dies at the deadline (adversarial
+	# review, session 170).
+	var steam := FakeSteam.new(PEER_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.PEER, PEER_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	bootstrap._process(1.0)
+	_advertise_host(client, PLAYER_A, HOST_ID)
+	steam.queue_packet(int(HOST_ID), PackedByteArray([0x41]))
+	bootstrap.poll()
+	_assert_equal([HOST_ID], _captured(bootstrap, "steam_host_connected"), "connected")
+	bootstrap._process(31.0)
+	_assert_equal([], _captured(bootstrap, "coordination_failed"), "no spurious failure")
+	_assert_equal(true, bootstrap.is_coordinating(), "session survives the deadline")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+func _test_duplicate_room_baseline_does_not_rearm() -> void:
+	# Regression: the client re-emits room_joined on every RoomJoined
+	# baseline (issue #107); a duplicate must not re-arm the host-id wait.
+	var steam := FakeSteam.new(PEER_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.PEER, PEER_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	_advertise_host(client, PLAYER_A, HOST_ID)
+	steam.queue_packet(int(HOST_ID), PackedByteArray([0x41]))
+	bootstrap.poll()
+	var transport: SFFakeTransportScript = client.transport
+	var baseline: Dictionary = _runner.call("_room_joined_data")
+	transport.inject_server_message({"type": "RoomJoined", "data": baseline})
+	client.poll()
+	bootstrap._process(31.0)
+	_assert_equal([], _captured(bootstrap, "coordination_failed"), "no re-armed wait")
+	_assert_equal(true, bootstrap.is_coordinating(), "session survives the baseline")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+func _test_stop_inside_signal_silences_followups() -> void:
+	# Regression: stop() inside a signal handler must silence the signals
+	# that would still fire in the same pump (adversarial review, session 170).
+	var steam := FakeSteam.new(HOST_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	_advertise_peer(client, PLAYER_B, PEER_ID)
+	_advertise_peer(client, PLAYER_B, OTHER_ID)
+	steam.request_session(int(PEER_ID))
+	steam.request_session(int(OTHER_ID))
+	bootstrap.steam_peer_disconnected.connect(func(_steam_id: String) -> void: bootstrap.stop())
+	steam.set_session_active(int(PEER_ID), false)
+	steam.set_session_active(int(OTHER_ID), false)
+	bootstrap.poll()
+	_assert_equal(1, _captured(bootstrap, "steam_peer_disconnected").size(), "one report")
+	_assert_equal(false, bootstrap.is_coordinating(), "the handler stopped it")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+func _test_restart_after_failure_rewires() -> void:
+	# After a failure the Steam listeners must be gone (a zombie listener
+	# would answer requests and the next start() would double-connect).
+	var steam := FakeSteam.new(HOST_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message({"type": "RoomLeft", "data": {}})
+	client.poll()
+	_assert_equal(1, _captured(bootstrap, "coordination_failed").size(), "failed")
+	steam.request_session(int(OTHER_ID))
+	_assert_equal([], steam.closes, "no zombie listener answers after failure")
+	bootstrap.accept_grace_sec = 0.0
+	_assert_equal(OK, bootstrap.start(), "restart")
+	_assert_equal(true, bootstrap.is_coordinating(), "coordinating again")
+	steam.request_session(int(OTHER_ID))
+	_assert_equal(1, steam.closes.size(), "listener rewired")
 	bootstrap.free()
 	client.free()
 	_done()
