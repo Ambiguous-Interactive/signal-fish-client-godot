@@ -64,7 +64,12 @@ true)`. Embedding was broken in 4.14/3.29 and fixed later; auto-init plus
 
 ## Open items
 
-- Live two-client validation with the Steam client running (no Steam seat in
-  CI; the dotnet adapter shipped under the same honest status).
+- Live two-client validation with the Steam client running - tracked as
+  #317 (real-extension seam groundwork), #318 (drill harness), #321
+  (dual-seat loopback), #322 (two-machine run + verdict; closes #315).
+  No Steam seat in CI; #319 explores one. The dotnet adapter shipped
+  under the same honest status.
+- Valve deprecated the classic P2P API (ISteamNetworking; still shipped
+  in Steamworks 1.65). Migration evaluation: #320.
 - GodotSteam version pin guidance for the demo project if a demo integration
   lands.

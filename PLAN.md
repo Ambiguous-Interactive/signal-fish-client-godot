@@ -23,8 +23,15 @@ and checks within about one hour. Session cadence:
 
 ### Post-v1 (P7, gated)
 
-- [ ] Steam P2P live two-client drill (#315) - needs two real Steam seats;
-      the drill checklist lives in the issue.
+Steam live-validation path (2026-10-06 feasibility research; the issues
+carry the full data-backed plan):
+
+- [ ] Real-extension seam groundwork: GDE present, Steam absent (#317).
+- [ ] Scripted live-drill harness: the #315 checklist, executable (#318).
+- [ ] Live drills: dual-seat loopback (#321), then two machines and the
+      recorded verdict closing #315 (#322).
+- [ ] Gated follow-ups: CI Steam seat exploration (#319); evaluation of
+      the post-deprecation P2P surface (#320).
 
 ## Definition of done (v1)
 
