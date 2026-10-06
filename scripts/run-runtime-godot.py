@@ -244,7 +244,9 @@ def fetch_pinned(url: str, checksum: str, target: Path) -> Path:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     print(f"steam-ext: downloading {url}")
-    partial = target.with_name(target.name + ".part")
+    # Pid-stamped: two lane invocations sharing a cache must not interleave
+    # writes into one temp file.
+    partial = target.with_name(f"{target.name}.{os.getpid()}.part")
     with (
         urllib.request.urlopen(url, timeout=60) as response,  # noqa: S310 - pinned constant
         partial.open("wb") as sink,
@@ -259,8 +261,9 @@ def fetch_pinned(url: str, checksum: str, target: Path) -> Path:
 
 def unzip(archive: Path, target: Path) -> None:
     # Extract beside the target and swap, so an interrupted run can never
-    # leave a half-extracted dir that a later run would reuse.
-    staging = target.with_name(target.name + ".partial")
+    # leave a half-extracted dir that a later run would reuse. Pid-stamped
+    # for the same reason as the download temp file.
+    staging = target.with_name(f"{target.name}.{os.getpid()}.partial")
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True)
     with zipfile.ZipFile(archive) as bundle:
