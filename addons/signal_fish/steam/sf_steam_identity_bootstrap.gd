@@ -12,13 +12,14 @@ extends Node
 ## game-data lane (see [SFSteamIdentity]).
 ##
 ## The flow, end to end: the host joins the room, takes the authority, and
-## publishes its id ([signal room_joined], re-published on every later join,
-## so late joiners never depend on timing). A peer joins, publishes its own
-## id, consumes the host id, and dials it. The fence: Steam's rendezvous
-## authenticates the connecting identity (the claim is Steam's, not the
-## peer's), so the host only checks that the connecting id was advertised on
-## the room's lane - an unknown requester waits [member accept_grace_sec] for
-## its advertisement and is refused if it never comes.
+## publishes its id ([signal room_joined], re-published on every later join
+## and on every peer advertisement, so late joiners never depend on timing).
+## A peer joins, publishes its own id, consumes the host id, and dials it.
+## The fence: Steam's rendezvous authenticates the connecting identity (the
+## claim is Steam's, not the peer's), so the host only checks that the
+## connecting id was advertised on the room's lane - an unknown requester
+## waits [member accept_grace_sec] for its advertisement and is refused if it
+## never comes.
 ##
 ## The Steam side rides GodotSteam's classic P2P API, resolved at
 ## [method start] through the [code]Steam[/code] Engine singleton (or the
@@ -31,7 +32,9 @@ extends Node
 ## callbacks (GodotSteam's [code]run_callbacks()[/code] or embedded mode)
 ## before [method start]; this node never touches them. Steamworks has no
 ## session-closed callback on this API, so disconnects are best-effort:
-## [method poll] watches [code]getP2PSessionState[/code] for tracked peers.
+## [method poll] watches [code]getP2PSessionState[/code], and a session only
+## reports a drop after it was seen active (setup reports
+## [code]connecting[/code]).
 ##
 ## Live-session failures surface as [signal coordination_failed] and stop the
 ## coordination (the signals stop with it). Membership enforcement beyond the
@@ -108,6 +111,11 @@ var _ack_deadline_sec := 0.0
 var _advertised_peers: Dictionary = {}
 var _pending_requests: Dictionary = {}
 var _connected_peers: Dictionary = {}
+# Sessions report connecting/inactive while Steam sets the channel up, so a
+# drop is only reported for a session that was seen active (or that Steam
+# failed through p2p_session_connect_fail).
+var _ever_active_peers: Dictionary = {}
+var _host_ever_active := false
 
 
 ## Starts consuming a client's session events. Attach before [method start].
@@ -129,17 +137,13 @@ func attach(client: SignalFishClientScript) -> Error:
 
 ## Stops consuming events and tears the coordination down.
 func detach() -> void:
-	if _client == null:
-		return
-	_client_is_live()
-	if _client == null:
-		return
-	_client.room_joined.disconnect(_on_client_room_joined)
-	_client.room_left.disconnect(_on_client_room_left)
-	_client.player_joined.disconnect(_on_client_player_joined)
-	_client.game_data_received.disconnect(_on_client_game_data)
-	_client.authority_changed.disconnect(_on_client_authority_changed)
-	_client.disconnected.disconnect(_on_client_disconnected)
+	if _client != null and is_instance_valid(_client):
+		_client.room_joined.disconnect(_on_client_room_joined)
+		_client.room_left.disconnect(_on_client_room_left)
+		_client.player_joined.disconnect(_on_client_player_joined)
+		_client.game_data_received.disconnect(_on_client_game_data)
+		_client.authority_changed.disconnect(_on_client_authority_changed)
+		_client.disconnected.disconnect(_on_client_disconnected)
 	_client = null
 	stop()
 
@@ -198,6 +202,9 @@ func stop() -> void:
 ## coordinating; call manually when driving without the tree.
 func poll() -> void:
 	if not _coordinating:
+		return
+	if not _client_is_live():
+		_fail_coordination("the attached client vanished")
 		return
 	_expire_pending_requests()
 	if not _coordinating:
@@ -337,7 +344,12 @@ func _on_steam_session_request(remote_steam_id: int) -> void:
 
 
 func _on_steam_connect_fail(remote_steam_id: int, session_error: int) -> void:
-	if not _coordinating or role != Role.PEER:
+	if not _coordinating:
+		return
+	if role == Role.HOST:
+		var peer_id := str(remote_steam_id)
+		if _connected_peers.has(peer_id):
+			_drop_peer(peer_id, "the Steam session failed (session error %d)" % session_error)
 		return
 	if str(remote_steam_id) != _host_id:
 		return
@@ -381,9 +393,14 @@ func _advertise_peer(peer_id: String, from_player: String) -> void:
 	if role != Role.HOST:
 		return
 	SFLogScript.debug("steam bootstrap: lane advertised %s from %s" % [peer_id, from_player])
+	var first_advertisement := not _advertised_peers.has(peer_id)
 	_advertised_peers[peer_id] = true
 	if _pending_requests.has(peer_id):
 		_accept_peer(peer_id)
+	# The advertisement proves a peer is coordinating without a fresh join
+	# event (a late start()); re-publish so its host-id wait can finish.
+	if first_advertisement:
+		_publish(SFSteamIdentityScript.HOST_LANE_KEY)
 
 
 func _accept_peer(peer_id: String) -> void:
@@ -457,28 +474,54 @@ func _check_dial_deadlines() -> void:
 
 func _detect_session_drops() -> void:
 	for peer_id: String in _connected_peers.keys():
-		if _session_is_active(peer_id.to_int()):
+		var state: Dictionary = _session_state(peer_id.to_int())
+		if not state.is_empty() and _is_active(state):
+			_ever_active_peers[peer_id] = true
 			continue
-		_connected_peers.erase(peer_id)
-		steam_peer_disconnected.emit(peer_id)
-		# A handler may have stopped the coordination inside the signal; the
-		# documented contract is that no signals follow stop().
+		# Steam reports a just-accepted session as connecting/inactive while
+		# it sets the channel up, and never-active sessions fail through
+		# p2p_session_connect_fail. Only a session seen active can drop.
+		if _ever_active_peers.has(peer_id):
+			_drop_peer(peer_id, "the peer Steam session closed")
 		if not _coordinating:
 			return
-	if _host_connected and not _session_is_active(_host_id.to_int()):
+	if _host_connected and not _host_session_alive():
 		_host_connected = false
 		_fail_coordination("the host Steam session closed")
 
 
-func _session_is_active(remote_steam_id: int) -> bool:
+func _session_state(remote_steam_id: int) -> Dictionary:
 	var state: Variant = steam.call("getP2PSessionState", remote_steam_id)
 	if typeof(state) != TYPE_DICTIONARY:
-		return false
-	var session_state: Dictionary = state
-	if session_state.is_empty():
-		return false
-	var active: bool = session_state.get("connection_active", true)
+		return {}
+	return state
+
+
+func _is_active(state: Dictionary) -> bool:
+	var active: bool = state.get("connection_active", false)
 	return active
+
+
+func _is_connecting(state: Dictionary) -> bool:
+	var connecting: bool = state.get("connecting", false)
+	return connecting
+
+
+func _host_session_alive() -> bool:
+	var state: Dictionary = _session_state(_host_id.to_int())
+	if not state.is_empty() and _is_active(state):
+		_host_ever_active = true
+		return true
+	if _is_connecting(state):
+		return true
+	return not _host_ever_active
+
+
+func _drop_peer(peer_id: String, why: String) -> void:
+	_connected_peers.erase(peer_id)
+	_ever_active_peers.erase(peer_id)
+	SFLogScript.info("steam bootstrap: %s dropped (%s)" % [peer_id, why])
+	steam_peer_disconnected.emit(peer_id)
 
 
 func _fail_coordination(reason: String) -> void:
@@ -516,12 +559,14 @@ func _reset_coordination() -> void:
 	_awaiting_host_id = false
 	_awaiting_ack = false
 	_host_connected = false
+	_host_ever_active = false
 	_host_id = ""
 	_local_id = ""
 	_elapsed_sec = 0.0
 	_advertised_peers = {}
 	_pending_requests = {}
 	_connected_peers = {}
+	_ever_active_peers = {}
 
 
 func _client_is_live() -> bool:

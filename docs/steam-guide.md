@@ -39,9 +39,10 @@ bootstrap.start()
 ```
 
 The host publishes its SteamId64 when the room session goes live and
-re-publishes on every later join, so late joiners never depend on timing. It
-also requests the authority: the fence needs a stable holder, and authority
-leaving the host fails the coordination.
+re-publishes on every later join and whenever a peer's advertisement arrives
+(a peer can start coordinating after the host's publish), so late joiners
+never depend on timing. It also requests the authority: the fence needs a
+stable holder, and authority leaving the host fails the coordination.
 
 Peer:
 
@@ -112,7 +113,10 @@ game's job.
 
 Because the classic P2P API has no session-closed callback, disconnects are
 detected by watching `getP2PSessionState` during `poll()` - best effort, and
-worth a fallback in the game's own protocol.
+worth a fallback in the game's own protocol. A session only reports a drop
+after it was seen active: Steam reports connection setup as `connecting`, so
+setup never reads as a drop, and a session that never came up fails through
+`p2p_session_connect_fail` instead.
 
 ## Validation status
 

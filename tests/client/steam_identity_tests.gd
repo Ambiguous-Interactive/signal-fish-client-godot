@@ -61,6 +61,9 @@ func run_all() -> void:
 		_test_duplicate_room_baseline_does_not_rearm,
 		_test_stop_inside_signal_silences_followups,
 		_test_restart_after_failure_rewires,
+		_test_connecting_session_never_drops,
+		_test_host_republishes_on_peer_advertisement,
+		_test_freed_client_tears_down,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -473,6 +476,7 @@ func _test_session_drop_detection() -> void:
 	_advertise_peer(client, PLAYER_B, PEER_ID)
 	steam.request_session(int(PEER_ID))
 	_assert_equal([int(PEER_ID)], steam.accepts, "fenced")
+	bootstrap.poll()
 	steam.set_session_active(int(PEER_ID), false)
 	bootstrap.poll()
 	_assert_equal([PEER_ID], _captured(bootstrap, "steam_peer_disconnected"), "drop reported")
@@ -634,6 +638,7 @@ func _test_stop_inside_signal_silences_followups() -> void:
 	steam.request_session(int(PEER_ID))
 	steam.request_session(int(OTHER_ID))
 	bootstrap.steam_peer_disconnected.connect(func(_steam_id: String) -> void: bootstrap.stop())
+	bootstrap.poll()
 	steam.set_session_active(int(PEER_ID), false)
 	steam.set_session_active(int(OTHER_ID), false)
 	bootstrap.poll()
@@ -667,6 +672,103 @@ func _test_restart_after_failure_rewires() -> void:
 	_assert_equal(1, steam.closes.size(), "listener rewired")
 	bootstrap.free()
 	client.free()
+	_done()
+
+
+func _test_connecting_session_never_drops() -> void:
+	# Bugbot: Steam reports a just-accepted session as connecting/inactive
+	# while it sets the channel up; that setup must never read as a drop,
+	# and only a session seen active (or failed by Steam) can drop.
+	var steam := FakeSteam.new(HOST_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	_advertise_peer(client, PLAYER_B, PEER_ID)
+	steam.request_session(int(PEER_ID))
+	_assert_equal([PEER_ID], _captured(bootstrap, "steam_peer_connected"), "fenced")
+	steam.set_session(int(PEER_ID), false, true)
+	bootstrap.poll()
+	_assert_equal([], _captured(bootstrap, "steam_peer_disconnected"), "setup is not a drop")
+	steam.set_session(int(PEER_ID), true, false)
+	bootstrap.poll()
+	steam.set_session(int(PEER_ID), false, false)
+	bootstrap.poll()
+	_assert_equal([PEER_ID], _captured(bootstrap, "steam_peer_disconnected"), "seen-active drop")
+	bootstrap.free()
+	client.free()
+
+	steam = FakeSteam.new(HOST_ID)
+	bootstrap = _make_bootstrap(SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam)
+	client = _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach 2")
+	_assert_equal(OK, bootstrap.start(), "start 2")
+	_advertise_peer(client, PLAYER_B, PEER_ID)
+	steam.request_session(int(PEER_ID))
+	steam.set_session(int(PEER_ID), false, false)
+	bootstrap.poll()
+	_assert_equal(
+		[],
+		_captured(bootstrap, "steam_peer_disconnected"),
+		"never-active waits for Steam's verdict"
+	)
+	steam.fail_session(int(PEER_ID), 4)
+	_assert_equal(
+		[PEER_ID],
+		_captured(bootstrap, "steam_peer_disconnected"),
+		"Steam's connect fail drops the peer"
+	)
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+func _test_host_republishes_on_peer_advertisement() -> void:
+	# Bugbot: a peer that starts coordinating after the host's publish never
+	# sees a join-triggered re-publish; the advertisement must close that gap.
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	_assert_equal(1, _game_data_send_count(client), "one publish so far")
+	_advertise_peer(client, PLAYER_B, PEER_ID)
+	_assert_equal(2, _game_data_send_count(client), "advertisement re-publishes")
+	_assert_equal(
+		SFSteamIdentityScript.host_envelope(HOST_ID),
+		_last_game_data_payload(client),
+		"the re-publish carries the host id"
+	)
+	_advertise_peer(client, PLAYER_B, PEER_ID)
+	_assert_equal(2, _game_data_send_count(client), "repeat advertisement is silent")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+func _test_freed_client_tears_down() -> void:
+	# Bugbot: a freed client must not leave Steam listeners armed; the
+	# coordination fails loudly and detach() still stops the bootstrap.
+	var steam := FakeSteam.new(HOST_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	client.free()
+	bootstrap.poll()
+	_assert_equal(
+		["the attached client vanished"],
+		_captured(bootstrap, "coordination_failed"),
+		"vanished client fails the coordination"
+	)
+	steam.request_session(int(OTHER_ID))
+	_assert_equal([], steam.closes, "no listener answers after the client vanished")
+	bootstrap.free()
 	_done()
 
 
@@ -827,10 +929,14 @@ class FakeSteam:
 	func getP2PSessionState(remote_steam_id: int) -> Dictionary:
 		if not session_states.has(remote_steam_id):
 			return {}
-		return {"connection_active": session_states[remote_steam_id]}
+		var entry: Dictionary = session_states[remote_steam_id]
+		return {"connection_active": entry["active"], "connecting": entry["connecting"]}
+
+	func set_session(remote_steam_id: int, active: bool, connecting: bool) -> void:
+		session_states[remote_steam_id] = {"active": active, "connecting": connecting}
 
 	func set_session_active(remote_steam_id: int, active: bool) -> void:
-		session_states[remote_steam_id] = active
+		set_session(remote_steam_id, active, false)
 
 	func request_session(remote_steam_id: int) -> void:
 		set_session_active(remote_steam_id, true)
