@@ -3,14 +3,15 @@ extends RefCounted
 ## Issues #149/#151: wire identifiers are upstream `uuid::Uuid` values
 ## (`PlayerId`, `RoomId`, `SessionGeneration`). On the text path a present
 ## identifier must be canonical lowercase hyphenated UUID text: the empty
-## string collided with the retired negotiated-rkyv "" sender-unknowable
-## sentinel (issue #149), and no other serde spelling (simple, braced, urn,
-## uppercase) is wire-reachable (issue #151) - upstream serializes `Uuid` in
-## exactly that one form, and its own text-path precedent
-## (`canonical_room_operation_id`) refuses everything else. The binary path
-## already enforces the 16-byte UUID and formats it to the same string.
-## Wire-null/absent optionals keep their "" sentinels; free-text fields stay
-## pass-through.
+## string collided with the "" sender-unknowable sentinel of the
+## envelope-less pre-#627 negotiated-rkyv path (rkyv returned v3-only with
+## a real UUID sender, server issue #627; collision, issue #149), and no
+## other serde spelling (simple, braced, urn, uppercase) is wire-reachable
+## (issue #151): upstream serializes `Uuid` in exactly that one form, and
+## its own text-path precedent (`canonical_room_operation_id`) refuses
+## everything else. The binary path already enforces the 16-byte UUID and
+## formats it to the same string. Wire-null/absent optionals keep their ""
+## sentinels; free-text fields stay pass-through.
 
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
@@ -44,9 +45,11 @@ func run_all() -> void:
 func _test_uuid_text_shape() -> void:
 	# Issues #149/#151: identifier fields are upstream UUIDs (`PlayerId`,
 	# `RoomId`, `SessionGeneration`), so a present id must be canonical
-	# lowercase hyphenated UUID text: empty collided with the retired
-	# negotiated-rkyv "" sender-unknowable sentinel, and no other serde
-	# spelling is wire-reachable. Free-text fields stay pass-through.
+	# lowercase hyphenated UUID text: empty collided with the ""
+	# sender-unknowable sentinel of the envelope-less pre-#627
+	# negotiated-rkyv path (rkyv's v3 return carries a real UUID sender,
+	# server issue #627), and no other serde spelling is wire-reachable.
+	# Free-text fields stay pass-through.
 	# Cases: [label, envelope type, data].
 	var empty_id_cases := [
 		["game data empty from_player", "GameData", {"from_player": "", "data": {}}],
