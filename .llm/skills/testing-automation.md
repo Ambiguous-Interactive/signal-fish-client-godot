@@ -148,10 +148,10 @@ checks. The shell launcher remains for existing callers. The dispatcher exposes
 without drifting from local reproduction commands. `all` runs the static
 checks, the Prettier and markdownlint checks, and the godot suites
 concurrently - the gate wall is the slower half, not the sum.
-The dispatcher also exposes the opt-in `steam-ext` lane (issue #317): pinned
-Godot 4.4.1 + GodotSteam 4.21 GDExtension in fresh copies (4.4+ only; no 4.3
-build ships linux arm64), running `run_steam_groundwork.gd` and every suite
-with the extension present. Never part of `all`.
+Opt-in Steam lanes, never part of `all`: `steam-ext` (issue #317) pins
+Godot 4.4.1 + GodotSteam 4.21 GDExtension in fresh copies and runs the
+groundwork plus every suite with it; `steam-drill` (issue #318) runs the
+live-drill checklist loopback (#315), pending live without a Steam seat.
 The `godot` subcommand accepts suite names (`protocol transport
 client binary reconnect demo_boot p2p_boot`); one explicit suite runs warm
 in-tree against the live `.godot` cache for fast local iteration, while
