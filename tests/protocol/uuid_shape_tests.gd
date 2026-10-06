@@ -5,13 +5,13 @@ extends RefCounted
 ## identifier must be canonical lowercase hyphenated UUID text: the empty
 ## string collided with the "" sender-unknowable sentinel of the
 ## envelope-less pre-#627 negotiated-rkyv path (rkyv returned v3-only with
-## a real UUID sender, server issue #627; issue #149), and no other serde
-## spelling (simple, braced, urn, uppercase) is wire-reachable (issue #151):
-## upstream serializes `Uuid` in exactly that one form, and its own
-## text-path precedent (`canonical_room_operation_id`) refuses everything
-## else. The binary path already enforces the 16-byte UUID and formats it
-## to the same string. Wire-null/absent optionals keep their "" sentinels;
-## free-text fields stay pass-through.
+## a real UUID sender, server issue #627; collision, issue #149), and no
+## other serde spelling (simple, braced, urn, uppercase) is wire-reachable
+## (issue #151): upstream serializes `Uuid` in exactly that one form, and
+## its own text-path precedent (`canonical_room_operation_id`) refuses
+## everything else. The binary path already enforces the 16-byte UUID and
+## formats it to the same string. Wire-null/absent optionals keep their ""
+## sentinels; free-text fields stay pass-through.
 
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
