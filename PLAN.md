@@ -28,8 +28,7 @@ carry the full data-backed plan):
 
 - [ ] Live drills: dual-seat loopback (#321), then two machines and the
       recorded verdict closing #315 (#322), driven by the #318 harness.
-- [ ] Gated follow-ups: CI Steam seat exploration (#319); evaluation of
-      the post-deprecation P2P surface (#320).
+- [ ] Gated follow-up: CI Steam seat exploration (#319).
 
 ## Definition of done (v1)
 

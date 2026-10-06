@@ -78,6 +78,8 @@ true)`. Embedding was broken in 4.14/3.29 and fixed later; auto-init plus
   #319 explores one. The dotnet adapter shipped under the same honest
   status.
 - Valve deprecated the classic P2P API (ISteamNetworking; still shipped
-  in Steamworks 1.65). Migration evaluation: #320.
+  in Steamworks 1.65). Migration verdict: Networking Messages
+  (ISteamNetworkingMessages) is the port target; facts and deltas in
+  `steam-p2p-surface.md` (#320, 2026-10-06).
 - GodotSteam version pin guidance for the demo project if a demo integration
   lands.

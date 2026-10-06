@@ -35,8 +35,7 @@ point here unless a tool requires a tiny wrapper format.
   checks, progress log, and main sync, then end the session. Put remaining
   work in `PLAN.md` for a later session.
 - Keep `.llm` Markdown files and known pointer files at or below 300 lines.
-- Add `description`, `triggers`, and `category` frontmatter to every `.llm`
-  Markdown file except generated `.llm/index.md`.
+- Add `description`, `triggers`, and `category` frontmatter to every `.llm` Markdown file except generated `.llm/index.md`.
 - Update generated indexes after adding, removing, or renaming `.llm`
   Markdown files.
 - Prefer Godot-native APIs and GDScript examples over C# assumptions.
@@ -297,4 +296,5 @@ Do not edit the section below manually. Regenerate it with
 - [Signal Fish Protocol Fixtures](research/protocol-fixtures.md) - Pinned upstream sources used to build Signal Fish v2 protocol fixtures for the Godot client.
 - [Signal Fish Upstream References](research/protocol-links.md) - Curated upstream references for Signal Fish protocol and client compatibility work.
 - [Steam Identity Bootstrap Notes (issue #312)](research/steam-identity.md) - GodotSteam P2P facts behind the SFSteamIdentityBootstrap design (versions, singleton access, callback pumping, wire keys).
+- [Steam Post-Deprecation P2P Surface Notes (issue #320)](research/steam-p2p-surface.md) - Verdict and source-anchored facts for moving off the deprecated classic Steam P2P API to Networking Messages (issue #320).
 <!-- LLM-INDEX:END -->
