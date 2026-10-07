@@ -19,6 +19,11 @@ const CLIENT_SAMPLES := "res://tests/fixtures/upstream/v2_client_messages.jsonl"
 const SERVER_SAMPLES_V3 := "res://tests/fixtures/upstream/v3_server_messages.jsonl"
 const CLIENT_SAMPLES_V3 := "res://tests/fixtures/upstream/v3_client_messages.jsonl"
 
+## Probe-count floor for the future-field sweep, so a corpus refresh that
+## dodges every injection site cannot pass the sweep having probed nothing.
+## Raise it with the corpus.
+const FUTURE_FIELD_PROBE_COUNT := 62
+
 ## All `ClientMessage` wire names upstream accepts for the v2 route.
 const CLIENT_MESSAGE_TYPES: Array[String] = [
 	"Authenticate",
@@ -110,6 +115,7 @@ func run_all() -> void:
 		v3_server_events, EXPECTED_V3_SERVER_SIGNALS, 17, SERVER_SAMPLES_V3
 	)
 	_check_v3_published_shape_pins(v3_server_events)
+	_check_server_samples_tolerate_future_fields()
 	var cases: Array[Callable] = [
 		_test_all_client_samples_are_client_messages,
 		_test_all_v3_client_samples_are_client_messages,
@@ -282,6 +288,95 @@ func _check_v3_published_shape_pins(server_events: Array[SFTypesScript.DecodedEv
 		for expected_type: String in ["RoomLeft", "PlayerKicked", "RoomCodeRegenerated"]:
 			if not result_types.has(expected_type):
 				_failures.append("no room operation result sample decodes to %s" % expected_type)
+
+
+## Upstream grows the server surface between releases by adding optional
+## payload fields (the v0.9.1...v0.10.0 diff added three; two land on
+## server payloads), while the rust binding pin defers their typed surface
+## here. Tolerance contract: every server sample keeps decoding with a
+## synthetic future field on the payload, one level nested, and inside a
+## nested list entry; a map of objects grows by adding a key with a
+## well-formed entry, so the probe mirrors the container's shape. An
+## additive upstream release must never strand a pinned client with a
+## protocol error.
+func _check_server_samples_tolerate_future_fields() -> void:
+	var probes := 0
+	for path: String in [SERVER_SAMPLES, SERVER_SAMPLES_V3]:
+		for line: String in _read_sample_lines(path):
+			probes += _check_future_field_tolerance(path, line)
+	_assert_equal(FUTURE_FIELD_PROBE_COUNT, probes, "future-field probe count")
+
+
+func _check_future_field_tolerance(path: String, line: String) -> int:
+	var parsed: Variant = JSON.parse_string(line)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		_failures.append("%s: sample line is not a JSON object: %s" % [path, _line_summary(line)])
+		return 0
+	var message: Dictionary = parsed
+	if not message.has("data") or typeof(message["data"]) != TYPE_DICTIONARY:
+		# Unit variants (Pong, RoomLeft) take no payload upstream, so they
+		# cannot gain a field.
+		return 0
+	var data: Dictionary = message["data"]
+	var type_name: String = message.get("type", "")
+	var probes := 1
+	_check_tolerates_future_field(path, type_name, data, "")
+	for key: String in data:
+		var value: Variant = data[key]
+		if typeof(value) == TYPE_DICTIONARY:
+			_check_tolerates_future_field(path, type_name, data, key)
+			probes += 1
+		elif typeof(value) == TYPE_ARRAY:
+			var entries: Array = value
+			if not entries.is_empty() and typeof(entries[0]) == TYPE_DICTIONARY:
+				_check_tolerates_future_field_in_list(path, type_name, data, key)
+				probes += 1
+	return probes
+
+
+func _check_tolerates_future_field(
+	path: String, type_name: String, data: Dictionary, nested_key: String
+) -> void:
+	var probe: Dictionary = data.duplicate(true)
+	var site := "data"
+	if nested_key.is_empty():
+		probe["sf_future_field"] = true
+	else:
+		var nested: Dictionary = probe[nested_key]
+		nested["sf_future_field"] = _future_field_value(nested)
+		site = "data.%s" % nested_key
+	_decode_must_tolerate(path, type_name, probe, site)
+
+
+func _future_field_value(member: Dictionary) -> Variant:
+	for value: Variant in member.values():
+		if typeof(value) == TYPE_DICTIONARY:
+			var entry: Dictionary = value
+			return entry.duplicate(true)
+	return true
+
+
+func _check_tolerates_future_field_in_list(
+	path: String, type_name: String, data: Dictionary, list_key: String
+) -> void:
+	var probe: Dictionary = data.duplicate(true)
+	var entries: Array = probe[list_key]
+	var entry: Dictionary = entries[0]
+	entry["sf_future_field"] = true
+	_decode_must_tolerate(path, type_name, probe, "data.%s[0]" % list_key)
+
+
+func _decode_must_tolerate(path: String, type_name: String, data: Dictionary, site: String) -> void:
+	var decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(
+		JSON.stringify({"type": type_name, "data": data})
+	)
+	if decoded == null or decoded.signal_name == &"protocol_error":
+		var detail := "null decode"
+		if decoded != null and not decoded.args.is_empty():
+			detail = str(decoded.args[0])
+		_failures.append(
+			"%s: %s refused a future field at %s: %s" % [path, type_name, site, detail]
+		)
 
 
 func _test_all_client_samples_are_client_messages() -> void:

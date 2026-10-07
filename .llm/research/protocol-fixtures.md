@@ -48,8 +48,17 @@ the upstream surface diff at re-pin time:
   `874a8d448db9c212e70d60e80af0a0070c36b5c45b99ba6b88542877a8c13c0e`;
   `v3-server-messages.jsonl`
   `efa7c41c7649ef5bf0967edd4248fd8197a1e3c75d6de749385ef11b63105cd4`.
-  The rust SDK's `[wire_samples]` digests still pin the v0.9.2 bytes
-  until it re-syncs.
+  Tarball diff v0.9.1...v0.10.0 (2026-10-07; the GitHub compare view
+  undercounts): additive only. Sole wire-visible changes are the three
+  fields above, the `protobuf` token (the only v3 binary-envelope decode
+  change), and nothing else in `error_codes.rs`, `room_state.rs`,
+  `delivery.rs`; both `join_only` occurrences are client->server.
+  `src/websocket/` keeps its close-code table and error mapping but
+  gained relay plumbing and a MessagePack depth gate: 128 container
+  levels as a wire contract (`protocol/binary.rs` `msgpack_depth_within`,
+  enforced before decode on the game-data path and the token-bound
+  envelope). The Godot codec caps encode and decode at depth 16,
+  stricter in both directions, so nothing it sends or accepts trips it.
 
 - v2 wire bytes are frozen upstream: no legacy message variant, error code,
   or field was renamed or removed; all new surface is additive. `StartGame`
@@ -76,24 +85,14 @@ the upstream surface diff at re-pin time:
   `reconnection_token`, rotated on every join and every successful
   reconnect; the fixtures now model both (rotation pinned by the fixture
   decode test).
-- The Rust SDK also vendors the samples with sha256 digests in
-  `tests/compatibility.toml` (`[wire_samples]`; verified live 2026-09-20):
-  - `v2-client-messages.jsonl`
-    `929f25d702d3e21f2cca640cd14f9ce044945a6ef9c2c258de56f3f112164227`
-  - `v2-server-messages.jsonl`
-    `b5aee60d2cbd410c1088da1bbd1142d88d89600bc600f00b2d1849586f1654cd`
-  - `v3-client-messages.jsonl`
-    `5f6e92f550e7bb0b2ea4be02dea30f5b09677ecf4e01b5451d41d824f405b4cb`
-  - `v3-server-messages.jsonl`
-    `a175151b8b4dffa95818b11d41651551d499f9388e00309c95e0ba12159bbfce`
-    The v0.9.1-era elided-`"..."`-samples note is obsolete: since server
-    v0.9.2 they are concrete frames (see the spec-refresh bullet above).
-    The Godot fixtures remain
-    hand-built supersets (all 24 server variants, full-field shapes,
-    fake-placeholder tokens, byte-pinned to the Godot builders); the
-    concrete upstream samples are additionally vendored and decoded
-    end-to-end by `tests/protocol/upstream_samples_tests.gd`, so both the
-    hand-built corpus and the published spec bytes guard the codec.
+- The Rust SDK also vendors the sample corpora with sha256 digests in
+  `tests/compatibility.toml` (`[wire_samples]`; they still pin the v0.9.2
+  bytes). The Godot fixtures remain
+  hand-built supersets (all 24 server variants, full-field shapes,
+  fake-placeholder tokens, byte-pinned to the Godot builders); the
+  concrete upstream samples are additionally vendored and decoded
+  end-to-end by `tests/protocol/upstream_samples_tests.gd`, so both the
+  hand-built corpus and the published spec bytes guard the codec.
 
 ## Source Paths
 
