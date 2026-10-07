@@ -522,8 +522,10 @@ func send_game_data_binary(bytes: PackedByteArray) -> Error:
 		return ERR_BUSY
 	if bytes.size() > _config.max_outbound_frame_bytes:
 		_emit_protocol_error(
-			"send_game_data_binary: %d bytes exceeds outbound cap %d"
-			% [bytes.size(), _config.max_outbound_frame_bytes]
+			(
+				"send_game_data_binary: %d bytes exceeds outbound cap %d"
+				% [bytes.size(), _config.max_outbound_frame_bytes]
+			)
 		)
 		return ERR_INVALID_DATA
 	var error: Error = transport.send_binary(bytes)
@@ -1252,8 +1254,10 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 	var frame_bytes := wire.to_utf8_buffer().size()
 	if frame_bytes > _config.max_outbound_frame_bytes:
 		_emit_protocol_error(
-			"%s: frame %d bytes exceeds outbound cap %d"
-			% [action, frame_bytes, _config.max_outbound_frame_bytes]
+			(
+				"%s: frame %d bytes exceeds outbound cap %d"
+				% [action, frame_bytes, _config.max_outbound_frame_bytes]
+			)
 		)
 		return ERR_INVALID_DATA
 	var error: Error = transport.send_text(wire)
