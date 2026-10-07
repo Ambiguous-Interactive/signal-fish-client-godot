@@ -107,6 +107,14 @@ Room commands require an authenticated session. Sending one before
 authentication emits `protocol_error`, returns `ERR_UNAUTHORIZED`, and
 sends nothing.
 
+`send_signal` and `send_transport_status` also require a negotiated v3
+connection. `send_signal` further requires the latest `session_plan`:
+the generation must equal the current plan's. No signal can be sent
+before a plan arrives, after the room or dial ends, or after a fresh
+baseline until the next plan. Each refusal emits `protocol_error`,
+returns an `Error`, and sends nothing - a dropped frame would only
+surface as a generic server error while the peer waits.
+
 ## State machines
 
 ```gdscript
