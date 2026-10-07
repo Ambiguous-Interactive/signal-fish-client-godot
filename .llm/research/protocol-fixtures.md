@@ -18,11 +18,9 @@ codec or fixture files.
   upstream `tests/compatibility.toml`)
 - `signal-fish-cloud`: `ffdd5105d9e844aefd54ec4a3cd832231dd428cd`
 
-Re-pinned 2026-09-20 (issue #12). Prior pins (read 2026-05-29): server
-`4f766b7856bead1e1cc07d4e7a1057831a045749`, client-rust
-`da4c0bdf0657370ec340321363f3b5850e06b0b0`. Drift against the upstream
-binding is checked by `scripts/check-protocol-sync.py` (weekly scheduled
-workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
+Re-pinned 2026-09-20 (issue #12). Drift against the upstream binding is
+checked by `scripts/check-protocol-sync.py` (weekly `protocol-sync.yml`);
+the upstream surface diff at re-pin time:
 
 - v0.9.2 spec refresh (2026-09-21, issue #55): server tag `v0.9.2` is
   `6b76d665f32f2af4acc64dee8a5239f93bd5b784`. It changed no protocol
@@ -78,9 +76,8 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
   `reconnection_token`, rotated on every join and every successful
   reconnect; the fixtures now model both (rotation pinned by the fixture
   decode test).
-- The Rust SDK also vendors upstream wire samples with sha256 digests in
-  `tests/compatibility.toml` (`[wire_samples]`); all four verified live
-  2026-09-20 (this file is our provenance record for the digests):
+- The Rust SDK also vendors the samples with sha256 digests in
+  `tests/compatibility.toml` (`[wire_samples]`; verified live 2026-09-20):
   - `v2-client-messages.jsonl`
     `929f25d702d3e21f2cca640cd14f9ce044945a6ef9c2c258de56f3f112164227`
   - `v2-server-messages.jsonl`
@@ -89,9 +86,9 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
     `5f6e92f550e7bb0b2ea4be02dea30f5b09677ecf4e01b5451d41d824f405b4cb`
   - `v3-server-messages.jsonl`
     `a175151b8b4dffa95818b11d41651551d499f9388e00309c95e0ba12159bbfce`
-    The v0.9.1-era note that the upstream v2 samples were elided
-    `"..."` shapes is obsolete: since server v0.9.2 they are concrete
-    frames (see the spec-refresh bullet above). The Godot fixtures remain
+    The v0.9.1-era elided-`"..."`-samples note is obsolete: since server
+    v0.9.2 they are concrete frames (see the spec-refresh bullet above).
+    The Godot fixtures remain
     hand-built supersets (all 24 server variants, full-field shapes,
     fake-placeholder tokens, byte-pinned to the Godot builders); the
     concrete upstream samples are additionally vendored and decoded
@@ -117,7 +114,7 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
 | Rust client API/config defaults             | client-rust | `src/client.rs`, `src/polling_client.rs`                                                                                                                     |
 | Rust client docs                            | client-rust | `docs/protocol.md`, `docs/events.md`, `docs/client.md`, `docs/wasm.md`                                                                                       |
 | Upstream illustrative fixtures              | server      | `.llm/code-samples/protocol/v2-client-messages.jsonl`, `.llm/code-samples/protocol/v2-server-messages.jsonl`, and the v3 pair (concrete frames since v0.9.2) |
-| Vendored upstream v2 samples                | server      | `tests/fixtures/upstream/v2_client_messages.jsonl`, `tests/fixtures/upstream/v2_server_messages.jsonl`                                                       |
+| Vendored upstream v2 samples                | this repo   | `tests/fixtures/upstream/v2_client_messages.jsonl`, `tests/fixtures/upstream/v2_server_messages.jsonl`                                                       |
 | Cloud protocol cross-check                  | cloud       | `src/protocol/messages.rs`, `src/protocol/types.rs`, `src/protocol/error_codes.rs`                                                                           |
 
 ## Fixture Files
@@ -269,32 +266,35 @@ blank lines and lines beginning with `#`.
   canonical outbound form instead of re-emitting an unsupported string.
 - Reconnect uses `player_id`, `room_id`, and `auth_token`; fixtures use fake
   placeholder tokens only.
+- `Signal.generation` is required by modern servers (v0.10.0
+  `messages.rs`: `generation: SessionGeneration`, a typed `Uuid`); a
+  missing or non-UUID value fails parse, and the server answers
+  `Error{InvalidInput}`, drops the frame, and keeps the link
+  (`websocket/token_binding.rs`). The server relays the generation
+  verbatim; recipients filter by their current plan (`signaling.rs`).
+  The rust client also refuses off-plan peers (`client_core.rs`); the
+  Godot client gates `send_signal` on the same trio and
+  `send_transport_status` on the version alone (peers: mesh-owned, #330).
 
 ## Open Verification Items
 
 - Binary frame format (resolved 2026-09-20): the pinned v2/v3 envelope
-  contract in the Wire Notes section supersedes the older docs-vs-source
-  drift question for frames; implemented in
-  `addons/signal_fish/protocol/sf_binary_frames.gd` with byte-pinned tests.
+  contract above lives in `sf_binary_frames.gd` with byte-pinned tests.
 - Server docs still show a base64 string for `GameDataBinary.payload`, while
-  current source uses binary frames for negotiated binary payloads and
-  `serde_bytes` for text serialization. The text-form decoder
+  current source uses binary frames; the text-form decoder
   (`sf_binary_codec.gd`) stays tolerant of both byte arrays and base64
   strings until an upstream fixture resolves the documentation drift.
 - `supports_authority` defaults to `true` in server
   `src/server/room_service.rs`; docs imply omitted or false disables authority.
   Godot API defaults must be decided against source compatibility before P1.
 - Server and Rust client expose `STORAGE_ERROR`; cloud exposes
-  `DATABASE_ERROR`. Include a compatibility policy before locking the final
+  `DATABASE_ERROR`; pick a compatibility policy before locking the final
   error-code table.
 - Reconnection token origin (resolved 2026-09-19): the server issues
   `reconnection_token: Option<String>` inside every `RoomJoinedPayload` and
-  `ReconnectedPayload` (server `src/protocol/messages.rs` @ `eaae1ca3`);
-  the Rust client retains it for opt-in auto-reconnect
-  (`src/client_core.rs` `AutoReconnectContext` @ `fdab2e83`). See
-  `.llm/skills/reconnection-replay.md`. Upstream rotates the token on every
-  join and every successful reconnect; the fixtures now carry fake
-  placeholder tokens modeling the rotation (issue #12).
+  `ReconnectedPayload` and rotates it on every join and reconnect (issue
+  #12); fixtures carry fake rotated tokens. See
+  `.llm/skills/reconnection-replay.md`.
 - Upstream close-code conventions (resolved 2026-09-23, server `main` @
-  `272cfa0c`): `CloseReason` in `src/coordination/mod.rs` maps `4000`-`4007`
-  plus RFC `1000`/`1009`; see `.llm/skills/reconnection-replay.md`.
+  `272cfa0c`): `CloseReason` maps `4000`-`4007` plus RFC `1000`/`1009`;
+  see `.llm/skills/reconnection-replay.md`.

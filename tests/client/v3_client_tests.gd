@@ -12,6 +12,7 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
+const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array[String] = []
@@ -36,6 +37,7 @@ func run_all() -> void:
 		_test_v3_events_surface,
 		_test_v3_advisory_events_surface,
 		_test_v3_send_methods,
+		_test_signal_gate_tracks_plan_identity,
 		_test_connect_token_reaches_wire,
 		_test_encode_boundary_refuses_unserializable_payload,
 	]
@@ -350,60 +352,198 @@ func _test_v3_advisory_events_surface() -> void:
 
 
 func _test_v3_send_methods() -> void:
-	var client := _make_authenticated_client()
-	var fake: SFFakeTransportScript = client.transport
-	var before: int = fake.sent_text.size()
+	# Signal gating matrix (rust parity: ensure_v3, then SessionPlanUnavailable,
+	# then the stale-generation check): each refusal explains itself and puts
+	# nothing on the wire, since a dropped frame would only surface as a
+	# distant generic server error while the peer waits (issue #330).
+	var generation := "40000000-0000-0000-0000-000000000001"
+	var payload: Dictionary = {"Offer": "v=0"}
+
+	var ungated := _make_authenticated_client()
+	var ungated_fake: SFFakeTransportScript = ungated.transport
+	var ungated_errors: Array[String] = _track_protocol_errors(ungated)
+	var ungated_before: int = ungated_fake.sent_text.size()
 	_assert_equal(
-		OK,
-		client.send_signal(PLAYER_B, "40000000-0000-0000-0000-000000000001", {"Offer": "v=0"}),
-		"send_signal"
+		ERR_UNAVAILABLE,
+		ungated.send_signal(PLAYER_B, generation, payload),
+		"pre-negotiation signal refused"
 	)
+	var v2_info: Dictionary = _runner.call("_protocol_info")
+	v2_info["protocol_version"] = 2
+	ungated_fake.inject_server_message({"type": "ProtocolInfo", "data": v2_info})
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		ungated.send_signal(PLAYER_B, generation, payload),
+		"v2-negotiated signal refused"
+	)
+	_assert_equal(2, ungated_errors.size(), "every version refusal explains itself")
+	_assert_string_contains(
+		ungated_errors[0], "no v3 negotiation seen", "pre-negotiation diagnostic"
+	)
+	_assert_string_contains(ungated_errors[1], "v2", "v2 diagnostic")
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		ungated.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true),
+		"v2-negotiated transport status refused"
+	)
+	_assert_string_contains(ungated_errors[2], "negotiates v2", "v2 transport status diagnostic")
+	_assert_equal(
+		ungated_before, ungated_fake.sent_text.size(), "refused signals stay off the wire"
+	)
+	ungated.free()
+
+	# An off-contract plan (no room baseline yet, issue #120) must not arm
+	# the gate: the mesh drops the same frame.
+	var baseline_less := _make_authenticated_client()
+	var baseline_less_fake: SFFakeTransportScript = baseline_less.transport
+	var baseline_less_errors: Array[String] = _track_protocol_errors(baseline_less)
+	var baseline_less_info: Dictionary = _runner.call("_protocol_info")
+	baseline_less_info["protocol_version"] = 3
+	baseline_less_fake.inject_server_message({"type": "ProtocolInfo", "data": baseline_less_info})
+	_inject_session_plan(baseline_less_fake, generation)
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		baseline_less.send_signal(PLAYER_B, generation, payload),
+		"pre-baseline plan does not arm the gate"
+	)
+	_assert_string_contains(baseline_less_errors[0], "session plan", "pre-baseline diagnostic")
+	baseline_less.free()
+
+	var planned: SignalFishClientScript = _runner.call("_make_in_room_client")
+	var fake: SFFakeTransportScript = planned.transport
+	var errors: Array[String] = _track_protocol_errors(planned)
+	var v3_info: Dictionary = _runner.call("_protocol_info")
+	v3_info["protocol_version"] = 3
+	fake.inject_server_message({"type": "ProtocolInfo", "data": v3_info})
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		planned.send_signal(PLAYER_B, generation, payload),
+		"signal without a session plan refused"
+	)
+	_assert_string_contains(errors[0], "session plan", "no-plan diagnostic")
+
+	_inject_session_plan(fake, generation)
+	var before: int = fake.sent_text.size()
+	_assert_equal(OK, planned.send_signal(PLAYER_B, generation, payload), "send_signal")
 	var expected_signal := SFMessagesScript.encode(
-		SFMessagesScript.peer_signal(
-			PLAYER_B, "40000000-0000-0000-0000-000000000001", {"Offer": "v=0"}
-		)
+		SFMessagesScript.peer_signal(PLAYER_B, generation, payload)
 	)
 	_assert_equal(expected_signal, fake.sent_text[before], "send_signal wire bytes")
-
 	_assert_equal(
-		OK,
-		client.send_signal(PLAYER_B, "", {"IceCandidate": "candidate:1"}),
-		"legacy empty generation accepted"
+		ERR_INVALID_PARAMETER,
+		planned.send_signal(PLAYER_B, "40000000-0000-0000-0000-000000000009", payload),
+		"stale generation refused"
 	)
-	var expected_legacy := SFMessagesScript.encode(
-		SFMessagesScript.peer_signal(PLAYER_B, "", {"IceCandidate": "candidate:1"})
+	_assert_equal(
+		ERR_INVALID_PARAMETER,
+		planned.send_signal(PLAYER_B, "", payload),
+		"empty generation refused on a real plan"
 	)
-	_assert_equal(expected_legacy, fake.sent_text[before + 1], "legacy signal omits generation")
+	_assert_equal(3, errors.size(), "every signal refusal explains itself")
 
 	_assert_equal(
 		ERR_INVALID_DATA,
-		client.send_signal(PLAYER_B, "40000000-0000-0000-0000-000000000001", null),
+		planned.send_signal(PLAYER_B, generation, null),
 		"null signal payload refused locally"
 	)
 	_assert_equal(
 		ERR_INVALID_DATA,
-		client.send_signal("", "40000000-0000-0000-0000-000000000001", {"Offer": "s"}),
+		planned.send_signal("", generation, {"Offer": "s"}),
 		"empty peer refused locally"
 	)
 
 	_assert_equal(
 		OK,
-		client.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true),
+		planned.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true),
 		"send_transport_status"
 	)
 	var expected_status := SFMessagesScript.encode(
 		SFMessagesScript.transport_status("webrtc", true)
 	)
-	_assert_equal(expected_status, fake.sent_text[before + 2], "status wire bytes")
+	_assert_equal(expected_status, fake.sent_text[before + 1], "status wire bytes")
 
 	_assert_equal(
 		ERR_INVALID_DATA,
-		client.send_transport_status(SFSessionTypesScript.TransportKind.UNKNOWN, true),
+		planned.send_transport_status(SFSessionTypesScript.TransportKind.UNKNOWN, true),
 		"unknown transport refused locally"
 	)
-	_assert_equal(before + 3, fake.sent_text.size(), "refused sends put nothing on the wire")
+	var pre_negotiation := _make_authenticated_client()
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		pre_negotiation.send_transport_status(SFSessionTypesScript.TransportKind.WEBRTC, true),
+		"transport status refused pre-negotiation"
+	)
+	_assert_equal(before + 2, fake.sent_text.size(), "refused sends put nothing on the wire")
+	planned.free()
+	pre_negotiation.free()
+	_done()
+
+
+func _test_signal_gate_tracks_plan_identity() -> void:
+	# The gate rides the latest authoritative plan: legacy plans (generation
+	# omitted) keep the "" wire shape, re-plans restale the old generation,
+	# and room-scoped teardown ends the gate (issue #330).
+	var client: SignalFishClientScript = _runner.call("_make_in_room_client")
+	var fake: SFFakeTransportScript = client.transport
+	var errors: Array[String] = _track_protocol_errors(client)
+	var v3_info: Dictionary = _runner.call("_protocol_info")
+	v3_info["protocol_version"] = 3
+	fake.inject_server_message({"type": "ProtocolInfo", "data": v3_info})
+	var generation := "40000000-0000-0000-0000-000000000001"
+	var payload: Dictionary = {"Offer": "v=0"}
+
+	_inject_session_plan(fake, "")
+	var legacy_before: int = fake.sent_text.size()
+	_assert_equal(OK, client.send_signal(PLAYER_B, "", payload), "legacy generation sent")
+	_assert_equal(
+		SFMessagesScript.encode(SFMessagesScript.peer_signal(PLAYER_B, "", payload)),
+		fake.sent_text[legacy_before],
+		"legacy signal omits generation"
+	)
+	_assert_equal(
+		ERR_INVALID_PARAMETER,
+		client.send_signal(PLAYER_B, generation, payload),
+		"real generation refused on a legacy plan"
+	)
+
+	_inject_session_plan(fake, generation)
+	_assert_equal(
+		ERR_INVALID_PARAMETER,
+		client.send_signal(PLAYER_B, "", payload),
+		"legacy generation goes stale on a re-plan"
+	)
+	_assert_equal(OK, client.send_signal(PLAYER_B, generation, payload), "re-plan re-arms the gate")
+
+	# Every authoritative baseline disarms the gate (rust `set_room` parity):
+	# a duplicate RoomJoined must not let the previous plan keep sending.
+	fake.inject_server_message({"type": "RoomJoined", "data": _runner.call("_room_joined_data")})
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		client.send_signal(PLAYER_B, generation, payload),
+		"duplicate baseline disarms the gate"
+	)
+	_inject_session_plan(fake, generation)
+	_assert_equal(OK, client.send_signal(PLAYER_B, generation, payload), "next plan re-arms")
+
+	fake.inject_server_message({"type": "RoomLeft"})
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		client.send_signal(PLAYER_B, generation, payload),
+		"room left ends the plan gate"
+	)
+	# A plan only reaches room members, so re-arming rides the next baseline.
+	fake.inject_server_message({"type": "RoomJoined", "data": _runner.call("_room_joined_data")})
+	_inject_session_plan(fake, generation)
+	_assert_equal(OK, client.send_signal(PLAYER_B, generation, payload), "next baseline re-arms")
+	_assert_equal(4, errors.size(), "every identity refusal explains itself")
 	client.free()
 	_done()
+
+
+func _inject_session_plan(fake: SFFakeTransportScript, generation: String) -> void:
+	fake.inject_server_message(
+		{"type": "SessionPlan", "data": ClientFixtures.session_plan_data(generation)}
+	)
 
 
 func _test_connect_token_reaches_wire() -> void:

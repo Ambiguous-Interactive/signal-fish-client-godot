@@ -215,6 +215,14 @@ var _effective_game_data_format: int = SFTypesScript.GameDataEncoding.UNKNOWN
 # Gates the v3-only opaque wire shapes (rkyv/protobuf) on the version the
 # server actually picked, not the one the config requested.
 var _negotiated_protocol_version := 0
+# Latest authoritative session plan. Sends gated on it mirror the rust
+# client's ensure_v3 + SessionPlanUnavailable + stale-generation refusals:
+# the server relays signals verbatim but refuses generation-less frames at
+# parse time (server v0.10.0 required `Signal.generation`), so a stale or
+# absent plan generation would only ever surface as a distant generic error
+# while the peer waits for a signal that never arrives (issue #330).
+var _session_plan_seen := false
+var _session_plan_generation := ""
 
 
 func configure(config: SignalFishConfigScript) -> Error:
@@ -585,30 +593,59 @@ func leave_spectator() -> Error:
 	return _send_envelope(SFMessagesScript.leave_spectator(), "leave_spectator")
 
 
-## Relay one opaque WebRTC signal to [param to_peer] (protocol v3). Requires a
-## negotiated v3 connection; the server rejects it on the relay floor.
-## [param generation] is the latest [signal session_plan] generation. "" omits
-## the field for legacy Server 0.4 plans only — the pinned server (v0.9.1+)
-## requires it. [param signal_payload] is forwarded verbatim.
+## Relay one opaque WebRTC signal to [param to_peer] (protocol v3). Refused
+## locally — with nothing on the wire — unless the connection negotiated v3,
+## a [signal session_plan] has arrived, and [param generation] equals that
+## plan's generation ("" only on legacy plans whose own generation is ""):
+## the pinned server (v0.9.1+) requires `generation` at parse time, so an
+## off-plan signal would be dropped server-side with only a generic error
+## while the peer waits (issue #330, rust-client parity). [param
+## signal_payload] is forwarded verbatim.
 func send_signal(to_peer: String, generation: String, signal_payload: Variant) -> Error:
 	var guard := _guard_session_send("send_signal")
 	if guard != OK:
 		return guard
+	if _refuse_pre_v3("send_signal"):
+		return ERR_UNAVAILABLE
+	if not _session_plan_seen:
+		_emit_protocol_error("send_signal requires a session plan; none seen on this connection")
+		return ERR_UNAVAILABLE
+	if generation != _session_plan_generation:
+		_emit_protocol_error("send_signal generation must match the latest session_plan generation")
+		return ERR_INVALID_PARAMETER
 	return _send_envelope(
-		SFMessagesScript.peer_signal(to_peer, _optional_string(generation), signal_payload),
-		"send_signal"
+		SFMessagesScript.peer_signal(to_peer, generation, signal_payload), "send_signal"
 	)
 
 
 ## Report the current data-path transport state (protocol v3; informational).
-## [param transport_kind] takes a [enum SFSessionTypes.TransportKind] value.
+## Refused locally before a v3 negotiation for the same reason as
+## [method send_signal]. [param transport_kind] takes a
+## [enum SFSessionTypes.TransportKind] value.
 func send_transport_status(transport_kind: int, is_up: bool) -> Error:
 	var guard := _guard_session_send("send_transport_status")
 	if guard != OK:
 		return guard
+	if _refuse_pre_v3("send_transport_status"):
+		return ERR_UNAVAILABLE
 	return _send_envelope(
 		SFMessagesScript.transport_status(transport_kind, is_up), "send_transport_status"
 	)
+
+
+func _refuse_pre_v3(action: String) -> bool:
+	if _negotiated_protocol_version >= 3:
+		return false
+	if _negotiated_protocol_version == 0:
+		_emit_protocol_error("%s requires protocol version 3; no v3 negotiation seen" % action)
+	else:
+		_emit_protocol_error(
+			(
+				"%s requires protocol version 3; this connection negotiates v%d"
+				% [action, _negotiated_protocol_version]
+			)
+		)
+	return true
 
 
 func _process(delta: float) -> void:
@@ -1010,6 +1047,11 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# latch here (issue #107, closed as intended behavior).
 			var info: SFTypesScript.RoomJoinedInfo = event.args[0]
 			_apply_room_info(info)
+			# Rust clears plan state on every baseline (`set_room`): a stale
+			# generation from the previous baseline must not keep the gate
+			# armed across an off-contract re-baseline (issue #330).
+			_session_plan_seen = false
+			_session_plan_generation = ""
 			_session_state = _session_state_for_lobby(_lobby_state)
 			_auto_reconnect_attempts = 0
 			room_joined.emit(info)
@@ -1070,6 +1112,13 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"new_peer":
 			new_peer.emit(event.args[0], event.args[1])
 		&"session_plan":
+			# A plan is room-scoped (issue #120): like the mesh, a plan landing
+			# before any room baseline is off-contract server input and must
+			# not arm the send gate.
+			if not _room_id.is_empty():
+				var plan: SFSessionTypesScript.SessionPlanInfo = event.args[0]
+				_session_plan_seen = true
+				_session_plan_generation = plan.generation
 			session_plan.emit(event.args[0])
 		&"peer_transport_status":
 			peer_transport_status.emit(event.args[0], event.args[1], event.args[2])
@@ -1099,6 +1148,12 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			_reconnected_seen = true
 			var info: SFTypesScript.RoomJoinedInfo = event.args[0]
 			_apply_room_info(info)
+			# The pre-drop plan identity is dead on a re-dial, and replayed
+			# plans surface through [signal reconnected] only (never the
+			# session_plan dispatch), so sends stay gated until the next live
+			# plan — the same posture as the mesh teardown.
+			_session_plan_seen = false
+			_session_plan_generation = ""
 			_session_state = _session_state_for_lobby(_lobby_state)
 			_clear_reconnect_credentials()
 			_auto_reconnect_attempts = 0
@@ -1120,6 +1175,8 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# SpectatorJoined is an authoritative baseline (issue #107).
 			var info: SFTypesScript.SpectatorJoinedInfo = event.args[0]
 			_apply_spectator_info(info)
+			_session_plan_seen = false
+			_session_plan_generation = ""
 			_session_state = SessionState.SPECTATING
 			spectator_joined.emit(info)
 		&"spectator_join_failed":
@@ -1228,6 +1285,9 @@ func _clear_room_state() -> void:
 	_lobby_state = SFTypesScript.LobbyState.UNKNOWN
 	_players = []
 	_spectators = []
+	# Plans are room-scoped (issue #120): the plan gate dies with the room.
+	_session_plan_seen = false
+	_session_plan_generation = ""
 
 
 func _bound_roster(roster: Array, label: String) -> void:

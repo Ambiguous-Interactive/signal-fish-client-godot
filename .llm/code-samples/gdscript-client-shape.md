@@ -87,6 +87,9 @@ Each returns `Error`; room commands require authentication (pre-auth emits
 client messages map to these (Authenticate is sent automatically on open);
 `send_signal`/`send_transport_status` are the v3 additions, and
 `send_game_data_binary` rides the negotiated binary-frame route.
+`send_signal`/`send_transport_status` also require a v3 negotiation, and
+`send_signal` additionally requires the latest `session_plan` generation;
+each refusal emits `protocol_error` and sends nothing (issue #330).
 
 ```gdscript
 func join_room(params: JoinRoomParams) -> Error

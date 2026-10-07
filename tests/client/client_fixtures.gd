@@ -38,6 +38,29 @@ static func protocol_info() -> Dictionary:
 	}
 
 
+## Session plan over PLAYER_B; an empty [param generation] builds the legacy
+## Server 0.4 shape (generation omitted).
+static func session_plan_data(generation: String) -> Dictionary:
+	var data: Dictionary = {
+		"topology": "mesh",
+		"transport": "webrtc",
+		"peers":
+		[
+			{
+				"player_id": PLAYER_B,
+				"player_name": "Bob",
+				"is_authority": false,
+				"initiate": true,
+			},
+		],
+		"ice_servers": [{"urls": ["stun:stun.l.google.com:19302"]}],
+		"fallback": "relay",
+	}
+	if not generation.is_empty():
+		data["generation"] = generation
+	return data
+
+
 static func player(id: String, display_name: String) -> Dictionary:
 	return {
 		"id": id,

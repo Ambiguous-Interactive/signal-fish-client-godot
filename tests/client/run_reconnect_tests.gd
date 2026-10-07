@@ -89,6 +89,7 @@ func _run() -> void:
 		_test_scheme_refused_reconnect_drops_dial_credentials,
 		_test_duplicate_authenticated_sends_handshake_once,
 		_test_duplicate_reconnected_is_fully_silent,
+		_test_reconnected_clears_signal_plan_gate,
 		_test_unsolicited_reconnected_is_loud,
 		_test_dial_contract_survives_authentication_error,
 		_test_duplicate_protocol_info_is_fully_silent,
@@ -928,6 +929,56 @@ func _test_duplicate_reconnected_is_fully_silent() -> void:
 		"session state untouched by duplicate"
 	)
 	_assert_no_protocol_errors()
+	client.free()
+	_done()
+
+
+func _test_reconnected_clears_signal_plan_gate() -> void:
+	# Issue #330: the pre-drop plan identity is dead on a re-dial, and
+	# replayed plans surface through the reconnected payload only, so sends
+	# stay gated until the next live plan. Local tracker: the intentional
+	# refusal must not pollute the shared zero-error assertion.
+	var client := _make_reconnect_client(TOKEN_V1, false)
+	var errors := _track_protocol_errors(client)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	client.set_auto_reconnect(true)
+	var info := ClientFixtures.protocol_info()
+	info["protocol_version"] = 3
+	transport.inject_server_message({"type": "ProtocolInfo", "data": info})
+	var generation := "40000000-0000-0000-0000-000000000001"
+	var data := _room_joined_data({"lobby_state": "lobby"})
+	data["reconnection_token"] = TOKEN_V2
+	data["missed_events"] = []
+	transport.inject_server_message({"type": "Reconnected", "data": data})
+	transport.inject_server_message(
+		{"type": "SessionPlan", "data": ClientFixtures.session_plan_data(generation)}
+	)
+	_assert_equal(
+		OK,
+		client.send_signal(PLAYER_B, generation, {"Offer": "v=0"}),
+		"pre-drop plan arms the gate"
+	)
+	transport.inject_close(4999, "dropped")
+	client.transport = SFFakeTransportScript.new()
+	transport = client.transport
+	_step(client, 1.0)
+	_assert_equal(OK, _wait_open(client), "auto dial after baseline")
+	transport.inject_server_message({"type": "ProtocolInfo", "data": info})
+	transport.inject_server_message({"type": "Reconnected", "data": data})
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		client.send_signal(PLAYER_B, generation, {"Offer": "v=0"}),
+		"re-dial gates signals until the next live plan"
+	)
+	_assert_equal(1, errors.size(), "exactly the plan-gate diagnostic")
+	_assert_string_contains(errors[0], "session plan", "plan-gate diagnostic")
+	transport.inject_server_message(
+		{"type": "SessionPlan", "data": ClientFixtures.session_plan_data(generation)}
+	)
+	_assert_equal(
+		OK, client.send_signal(PLAYER_B, generation, {"Offer": "v=0"}), "live plan re-arms the gate"
+	)
 	client.free()
 	_done()
 

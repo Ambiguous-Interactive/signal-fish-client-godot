@@ -14,6 +14,7 @@ const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_c
 const SFWebRTCMeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
+const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
@@ -165,6 +166,12 @@ func _inject_plan(
 	if ice_servers != null:
 		data["ice_servers"] = ice_servers
 	var fake_transport: SFFakeTransportScript = client.transport
+	# The mesh relays through send_signal/send_transport_status, both gated on
+	# the v3 negotiation. Duplicate ProtocolInfo stays a silent no-op (issue
+	# #82), so re-injecting per plan is idempotent.
+	var info := ClientFixtures.protocol_info()
+	info["protocol_version"] = 3
+	fake_transport.inject_server_message({"type": "ProtocolInfo", "data": info})
 	fake_transport.inject_server_message({"type": "SessionPlan", "data": data})
 
 
