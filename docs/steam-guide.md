@@ -97,6 +97,7 @@ the bootstrap channel.
 | `host_id_timeout_sec`       | How long a peer waits for the host id before failing. Zero waits forever.                        |
 | `steam_connect_timeout_sec` | How long the dial may take before failing. Zero waits forever.                                   |
 | `steam_channel`             | The P2P channel the handshake uses. The game owns the rest.                                      |
+| `max_packets_per_poll`      | Handshake packets drained per `poll`. The rest waits for the next poll.                          |
 | `steam`                     | Injectable Steam seam; tests substitute a fake, games leave it null.                             |
 
 ## Failure modes

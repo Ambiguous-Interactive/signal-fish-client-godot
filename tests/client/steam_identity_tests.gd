@@ -11,6 +11,7 @@ const SFSteamIdentityScript = preload("res://addons/signal_fish/steam/sf_steam_i
 const SFSteamIdentityBootstrapScript = preload(
 	"res://addons/signal_fish/steam/sf_steam_identity_bootstrap.gd"
 )
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
@@ -65,6 +66,9 @@ func run_all() -> void:
 		_test_restart_after_failure_rewires,
 		_test_connecting_session_never_drops,
 		_test_host_republishes_on_peer_advertisement,
+		_test_advertised_peer_cap,
+		_test_pending_requests_cap,
+		_test_handshake_drain_cap,
 		_test_freed_client_tears_down,
 	]
 	CompletionGuard.drive(self, cases, _failures)
@@ -814,6 +818,94 @@ func _test_host_republishes_on_peer_advertisement() -> void:
 	)
 	_advertise_peer(client, PLAYER_B, PEER_ID)
 	_assert_equal(2, _game_data_send_count(client), "repeat advertisement is silent")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+## Issue #335: the fence set is bounded like every other wire-driven roster;
+## a flood of unique ids must not grow it or amplify into a re-publish each.
+
+
+func _test_advertised_peer_cap() -> void:
+	var steam := FakeSteam.new(HOST_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	var cap := SFTypeUtils.MAX_TRACKED_PEERS
+	for index: int in cap:
+		bootstrap._advertised_peers["7656119796026%05d" % index] = true
+	_advertise_peer(client, PLAYER_B, OTHER_ID)
+	_assert(not bootstrap._advertised_peers.has(OTHER_ID), "an over-cap id is not fenced")
+	_assert_equal(1, _game_data_send_count(client), "the refusal amplifies no re-publish")
+	# Tracked members are unaffected: their request still fences verbatim.
+	bootstrap._advertised_peers[PEER_ID] = true
+	steam.request_session(int(PEER_ID))
+	_assert_equal([int(PEER_ID)], steam.accepts, "a tracked id fences normally")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+## Issue #335: the pending-request set is size-bounded, not only
+## grace-bounded; an over-cap requester is refused on the spot, while a
+## repeat request from an id already in the window re-arms (Bugbot, PR
+## #336).
+
+
+func _test_pending_requests_cap() -> void:
+	var steam := FakeSteam.new(HOST_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	var cap := SFTypeUtils.MAX_TRACKED_PEERS
+	for index: int in cap:
+		bootstrap._pending_requests["7656119796027%05d" % index] = bootstrap._elapsed_sec + 60.0
+	steam.request_session(int(OTHER_ID))
+	_assert_equal([int(OTHER_ID)], steam.closes, "an over-cap requester is refused at once")
+	_assert(not bootstrap._pending_requests.has(OTHER_ID), "the refusal leaves no entry")
+	var kept := "7656119796027%05d" % 0
+	bootstrap._process(3.0)
+	steam.request_session(int(kept))
+	bootstrap._process(2.5)
+	_assert(bootstrap._pending_requests.has(kept), "the re-armed window holds")
+	_assert_equal([int(OTHER_ID)], steam.closes, "the repeat request is not refused")
+	bootstrap._process(2.6)
+	_assert_equal(
+		[int(OTHER_ID), int(kept)], steam.closes, "the re-armed slot still expires on schedule"
+	)
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+## Issue #335: the handshake pump drains at most max_packets_per_poll packets
+## per poll, so a seam that never drains cannot spin the frame.
+
+
+func _test_handshake_drain_cap() -> void:
+	var steam := FakeSteam.new(PEER_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.PEER, PEER_ID, steam
+	)
+	bootstrap.max_packets_per_poll = 3
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	_advertise_host(client, PLAYER_A, HOST_ID)
+	for index: int in 5:
+		steam.queue_packet(int(HOST_ID), PackedByteArray([0x41]))
+	bootstrap.poll()
+	_assert_equal([HOST_ID], _captured(bootstrap, "steam_host_connected"), "the first ack connects")
+	_assert_equal(2, steam.queue.size(), "one poll drains at most the cap")
+	bootstrap.poll()
+	_assert_equal(0, steam.queue.size(), "the next poll drains the rest")
 	bootstrap.free()
 	client.free()
 	_done()

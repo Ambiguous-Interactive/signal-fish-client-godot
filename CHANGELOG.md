@@ -26,6 +26,16 @@ released version.
   `room_operation_result` (surfaced verbatim). All are informational; the
   client never acts on them.
 
+### Fixed
+
+- Hostile input can no longer grow client memory without a bound (issue
+  #335). The Steam bootstrap caps its fence set and pending requests, and
+  drains at most 64 handshake packets per `poll` (`max_packets_per_poll`);
+  the mesh caps each peer's signal-relay queue at 64 and drops the old
+  peer generation before opening a new one; the redaction list caps
+  distinct room passwords at 16, and the live credential re-pins on every
+  dial so it is always redacted while in use.
+
 ## [v0.1.1] - 2026-10-01
 
 ### Changed

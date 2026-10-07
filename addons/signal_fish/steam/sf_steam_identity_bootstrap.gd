@@ -62,6 +62,7 @@ enum Role { PEER, HOST }
 
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFSteamIdentityScript = preload("res://addons/signal_fish/steam/sf_steam_identity.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 
@@ -69,6 +70,11 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 ## [code]k_EP2PSendReliable[/code]), pinned so the duck-typed seam needs no
 ## constant lookup. The handshake is one byte; reliable delivery is free.
 const P2P_SEND_RELIABLE := 2
+
+## Handshake packets drained per [method poll], mirroring the WebSocket
+## transport's per-poll cap: a seam that reports available bytes without ever
+## consuming them must not spin the frame (issue #335).
+const DEFAULT_MAX_PACKETS_PER_POLL := 64
 
 const _POKE_BYTE := 0x53
 const _ACK_BYTE := 0x41
@@ -87,6 +93,8 @@ var steam_connect_timeout_sec: float = 30.0
 ## The P2P channel the bootstrap exchanges its handshake on. The game owns
 ## every other channel and must stay off this one.
 var steam_channel: int = 1
+## Handshake packets drained per [method poll] (issue #335).
+var max_packets_per_poll: int = DEFAULT_MAX_PACKETS_PER_POLL
 ## Duck-typed Steam seam (the GodotSteam singleton surface). Null resolves
 ## [code]Engine.get_singleton("Steam")[/code] at [method start]; tests inject
 ## a fake. Never reference the bare [code]Steam[/code] identifier: the script
@@ -107,7 +115,8 @@ var _awaiting_ack := false
 var _ack_deadline_sec := 0.0
 # Host state: the advertised-membership set only grows during a session (a
 # member that leaves keeps its entry until the session ends), matching the
-# dotnet adapter's fence semantics.
+# dotnet adapter's fence semantics. Bounded at MAX_TRACKED_PEERS like every
+# wire-driven roster (issue #335).
 var _advertised_peers: Dictionary = {}
 var _pending_requests: Dictionary = {}
 var _connected_peers: Dictionary = {}
@@ -161,6 +170,7 @@ func start() -> Error:
 		or host_id_timeout_sec < 0.0
 		or steam_connect_timeout_sec < 0.0
 		or steam_channel < 0
+		or max_packets_per_poll < 1
 	):
 		return ERR_INVALID_PARAMETER
 	if steam == null:
@@ -340,6 +350,14 @@ func _on_steam_session_request(remote_steam_id: int) -> void:
 	if accept_grace_sec <= 0.0:
 		_refuse_request(remote_steam_id, "id not advertised on the lane")
 		return
+	# The cap only refuses new waiters: a repeat request from an id already
+	# in the grace window just re-arms its deadline (Bugbot, PR #336).
+	if not _pending_requests.has(peer_id):
+		if _pending_requests.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
+			_refuse_request(
+				remote_steam_id, "pending fence requests at cap %d" % SFTypeUtils.MAX_TRACKED_PEERS
+			)
+			return
 	_pending_requests[peer_id] = _elapsed_sec + accept_grace_sec
 
 
@@ -394,7 +412,20 @@ func _advertise_peer(peer_id: String, from_player: String) -> void:
 		return
 	SFLogScript.debug("steam bootstrap: lane advertised %s from %s" % [peer_id, from_player])
 	var first_advertisement := not _advertised_peers.has(peer_id)
-	_advertised_peers[peer_id] = true
+	if first_advertisement:
+		if _advertised_peers.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
+			# A flood of unique ids must not grow the fence set or amplify
+			# into a room-wide re-publish per id (issue #335). A pending
+			# request from the refused id expires on schedule: the fence
+			# never accepts an id the set could not record.
+			SFLogScript.error(
+				(
+					"steam bootstrap: advertised peers at cap %d; id not fenced"
+					% SFTypeUtils.MAX_TRACKED_PEERS
+				)
+			)
+			return
+		_advertised_peers[peer_id] = true
 	if _pending_requests.has(peer_id):
 		_accept_peer(peer_id)
 	# The advertisement proves a peer is coordinating without a fresh join
@@ -443,7 +474,9 @@ func _expire_pending_requests() -> void:
 
 func _pump_handshake_channel() -> void:
 	var size: int = steam.call("getAvailableP2PPacketSize", steam_channel)
-	while size > 0:
+	var drained := 0
+	while size > 0 and drained < max_packets_per_poll:
+		drained += 1
 		var packet: Variant = steam.call("readP2PPacket", size, steam_channel)
 		size = steam.call("getAvailableP2PPacketSize", steam_channel)
 		if typeof(packet) != TYPE_DICTIONARY:
