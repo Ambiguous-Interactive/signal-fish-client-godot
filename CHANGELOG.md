@@ -34,7 +34,7 @@ released version.
   the mesh caps each peer's signal-relay queue at 64 and drops the old
   peer generation before opening a new one; the redaction list caps
   distinct room passwords at 16, and the live credential re-pins on every
-  dial so it never ages out.
+  dial so it is always redacted while in use.
 
 ## [v0.1.1] - 2026-10-01
 
