@@ -898,6 +898,36 @@ func _test_v3_validation_and_sentinels() -> void:
 		_assert_equal(
 			8589934592, big_outbound.args[0].max_outbound_message_size, "outbound cap kept"
 		)
+	# The v0.10.0 ProtocolInfo disclosure fields have no typed surface yet
+	# (the rust binding still pins v0.9.1): tolerance means they ride in raw
+	# verbatim without moving a typed field.
+	var v010_info: SFTypesScript.DecodedEvent = (
+		SFEventsScript
+		. decode_envelope(
+			{
+				"type": "ProtocolInfo",
+				"data":
+				{
+					"protocol_version": 3,
+					"implementation_version": "0.10.0",
+					"game_data_limits": [{"encoding": "json", "max_bytes": 262144}],
+				},
+			}
+		)
+	)
+	if _assert_decoded_signal("protocol_info", v010_info, "v0.10.0 disclosure fields decode"):
+		var disclosure: SFTypesScript.ProtocolInfo = v010_info.args[0]
+		_assert_equal(
+			"0.10.0",
+			disclosure.raw.get("implementation_version"),
+			"implementation_version rides in raw"
+		)
+		_assert_equal(
+			[{"encoding": "json", "max_bytes": 262144}],
+			disclosure.raw.get("game_data_limits"),
+			"game_data_limits rides in raw"
+		)
+		_assert_equal(3, disclosure.protocol_version, "typed version untouched by raw fields")
 	_assert_protocol_error_contains(
 		SFEventsScript.decode_envelope(
 			{"type": "ProtocolInfo", "data": {"max_outbound_message_size": -1}}
