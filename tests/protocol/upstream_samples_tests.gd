@@ -249,9 +249,13 @@ func _check_v3_published_shape_pins(server_events: Array[SFTypesScript.DecodedEv
 	_assert_equal(1, delivery_reports.size(), "delivery report sample count")
 	if delivery_reports.size() == 1:
 		var report: SFSessionTypesScript.DeliveryReportInfo = delivery_reports[0].args[0]
-		_assert_equal(8, report.counters_for("reliable").get_count("delivered"), "reliable delivered")
+		_assert_equal(
+			8, report.counters_for("reliable").get_count("delivered"), "reliable delivered"
+		)
 		_assert_equal(1, report.counters_for("latest").get_count("superseded"), "latest superseded")
-		_assert_equal(4, report.counters_for("volatile").get_count("delivered"), "volatile delivered")
+		_assert_equal(
+			4, report.counters_for("volatile").get_count("delivered"), "volatile delivered"
+		)
 		_assert_equal(1, report.gaps.size(), "delivery report gap count")
 		if report.gaps.size() == 1:
 			_assert_equal(
@@ -284,7 +288,9 @@ func _test_all_client_samples_are_client_messages() -> void:
 	var known := {}
 	for message_type: String in CLIENT_MESSAGE_TYPES:
 		known[message_type] = true
-	for line: String in _read_sample_lines(CLIENT_SAMPLES):
+	var lines := _read_sample_lines(CLIENT_SAMPLES)
+	_assert_equal(15, lines.size(), "%s content line count" % CLIENT_SAMPLES)
+	for line: String in lines:
 		_check_client_sample_line(CLIENT_SAMPLES, line, known)
 	_done()
 
@@ -293,7 +299,9 @@ func _test_all_v3_client_samples_are_client_messages() -> void:
 	var known := {}
 	for message_type: String in CLIENT_MESSAGE_TYPES_V3:
 		known[message_type] = true
-	for line: String in _read_sample_lines(CLIENT_SAMPLES_V3):
+	var lines := _read_sample_lines(CLIENT_SAMPLES_V3)
+	_assert_equal(10, lines.size(), "%s content line count" % CLIENT_SAMPLES_V3)
+	for line: String in lines:
 		_check_client_sample_line(CLIENT_SAMPLES_V3, line, known)
 	_done()
 

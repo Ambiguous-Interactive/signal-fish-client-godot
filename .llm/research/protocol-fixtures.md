@@ -1,5 +1,5 @@
 ---
-description: Pinned upstream sources used to build Signal Fish v2 protocol fixtures for the Godot client.
+description: Pinned upstream sources used to build Signal Fish protocol fixtures for the Godot client.
 triggers: protocol fixture, upstream commit, signal fish, codec, messages, error codes, reconnection, spectator
 category: Protocol
 ---

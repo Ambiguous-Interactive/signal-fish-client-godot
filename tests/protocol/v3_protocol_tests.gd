@@ -57,6 +57,11 @@ func _test_v3_advisory_events() -> void:
 	var silent := SFEventsScript.decode_text('{"type": "GoingAway", "data": {"deadline_ms": 5}}')
 	if _assert_decoded_signal("going_away", silent, "going away without hint decodes"):
 		_assert_equal(-1, silent.args[1], "absent retry hint decodes to the -1 sentinel")
+	var zero_hint := SFEventsScript.decode_text(
+		'{"type": "GoingAway", "data": {"deadline_ms": 5, "retry_after_secs": 0}}'
+	)
+	if _assert_decoded_signal("going_away", zero_hint, "zero-second hint decodes"):
+		_assert_equal(0, zero_hint.args[1], "a real 0 hint is not the absent sentinel")
 	var explicit_null := SFEventsScript.decode_text(
 		'{"type": "GoingAway", "data": {"deadline_ms": 5, "retry_after_secs": null}}'
 	)
@@ -67,17 +72,18 @@ func _test_v3_advisory_events() -> void:
 		"negative deadline": '{"type": "GoingAway", "data": {"deadline_ms": -1}}',
 		"non-integer deadline": '{"type": "GoingAway", "data": {"deadline_ms": 1.5}}',
 		"deadline above i64": '{"type": "GoingAway", "data": {"deadline_ms": 9223372036854775808}}',
-		"hint above i64": (
+		"hint above i64":
+		(
 			'{"type": "GoingAway", "data": {"deadline_ms": 1,'
 			+ ' "retry_after_secs": 9223372036854775808}}'
 		),
-		"non-integer hint": '{"type": "GoingAway", "data": {"deadline_ms": 1, "retry_after_secs": "soon"}}',
+		"non-integer hint":
+		'{"type": "GoingAway", "data": {"deadline_ms": 1,' + ' "retry_after_secs": "soon"}}',
 	}
 	for label: String in going_away_refusals:
 		var going_away_text: String = going_away_refusals[label]
 		_assert_protocol_error(
-			SFEventsScript.decode_text(going_away_text),
-			"GoingAway refuses %s" % label
+			SFEventsScript.decode_text(going_away_text), "GoingAway refuses %s" % label
 		)
 
 	var report := SFEventsScript.decode_text(
@@ -93,7 +99,9 @@ func _test_v3_advisory_events() -> void:
 		var info: SFSessionTypesScript.DeliveryReportInfo = report.args[0]
 		_assert_equal(8, info.counters_for("reliable").get_count("delivered"), "reliable delivered")
 		_assert_equal(2, info.counters_for("latest").get_count("superseded"), "latest superseded")
-		_assert_equal(0, info.counters_for("latest").get_count("dropped_full"), "latest dropped_full")
+		_assert_equal(
+			0, info.counters_for("latest").get_count("dropped_full"), "latest dropped_full"
+		)
 		_assert_equal(null, info.counters_for("volatile"), "absent class has no counters object")
 		_assert_equal(1, info.gaps.size(), "gap count")
 		if info.gaps.size() == 1:
@@ -105,16 +113,20 @@ func _test_v3_advisory_events() -> void:
 			_assert_equal(43, info.gaps[0].to_seq, "gap to_seq")
 	var gaps_cap := {"type": "DeliveryReport", "data": {"per_class": {}, "gaps": []}}
 	var hostile_gaps: Array = gaps_cap["data"]["gaps"]
-	for index: int in 257:
-		hostile_gaps.append(
-			{
-				"from_player": "10000000-0000-0000-0000-000000000001",
-				"epoch": 1,
-				"from_seq": 1,
-				"to_seq": 1,
-				"reason": "volatile_dropped",
-			}
-		)
+	var gap_template := {
+		"from_player": "10000000-0000-0000-0000-000000000001",
+		"epoch": 1,
+		"from_seq": 1,
+		"to_seq": 1,
+		"reason": "volatile_dropped",
+	}
+	for index: int in 256:
+		hostile_gaps.append(gap_template)
+	var cap_boundary := SFEventsScript.decode_text(JSON.stringify(gaps_cap))
+	if _assert_decoded_signal("delivery_report", cap_boundary, "exactly the gap cap decodes"):
+		var capped: SFSessionTypesScript.DeliveryReportInfo = cap_boundary.args[0]
+		_assert_equal(256, capped.gaps.size(), "cap boundary gap count")
+	hostile_gaps.append(gap_template)
 	_assert_protocol_error(
 		SFEventsScript.decode_text(JSON.stringify(gaps_cap)),
 		"DeliveryReport refuses more than the upstream gap cap"
@@ -122,25 +134,29 @@ func _test_v3_advisory_events() -> void:
 	var report_refusals := {
 		"missing per_class": '{"type": "DeliveryReport", "data": {}}',
 		"non-object per_class": '{"type": "DeliveryReport", "data": {"per_class": 3}}',
-		"negative counter": (
-			'{"type": "DeliveryReport", "data": {"per_class": {"reliable": {"delivered": -1}}}}'
-		),
-		"counter above i64": (
+		"null gaps": '{"type": "DeliveryReport", "data": {"per_class": {}, "gaps": null}}',
+		"negative counter":
+		'{"type": "DeliveryReport", "data": {"per_class": {"reliable": {"delivered": -1}}}}',
+		"counter above i64":
+		(
 			'{"type": "DeliveryReport", "data": {"per_class": {"reliable":'
 			+ ' {"delivered": 9223372036854775808}}}}'
 		),
 		"non-object gap": '{"type": "DeliveryReport", "data": {"per_class": {}, "gaps": [1]}}',
-		"gap bad sender": (
+		"gap bad sender":
+		(
 			'{"type": "DeliveryReport", "data": {"per_class": {}, "gaps":'
 			+ ' [{"from_player": "peer-b", "epoch": 1, "from_seq": 1, "to_seq": 1,'
 			+ ' "reason": "volatile_dropped"}]}}'
 		),
-		"gap epoch above u32": (
+		"gap epoch above u32":
+		(
 			'{"type": "DeliveryReport", "data": {"per_class": {}, "gaps":'
 			+ ' [{"from_player": "10000000-0000-0000-0000-000000000001", "epoch": 4294967296,'
 			+ ' "from_seq": 1, "to_seq": 1, "reason": "volatile_dropped"}]}}'
 		),
-		"gap unknown reason": (
+		"gap unknown reason":
+		(
 			'{"type": "DeliveryReport", "data": {"per_class": {}, "gaps":'
 			+ ' [{"from_player": "10000000-0000-0000-0000-000000000001", "epoch": 1,'
 			+ ' "from_seq": 1, "to_seq": 1, "reason": "vaporized"}]}}'
@@ -149,8 +165,7 @@ func _test_v3_advisory_events() -> void:
 	for label: String in report_refusals:
 		var report_text: String = report_refusals[label]
 		_assert_protocol_error(
-			SFEventsScript.decode_text(report_text),
-			"DeliveryReport refuses %s" % label
+			SFEventsScript.decode_text(report_text), "DeliveryReport refuses %s" % label
 		)
 	var no_gaps := SFEventsScript.decode_text(
 		'{"type": "DeliveryReport", "data": {"per_class": {"reliable": {"delivered": 1}}}}'
@@ -177,32 +192,66 @@ func _test_v3_room_operation_results() -> void:
 		_assert_equal({}, info.data, "unit variant carries no data")
 	var accepted_variants := {
 		"PlayerKicked": {"player_id": "10000000-0000-0000-0000-000000000001"},
+		"PlayerBanned": {"player_id": "10000000-0000-0000-0000-000000000001"},
+		"PlayerUnbanned": {"player_id": "10000000-0000-0000-0000-000000000001"},
+		"AuthorityTransferred": {"player_id": "10000000-0000-0000-0000-000000000001"},
 		"RoomCodeRegenerated": {"room_code": "USE4XP"},
 		"RoomAccessUpdated": {"requires_password": true},
+		"RoomJoinFailed": {"reason": "room is full"},
+		"SpectatorJoinFailed": {"reason": "room is full"},
 		"OperationFailed": {"reason": "room is closed"},
 		"ReconnectionFailed": {"reason": "stale", "error_code": "RECONNECTION_EXPIRED"},
 		"SpectatorLeft": {"reason": "voluntary_leave", "current_spectators": []},
+		"SpectatorJoined":
+		{
+			"room_id": "20000000-0000-0000-0000-000000000001",
+			"room_code": "RC",
+			"spectator_id": "30000000-0000-0000-0000-000000000001",
+			"game_name": "g",
+			"current_players": [],
+			"current_spectators": [],
+			"lobby_state": "lobby",
+		},
+		"Reconnected": _reconnected_result_payload(),
 	}
 	for variant: String in accepted_variants:
-		var decoded := SFEventsScript.decode_text(
-			JSON.stringify({
-				"type": "RoomOperationResult",
-				"data": {
-					"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-					"result": {"type": variant, "data": accepted_variants[variant]},
-				},
-			})
+		var decoded := (
+			SFEventsScript
+			. decode_text(
+				(
+					JSON
+					. stringify(
+						{
+							"type": "RoomOperationResult",
+							"data":
+							{
+								"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+								"result": {"type": variant, "data": accepted_variants[variant]},
+							},
+						}
+					)
+				)
+			)
 		)
 		if _assert_decoded_signal("room_operation_result", decoded, "%s result decodes" % variant):
 			_assert_equal(variant, decoded.args[0].result_type, "%s result type" % variant)
-	var room_joined_result := SFEventsScript.decode_text(
-		JSON.stringify({
-			"type": "RoomOperationResult",
-			"data": {
-				"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-				"result": {"type": "RoomJoined", "data": _room_joined_with_bad_ice()},
-			},
-		})
+	var room_joined_result := (
+		SFEventsScript
+		. decode_text(
+			(
+				JSON
+				. stringify(
+					{
+						"type": "RoomOperationResult",
+						"data":
+						{
+							"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+							"result": {"type": "RoomJoined", "data": _room_joined_with_bad_ice()},
+						},
+					}
+				)
+			)
+		)
 	)
 	_assert_protocol_error_contains(
 		room_joined_result, "urls", "RoomJoined result payload is validated"
@@ -213,18 +262,26 @@ func _test_v3_room_operation_results() -> void:
 		"missing result": null,
 		"unit variant with data": {"type": "RoomLeft", "data": {}},
 		"player variant without id": {"type": "PlayerKicked", "data": {}},
-		"player variant bad id": {
+		"player variant bad id":
+		{
 			"type": "PlayerKicked",
 			"data": {"player_id": "peer-b"},
 		},
 		"code variant empty code": {"type": "RoomCodeRegenerated", "data": {"room_code": ""}},
 		"access variant without flag": {"type": "RoomAccessUpdated", "data": {}},
 		"failure variant without reason": {"type": "OperationFailed", "data": {}},
-		"reconnection variant without code": {
+		"reconnection variant without code":
+		{
 			"type": "ReconnectionFailed",
 			"data": {"reason": "stale"},
 		},
-		"spectator-left variant non-string reason": {
+		"reconnected variant without missed_events":
+		{
+			"type": "Reconnected",
+			"data": _room_joined_with_bad_ice(),
+		},
+		"spectator-left variant non-string reason":
+		{
 			"type": "SpectatorLeft",
 			"data": {"reason": 5},
 		},
@@ -241,7 +298,8 @@ func _test_v3_room_operation_results() -> void:
 		)
 	var id_refusals := {
 		"missing operation id": {"result": {"type": "RoomLeft"}},
-		"non-canonical operation id": {
+		"non-canonical operation id":
+		{
 			"operation_id": "{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa}",
 			"result": {"type": "RoomLeft"},
 		},
@@ -1020,6 +1078,15 @@ func _room_joined_with_bad_ice() -> Dictionary:
 		"relay_type": "websocket",
 		"ice_servers": [{"urls": "not-an-array"}],
 	}
+
+
+## A valid RoomJoined-shaped payload plus the upstream-required
+## missed_events field for a Reconnected result payload.
+func _reconnected_result_payload() -> Dictionary:
+	var payload := _room_joined_with_bad_ice()
+	payload.erase("ice_servers")
+	payload["missed_events"] = []
+	return payload
 
 
 func _read_fixture_lines(path: String) -> PackedStringArray:

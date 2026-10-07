@@ -281,41 +281,50 @@ func _test_v3_advisory_events_surface() -> void:
 			operation_results.append(result)
 	)
 
-	fake.inject_server_message(
-		{
-			"type": "GoingAway",
-			"data": {"deadline_ms": 1700000000000, "retry_after_secs": 30},
-		}
-	)
-	fake.inject_server_message(
-		{
-			"type": "DeliveryReport",
-			"data":
+	(
+		fake
+		. inject_server_message(
 			{
-				"per_class":
-				{"reliable": {"delivered": 8, "abandoned": 0, "unsupported_format": 0}},
-				"gaps":
-				[
-					{
-						"from_player": PLAYER_B,
-						"epoch": 1,
-						"from_seq": 42,
-						"to_seq": 42,
-						"reason": "latest_superseded",
-					},
-				],
+				"type": "GoingAway",
+				"data": {"deadline_ms": 1700000000000, "retry_after_secs": 30},
 			}
-		}
+		)
 	)
-	fake.inject_server_message(
-		{
-			"type": "RoomOperationResult",
-			"data":
+	(
+		fake
+		. inject_server_message(
 			{
-				"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-				"result": {"type": "RoomLeft"},
+				"type": "DeliveryReport",
+				"data":
+				{
+					"per_class":
+					{"reliable": {"delivered": 8, "abandoned": 0, "unsupported_format": 0}},
+					"gaps":
+					[
+						{
+							"from_player": PLAYER_B,
+							"epoch": 1,
+							"from_seq": 42,
+							"to_seq": 42,
+							"reason": "latest_superseded",
+						},
+					],
+				}
 			}
-		}
+		)
+	)
+	(
+		fake
+		. inject_server_message(
+			{
+				"type": "RoomOperationResult",
+				"data":
+				{
+					"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+					"result": {"type": "RoomLeft"},
+				}
+			}
+		)
 	)
 	_assert_equal(1, going_aways.size(), "going_away surfaced")
 	if going_aways.size() == 1:
@@ -323,7 +332,9 @@ func _test_v3_advisory_events_surface() -> void:
 		_assert_equal(30, going_aways[0][1], "going_away retry hint surfaced")
 	_assert_equal(1, reports.size(), "delivery_report surfaced")
 	if reports.size() == 1:
-		_assert_equal(8, reports[0].counters_for("reliable").get_count("delivered"), "report counters")
+		_assert_equal(
+			8, reports[0].counters_for("reliable").get_count("delivered"), "report counters"
+		)
 		_assert_equal(1, reports[0].gaps.size(), "report gaps surfaced")
 	_assert_equal(1, operation_results.size(), "room_operation_result surfaced")
 	if operation_results.size() == 1:

@@ -42,7 +42,7 @@ Generated Markdown inventory by `scripts/generate-llm-index.ps1`; do not edit by
 - [Godot Target Notes](research/godot-targets.md) - Godot 4.x target notes for the GDScript Signal Fish addon, with the recorded Godot 3.6 compatibility deferral.
 - [GStack Adaptation Notes](research/gstack-adaptations.md) - Practical gstack practices adapted for this repo's lightweight LLM harness.
 - [Hot-Path Audit Verdicts (issue #161)](research/hot-path-audit.md) - Measured verdicts for issue #161 hot-path audit ideas (allocations, value-typed cursor decoders, float wire-text memo) so no session repeats them without new engine capabilities.
-- [Signal Fish Protocol Fixtures](research/protocol-fixtures.md) - Pinned upstream sources used to build Signal Fish v2 protocol fixtures for the Godot client.
+- [Signal Fish Protocol Fixtures](research/protocol-fixtures.md) - Pinned upstream sources used to build Signal Fish protocol fixtures for the Godot client.
 - [Signal Fish Upstream References](research/protocol-links.md) - Curated upstream references for Signal Fish protocol and client compatibility work.
 - [Steam Identity Bootstrap Notes (issue #312)](research/steam-identity.md) - GodotSteam P2P facts behind the SFSteamIdentityBootstrap design (versions, singleton access, callback pumping, wire keys).
 - [Steam Post-Deprecation P2P Surface Notes (issue #320)](research/steam-p2p-surface.md) - Verdict and source-anchored facts for moving off the deprecated classic Steam P2P API to Networking Messages (issue #320).

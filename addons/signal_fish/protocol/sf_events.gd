@@ -637,8 +637,10 @@ static func _decode_room_operation_result(
 		return _protocol_error("RoomOperationResult result type must not be empty", envelope)
 	if not SFSessionTypesScript.ROOM_OPERATION_RESULT_TYPES.has(result_type):
 		return _protocol_error(
-			"RoomOperationResult result type is unknown: %s"
-			% SFDiagnosticsScript.render_key(result_type),
+			(
+				"RoomOperationResult result type is unknown: %s"
+				% SFDiagnosticsScript.render_key(result_type)
+			),
 			envelope
 		)
 	var payload_error := _validate_room_operation_result_payload(result_type, result.get("data"))
@@ -654,14 +656,22 @@ static func _decode_room_operation_result(
 	)
 
 
-static func _validate_room_operation_result_payload(result_type: String, payload: Variant) -> String:
+static func _validate_room_operation_result_payload(
+	result_type: String, payload: Variant
+) -> String:
 	if result_type == "RoomLeft":
 		return "data must be omitted" if payload != null else ""
 	if not payload is Dictionary:
 		return "requires a data object"
 	var data: Dictionary = payload
 	match result_type:
-		"RoomJoined", "Reconnected":
+		"RoomJoined":
+			return SFTypesScript.validate_room_joined_info(data)
+		"Reconnected":
+			# Upstream ReconnectedPayload requires missed_events; the
+			# top-level event refuses its absence too.
+			if not data.has("missed_events") or typeof(data["missed_events"]) != TYPE_ARRAY:
+				return "requires a missed_events array"
 			return SFTypesScript.validate_room_joined_info(data)
 		"SpectatorJoined":
 			return SFTypesScript.validate_spectator_joined_info(data)
@@ -680,7 +690,7 @@ static func _validate_room_operation_result_payload(result_type: String, payload
 			if not _has_bool(data, "requires_password"):
 				return "requires_password must be a bool"
 			return ""
-		"RoomJoinFailed", "OperationFailed":
+		"RoomJoinFailed", "SpectatorJoinFailed", "OperationFailed":
 			if not _has_string(data, "reason"):
 				return "requires string reason"
 			return _validate_optional_error_code(data, result_type)

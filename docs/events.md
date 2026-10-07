@@ -105,11 +105,19 @@ signal_received(from_player, generation, signal_payload)
 new_peer(peer_id, you_initiate)
 session_plan(plan)
 peer_transport_status(peer_id, transport, connected)
+going_away(deadline_ms, retry_after_secs)
+delivery_report(report)
+room_operation_result(result)
 ```
 
-These four signals only fire when `SignalFishConfig.protocol_version` is
+These signals only fire when `SignalFishConfig.protocol_version` is
 set to a positive version (opt-in; `0` omits the capabilities and keeps the
 v2 wire bytes) and the server negotiates a v3 session plan.
+
+`going_away` is a best-effort drain advisory; the close that follows stays
+authoritative. `delivery_report` and `room_operation_result` are surfaced
+verbatim; the client never acts on them. `retry_after_secs` is `-1` when
+the server sends no hint.
 
 ## Typed payloads and sentinels
 

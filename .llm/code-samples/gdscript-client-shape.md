@@ -153,7 +153,7 @@ room_operation_result(result)  # RoomOperationResultInfo (15 closed variants)
   exact wire details.
 - Closed sets are enums: `SFTypes.LobbyState`, `GameDataEncoding`,
   `RelayTransport`, `SpectatorReason`, `ReplayStatus`; `SFErrorCodes.Code`;
-  `SFSessionTypes.Topology`/`TransportKind`.
+  `SFSessionTypes.Topology`/`TransportKind`/`DeliveryGapReason`.
 - Optional wire values surface as decoded sentinels: missing strings -> `""`,
   missing arrays -> empty, unknown enum strings -> `UNKNOWN`, absent error codes
   -> `SFErrorCodes.Code.NONE`.

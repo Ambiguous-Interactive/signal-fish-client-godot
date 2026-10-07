@@ -12,7 +12,13 @@ extends RefCounted
 
 enum Topology { UNKNOWN = -1, RELAY, HOST, MESH }
 enum TransportKind { UNKNOWN = -1, RELAY, DIRECT, WEBRTC }
-enum DeliveryGapReason { UNKNOWN = -1, LATEST_SUPERSEDED, LATEST_DROPPED_FULL, VOLATILE_DROPPED, UNSUPPORTED_FORMAT }
+enum DeliveryGapReason {
+	UNKNOWN = -1,
+	LATEST_SUPERSEDED,
+	LATEST_DROPPED_FULL,
+	VOLATILE_DROPPED,
+	UNSUPPORTED_FORMAT,
+}
 
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
@@ -336,8 +342,10 @@ class DeliveryReportInfo:
 		for class_key: String in wire_classes:
 			var counters: Dictionary = wire_classes[class_key]
 			per_class[class_key] = DeliveryClassCountersInfo.new(counters)
-		for gap: Dictionary in data.get("gaps", []):
-			gaps.append(DeliveryGapInfo.new(gap))
+		var wire_gaps: Variant = data.get("gaps", [])
+		if wire_gaps is Array:
+			for gap: Dictionary in wire_gaps:
+				gaps.append(DeliveryGapInfo.new(gap))
 
 	func counters_for(class_key: String) -> DeliveryClassCountersInfo:
 		return per_class.get(class_key, null)
@@ -483,6 +491,8 @@ static func validate_delivery_report(data: Variant) -> String:
 		var gaps_error := _validate_delivery_gaps(dict["gaps"])
 		if not gaps_error.is_empty():
 			return "DeliveryReport %s" % gaps_error
+	elif dict.has("gaps"):
+		return "DeliveryReport gaps must be an array"
 	return ""
 
 
