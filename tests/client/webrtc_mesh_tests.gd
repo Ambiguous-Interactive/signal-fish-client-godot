@@ -54,6 +54,8 @@ func run_all() -> void:
 		_test_plan_before_room_baseline_is_ignored,
 		_test_plan_replaces_fully,
 		_test_plan_peer_count_stays_bounded,
+		_test_plan_flip_never_doubles_past_cap,
+		_test_relay_queue_stays_bounded,
 		_test_ice_replace_and_clear,
 		_test_signal_gates,
 		_test_new_peer_event_obey_flag,
@@ -462,6 +464,79 @@ func _test_plan_peer_count_stays_bounded() -> void:
 	_assert_equal(cap, mesh.get_peer_count(), "over-cap plan opens only the cap")
 	_assert_equal(cap, _mesh_peers(mesh).size(), "one connection per retained peer")
 	_assert_equal(cap, multiplayer.added.size(), "retained peers join the multiplayer roster")
+	mesh.free()
+	client.free()
+	_done()
+
+
+## Issue #335: a full-roster plan flip drops the old generation before
+## opening the new one, so live peer connections never exceed the cap.
+
+
+func _test_plan_flip_never_doubles_past_cap() -> void:
+	var cap := SFTypeUtils.MAX_TRACKED_PEERS
+	var client := _make_in_room_client()
+	var mesh := _make_mesh()
+	_attach(mesh, client)
+	var created: Array[FakePeerConnection] = mesh.get_meta("created")
+	mesh.peer_connection_factory = func() -> Variant:
+		var pc := FakePeerConnection.new()
+		var live := 1
+		for connection: FakePeerConnection in created:
+			if not connection.closed:
+				live += 1
+		pc.live_at_creation = live
+		created.append(pc)
+		return pc
+	var first: Array[Dictionary] = []
+	var second: Array[Dictionary] = []
+	for index: int in cap:
+		first.append(_peer("000000ee-0000-0000-0000-%012d" % index, index % 2 == 0))
+		second.append(_peer("000000ff-0000-0000-0000-%012d" % index, index % 2 == 0))
+	_inject_plan(client, first)
+	_assert_equal(cap, mesh.get_peer_count(), "the first generation fills the cap")
+	_inject_plan(client, second, "40000000-0000-0000-0000-000000000002")
+	_assert_equal(cap, mesh.get_peer_count(), "the flip lands at the cap")
+	var peak := 0
+	for connection: FakePeerConnection in created:
+		peak = maxi(peak, connection.live_at_creation)
+	_assert(peak <= cap, "live connections never exceed the cap (peak %d)" % peak)
+	mesh.free()
+	client.free()
+	_done()
+
+
+## Issue #335: the per-peer relay queue stays bounded even when the retry
+## budget never fires (no consecutive refusals); overflow refuses the newest
+## signal, so the Offer-first order survives.
+
+
+func _test_relay_queue_stays_bounded() -> void:
+	var client := _make_in_room_client()
+	var errors := _track_protocol_errors(client)
+	var mesh := _make_mesh()
+	_attach(mesh, client)
+	var fake_transport: SFFakeTransportScript = client.transport
+	_inject_plan(client, [_peer(PLAYER_B, true)])
+	var pc: FakePeerConnection = _mesh_peers(mesh)[0]
+	fake_transport.buffered_amount = 262145
+	var lines: Array[String] = _captured_log_lines(
+		func() -> void:
+			pc.emit_session_description_created("offer", "v=0")
+			for index: int in SFWebRTCMeshScript.MAX_PENDING_RELAYS + 1:
+				pc.emit_ice_candidate_created("", index, "cand:%d" % index)
+	)
+	var entry: SFWebRTCMeshScript._MeshPeer = mesh._peers[PLAYER_B]
+	_assert_equal(
+		SFWebRTCMeshScript.MAX_PENDING_RELAYS,
+		entry.pending_signals.size(),
+		"the relay queue clamps to the cap"
+	)
+	_assert_equal(_offer_signal(), entry.pending_signals[0], "the offer keeps the queue head")
+	_assert_equal(2, lines.size(), "each refused signal logs exactly once")
+	for line: String in lines:
+		_assert(line.contains("relay queue"), "the refusal names the queue: %s" % line)
+	_assert_equal(1, errors.size(), "only the direct refusal is a protocol error")
 	mesh.free()
 	client.free()
 	_done()
@@ -1382,6 +1457,7 @@ class FakePeerConnection:
 	var added_candidates: Array[Array] = []
 	var poll_calls := 0
 	var closed := false
+	var live_at_creation := 0
 
 	func initialize(configuration: Variant) -> Error:
 		initialize_config = configuration

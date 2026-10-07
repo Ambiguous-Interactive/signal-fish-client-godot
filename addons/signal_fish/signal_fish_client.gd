@@ -120,9 +120,9 @@ const RECONNECT_JITTER_FRACTION := 0.25
 
 ## Redaction-list bound for rotating secrets (issue #274): a hostile relay
 ## cycling fresh reconnection tokens per baseline must not grow the list
-## without a bound. Configured secrets (credential, passwords, consumer-
-## supplied reconnect identities) stay pinned; per-baseline tokens rotate
-## under the cap, evicting the oldest.
+## without a bound. Per-baseline tokens rotate under the cap, evicting the
+## oldest; pinned secrets are bounded by the same cap and evict oldest-first,
+## so the live credential (always the newest pin) stays redacted (issue #335).
 const MAX_REMEMBERED_SECRETS := 16
 
 ## Upstream `CloseReason::Kicked`: a kick removes the reconnection record, so
@@ -1517,6 +1517,12 @@ func _remember_secret(secret: String, pinned := false) -> void:
 	if pinned:
 		_secrets.insert(_pinned_secrets, secret)
 		_pinned_secrets += 1
+		if _pinned_secrets > MAX_REMEMBERED_SECRETS:
+			# Distinct pins (rotated room passwords) are bounded like the
+			# rotating half; the newest pin is the live credential, so
+			# oldest-first eviction can never unredact it (issue #335).
+			_secrets.remove_at(0)
+			_pinned_secrets -= 1
 		return
 	_secrets.append(secret)
 	if _secrets.size() > _pinned_secrets + MAX_REMEMBERED_SECRETS:

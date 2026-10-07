@@ -88,6 +88,9 @@ var signal_retry_msec := 1000
 ## its pending queue (issue #127).
 var signal_retry_budget := 10
 
+## Signals queued per peer while the link is backpressured (issue #335).
+const MAX_PENDING_RELAYS := 64
+
 var _client: SignalFishClientScript = null
 # Distinguishes "never attached / detached" from "the attached client node was
 # freed": Godot reads a freed object held by a script-typed variable as null,
@@ -337,13 +340,15 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 		var wanted_peer: SFSessionTypesScript.SessionPeerInfo = wanted[uuid]
 		if entry.initiate != wanted_peer.initiate or entry.generation != plan.generation:
 			_drop_peer(uuid)
+	# Drops precede opens: a full-roster plan flip must never hold both
+	# generations past the tracked-peer ceiling (issue #335).
+	for uuid: String in _peers.keys():
+		if not wanted.has(uuid):
+			_drop_peer(uuid)
 	for uuid: String in wanted:
 		if not _peers.has(uuid):
 			var wanted_peer: SFSessionTypesScript.SessionPeerInfo = wanted[uuid]
 			_open_peer(uuid, wanted_peer.initiate)
-	for uuid: String in _peers.keys():
-		if not wanted.has(uuid):
-			_drop_peer(uuid)
 
 
 func _open_peer(uuid: String, initiate: bool) -> void:
@@ -514,6 +519,16 @@ func _dispatch_relay(entry: _MeshPeer, payload: Dictionary) -> void:
 
 
 func _enqueue_relay(entry: _MeshPeer, payload: Dictionary) -> void:
+	if entry.pending_signals.size() >= MAX_PENDING_RELAYS:
+		# Order (Offer before candidates) survives by refusing the newest
+		# signal instead of evicting the queue head (issue #335).
+		SFLogScript.error(
+			(
+				"mesh: relay queue to %s is at cap %d; signal dropped"
+				% [entry.uuid, MAX_PENDING_RELAYS]
+			)
+		)
+		return
 	entry.pending_signals.append(payload)
 	if entry.pending_signals.size() == 1:
 		entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
@@ -559,6 +574,8 @@ func _on_client_server_error(_message: String, error_code: int) -> void:
 		if entry.relay_dropped or not entry.has_last_relayed:
 			continue
 		if entry.pending_signals.has(entry.last_relayed):
+			continue
+		if entry.pending_signals.size() >= MAX_PENDING_RELAYS:
 			continue
 		# The server-refused payload predates the queued local sends.
 		entry.pending_signals.push_front(entry.last_relayed)
