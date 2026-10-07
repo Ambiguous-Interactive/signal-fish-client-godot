@@ -15,6 +15,10 @@ released version.
   role-scoped SteamId64s on the game-data lane, fences the host's Steam
   accepts behind that exchange, and hands established sessions to the game.
   Requires the GodotSteam GDExtension; the relay-only client stays unchanged.
+- Three new v3 signals: `going_away` (graceful server-drain advisory),
+  `delivery_report` (per-class delivery counters plus omission gaps), and
+  `room_operation_result` (surfaced verbatim). All are informational; the
+  client never acts on them.
 
 ## [v0.1.1] - 2026-10-01
 

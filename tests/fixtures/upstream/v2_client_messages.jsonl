@@ -1,10 +1,11 @@
 # Upstream Signal Fish v2 client wire samples (concrete, complete frames).
-# Source: signal-fish-server tag v0.9.2 (6b76d665f32f2af4acc64dee8a5239f93bd5b784)
+# Source: signal-fish-server tag v0.10.0 (269b6db18992159d6d18a0987070ea99bb084fd6)
 #   .llm/code-samples/protocol/v2-client-messages.jsonl
-# sha256 b1e1bbfb3df2603fd8bf4630d49ddbf3fa65708200a2b1e8f081631c49f2025a (upstream bytes)
-# Vendored 2026-09-21 (issue #55). Upstream tokens are placeholders, not secrets.
+# sha256 bc774c2c4d6d1ebba1b2fac9d1a4cefee59303cbfd65eb361968fcc2d651a3ca (upstream bytes)
+# Vendored 2026-10-07 (upstream v0.10.0 sample refresh). Upstream tokens are placeholders, not secrets.
 {"type": "Authenticate", "data": {"app_id": "mb_app_abc123", "sdk_version": "1.2.3", "platform": "unity"}}
 {"type": "JoinRoom", "data": {"game_name": "my-game", "room_code": "ABC123", "player_name": "Player1", "max_players": 8, "supports_authority": true, "relay_transport": null}}
+{"type": "JoinRoom", "data": {"game_name": "my-game", "room_code": "ABC123", "player_name": "Player1", "max_players": 8, "supports_authority": true, "relay_transport": null, "join_only": true}}
 {"type": "JoinRoom", "data": {"game_name": "my-game", "room_code": null, "player_name": "Player1", "max_players": null, "supports_authority": null, "relay_transport": null}}
 {"type": "GameData", "data": {"data": {"action": "move", "x": 10}}}
 {"type": "AuthorityRequest", "data": {"become_authority": true}}
@@ -16,3 +17,4 @@
 {"type": "JoinAsSpectator", "data": {"game_name": "my-game", "room_code": "ABC123", "spectator_name": "Observer"}}
 {"type": "LeaveSpectator"}
 {"type": "LeaveRoom"}
+{"type": "Authenticate", "data": {"app_id": "mb_app_abc123", "sdk_version": "1.2.3", "platform": "unity", "game_data_format": "rkyv"}}

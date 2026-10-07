@@ -140,6 +140,9 @@ signal_received(from_player, generation, signal_payload)
 new_peer(peer_id, you_initiate)
 session_plan(plan)
 peer_transport_status(peer_id, transport, connected)
+going_away(deadline_ms, retry_after_secs)  # retry_after_secs is -1 when absent
+delivery_report(report)  # DeliveryReportInfo: per-class counters + gaps
+room_operation_result(result)  # RoomOperationResultInfo (15 closed variants)
 ```
 
 ## Value objects & enums
@@ -150,7 +153,7 @@ peer_transport_status(peer_id, transport, connected)
   exact wire details.
 - Closed sets are enums: `SFTypes.LobbyState`, `GameDataEncoding`,
   `RelayTransport`, `SpectatorReason`, `ReplayStatus`; `SFErrorCodes.Code`;
-  `SFSessionTypes.Topology`/`TransportKind`.
+  `SFSessionTypes.Topology`/`TransportKind`/`DeliveryGapReason`.
 - Optional wire values surface as decoded sentinels: missing strings -> `""`,
   missing arrays -> empty, unknown enum strings -> `UNKNOWN`, absent error codes
   -> `SFErrorCodes.Code.NONE`.

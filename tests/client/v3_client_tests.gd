@@ -34,6 +34,7 @@ func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_v3_config_advertises_capabilities,
 		_test_v3_events_surface,
+		_test_v3_advisory_events_surface,
 		_test_v3_send_methods,
 		_test_connect_token_reaches_wire,
 		_test_encode_boundary_refuses_unserializable_payload,
@@ -255,6 +256,95 @@ func _test_v3_events_surface() -> void:
 	_assert_equal(2, plans.size(), "relay reset plan surfaced")
 	var relay_plan: SFSessionTypesScript.SessionPlanInfo = plans[1]
 	_assert_equal(0, relay_plan.peers.size(), "relay reset plan has no peers")
+	client.free()
+	_done()
+
+
+## The v0.10.0 advisory/accountability events surface through the client as
+## signals only: no session state moves, and no protocol_error fires.
+func _test_v3_advisory_events_surface() -> void:
+	var client := _make_authenticated_client()
+	var fake: SFFakeTransportScript = client.transport
+	var protocol_errors := _track_protocol_errors(client)
+	var going_aways: Array[Array] = []
+	client.going_away.connect(
+		func(deadline_ms: int, retry_after_secs: int) -> void:
+			going_aways.append([deadline_ms, retry_after_secs])
+	)
+	var reports: Array[SFSessionTypesScript.DeliveryReportInfo] = []
+	client.delivery_report.connect(
+		func(report: SFSessionTypesScript.DeliveryReportInfo) -> void: reports.append(report)
+	)
+	var operation_results: Array[SFSessionTypesScript.RoomOperationResultInfo] = []
+	client.room_operation_result.connect(
+		func(result: SFSessionTypesScript.RoomOperationResultInfo) -> void:
+			operation_results.append(result)
+	)
+
+	(
+		fake
+		. inject_server_message(
+			{
+				"type": "GoingAway",
+				"data": {"deadline_ms": 1700000000000, "retry_after_secs": 30},
+			}
+		)
+	)
+	(
+		fake
+		. inject_server_message(
+			{
+				"type": "DeliveryReport",
+				"data":
+				{
+					"per_class":
+					{"reliable": {"delivered": 8, "abandoned": 0, "unsupported_format": 0}},
+					"gaps":
+					[
+						{
+							"from_player": PLAYER_B,
+							"epoch": 1,
+							"from_seq": 42,
+							"to_seq": 42,
+							"reason": "latest_superseded",
+						},
+					],
+				}
+			}
+		)
+	)
+	(
+		fake
+		. inject_server_message(
+			{
+				"type": "RoomOperationResult",
+				"data":
+				{
+					"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+					"result": {"type": "RoomLeft"},
+				}
+			}
+		)
+	)
+	_assert_equal(1, going_aways.size(), "going_away surfaced")
+	if going_aways.size() == 1:
+		_assert_equal(1700000000000, going_aways[0][0], "going_away deadline surfaced")
+		_assert_equal(30, going_aways[0][1], "going_away retry hint surfaced")
+	_assert_equal(1, reports.size(), "delivery_report surfaced")
+	if reports.size() == 1:
+		_assert_equal(
+			8, reports[0].counters_for("reliable").get_count("delivered"), "report counters"
+		)
+		_assert_equal(1, reports[0].gaps.size(), "report gaps surfaced")
+	_assert_equal(1, operation_results.size(), "room_operation_result surfaced")
+	if operation_results.size() == 1:
+		_assert_equal("RoomLeft", operation_results[0].result_type, "operation result type")
+		_assert_equal(
+			"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			operation_results[0].operation_id,
+			"operation id surfaced"
+		)
+	_assert_equal(0, protocol_errors.size(), "advisory events are not protocol errors")
 	client.free()
 	_done()
 

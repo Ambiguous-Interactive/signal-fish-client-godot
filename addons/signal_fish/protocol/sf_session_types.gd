@@ -3,13 +3,22 @@ extends RefCounted
 
 ## Protocol v3 session-plan value objects (upstream `SessionPlanPayload`,
 ## `SessionPeer`, `DirectEndpoint`, `IceServer`, `NewPeer`,
-## `PeerTransportStatus` in signal-fish-client-rust `src/protocol.rs`, pinned
-## by `tests/fixtures/v3_server_messages.jsonl`). Split from [code]SFTypes[/code]
+## `PeerTransportStatus`, `GoingAway`, `DeliveryReport`,
+## `RoomOperationResult` in signal-fish-client-rust `src/protocol.rs`, pinned
+## by `tests/fixtures/v3_server_messages.jsonl` and the vendored upstream
+## sample corpus). Split from [code]SFTypes[/code]
 ## to keep that file focused on the v2 surface; the enums and lookup tables
 ## here are the v3 additions to the protocol's closed token sets.
 
 enum Topology { UNKNOWN = -1, RELAY, HOST, MESH }
 enum TransportKind { UNKNOWN = -1, RELAY, DIRECT, WEBRTC }
+enum DeliveryGapReason {
+	UNKNOWN = -1,
+	LATEST_SUPERSEDED,
+	LATEST_DROPPED_FULL,
+	VOLATILE_DROPPED,
+	UNSUPPORTED_FORMAT,
+}
 
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
@@ -37,6 +46,40 @@ const TRANSPORT_KIND_FROM_STRING: Dictionary = {
 	"direct": TransportKind.DIRECT,
 	"webrtc": TransportKind.WEBRTC,
 }
+
+const DELIVERY_GAP_REASON_FROM_STRING: Dictionary = {
+	"latest_superseded": DeliveryGapReason.LATEST_SUPERSEDED,
+	"latest_dropped_full": DeliveryGapReason.LATEST_DROPPED_FULL,
+	"volatile_dropped": DeliveryGapReason.VOLATILE_DROPPED,
+	"unsupported_format": DeliveryGapReason.UNSUPPORTED_FORMAT,
+}
+
+## Maximum exact omission ranges in one DeliveryReport (upstream
+## `DELIVERY_REPORT_MAX_GAPS`): refuse larger hostile arrays.
+const MAX_DELIVERY_GAPS := 256
+
+## The closed upstream `RoomOperationResult` variant set (server
+## `src/protocol/messages.rs` @ v0.9.1 wire commit, unchanged through
+## v0.10.0). The client never issues RoomOperations yet, so any result is
+## unsolicited: decoded and surfaced verbatim, never applied to session
+## state.
+const ROOM_OPERATION_RESULT_TYPES: Array[String] = [
+	"RoomJoined",
+	"RoomJoinFailed",
+	"RoomLeft",
+	"Reconnected",
+	"ReconnectionFailed",
+	"SpectatorJoined",
+	"SpectatorJoinFailed",
+	"SpectatorLeft",
+	"OperationFailed",
+	"PlayerKicked",
+	"RoomCodeRegenerated",
+	"RoomAccessUpdated",
+	"PlayerBanned",
+	"PlayerUnbanned",
+	"AuthorityTransferred",
+]
 
 
 ## A STUN/TURN server for WebRTC ICE negotiation (upstream `IceServer`).
@@ -241,6 +284,103 @@ class PeerTransportStatusInfo:
 		return raw.duplicate(true)
 
 
+## One exact omission range in a DeliveryReport (upstream `DeliveryGap`).
+## [code]from_seq[/code]/[code]to_seq[/code] are the inclusive omitted
+## sequence bounds of one sender's stream.
+class DeliveryGapInfo:
+	extends RefCounted
+	var from_player: String = ""
+	var epoch: int = 0
+	var from_seq: int = 0
+	var to_seq: int = 0
+	var reason: int = DeliveryGapReason.UNKNOWN
+	var raw: Dictionary = {}
+
+	func _init(data: Dictionary = {}) -> void:
+		raw = data
+		from_player = SFTypeUtils.string_or_empty(data.get("from_player"))
+		epoch = SFTypeUtils.int_or_zero(data.get("epoch"))
+		from_seq = SFTypeUtils.int_or_zero(data.get("from_seq"))
+		to_seq = SFTypeUtils.int_or_zero(data.get("to_seq"))
+		reason = SFTypeUtils.enum_value(
+			DELIVERY_GAP_REASON_FROM_STRING, data.get("reason"), DeliveryGapReason.UNKNOWN
+		)
+
+	func to_dict() -> Dictionary:
+		return raw.duplicate(true)
+
+
+## Cumulative outcomes for one delivery class (upstream
+## `ReliableDeliveryCounters`/`LatestDeliveryCounters`/
+## `VolatileDeliveryCounters`). Counters are wire u64, so values above the
+## platform int range are refused at validation (issue #73 policy).
+class DeliveryClassCountersInfo:
+	extends RefCounted
+	var counters: Dictionary = {}
+
+	func _init(data: Dictionary = {}) -> void:
+		for key: String in data:
+			counters[key] = SFTypeUtils.int_or_zero(data[key])
+
+	func get_count(key: String) -> int:
+		return counters.get(key, 0)
+
+
+## The exact delivery-accountability report (upstream `DeliveryReportPayload`,
+## protocol v3 only). Informational: the client surfaces it and never acts on
+## it. Known class keys mirror upstream; unknown future classes survive in
+## [code]raw[/code].
+class DeliveryReportInfo:
+	extends RefCounted
+	var per_class: Dictionary = {}
+	var gaps: Array[DeliveryGapInfo] = []
+	var raw: Dictionary = {}
+
+	func _init(data: Dictionary = {}) -> void:
+		raw = data
+		var wire_classes: Dictionary = data.get("per_class", {})
+		for class_key: String in wire_classes:
+			var counters: Dictionary = wire_classes[class_key]
+			per_class[class_key] = DeliveryClassCountersInfo.new(counters)
+		var wire_gaps: Variant = data.get("gaps", [])
+		if wire_gaps is Array:
+			for gap: Dictionary in wire_gaps:
+				gaps.append(DeliveryGapInfo.new(gap))
+
+	func counters_for(class_key: String) -> DeliveryClassCountersInfo:
+		return per_class.get(class_key, null)
+
+	func to_dict() -> Dictionary:
+		return raw.duplicate(true)
+
+
+## A terminal response carried by a v3 `RoomOperationResult` (upstream
+## `RoomOperationResult`, 15 closed variants). [code]result_type[/code] is the
+## wire variant name; [code]data[/code] is the validated variant payload.
+## Correlation (matching one to a pending operation) lands with the
+## RoomOperation sender; until then every result is surfaced verbatim.
+class RoomOperationResultInfo:
+	extends RefCounted
+	var operation_id: String = ""
+	var result_type: String = ""
+	var data: Dictionary = {}
+	var raw: Dictionary = {}
+
+	func _init(data_dict: Dictionary = {}) -> void:
+		raw = data_dict
+		operation_id = SFTypeUtils.string_or_empty(data_dict.get("operation_id"))
+		var result: Variant = data_dict.get("result", {})
+		if result is Dictionary:
+			var result_dict: Dictionary = result
+			result_type = SFTypeUtils.string_or_empty(result_dict.get("type"))
+			var result_data: Variant = result_dict.get("data", {})
+			if result_data is Dictionary:
+				data = result_data
+
+	func to_dict() -> Dictionary:
+		return raw.duplicate(true)
+
+
 static func topology_from_string(value: Variant) -> int:
 	return SFTypeUtils.enum_value(TOPOLOGY_FROM_STRING, value, Topology.UNKNOWN)
 
@@ -336,6 +476,34 @@ static func make_session_plan_info(data: Dictionary) -> SessionPlanInfo:
 	return SessionPlanInfo.new(data)
 
 
+static func validate_delivery_report(data: Variant) -> String:
+	if typeof(data) != TYPE_DICTIONARY:
+		return "DeliveryReport data must be an object"
+	var dict: Dictionary = data
+	if not dict.has("per_class") or typeof(dict["per_class"]) != TYPE_DICTIONARY:
+		return "DeliveryReport requires a per_class object"
+	var per_class: Dictionary = dict["per_class"]
+	for class_key: String in per_class:
+		var error := _validate_delivery_counters(per_class[class_key])
+		if not error.is_empty():
+			return "DeliveryReport per_class.%s: %s" % [class_key, error]
+	if dict.has("gaps") and dict["gaps"] != null:
+		var gaps_error := _validate_delivery_gaps(dict["gaps"])
+		if not gaps_error.is_empty():
+			return "DeliveryReport %s" % gaps_error
+	elif dict.has("gaps"):
+		return "DeliveryReport gaps must be an array"
+	return ""
+
+
+static func make_delivery_report(data: Dictionary) -> DeliveryReportInfo:
+	return DeliveryReportInfo.new(data)
+
+
+static func make_room_operation_result(data: Dictionary) -> RoomOperationResultInfo:
+	return RoomOperationResultInfo.new(data)
+
+
 static func _validate_ice_server(data: Variant) -> String:
 	if typeof(data) != TYPE_DICTIONARY:
 		return "IceServer must be an object"
@@ -411,3 +579,48 @@ static func _is_integer_value_in_range(value: Variant, min_value: int, max_value
 		return false
 	var number: float = value
 	return number >= float(min_value) and number <= float(max_value)
+
+
+static func _validate_delivery_counters(value: Variant) -> String:
+	if typeof(value) != TYPE_DICTIONARY:
+		return "counters must be an object"
+	var counters: Dictionary = value
+	for key: String in counters:
+		if not is_u64_wire_integer(counters[key]):
+			return "counter %s must be a nonnegative integer" % key
+	return ""
+
+
+static func _validate_delivery_gaps(value: Variant) -> String:
+	if typeof(value) != TYPE_ARRAY:
+		return "gaps must be an array"
+	var gaps: Array = value
+	if gaps.size() > MAX_DELIVERY_GAPS:
+		return "gaps exceed %d entries" % MAX_DELIVERY_GAPS
+	for gap: Variant in gaps:
+		if typeof(gap) != TYPE_DICTIONARY:
+			return "gap entries must be objects"
+		var entry: Dictionary = gap
+		if not _has_id(entry, "from_player"):
+			return "gap requires lowercase hyphenated UUID from_player"
+		if not _is_integer_value_in_range(entry.get("epoch"), 0, U32_MAX):
+			return "gap epoch must be u32"
+		if not is_u64_wire_integer(entry.get("from_seq")):
+			return "gap from_seq must be a nonnegative integer"
+		if not is_u64_wire_integer(entry.get("to_seq")):
+			return "gap to_seq must be a nonnegative integer"
+		if not _has_known_enum_token(entry, "reason", DELIVERY_GAP_REASON_FROM_STRING):
+			return "gap reason is unknown"
+	return ""
+
+
+## Wire u64: nonnegative and inside the platform int range. Values at or
+## above 2^63 are hostile, never collapsed (issue #73 policy).
+static func is_u64_wire_integer(value: Variant) -> bool:
+	if value is int:
+		var integer: int = value
+		return integer >= 0
+	if not SFTypeUtils.is_i64_integer(value):
+		return false
+	var number: float = value
+	return number >= 0.0

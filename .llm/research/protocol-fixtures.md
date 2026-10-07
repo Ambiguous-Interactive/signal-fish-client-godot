@@ -1,5 +1,5 @@
 ---
-description: Pinned upstream sources used to build Signal Fish v2 protocol fixtures for the Godot client.
+description: Pinned upstream sources used to build Signal Fish protocol fixtures for the Godot client.
 triggers: protocol fixture, upstream commit, signal fish, codec, messages, error codes, reconnection, spectator
 category: Protocol
 ---
@@ -26,22 +26,32 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
 
 - v0.9.2 spec refresh (2026-09-21, issue #55): server tag `v0.9.2` is
   `6b76d665f32f2af4acc64dee8a5239f93bd5b784`. It changed no protocol
-  surface (`messages.rs`/`types.rs`/`error_codes.rs` untouched; only
-  server-internal bus routing and dependency bumps), so the codec pin
-  above stays at the v0.9.1 wire commit while the rust binding still
-  pins it. What v0.9.2 did change is the published wire samples: the
-  `.llm/code-samples/protocol` v2 files are now concrete, complete,
-  round-trip-guarded frames (server PRs #612/#613) instead of elided
-  shapes. They are vendored byte-identically (plus a provenance header)
-  under `tests/fixtures/upstream/` and pinned to the codec by
-  `tests/protocol/upstream_samples_tests.gd`; sample digests:
-  - `v2-client-messages.jsonl`
-    `b1e1bbfb3df2603fd8bf4630d49ddbf3fa65708200a2b1e8f081631c49f2025a`
-  - `v2-server-messages.jsonl`
-    `58272c29fef10f2eaa865f935a9e832bc601127890242a7c30b30bbaf8828407`
-    Upstream notes the v2 corpus is complete for text envelopes:
-    `GameDataBinary` has no `{type, data}` JSON form, and `StartGame`
-    refusals arrive as `Error{GAME_START_NOT_READY}` frames.
+  surface (`messages.rs`/`types.rs`/`error_codes.rs` untouched), so the
+  codec pin above stays at the v0.9.1 wire commit. Upstream notes the
+  v2 corpus is complete for text envelopes: `GameDataBinary` has no
+  `{type, data}` JSON form, and `StartGame` refusals arrive as
+  `Error{GAME_START_NOT_READY}` frames.
+
+- v0.10.0 sample refresh (2026-10-07): server tag `v0.10.0` is
+  `269b6db18992159d6d18a0987070ea99bb084fd6`. Its protocol surface grew
+  (`JoinRoom.join_only`, `ProtocolInfo.implementation_version` and
+  `.game_data_limits`, `protobuf` now negotiable), but the rust binding
+  still pins the v0.9.1 wire commit, so the codec pin above stays.
+  Binding-pending (decode-tolerated; typed surface waits for the rust
+  SDK): `join_only`, `game_data_limits`, and `implementation_version`
+  (survives in `ProtocolInfo.raw`). The published sample corpus
+  moved (v2-client +2; v3-client +1; v3-server ProtocolInfo line plus a
+  second ProtocolInfo); all four files are vendored byte-identically
+  under `tests/fixtures/upstream/` and every line must decode
+  (`upstream_samples_tests.gd`). Upstream-byte digests:
+  `v2-client-messages.jsonl`
+  `bc774c2c4d6d1ebba1b2fac9d1a4cefee59303cbfd65eb361968fcc2d651a3ca`;
+  `v2-server-messages.jsonl` unchanged; `v3-client-messages.jsonl`
+  `874a8d448db9c212e70d60e80af0a0070c36b5c45b99ba6b88542877a8c13c0e`;
+  `v3-server-messages.jsonl`
+  `efa7c41c7649ef5bf0967edd4248fd8197a1e3c75d6de749385ef11b63105cd4`.
+  The rust SDK's `[wire_samples]` digests still pin the v0.9.2 bytes
+  until it re-syncs.
 
 - v2 wire bytes are frozen upstream: no legacy message variant, error code,
   or field was renamed or removed; all new surface is additive. `StartGame`
@@ -90,25 +100,25 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
 
 ## Source Paths
 
-| Concern                                     | Repo        | Path                                                                                                                                        |
-| ------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Client and server envelopes                 | server      | `src/protocol/messages.rs`, `docs/protocol.md`                                                                                              |
-| Core value types and enum wire names        | server      | `src/protocol/types.rs`                                                                                                                     |
-| Lobby state names and room transitions      | server      | `src/protocol/room_state.rs`, `docs/concepts/rooms-and-lobbies.md`                                                                          |
-| Error code wire names                       | server      | `src/protocol/error_codes.rs`, `docs/reference/error-codes.md`                                                                              |
-| WebSocket text vs binary frame behavior     | server      | `src/websocket/connection.rs`, `src/websocket/sending.rs`                                                                                   |
-| Reconnection tokens and buffers             | server      | `src/reconnection.rs`, `docs/adr/reconnection-protocol.md`, `docs/concepts/reconnection.md`                                                 |
-| Server room defaults and authority behavior | server      | `src/server/room_service.rs`                                                                                                                |
-| Authority rules                             | server      | `docs/concepts/authority.md`                                                                                                                |
-| Spectator rules                             | server      | `docs/concepts/spectator-mode.md`                                                                                                           |
-| Rust client protocol mirror                 | client-rust | `src/protocol.rs`                                                                                                                           |
-| Rust client error code mirror               | client-rust | `src/error_codes.rs`                                                                                                                        |
-| Rust client event set                       | client-rust | `src/event.rs`                                                                                                                              |
-| Rust client API/config defaults             | client-rust | `src/client.rs`, `src/polling_client.rs`                                                                                                    |
-| Rust client docs                            | client-rust | `docs/protocol.md`, `docs/events.md`, `docs/client.md`, `docs/wasm.md`                                                                      |
-| Upstream illustrative fixtures              | server      | `.llm/code-samples/protocol/v2-client-messages.jsonl`, `.llm/code-samples/protocol/v2-server-messages.jsonl` (concrete frames since v0.9.2) |
-| Vendored upstream v2 samples                | server      | `tests/fixtures/upstream/v2_client_messages.jsonl`, `tests/fixtures/upstream/v2_server_messages.jsonl`                                      |
-| Cloud protocol cross-check                  | cloud       | `src/protocol/messages.rs`, `src/protocol/types.rs`, `src/protocol/error_codes.rs`                                                          |
+| Concern                                     | Repo        | Path                                                                                                                                                         |
+| ------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Client and server envelopes                 | server      | `src/protocol/messages.rs`, `docs/protocol.md`                                                                                                               |
+| Core value types and enum wire names        | server      | `src/protocol/types.rs`                                                                                                                                      |
+| Lobby state names and room transitions      | server      | `src/protocol/room_state.rs`, `docs/concepts/rooms-and-lobbies.md`                                                                                           |
+| Error code wire names                       | server      | `src/protocol/error_codes.rs`, `docs/reference/error-codes.md`                                                                                               |
+| WebSocket text vs binary frame behavior     | server      | `src/websocket/connection.rs`, `src/websocket/sending.rs`                                                                                                    |
+| Reconnection tokens and buffers             | server      | `src/reconnection.rs`, `docs/adr/reconnection-protocol.md`, `docs/concepts/reconnection.md`                                                                  |
+| Server room defaults and authority behavior | server      | `src/server/room_service.rs`                                                                                                                                 |
+| Authority rules                             | server      | `docs/concepts/authority.md`                                                                                                                                 |
+| Spectator rules                             | server      | `docs/concepts/spectator-mode.md`                                                                                                                            |
+| Rust client protocol mirror                 | client-rust | `src/protocol.rs`                                                                                                                                            |
+| Rust client error code mirror               | client-rust | `src/error_codes.rs`                                                                                                                                         |
+| Rust client event set                       | client-rust | `src/event.rs`                                                                                                                                               |
+| Rust client API/config defaults             | client-rust | `src/client.rs`, `src/polling_client.rs`                                                                                                                     |
+| Rust client docs                            | client-rust | `docs/protocol.md`, `docs/events.md`, `docs/client.md`, `docs/wasm.md`                                                                                       |
+| Upstream illustrative fixtures              | server      | `.llm/code-samples/protocol/v2-client-messages.jsonl`, `.llm/code-samples/protocol/v2-server-messages.jsonl`, and the v3 pair (concrete frames since v0.9.2) |
+| Vendored upstream v2 samples                | server      | `tests/fixtures/upstream/v2_client_messages.jsonl`, `tests/fixtures/upstream/v2_server_messages.jsonl`                                                       |
+| Cloud protocol cross-check                  | cloud       | `src/protocol/messages.rs`, `src/protocol/types.rs`, `src/protocol/error_codes.rs`                                                                           |
 
 ## Fixture Files
 
@@ -132,12 +142,13 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
   extended `ProtocolInfo` (negotiated/min/max version, `transports`,
   `max_outbound_message_size`).
 - `tests/fixtures/upstream/v2_client_messages.jsonl` and
-  `tests/fixtures/upstream/v2_server_messages.jsonl` (added 2026-09-21,
-  issue #55) are byte-identical copies of the upstream v0.9.2 concrete
-  sample corpus with a provenance header; the sample digests above pin
-  the upstream bytes. `tests/protocol/upstream_samples_tests.gd` decodes
-  every server line and checks every client line against the client
-  message type set.
+  `tests/fixtures/upstream/v2_server_messages.jsonl` (issue #55;
+  v0.10.0 corpus 2026-10-07) plus `v3_client_messages.jsonl`/
+  `v3_server_messages.jsonl` (2026-10-07) are byte-identical copies of
+  the upstream corpus; each provenance header pins the tag, commit, and
+  upstream-byte digest.
+  `tests/protocol/upstream_samples_tests.gd` decodes every server line
+  and checks every client line against the client message type set.
 - Upstream v3 signaling anchors: server `docs/concepts/protocol-versions.md`
   (v2-vs-v3 mental model, capability negotiation, selection ladder),
   rust `src/webrtc.rs` + `src/mesh.rs` (signaling choreography: obey the
@@ -226,6 +237,15 @@ blank lines and lines beginning with `#`.
     Godot decoder (`sf_binary_frames.gd`) accepts v2 and v3; for well-formed
     frames a v2 envelope can never parse as v3 and vice versa (v3 requires
     both stamps, v2 forbids them).
+- v3 advisory/accountability events (vendored v3 corpus): `GoingAway`
+  `{deadline_ms u64, retry_after_secs Option<u64>}` is a best-effort drain
+  advisory; the close after it stays authoritative and the client never
+  acts on it (`retry_after_secs` -1 sentinel when absent).
+  `DeliveryReport` carries per-class u64 counters plus at most 256 exact
+  omission `gaps`. `RoomOperationResult` is a room-operation terminal
+  response over the closed 15-variant set with a canonical UUID
+  `operation_id`; surfaced verbatim, never applied (correlation needs a
+  RoomOperation sender).
 - Relay `ConnectionInfo.transport` defaults to `auto` upstream when omitted or
   null. Outbound builders should reject typo strings, while inbound decoding
   should map unknown future transport strings to `RelayTransport.UNKNOWN`.
@@ -277,5 +297,4 @@ blank lines and lines beginning with `#`.
   placeholder tokens modeling the rotation (issue #12).
 - Upstream close-code conventions (resolved 2026-09-23, server `main` @
   `272cfa0c`): `CloseReason` in `src/coordination/mod.rs` maps `4000`-`4007`
-  plus RFC `1000`/`1009`; see the table in
-  `.llm/skills/reconnection-replay.md`.
+  plus RFC `1000`/`1009`; see `.llm/skills/reconnection-replay.md`.
