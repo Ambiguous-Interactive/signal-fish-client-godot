@@ -350,11 +350,14 @@ func _on_steam_session_request(remote_steam_id: int) -> void:
 	if accept_grace_sec <= 0.0:
 		_refuse_request(remote_steam_id, "id not advertised on the lane")
 		return
-	if _pending_requests.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
-		_refuse_request(
-			remote_steam_id, "pending fence requests at cap %d" % SFTypeUtils.MAX_TRACKED_PEERS
-		)
-		return
+	# The cap only refuses new waiters: a repeat request from an id already
+	# in the grace window just re-arms its deadline (Bugbot, PR #336).
+	if not _pending_requests.has(peer_id):
+		if _pending_requests.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
+			_refuse_request(
+				remote_steam_id, "pending fence requests at cap %d" % SFTypeUtils.MAX_TRACKED_PEERS
+			)
+			return
 	_pending_requests[peer_id] = _elapsed_sec + accept_grace_sec
 
 

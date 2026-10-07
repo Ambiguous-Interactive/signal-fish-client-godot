@@ -851,7 +851,9 @@ func _test_advertised_peer_cap() -> void:
 
 
 ## Issue #335: the pending-request set is size-bounded, not only
-## grace-bounded; an over-cap requester is refused on the spot.
+## grace-bounded; an over-cap requester is refused on the spot, while a
+## repeat request from an id already in the window re-arms (Bugbot, PR
+## #336).
 
 
 func _test_pending_requests_cap() -> void:
@@ -864,10 +866,20 @@ func _test_pending_requests_cap() -> void:
 	_assert_equal(OK, bootstrap.start(), "start")
 	var cap := SFTypeUtils.MAX_TRACKED_PEERS
 	for index: int in cap:
-		bootstrap._pending_requests["7656119796027%05d" % index] = bootstrap._elapsed_sec + 5.0
+		bootstrap._pending_requests["7656119796027%05d" % index] = bootstrap._elapsed_sec + 60.0
 	steam.request_session(int(OTHER_ID))
 	_assert_equal([int(OTHER_ID)], steam.closes, "an over-cap requester is refused at once")
 	_assert(not bootstrap._pending_requests.has(OTHER_ID), "the refusal leaves no entry")
+	var kept := "7656119796027%05d" % 0
+	bootstrap._process(3.0)
+	steam.request_session(int(kept))
+	bootstrap._process(2.5)
+	_assert(bootstrap._pending_requests.has(kept), "the re-armed window holds")
+	_assert_equal([int(OTHER_ID)], steam.closes, "the repeat request is not refused")
+	bootstrap._process(2.6)
+	_assert_equal(
+		[int(OTHER_ID), int(kept)], steam.closes, "the re-armed slot still expires on schedule"
+	)
 	bootstrap.free()
 	client.free()
 	_done()
