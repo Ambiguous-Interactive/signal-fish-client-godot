@@ -18,7 +18,8 @@ max-public-methods: 31
 # unbounded growth. 1450 -> 1550: the addon joined the error-level warning
 # net (exclude_addons=false, issue #170) and carries per-statement
 # @warning_ignore markers; the client alone holds 58 of them.
-max-file-lines: 1550
+# 1550 -> 1600: the client gained the issue-#333 outbound frame-cap gates.
+max-file-lines: 1600
 
 # max-returns: the headless smoke runner sequences async waits with
 # early-return guards so a timed-out step skips every dependent step; the

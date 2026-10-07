@@ -10,6 +10,12 @@ released version.
 
 ### Added
 
+- `max_outbound_frame_bytes` config (64 KiB default, the upstream server
+  default): one outbound text or binary frame over the cap is refused
+  locally with `protocol_error` and `ERR_INVALID_DATA`, and nothing is
+  queued. Upstream drops an oversized text frame as `MessageTooLarge` and
+  the action is lost; a binary frame it cannot verify ends the session.
+  Raise the knob when the deployment raises its server limit.
 - Optional `SFSteamIdentityBootstrap`: puts Steam P2P relay traffic on a
   Signal Fish room. The room is the membership fence; the bootstrap exchanges
   role-scoped SteamId64s on the game-data lane, fences the host's Steam

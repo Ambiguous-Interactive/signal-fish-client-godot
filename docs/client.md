@@ -24,6 +24,7 @@ The runtime addon ships two public classes under `addons/signal_fish/`:
 | Game data       | `decode_msgpack_payloads`      | Default `false`. Opt-in MessagePack decode.                                                                                                                                                                                                                                                                                                                            |
 | Limits          | `max_inbound_frame_bytes`      | Frames over this are dropped (~256 KiB default).                                                                                                                                                                                                                                                                                                                       |
 | Limits          | `max_buffered_bytes`           | Send backpressure threshold (~256 KiB default).                                                                                                                                                                                                                                                                                                                        |
+| Limits          | `max_outbound_frame_bytes`     | One outbound text/binary frame over this is refused locally (64 KiB default, the upstream server default).                                                                                                                                                                                                                                                             |
 | Limits          | `max_inbound_packets_per_poll` | Default `64`; overflow moves to the next tick.                                                                                                                                                                                                                                                                                                                         |
 | Reconnect       | `reconnect_max_attempts`       | Default `5`. Budget for auto-reconnect.                                                                                                                                                                                                                                                                                                                                |
 | Heartbeat       | `heartbeat_interval_sec`       | Default `0` (off). Seconds between automatic `Ping`s while connected + authenticated.                                                                                                                                                                                                                                                                                  |
@@ -130,6 +131,11 @@ session state.
 - Sends are backpressured. Over `max_buffered_bytes`, a send returns
   `ERR_BUSY`, emits `protocol_error`, and queues nothing.
 - Frames over `max_inbound_frame_bytes` are dropped with `protocol_error`.
+- One outbound text/binary frame over `max_outbound_frame_bytes` is refused
+  with `protocol_error` and `ERR_INVALID_DATA`, and nothing is queued. The
+  default matches the upstream server's default inbound cap (64 KiB): the
+  server drops an oversized text frame as `MessageTooLarge` and the action
+  is lost; a binary frame it cannot verify ends the session.
 - Malformed input never crashes the client. Decode failures emit
   `protocol_error` and keep the connection.
 - Repeated JSON keys in an inbound text frame are rejected with

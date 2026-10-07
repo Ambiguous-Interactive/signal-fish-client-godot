@@ -91,6 +91,22 @@ func _test_send_guards_and_wire_bytes() -> void:
 	var backpressure_error: String = errors[0]
 	_assert_string_contains(backpressure_error, "backpressure", "binary backpressure message")
 	client_transport.buffered_amount = 0
+	# The boundary is exact: at the cap the frame goes out whole, one byte
+	# over is refused locally. A binary frame the server cannot verify is
+	# farewelled upstream, so oversized bytes must never reach the wire
+	# (issue #333).
+	client._config.max_outbound_frame_bytes = payload.size()
+	_assert_equal(OK, client.send_game_data_binary(payload), "binary at the cap sends")
+	var at_cap_binary: int = client_transport.sent_binary.size()
+	client._config.max_outbound_frame_bytes = payload.size() - 1
+	_assert_equal(
+		ERR_INVALID_DATA, client.send_game_data_binary(payload), "binary over the cap refused"
+	)
+	_assert_equal(
+		at_cap_binary, client_transport.sent_binary.size(), "oversized binary stays off the wire"
+	)
+	var cap_error: String = errors[errors.size() - 1]
+	_assert_string_contains(cap_error, "outbound cap", "binary cap message")
 	client.free()
 	_done()
 
