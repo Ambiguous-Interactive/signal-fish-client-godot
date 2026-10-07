@@ -1,17 +1,23 @@
 extends RefCounted
 
-## Pins the codec to the concrete v2 wire samples upstream publishes as of
-## signal-fish-server v0.9.2 (issue #55). Every sample line must decode, every
-## v2 server event must appear, and the published shapes that constrain the
-## codec are pinned by name so drift surfaces as a named failure.
+## Pins the codec to the concrete wire samples upstream publishes as of
+## signal-fish-server v0.10.0 (issue #55 vendored the v0.9.2 corpus; the
+## v0.10.0 refresh added the v3 corpora and two v2 client lines). Every
+## sample line must decode, every expected server event must appear, and the
+## published shapes that constrain the codec are pinned by name so drift
+## surfaces as a named failure.
 
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
+const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
+const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const SERVER_SAMPLES := "res://tests/fixtures/upstream/v2_server_messages.jsonl"
 const CLIENT_SAMPLES := "res://tests/fixtures/upstream/v2_client_messages.jsonl"
+const SERVER_SAMPLES_V3 := "res://tests/fixtures/upstream/v3_server_messages.jsonl"
+const CLIENT_SAMPLES_V3 := "res://tests/fixtures/upstream/v3_client_messages.jsonl"
 
 ## All `ClientMessage` wire names upstream accepts for the v2 route.
 const CLIENT_MESSAGE_TYPES: Array[String] = [
@@ -27,6 +33,15 @@ const CLIENT_MESSAGE_TYPES: Array[String] = [
 	"Reconnect",
 	"JoinAsSpectator",
 	"LeaveSpectator",
+]
+
+## All `ClientMessage` wire names upstream accepts for the v3 route.
+const CLIENT_MESSAGE_TYPES_V3: Array[String] = [
+	"Authenticate",
+	"RoomOperation",
+	"GameData",
+	"Signal",
+	"TransportStatus",
 ]
 
 ## Every v2 `ServerMessage` variant must be represented in the published
@@ -57,6 +72,21 @@ const EXPECTED_SERVER_SIGNALS: Array[String] = [
 	"server_error",
 ]
 
+## Every signal the published v3 sample corpus must decode to (17 lines).
+const EXPECTED_V3_SERVER_SIGNALS: Array[String] = [
+	"protocol_info",
+	"room_operation_result",
+	"delivery_report",
+	"game_data_received",
+	"new_peer",
+	"signal_received",
+	"session_plan",
+	"room_joined",
+	"reconnected",
+	"peer_transport_status",
+	"going_away",
+]
+
 var _failures: Array[String] = []
 var _test_done := false
 
@@ -72,38 +102,47 @@ static func run() -> Array[String]:
 
 
 func run_all() -> void:
-	var server_events := _decode_all_server_samples()
-	_check_all_expected_signals_present(server_events)
+	var server_events := _decode_all_server_samples(SERVER_SAMPLES)
+	_check_all_expected_signals_present(server_events, EXPECTED_SERVER_SIGNALS, 24, SERVER_SAMPLES)
 	_check_published_shape_pins(server_events)
+	var v3_server_events := _decode_all_server_samples(SERVER_SAMPLES_V3)
+	_check_all_expected_signals_present(
+		v3_server_events, EXPECTED_V3_SERVER_SIGNALS, 17, SERVER_SAMPLES_V3
+	)
+	_check_v3_published_shape_pins(v3_server_events)
 	var cases: Array[Callable] = [
 		_test_all_client_samples_are_client_messages,
+		_test_all_v3_client_samples_are_client_messages,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
 
 
-func _decode_all_server_samples() -> Array[SFTypesScript.DecodedEvent]:
+func _decode_all_server_samples(path: String) -> Array[SFTypesScript.DecodedEvent]:
 	var events: Array[SFTypesScript.DecodedEvent] = []
-	for line: String in _read_sample_lines(SERVER_SAMPLES):
+	for line: String in _read_sample_lines(path):
 		var decoded: SFTypesScript.DecodedEvent = SFEventsScript.decode_text(line)
 		if decoded == null or decoded.signal_name == &"protocol_error":
-			_failures.append(
-				"%s: sample line failed to decode: %s" % [SERVER_SAMPLES, _line_summary(line)]
-			)
+			_failures.append("%s: sample line failed to decode: %s" % [path, _line_summary(line)])
 			continue
 		events.append(decoded)
 	return events
 
 
-func _check_all_expected_signals_present(server_events: Array[SFTypesScript.DecodedEvent]) -> void:
+func _check_all_expected_signals_present(
+	events: Array[SFTypesScript.DecodedEvent],
+	expected_signals: Array[String],
+	expected_count: int,
+	path: String
+) -> void:
 	var seen := {}
-	for decoded: SFTypesScript.DecodedEvent in server_events:
+	for decoded: SFTypesScript.DecodedEvent in events:
 		var signal_text := String(decoded.signal_name)
 		seen[signal_text] = seen.get(signal_text, 0) + 1
-	for expected: String in EXPECTED_SERVER_SIGNALS:
+	for expected: String in expected_signals:
 		if not seen.has(expected):
-			_failures.append("%s: no sample decodes to %s" % [SERVER_SAMPLES, expected])
-	_assert_equal(24, server_events.size(), "sample decode count")
+			_failures.append("%s: no sample decodes to %s" % [path, expected])
+	_assert_equal(expected_count, events.size(), "%s sample decode count" % path)
 
 
 func _check_published_shape_pins(server_events: Array[SFTypesScript.DecodedEvent]) -> void:
@@ -169,22 +208,105 @@ func _check_published_shape_pins(server_events: Array[SFTypesScript.DecodedEvent
 		)
 
 
+## The published v3 shapes that constrain the codec, pinned by name. The
+## v0.10.0 v3-only ProtocolInfo fields have no typed surface yet (the rust
+## binding still pins v0.9.1): tolerance means they ride in [code]raw[/code]
+## without failing decode.
+func _check_v3_published_shape_pins(server_events: Array[SFTypesScript.DecodedEvent]) -> void:
+	var protocol_infos := _events(server_events, "protocol_info")
+	_assert_equal(2, protocol_infos.size(), "v3 protocol info sample count")
+	if protocol_infos.size() == 2:
+		var info: SFTypesScript.ProtocolInfo = protocol_infos[0].args[0]
+		_assert_equal(
+			[SFTypesScript.GameDataEncoding.JSON, SFTypesScript.GameDataEncoding.MESSAGE_PACK],
+			info.game_data_formats,
+			"v3 protocol info formats"
+		)
+		_assert_equal(
+			SFTypeUtils.string_or_empty(info.raw.get("implementation_version")),
+			"0.10.0",
+			"v3-only implementation_version survives in raw"
+		)
+		var extended: SFTypesScript.ProtocolInfo = protocol_infos[1].args[0]
+		_assert_equal(
+			[
+				SFTypesScript.GameDataEncoding.JSON,
+				SFTypesScript.GameDataEncoding.MESSAGE_PACK,
+				SFTypesScript.GameDataEncoding.RKYV,
+				SFTypesScript.GameDataEncoding.PROTOBUF,
+			],
+			extended.game_data_formats,
+			"v3 protocol info advertises every published encoding"
+		)
+
+	var going_aways := _events(server_events, "going_away")
+	_assert_equal(1, going_aways.size(), "going away sample count")
+	if going_aways.size() == 1:
+		_assert_equal(1700000000000, going_aways[0].args[0], "going away deadline")
+		_assert_equal(30, going_aways[0].args[1], "going away retry hint")
+
+	var delivery_reports := _events(server_events, "delivery_report")
+	_assert_equal(1, delivery_reports.size(), "delivery report sample count")
+	if delivery_reports.size() == 1:
+		var report: SFSessionTypesScript.DeliveryReportInfo = delivery_reports[0].args[0]
+		_assert_equal(8, report.counters_for("reliable").get_count("delivered"), "reliable delivered")
+		_assert_equal(1, report.counters_for("latest").get_count("superseded"), "latest superseded")
+		_assert_equal(4, report.counters_for("volatile").get_count("delivered"), "volatile delivered")
+		_assert_equal(1, report.gaps.size(), "delivery report gap count")
+		if report.gaps.size() == 1:
+			_assert_equal(
+				SFSessionTypesScript.DeliveryGapReason.LATEST_SUPERSEDED,
+				report.gaps[0].reason,
+				"delivery gap reason"
+			)
+			_assert_equal(
+				"00000000-0000-0000-0000-00000000000b",
+				report.gaps[0].from_player,
+				"delivery gap sender"
+			)
+
+	var operation_results := _events(server_events, "room_operation_result")
+	_assert_equal(3, operation_results.size(), "room operation result sample count")
+	if operation_results.size() == 3:
+		var result_types := {}
+		for decoded: SFTypesScript.DecodedEvent in operation_results:
+			var result: SFSessionTypesScript.RoomOperationResultInfo = decoded.args[0]
+			result_types[result.result_type] = true
+			_assert_equal(
+				true, SFTypeUtils.is_canonical_uuid_text(result.operation_id), "operation id shape"
+			)
+		for expected_type: String in ["RoomLeft", "PlayerKicked", "RoomCodeRegenerated"]:
+			if not result_types.has(expected_type):
+				_failures.append("no room operation result sample decodes to %s" % expected_type)
+
+
 func _test_all_client_samples_are_client_messages() -> void:
 	var known := {}
 	for message_type: String in CLIENT_MESSAGE_TYPES:
 		known[message_type] = true
 	for line: String in _read_sample_lines(CLIENT_SAMPLES):
-		var parsed: Variant = JSON.parse_string(line)
-		if typeof(parsed) != TYPE_DICTIONARY:
-			_failures.append(
-				"%s: sample line is not a JSON object: %s" % [CLIENT_SAMPLES, _line_summary(line)]
-			)
-			continue
-		var message: Dictionary = parsed
-		var message_type: String = message.get("type", "")
-		if not known.has(message_type):
-			_failures.append("%s: unknown client message type %s" % [CLIENT_SAMPLES, message_type])
+		_check_client_sample_line(CLIENT_SAMPLES, line, known)
 	_done()
+
+
+func _test_all_v3_client_samples_are_client_messages() -> void:
+	var known := {}
+	for message_type: String in CLIENT_MESSAGE_TYPES_V3:
+		known[message_type] = true
+	for line: String in _read_sample_lines(CLIENT_SAMPLES_V3):
+		_check_client_sample_line(CLIENT_SAMPLES_V3, line, known)
+	_done()
+
+
+func _check_client_sample_line(path: String, line: String, known: Dictionary) -> void:
+	var parsed: Variant = JSON.parse_string(line)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		_failures.append("%s: sample line is not a JSON object: %s" % [path, _line_summary(line)])
+		return
+	var message: Dictionary = parsed
+	var message_type: String = message.get("type", "")
+	if not known.has(message_type):
+		_failures.append("%s: unknown client message type %s" % [path, message_type])
 
 
 func _first_event(

@@ -37,9 +37,223 @@ func run_all() -> void:
 		_test_plan_debug_repr_count_bounds,
 		_test_ice_debug_repr_item_bounds,
 		_test_plan_debug_repr_id_bounds,
+		_test_v3_advisory_events,
+		_test_v3_room_operation_results,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
+
+
+## GoingAway/DeliveryReport decode contracts: the accept paths pin the typed
+## args; the refusal matrix is data-driven so each hostile shape names its
+## diagnostic.
+func _test_v3_advisory_events() -> void:
+	var going_away := SFEventsScript.decode_text(
+		'{"type": "GoingAway", "data": {"deadline_ms": 1700000000000, "retry_after_secs": 30}}'
+	)
+	if _assert_decoded_signal("going_away", going_away, "going away decodes"):
+		_assert_equal(1700000000000, going_away.args[0], "going away deadline")
+		_assert_equal(30, going_away.args[1], "going away retry hint")
+	var silent := SFEventsScript.decode_text('{"type": "GoingAway", "data": {"deadline_ms": 5}}')
+	if _assert_decoded_signal("going_away", silent, "going away without hint decodes"):
+		_assert_equal(-1, silent.args[1], "absent retry hint decodes to the -1 sentinel")
+	var explicit_null := SFEventsScript.decode_text(
+		'{"type": "GoingAway", "data": {"deadline_ms": 5, "retry_after_secs": null}}'
+	)
+	if _assert_decoded_signal("going_away", explicit_null, "null retry hint decodes"):
+		_assert_equal(-1, explicit_null.args[1], "null retry hint decodes to the -1 sentinel")
+	var going_away_refusals := {
+		"missing deadline": '{"type": "GoingAway", "data": {"retry_after_secs": 1}}',
+		"negative deadline": '{"type": "GoingAway", "data": {"deadline_ms": -1}}',
+		"non-integer deadline": '{"type": "GoingAway", "data": {"deadline_ms": 1.5}}',
+		"deadline above i64": '{"type": "GoingAway", "data": {"deadline_ms": 9223372036854775808}}',
+		"hint above i64": (
+			'{"type": "GoingAway", "data": {"deadline_ms": 1,'
+			+ ' "retry_after_secs": 9223372036854775808}}'
+		),
+		"non-integer hint": '{"type": "GoingAway", "data": {"deadline_ms": 1, "retry_after_secs": "soon"}}',
+	}
+	for label: String in going_away_refusals:
+		var going_away_text: String = going_away_refusals[label]
+		_assert_protocol_error(
+			SFEventsScript.decode_text(going_away_text),
+			"GoingAway refuses %s" % label
+		)
+
+	var report := SFEventsScript.decode_text(
+		(
+			'{"type": "DeliveryReport", "data": {"per_class": {"reliable": {"delivered": 8,'
+			+ ' "abandoned": 0, "unsupported_format": 0}, "latest": {"delivered": 1,'
+			+ ' "superseded": 2, "dropped_full": 0, "abandoned": 0, "unsupported_format": 0}},'
+			+ ' "gaps": [{"from_player": "10000000-0000-0000-0000-000000000001", "epoch": 1,'
+			+ ' "from_seq": 42, "to_seq": 43, "reason": "volatile_dropped"}]}}'
+		)
+	)
+	if _assert_decoded_signal("delivery_report", report, "delivery report decodes"):
+		var info: SFSessionTypesScript.DeliveryReportInfo = report.args[0]
+		_assert_equal(8, info.counters_for("reliable").get_count("delivered"), "reliable delivered")
+		_assert_equal(2, info.counters_for("latest").get_count("superseded"), "latest superseded")
+		_assert_equal(0, info.counters_for("latest").get_count("dropped_full"), "latest dropped_full")
+		_assert_equal(null, info.counters_for("volatile"), "absent class has no counters object")
+		_assert_equal(1, info.gaps.size(), "gap count")
+		if info.gaps.size() == 1:
+			_assert_equal(
+				SFSessionTypesScript.DeliveryGapReason.VOLATILE_DROPPED,
+				info.gaps[0].reason,
+				"gap reason"
+			)
+			_assert_equal(43, info.gaps[0].to_seq, "gap to_seq")
+	var gaps_cap := {"type": "DeliveryReport", "data": {"per_class": {}, "gaps": []}}
+	var hostile_gaps: Array = gaps_cap["data"]["gaps"]
+	for index: int in 257:
+		hostile_gaps.append(
+			{
+				"from_player": "10000000-0000-0000-0000-000000000001",
+				"epoch": 1,
+				"from_seq": 1,
+				"to_seq": 1,
+				"reason": "volatile_dropped",
+			}
+		)
+	_assert_protocol_error(
+		SFEventsScript.decode_text(JSON.stringify(gaps_cap)),
+		"DeliveryReport refuses more than the upstream gap cap"
+	)
+	var report_refusals := {
+		"missing per_class": '{"type": "DeliveryReport", "data": {}}',
+		"non-object per_class": '{"type": "DeliveryReport", "data": {"per_class": 3}}',
+		"negative counter": (
+			'{"type": "DeliveryReport", "data": {"per_class": {"reliable": {"delivered": -1}}}}'
+		),
+		"counter above i64": (
+			'{"type": "DeliveryReport", "data": {"per_class": {"reliable":'
+			+ ' {"delivered": 9223372036854775808}}}}'
+		),
+		"non-object gap": '{"type": "DeliveryReport", "data": {"per_class": {}, "gaps": [1]}}',
+		"gap bad sender": (
+			'{"type": "DeliveryReport", "data": {"per_class": {}, "gaps":'
+			+ ' [{"from_player": "peer-b", "epoch": 1, "from_seq": 1, "to_seq": 1,'
+			+ ' "reason": "volatile_dropped"}]}}'
+		),
+		"gap epoch above u32": (
+			'{"type": "DeliveryReport", "data": {"per_class": {}, "gaps":'
+			+ ' [{"from_player": "10000000-0000-0000-0000-000000000001", "epoch": 4294967296,'
+			+ ' "from_seq": 1, "to_seq": 1, "reason": "volatile_dropped"}]}}'
+		),
+		"gap unknown reason": (
+			'{"type": "DeliveryReport", "data": {"per_class": {}, "gaps":'
+			+ ' [{"from_player": "10000000-0000-0000-0000-000000000001", "epoch": 1,'
+			+ ' "from_seq": 1, "to_seq": 1, "reason": "vaporized"}]}}'
+		),
+	}
+	for label: String in report_refusals:
+		var report_text: String = report_refusals[label]
+		_assert_protocol_error(
+			SFEventsScript.decode_text(report_text),
+			"DeliveryReport refuses %s" % label
+		)
+	var no_gaps := SFEventsScript.decode_text(
+		'{"type": "DeliveryReport", "data": {"per_class": {"reliable": {"delivered": 1}}}}'
+	)
+	if _assert_decoded_signal("delivery_report", no_gaps, "delivery report without gaps decodes"):
+		var lean: SFSessionTypesScript.DeliveryReportInfo = no_gaps.args[0]
+		_assert_equal(0, lean.gaps.size(), "absent gaps decode to an empty array")
+	_done()
+
+
+## RoomOperationResult decode contracts: the closed 15-variant set, the
+## canonical operation-id gate, and per-variant payload refusals. The client
+## never issues operations yet, so results only ever decode and surface.
+func _test_v3_room_operation_results() -> void:
+	var room_left := SFEventsScript.decode_text(
+		(
+			'{"type": "RoomOperationResult", "data": {"operation_id":'
+			+ ' "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "result": {"type": "RoomLeft"}}}'
+		)
+	)
+	if _assert_decoded_signal("room_operation_result", room_left, "RoomLeft result decodes"):
+		var info: SFSessionTypesScript.RoomOperationResultInfo = room_left.args[0]
+		_assert_equal("RoomLeft", info.result_type, "RoomLeft result type")
+		_assert_equal({}, info.data, "unit variant carries no data")
+	var accepted_variants := {
+		"PlayerKicked": {"player_id": "10000000-0000-0000-0000-000000000001"},
+		"RoomCodeRegenerated": {"room_code": "USE4XP"},
+		"RoomAccessUpdated": {"requires_password": true},
+		"OperationFailed": {"reason": "room is closed"},
+		"ReconnectionFailed": {"reason": "stale", "error_code": "RECONNECTION_EXPIRED"},
+		"SpectatorLeft": {"reason": "voluntary_leave", "current_spectators": []},
+	}
+	for variant: String in accepted_variants:
+		var decoded := SFEventsScript.decode_text(
+			JSON.stringify({
+				"type": "RoomOperationResult",
+				"data": {
+					"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+					"result": {"type": variant, "data": accepted_variants[variant]},
+				},
+			})
+		)
+		if _assert_decoded_signal("room_operation_result", decoded, "%s result decodes" % variant):
+			_assert_equal(variant, decoded.args[0].result_type, "%s result type" % variant)
+	var room_joined_result := SFEventsScript.decode_text(
+		JSON.stringify({
+			"type": "RoomOperationResult",
+			"data": {
+				"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+				"result": {"type": "RoomJoined", "data": _room_joined_with_bad_ice()},
+			},
+		})
+	)
+	_assert_protocol_error_contains(
+		room_joined_result, "urls", "RoomJoined result payload is validated"
+	)
+	var result_refusals := {
+		"unknown variant": {"type": "ConfettiCannon"},
+		"empty variant": {"type": ""},
+		"missing result": null,
+		"unit variant with data": {"type": "RoomLeft", "data": {}},
+		"player variant without id": {"type": "PlayerKicked", "data": {}},
+		"player variant bad id": {
+			"type": "PlayerKicked",
+			"data": {"player_id": "peer-b"},
+		},
+		"code variant empty code": {"type": "RoomCodeRegenerated", "data": {"room_code": ""}},
+		"access variant without flag": {"type": "RoomAccessUpdated", "data": {}},
+		"failure variant without reason": {"type": "OperationFailed", "data": {}},
+		"reconnection variant without code": {
+			"type": "ReconnectionFailed",
+			"data": {"reason": "stale"},
+		},
+		"spectator-left variant non-string reason": {
+			"type": "SpectatorLeft",
+			"data": {"reason": 5},
+		},
+	}
+	for label: String in result_refusals:
+		var payload: Dictionary = {"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
+		if result_refusals[label] != null:
+			payload["result"] = result_refusals[label]
+		_assert_protocol_error(
+			SFEventsScript.decode_text(
+				JSON.stringify({"type": "RoomOperationResult", "data": payload})
+			),
+			"RoomOperationResult refuses %s" % label
+		)
+	var id_refusals := {
+		"missing operation id": {"result": {"type": "RoomLeft"}},
+		"non-canonical operation id": {
+			"operation_id": "{aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa}",
+			"result": {"type": "RoomLeft"},
+		},
+	}
+	for label: String in id_refusals:
+		_assert_protocol_error(
+			SFEventsScript.decode_text(
+				JSON.stringify({"type": "RoomOperationResult", "data": id_refusals[label]})
+			),
+			"RoomOperationResult refuses %s" % label
+		)
+	_done()
 
 
 ## Issue #284: wire-derived lists in debug reprs are count-bounded, so a

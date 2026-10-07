@@ -1,0 +1,15 @@
+# Upstream Signal Fish v3 client wire samples (concrete, complete frames).
+# Source: signal-fish-server tag v0.10.0 (269b6db18992159d6d18a0987070ea99bb084fd6)
+#   .llm/code-samples/protocol/v3-client-messages.jsonl
+# sha256 874a8d448db9c212e70d60e80af0a0070c36b5c45b99ba6b88542877a8c13c0e (upstream bytes)
+# Vendored 2026-10-07 (upstream v0.10.0 sample refresh). Upstream tokens are placeholders, not secrets.
+{"type": "Authenticate", "data": {"app_id": "mb_app_abc123", "sdk_version": "1.2.3", "platform": "unity", "protocol_version": 3, "supported_transports": ["relay", "direct", "webrtc"], "supported_topologies": ["relay", "host", "mesh"], "requested_capabilities": ["room_operation_ids"]}}
+{"type": "RoomOperation", "data": {"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "operation": {"type": "LeaveRoom"}}}
+{"type": "RoomOperation", "data": {"operation_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "operation": {"type": "KickPlayer", "data": {"player_id": "cccccccc-cccc-cccc-cccc-cccccccccccc"}}}}
+{"type": "RoomOperation", "data": {"operation_id": "dddddddd-dddd-dddd-dddd-dddddddddddd", "operation": {"type": "RegenerateRoomCode"}}}
+{"type": "GameData", "data": {"data": {"position": {"x": 12, "y": 34}}, "class": "latest", "key": 7}}
+{"type": "GameData", "data": {"data": {"effect": "footstep"}, "class": "volatile"}}
+{"type": "Signal", "data": {"to": "00000000-0000-0000-0000-00000000000b", "generation": "00000000-0000-0000-0000-00000000000c", "signal": {"Offer": "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n..."}}}
+{"type": "Signal", "data": {"to": "00000000-0000-0000-0000-00000000000b", "generation": "00000000-0000-0000-0000-00000000000c", "signal": {"IceCandidate": "candidate:1 1 UDP 2130706431 10.0.0.5 54321 typ host"}}}
+{"type": "TransportStatus", "data": {"transport": "webrtc", "connected": true}}
+{"type": "Authenticate", "data": {"app_id": "mb_app_abc123", "sdk_version": "1.2.3", "platform": "unity", "game_data_format": "protobuf", "protocol_version": 3, "supported_transports": ["relay"], "supported_topologies": ["relay"], "requested_capabilities": ["room_operation_ids"]}}
