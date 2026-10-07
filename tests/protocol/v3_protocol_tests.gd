@@ -214,6 +214,9 @@ func _test_v3_room_operation_results() -> void:
 		},
 		"Reconnected": _reconnected_result_payload(),
 	}
+	var valid_room_joined: Dictionary = _room_joined_with_bad_ice()
+	valid_room_joined.erase("ice_servers")
+	accepted_variants["RoomJoined"] = valid_room_joined
 	for variant: String in accepted_variants:
 		var decoded := (
 			SFEventsScript
@@ -275,11 +278,6 @@ func _test_v3_room_operation_results() -> void:
 			"type": "ReconnectionFailed",
 			"data": {"reason": "stale"},
 		},
-		"reconnected variant without missed_events":
-		{
-			"type": "Reconnected",
-			"data": _room_joined_with_bad_ice(),
-		},
 		"spectator-left variant non-string reason":
 		{
 			"type": "SpectatorLeft",
@@ -296,6 +294,32 @@ func _test_v3_room_operation_results() -> void:
 			),
 			"RoomOperationResult refuses %s" % label
 		)
+	# Named diagnostic: the payload is otherwise a valid Reconnected result,
+	# so the refusal must attribute to the missing field itself.
+	var stale_reconnected: Dictionary = _reconnected_result_payload()
+	stale_reconnected.erase("missed_events")
+	_assert_protocol_error_contains(
+		(
+			SFEventsScript
+			. decode_text(
+				(
+					JSON
+					. stringify(
+						{
+							"type": "RoomOperationResult",
+							"data":
+							{
+								"operation_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+								"result": {"type": "Reconnected", "data": stale_reconnected},
+							}
+						}
+					)
+				)
+			)
+		),
+		"missed_events",
+		"Reconnected result requires missed_events"
+	)
 	var id_refusals := {
 		"missing operation id": {"result": {"type": "RoomLeft"}},
 		"non-canonical operation id":

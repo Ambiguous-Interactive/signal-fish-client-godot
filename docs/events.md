@@ -128,7 +128,8 @@ the server sends no hint.
   with the exact wire details.
 - Closed sets are enums: `SFTypes.LobbyState`, `GameDataEncoding`,
   `RelayTransport`, `SpectatorReason`, `SFErrorCodes.Code`, and
-  `SFSessionTypes.Topology` / `SFSessionTypes.TransportKind`.
+  `SFSessionTypes.Topology` / `SFSessionTypes.TransportKind` /
+  `SFSessionTypes.DeliveryGapReason`.
 - User game data stays `Variant`. Binary payloads are `PackedByteArray`.
 - `raw` may share structure across `missed_events`, so treat it as
   read-only. `to_dict()` returns the independent mutable copy.

@@ -38,8 +38,8 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
   `.game_data_limits`, `protobuf` now negotiable), but the rust binding
   still pins the v0.9.1 wire commit, so the codec pin above stays.
   Binding-pending (decode-tolerated; typed surface waits for the rust
-  SDK): `join_only`; `implementation_version` survives in
-  `ProtocolInfo.raw`; `game_data_limits`. The published sample corpus
+  SDK): `join_only`, `game_data_limits`, and `implementation_version`
+  (survives in `ProtocolInfo.raw`). The published sample corpus
   moved (v2-client +2; v3-client +1; v3-server ProtocolInfo line plus a
   second ProtocolInfo); all four files are vendored byte-identically
   under `tests/fixtures/upstream/` and every line must decode
@@ -50,9 +50,8 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
   `874a8d448db9c212e70d60e80af0a0070c36b5c45b99ba6b88542877a8c13c0e`;
   `v3-server-messages.jsonl`
   `efa7c41c7649ef5bf0967edd4248fd8197a1e3c75d6de749385ef11b63105cd4`.
-  The v3 corpus forced decode support for the advisory/accountability
-  events (see the wire notes). The rust SDK's
-  `[wire_samples]` digests still pin the v0.9.2 bytes until it re-syncs.
+  The rust SDK's `[wire_samples]` digests still pin the v0.9.2 bytes
+  until it re-syncs.
 
 - v2 wire bytes are frozen upstream: no legacy message variant, error code,
   or field was renamed or removed; all new surface is additive. `StartGame`
@@ -146,7 +145,8 @@ workflow `protocol-sync.yml`); the upstream surface diff at re-pin time:
   `tests/fixtures/upstream/v2_server_messages.jsonl` (issue #55;
   v0.10.0 corpus 2026-10-07) plus `v3_client_messages.jsonl`/
   `v3_server_messages.jsonl` (2026-10-07) are byte-identical copies of
-  the upstream corpus (provenance header; digests above pin the bytes).
+  the upstream corpus; each provenance header pins the tag, commit, and
+  upstream-byte digest.
   `tests/protocol/upstream_samples_tests.gd` decodes every server line
   and checks every client line against the client message type set.
 - Upstream v3 signaling anchors: server `docs/concepts/protocol-versions.md`
