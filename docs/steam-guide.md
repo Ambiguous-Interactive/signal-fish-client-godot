@@ -118,10 +118,77 @@ after it was seen active: Steam reports connection setup as `connecting`, so
 setup never reads as a drop, and a session that never came up fails through
 `p2p_session_connect_fail` instead.
 
+## Live drill runbook
+
+CI proves the bootstrap against a fake Steam seam. A live drill proves the
+real thing: two Steam seats, two accounts, one relay room, and the checklist
+as data (`run_steam_live_drill.gd`, issue #318). Run it before trusting the
+bootstrap in a shipped game.
+
+### Seats
+
+- Host seat: a machine with the native Steam client.
+- Peer seat: a second machine, or a container image with a desktop Steam
+  client (Steam-Headless is a common one) on the same machine.
+- Accounts: two Steam accounts. The first login on a seat is interactive
+  (Steam Guard), so use burner accounts and keep the seats logged in.
+- Steam app: the drills run against app id `480` (Spacewar). Put a
+  `steam_appid.txt` file with `480` next to the Godot binary; Steamworks
+  reads it when launched outside Steam.
+- Engine: Godot 4.4.1 plus the GodotSteam GDExtension 4.21 - the pair the
+  opt-in `steam-ext` lane downloads, pins, and checksums; use its copy for
+  the seat's drill tree. Version landmines (measured facts:
+  `.llm/research/steam-identity.md`):
+  - Every GDExtension from 4.16 on needs Godot 4.4 or newer.
+  - Godot 4.3 caps at GDExtension 4.15, which ships no linux arm64
+    libraries; arm64 seats need the 4.21 extension with Godot 4.4.1.
+  - Embedded callbacks broke in 4.14/3.29; auto-init plus embed only
+    works from 4.23. The drill harness pumps `run_callbacks()` itself,
+    so it needs neither.
+
+### Run
+
+Self-check first - deterministic, no Steam needed:
+
+```sh
+python3 -E scripts/run-runtime-checks.py steam-drill
+```
+
+Then one process per seat against a real relay. `--app` is your Signal
+Fish app id on the relay; the Steam app id above is separate. Start the
+host, and read the room code from its `room_joined` row:
+
+```sh
+godot --headless --path . --script tests/smoke/run_steam_live_drill.gd ++ --mode=live --seat=host --endpoint=wss://your-relay/socket --app=your-app --player=Host --out=host.json
+```
+
+Join the peer to the same room:
+
+```sh
+godot --headless --path . --script tests/smoke/run_steam_live_drill.gd ++ --mode=live --seat=peer --endpoint=wss://your-relay/socket --app=your-app --player=Peer --room=CODE --out=peer.json
+```
+
+The host seat finishes on `steam_peer_connected`, the peer seat on
+`steam_host_connected`. Failed checks exit 1, usage errors exit 2, and
+everything else exits 0: passed, and also pending - a seat with no Steam,
+or one that runs out of `--deadline-sec`, reports `pending` with the
+reason. Read the JSON report's `status` field, never the exit code alone.
+The report carries one row per recorded check, with elapsed times.
+
+### Evidence and verdict
+
+- Attach both seat JSON reports.
+- Capture Steam's relay log: launch each Steam client with `-lognetapi`;
+  it writes all P2P networking info to `log/netapi_log.txt` under the
+  Steam install directory.
+- Record the verdict on the drill issue (#322). A clean two-machine run
+  closes #315; re-scope with the failures when it does not.
+- Update `.llm/research/steam-identity.md` open items with the
+  fake-vs-real deltas.
+
 ## Validation status
 
 CI runs the full bootstrap against a deterministic fake Steam seam (fake
 time, fake transport, no GodotSteam). The GodotSteam call surface was
-authored against the GodotSteam 4.x sources and docs; live two-client
-validation with the Steam client running is the follow-up runbook item
-(issue #312).
+authored against the GodotSteam 4.x sources and docs; live validation
+follows the runbook above.
