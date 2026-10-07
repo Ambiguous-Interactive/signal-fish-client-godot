@@ -532,11 +532,19 @@ func _test_relay_queue_stays_bounded() -> void:
 		entry.pending_signals.size(),
 		"the relay queue clamps to the cap"
 	)
-	_assert_equal(_offer_signal(), entry.pending_signals[0], "the offer keeps the queue head")
+	_assert_equal({"Offer": "v=0"}, entry.pending_signals[0], "the offer keeps the queue head")
 	_assert_equal(2, lines.size(), "each refused signal logs exactly once")
 	for line: String in lines:
 		_assert(line.contains("relay queue"), "the refusal names the queue: %s" % line)
 	_assert_equal(1, errors.size(), "only the direct refusal is a protocol error")
+	# The last refused candidate became last_relayed without entering the
+	# queue; the healing re-queue must not push past the cap either.
+	_inject_server_error(client, "SIGNAL_RATE_LIMITED")
+	_assert_equal(
+		SFWebRTCMeshScript.MAX_PENDING_RELAYS,
+		entry.pending_signals.size(),
+		"the healing re-queue respects the cap"
+	)
 	mesh.free()
 	client.free()
 	_done()

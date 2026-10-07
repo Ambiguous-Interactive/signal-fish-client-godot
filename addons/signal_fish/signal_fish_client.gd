@@ -122,7 +122,7 @@ const RECONNECT_JITTER_FRACTION := 0.25
 ## cycling fresh reconnection tokens per baseline must not grow the list
 ## without a bound. Per-baseline tokens rotate under the cap, evicting the
 ## oldest; pinned secrets are bounded by the same cap and evict oldest-first,
-## so the live credential (always the newest pin) stays redacted (issue #335).
+## so the live credential (re-pinned on every dial) stays redacted (issue #335).
 const MAX_REMEMBERED_SECRETS := 16
 
 ## Upstream `CloseReason::Kicked`: a kick removes the reconnection record, so
@@ -847,6 +847,10 @@ func _fail_reconnect_handshake() -> void:
 
 
 func _send_authenticate() -> Error:
+	# The credential rides this dial; keep it on the redaction list and at
+	# the newest pin so bounded eviction cannot age it out (issue #335).
+	_remember_secret(_config.credential, true)
+	_touch_pinned_secret(_config.credential)
 	var protocol_version: Variant = null
 	if _config.protocol_version > 0:
 		protocol_version = _config.protocol_version
@@ -1519,14 +1523,30 @@ func _remember_secret(secret: String, pinned := false) -> void:
 		_pinned_secrets += 1
 		if _pinned_secrets > MAX_REMEMBERED_SECRETS:
 			# Distinct pins (rotated room passwords) are bounded like the
-			# rotating half; the newest pin is the live credential, so
-			# oldest-first eviction can never unredact it (issue #335).
+			# rotating half; pins in active use re-pin on every use, so
+			# oldest-first eviction only ages out dead credentials
+			# (issue #335).
 			_secrets.remove_at(0)
 			_pinned_secrets -= 1
 		return
 	_secrets.append(secret)
 	if _secrets.size() > _pinned_secrets + MAX_REMEMBERED_SECRETS:
 		_secrets.remove_at(_pinned_secrets)
+
+
+## Moves an already-tracked pin to the newest pin slot: eviction is
+## oldest-first, so a secret on its way onto the wire must never sit at the
+## eviction end (issue #335).
+func _touch_pinned_secret(secret: String) -> void:
+	if secret.is_empty():
+		return
+	var index := _secrets.find(secret)
+	if index == -1 or index >= _pinned_secrets:
+		return
+	_secrets.remove_at(index)
+	_pinned_secrets -= 1
+	_secrets.insert(_pinned_secrets, secret)
+	_pinned_secrets += 1
 
 
 func _teardown_transport() -> void:

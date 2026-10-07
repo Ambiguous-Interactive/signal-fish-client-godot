@@ -170,6 +170,7 @@ func start() -> Error:
 		or host_id_timeout_sec < 0.0
 		or steam_connect_timeout_sec < 0.0
 		or steam_channel < 0
+		or max_packets_per_poll < 1
 	):
 		return ERR_INVALID_PARAMETER
 	if steam == null:
@@ -351,8 +352,7 @@ func _on_steam_session_request(remote_steam_id: int) -> void:
 		return
 	if _pending_requests.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
 		_refuse_request(
-			remote_steam_id,
-			"pending fence requests at cap %d" % SFTypeUtils.MAX_TRACKED_PEERS
+			remote_steam_id, "pending fence requests at cap %d" % SFTypeUtils.MAX_TRACKED_PEERS
 		)
 		return
 	_pending_requests[peer_id] = _elapsed_sec + accept_grace_sec
@@ -412,10 +412,14 @@ func _advertise_peer(peer_id: String, from_player: String) -> void:
 	if first_advertisement:
 		if _advertised_peers.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
 			# A flood of unique ids must not grow the fence set or amplify
-			# into a room-wide re-publish per id (issue #335).
+			# into a room-wide re-publish per id (issue #335). A pending
+			# request from the refused id expires on schedule: the fence
+			# never accepts an id the set could not record.
 			SFLogScript.error(
-				"steam bootstrap: advertised peers at cap %d; id not fenced"
-				% SFTypeUtils.MAX_TRACKED_PEERS
+				(
+					"steam bootstrap: advertised peers at cap %d; id not fenced"
+					% SFTypeUtils.MAX_TRACKED_PEERS
+				)
 			)
 			return
 		_advertised_peers[peer_id] = true

@@ -9,6 +9,7 @@ const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
+const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
@@ -36,6 +37,7 @@ func run_all() -> void:
 		_test_roster_growth_stays_bounded,
 		_test_secret_list_stays_bounded,
 		_test_pinned_secret_list_stays_bounded,
+		_test_live_credential_stays_redacted,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -179,7 +181,7 @@ func _test_secret_list_stays_bounded() -> void:
 		client._secrets.size(),
 		"rotating tokens evict oldest past the cap"
 	)
-	_assert(client._secrets.has("pinned-pass-not-secret"), "pinned password never ages out")
+	_assert(client._secrets.has("pinned-pass-not-secret"), "the one pinned password stays")
 	var freshest := "rotated-token-%d-not-secret" % (rounds - 1)
 	_assert(client._secrets.has(freshest), "the freshest token stays redacted")
 	_assert(not client._secrets.has("rotated-token-0-not-secret"), "the oldest token ages out")
@@ -207,6 +209,51 @@ func _test_pinned_secret_list_stays_bounded() -> void:
 		SFLogScript.redact("pass %s end" % freshest, client._secrets),
 		SFLogScript.REDACTED,
 		"the freshest pin still redacts"
+	)
+	client.free()
+	_done()
+
+
+## Issue #335: the configured credential re-pins on every Authenticate dial,
+## so bounded pin eviction can never unredact a credential still in use —
+## while an idle credential ages out like any other pin.
+
+
+func _test_live_credential_stays_redacted() -> void:
+	var config: SignalFishConfigScript = _runner.call("_make_config")
+	config.credential = "sfk-live-credential-not-secret"
+	var client: SignalFishClientScript = _runner.call("_connect_new_client", config)
+	var cap: int = SignalFishClientScript.MAX_REMEMBERED_SECRETS
+	for index: int in cap + 4:
+		client._remember_secret("join-pass-%d-not-secret" % index, true)
+	_assert(
+		not client._secrets.has("sfk-live-credential-not-secret"),
+		"an idle credential ages out like any pin"
+	)
+	client._send_authenticate()
+	_assert(
+		client._secrets.has("sfk-live-credential-not-secret"),
+		"the dial re-pins the in-use credential"
+	)
+	_assert_equal(
+		"sfk-live-credential-not-secret",
+		client._secrets[client._pinned_secrets - 1],
+		"the re-pinned credential is the newest pin"
+	)
+	# A credential that stayed tracked but slid to the eviction end while the
+	# client joined other rooms moves back to the newest pin on the dial.
+	for index: int in cap - 1:
+		client._remember_secret("more-pass-%d-not-secret" % index, true)
+	_assert_equal(
+		"sfk-live-credential-not-secret",
+		client._secrets[0],
+		"the stale credential sits at the eviction end"
+	)
+	client._send_authenticate()
+	_assert_equal(
+		"sfk-live-credential-not-secret",
+		client._secrets[client._pinned_secrets - 1],
+		"the dial moves the in-use credential off the eviction end"
 	)
 	client.free()
 	_done()

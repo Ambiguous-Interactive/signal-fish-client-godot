@@ -63,6 +63,9 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 const _FNV1A_OFFSET_BASIS := -3750763034362895579
 const _FNV1A_PRIME := 1099511628211
 
+## Signals queued per peer while the link is backpressured (issue #335).
+const MAX_PENDING_RELAYS := 64
+
 ## Injectable factory returning an object duck-typed to
 ## [WebRTCPeerConnection]. Empty Callable = the engine class.
 var peer_connection_factory: Callable = Callable()
@@ -87,9 +90,6 @@ var signal_retry_msec := 1000
 ## relay payload may consume before the mesh logs a diagnostic and drops
 ## its pending queue (issue #127).
 var signal_retry_budget := 10
-
-## Signals queued per peer while the link is backpressured (issue #335).
-const MAX_PENDING_RELAYS := 64
 
 var _client: SignalFishClientScript = null
 # Distinguishes "never attached / detached" from "the attached client node was
