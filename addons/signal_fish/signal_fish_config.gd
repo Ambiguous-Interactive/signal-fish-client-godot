@@ -57,6 +57,16 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## Refuse to send when the transport has more than this many bytes queued.
 @export var max_buffered_bytes: int = 262144
 
+## Refuse to queue one outbound text/binary frame larger than this many wire
+## bytes. Mirrors the upstream server's default inbound cap
+## (`max_message_size`, 65536 in `src/config/defaults.rs`): the server
+## refuses an oversized text frame with `Error{MessageTooLarge}` and the
+## action is silently lost, while a failed token-bound binary frame is
+## farewelled (session dropped, issue #333). Local refusal surfaces the
+## problem at the call site; raise this when the deployment raises the
+## server limit (the value is not advertised to the client).
+@export var max_outbound_frame_bytes: int = 65536
+
 ## Upper bound on packets drained per [method SignalFishClient.poll]; overflow
 ## is picked up on the next poll.
 @export var max_inbound_packets_per_poll: int = 64
@@ -125,6 +135,7 @@ func _to_string() -> String:
 	fields.append("game_data_format=%s" % game_data_format)
 	fields.append("max_inbound_frame_bytes=%d" % max_inbound_frame_bytes)
 	fields.append("max_buffered_bytes=%d" % max_buffered_bytes)
+	fields.append("max_outbound_frame_bytes=%d" % max_outbound_frame_bytes)
 	fields.append("max_inbound_packets_per_poll=%d" % max_inbound_packets_per_poll)
 	return "<%s %s>" % [get_class(), " ".join(fields)]
 
@@ -141,6 +152,8 @@ func validation_error() -> String:
 		cap_error = "max_inbound_frame_bytes must be positive"
 	elif max_buffered_bytes <= 0:
 		cap_error = "max_buffered_bytes must be positive"
+	elif max_outbound_frame_bytes <= 0:
+		cap_error = "max_outbound_frame_bytes must be positive"
 	elif max_inbound_packets_per_poll <= 0:
 		cap_error = "max_inbound_packets_per_poll must be positive"
 	elif reconnect_max_attempts <= 0:

@@ -93,6 +93,7 @@ func _run() -> void:
 		_test_spectator_flow,
 		_test_reconnected_restores_room_state,
 		_test_backpressure_returns_busy_and_drops,
+		_test_outbound_frame_cap_refuses_oversized_sends,
 		_test_close_surfaces_code_reason_and_cleans_up,
 		_test_process_and_exit_tree_paths,
 		_test_roster_accessors_are_copies,
@@ -142,6 +143,9 @@ func _test_configure_validation() -> void:
 	config.max_buffered_bytes = 0
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "zero cap rejected")
 	config.max_buffered_bytes = 16
+	config.max_outbound_frame_bytes = 0
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "zero outbound cap rejected")
+	config.max_outbound_frame_bytes = 65536
 	config.max_inbound_frame_bytes = -1
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "negative frame cap rejected")
 	config.max_inbound_frame_bytes = 32
@@ -986,6 +990,29 @@ func _test_backpressure_returns_busy_and_drops() -> void:
 	_assert_equal(1, errors.size(), "backpressure emits protocol_error")
 	var backpressure_error: String = errors[0]
 	_assert_string_contains(backpressure_error, "backpressure", "backpressure message")
+	client.free()
+	_done()
+
+
+func _test_outbound_frame_cap_refuses_oversized_sends() -> void:
+	var client := _make_authenticated_client()
+	var errors := _track_protocol_errors(client)
+	var fake: SFFakeTransportScript = client.transport
+	_assert_equal(OK, client.send_game_data({"x": 1}), "baseline send")
+	var wire: String = fake.sent_text[fake.sent_text.size() - 1]
+	var frame_bytes := wire.to_utf8_buffer().size()
+	# The boundary is exact: a frame at the cap goes out whole, one byte over
+	# is refused locally with nothing on the wire (issue #333).
+	for cap_case: Array in [[0, OK], [-1, ERR_INVALID_DATA]]:
+		var delta: int = cap_case[0]
+		client._config.max_outbound_frame_bytes = frame_bytes + delta
+		var expected: int = cap_case[1]
+		var before: int = fake.sent_text.size()
+		_assert_equal(expected, client.send_game_data({"x": 1}), "cap delta %d result" % delta)
+		var wire_delta := 1 if expected == OK else 0
+		_assert_equal(wire_delta, fake.sent_text.size() - before, "cap delta %d wire count" % delta)
+	_assert_equal(1, errors.size(), "cap emits one protocol_error")
+	_assert_string_contains(errors[0], "outbound cap", "cap message")
 	client.free()
 	_done()
 

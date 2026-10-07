@@ -42,7 +42,8 @@ client.authenticated.connect(func(_app, _org, _limits) -> void:
   to JSON when unadvertised or when the server negotiates v2),
   `decode_msgpack_payloads` (default false).
 - Limits: `max_inbound_frame_bytes`, `max_buffered_bytes` (backpressure),
-  `max_inbound_packets_per_poll` (all default ~256 KiB / 64).
+  `max_outbound_frame_bytes` (64 KiB, upstream server default),
+  `max_inbound_packets_per_poll` (the rest default ~256 KiB / 64).
 - Reconnect: `reconnect_max_attempts` (default 5).
 - Heartbeat (off by default): `heartbeat_interval_sec` (0 = off),
   `pong_timeout_sec` - a silent link past the deadline is torn down as a
@@ -188,6 +189,9 @@ steam.stop()
 
 - Sends are backpressured: over `max_buffered_bytes` -> `ERR_BUSY` +
   `protocol_error`, nothing queued.
+- One outbound frame over `max_outbound_frame_bytes` -> `ERR_INVALID_DATA` +
+  `protocol_error`, nothing queued (64 KiB default = upstream server
+  default).
 - Frames over `max_inbound_frame_bytes` are dropped with `protocol_error`.
 - Malformed input never crashes: decode failures emit `protocol_error` and
   keep the connection.
