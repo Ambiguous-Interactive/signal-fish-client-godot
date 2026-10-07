@@ -54,6 +54,8 @@ func run_all() -> void:
 		_test_peer_dial_and_host_id_timeouts,
 		_test_authority_loss_fails_host,
 		_test_room_loss_fails_coordination,
+		_test_pending_requests_close_on_teardown,
+		_test_accept_failure_closes_requester,
 		_test_session_drop_detection,
 		_test_requests_while_not_hosting_refused,
 		_test_stop_closes_sessions,
@@ -460,6 +462,74 @@ func _test_room_loss_fails_coordination() -> void:
 		_captured(bootstrap, "coordination_failed"),
 		"link loss fails the coordination"
 	)
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+func _test_pending_requests_close_on_teardown() -> void:
+	# Parity: a fence request that was neither accepted nor refused still
+	# opened a Steam session; once the coordination stops nobody owns it, so
+	# every teardown path closes it (the dotnet adapter's teardown does).
+	# An established session stays with the game on a failure.
+	var steam := FakeSteam.new(HOST_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	_advertise_peer(client, PLAYER_B, PEER_ID)
+	steam.request_session(int(PEER_ID))
+	steam.request_session(int(OTHER_ID))
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message(
+		{
+			"type": "AuthorityChanged",
+			"data": {"authority_player": PLAYER_B, "you_are_authority": false}
+		}
+	)
+	client.poll()
+	_assert_equal(
+		["authority left the host; the fence has no holder"],
+		_captured(bootstrap, "coordination_failed"),
+		"authority loss fails the host"
+	)
+	_assert_equal(
+		[int(OTHER_ID)], steam.closes, "failure closes the pending requester, keeps the fenced peer"
+	)
+	bootstrap.free()
+	client.free()
+
+	steam = FakeSteam.new(HOST_ID)
+	bootstrap = _make_bootstrap(SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam)
+	client = _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach 2")
+	_assert_equal(OK, bootstrap.start(), "start 2")
+	steam.request_session(int(OTHER_ID))
+	bootstrap.stop()
+	_assert_equal([int(OTHER_ID)], steam.closes, "stop closes the pending requester")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+func _test_accept_failure_closes_requester() -> void:
+	# Parity: a refused accept leaves the poke's Steam session unowned; it
+	# closes on the spot (the dotnet adapter's accept path does the same).
+	var steam := FakeSteam.new(HOST_ID)
+	steam.accept_result = false
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	_advertise_peer(client, PLAYER_B, PEER_ID)
+	steam.request_session(int(PEER_ID))
+	_assert_equal([int(PEER_ID)], steam.closes, "failed accept closes the poke session")
+	_assert_equal([], _captured(bootstrap, "steam_peer_connected"), "no connect signal")
+	_assert_equal([], steam.sends, "no handshake reply")
 	bootstrap.free()
 	client.free()
 	_done()

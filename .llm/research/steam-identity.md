@@ -66,8 +66,9 @@ true)`. Embedding was broken in 4.14/3.29 and fixed later; auto-init plus
   is the "connected" event. Game traffic stays on the game's channels.
 - Session-closed detection does not exist on this API; `poll()` watches
   `getP2PSessionState().connection_active` (best effort).
-- Failure paths leave established Steam sessions to the game; a dial that
-  never completed closes its half-open session. `stop()` closes everything.
+- Failure paths leave established Steam sessions to the game; a half-open
+  dial and a pending fence request close on every teardown. `stop()`
+  closes everything.
 
 ## Open items
 

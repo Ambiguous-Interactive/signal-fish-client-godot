@@ -190,8 +190,8 @@ func start() -> Error:
 	return OK
 
 
-## Stops coordinating and closes every Steam session the bootstrap
-## established. No further signals fire after this.
+## Stops coordinating and closes every Steam session the bootstrap opened.
+## No further signals fire after this.
 func stop() -> void:
 	_close_tracked_sessions()
 	_reset_coordination()
@@ -409,6 +409,9 @@ func _accept_peer(peer_id: String) -> void:
 		return
 	var accepted: Variant = steam.call("acceptP2PSessionWithUser", peer_id.to_int())
 	if not (accepted is bool) or not accepted:
+		# A refused accept leaves the poke's session unowned; close it now
+		# (the dotnet adapter's accept path does the same).
+		steam.call("closeP2PSessionWithUser", peer_id.to_int())
 		SFLogScript.error("steam bootstrap: accept refused for %s" % peer_id)
 		return
 	_connected_peers[peer_id] = true
@@ -530,9 +533,11 @@ func _fail_coordination(reason: String) -> void:
 	SFLogScript.error("steam bootstrap: %s" % reason)
 	# A dial that never completed leaves a half-open session the game never
 	# owned; an established session always belongs to the game (stop() is the
-	# only path that closes fenced sessions).
+	# only path that closes fenced sessions). The same holds for a fence
+	# request that was never accepted or refused.
 	if role == Role.PEER and _awaiting_ack and not _host_id.is_empty():
 		steam.call("closeP2PSessionWithUser", _host_id.to_int())
+	_close_pending_requests()
 	_reset_coordination()
 	coordination_failed.emit(reason)
 
@@ -544,6 +549,15 @@ func _close_tracked_sessions() -> void:
 	if role == Role.PEER and not _host_id.is_empty():
 		closed.append(_host_id)
 	for peer_id: String in closed:
+		steam.call("closeP2PSessionWithUser", peer_id.to_int())
+	_close_pending_requests()
+
+
+## A fence request that was neither accepted nor refused still opened a Steam
+## session; nobody owns it once the coordination stops, so failure and stop
+## both close it (the dotnet adapter's teardown does the same).
+func _close_pending_requests() -> void:
+	for peer_id: String in _pending_requests.keys():
 		steam.call("closeP2PSessionWithUser", peer_id.to_int())
 
 
