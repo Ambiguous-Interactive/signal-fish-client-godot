@@ -252,6 +252,20 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> SFTypesScript.D
 				],
 				envelope
 			)
+		"GoingAway":
+			return _decode_going_away(type_name, data, envelope)
+		"DeliveryReport":
+			var delivery_report_error := SFSessionTypesScript.validate_delivery_report(data)
+			if not delivery_report_error.is_empty():
+				return _protocol_error(delivery_report_error, envelope)
+			return _event(
+				type_name,
+				&"delivery_report",
+				[SFSessionTypesScript.make_delivery_report(data)],
+				envelope
+			)
+		"RoomOperationResult":
+			return _decode_room_operation_result(type_name, data, envelope)
 		"Reconnected":
 			return _decode_reconnected(type_name, data, envelope, depth)
 		"ReconnectionFailed":
@@ -584,6 +598,117 @@ static func _decode_lobby_state_changed(
 		],
 		envelope
 	)
+
+
+static func _decode_going_away(
+	type_name: String, data: Dictionary, envelope: Dictionary
+) -> SFTypesScript.DecodedEvent:
+	if not SFSessionTypesScript.is_u64_wire_integer(data.get("deadline_ms")):
+		return _protocol_error("GoingAway requires u64 deadline_ms", envelope)
+	# retry_after_secs is an upstream Option<u64>: absent/null decodes to the
+	# -1 sentinel, so a real 0-second hint stays representable.
+	var retry_after_secs := -1
+	if data.has("retry_after_secs") and data["retry_after_secs"] != null:
+		if not SFSessionTypesScript.is_u64_wire_integer(data["retry_after_secs"]):
+			return _protocol_error("GoingAway retry_after_secs must be u64", envelope)
+		retry_after_secs = SFTypeUtils.int_or_zero(data["retry_after_secs"])
+	return _event(
+		type_name,
+		&"going_away",
+		[SFTypeUtils.int_or_zero(data["deadline_ms"]), retry_after_secs],
+		envelope
+	)
+
+
+static func _decode_room_operation_result(
+	type_name: String, data: Dictionary, envelope: Dictionary
+) -> SFTypesScript.DecodedEvent:
+	if not SFTypeUtils.is_canonical_uuid_text(data.get("operation_id")):
+		return _protocol_error(
+			"RoomOperationResult operation_id must be a lowercase hyphenated UUID", envelope
+		)
+	if not _has_dict(data, "result"):
+		return _protocol_error("RoomOperationResult requires a result object", envelope)
+	var result: Dictionary = data["result"]
+	if not _has_string(result, "type"):
+		return _protocol_error("RoomOperationResult requires a result type", envelope)
+	var result_type := SFTypeUtils.string_or_empty(result["type"])
+	if result_type.is_empty():
+		return _protocol_error("RoomOperationResult result type must not be empty", envelope)
+	if not SFSessionTypesScript.ROOM_OPERATION_RESULT_TYPES.has(result_type):
+		return _protocol_error(
+			"RoomOperationResult result type is unknown: %s"
+			% SFDiagnosticsScript.render_key(result_type),
+			envelope
+		)
+	var payload_error := _validate_room_operation_result_payload(result_type, result.get("data"))
+	if not payload_error.is_empty():
+		return _protocol_error(
+			"RoomOperationResult %s: %s" % [result_type, payload_error], envelope
+		)
+	return _event(
+		type_name,
+		&"room_operation_result",
+		[SFSessionTypesScript.make_room_operation_result(data)],
+		envelope
+	)
+
+
+static func _validate_room_operation_result_payload(result_type: String, payload: Variant) -> String:
+	if result_type == "RoomLeft":
+		return "data must be omitted" if payload != null else ""
+	if not payload is Dictionary:
+		return "requires a data object"
+	var data: Dictionary = payload
+	match result_type:
+		"RoomJoined", "Reconnected":
+			return SFTypesScript.validate_room_joined_info(data)
+		"SpectatorJoined":
+			return SFTypesScript.validate_spectator_joined_info(data)
+		"PlayerKicked", "PlayerBanned", "PlayerUnbanned", "AuthorityTransferred":
+			if not SFTypeUtils.is_canonical_uuid_text(data.get("player_id")):
+				return "player_id must be a lowercase hyphenated UUID"
+			return ""
+		"RoomCodeRegenerated":
+			if (
+				not _has_string(data, "room_code")
+				or SFTypeUtils.string_or_empty(data["room_code"]).is_empty()
+			):
+				return "room_code must be a non-empty string"
+			return ""
+		"RoomAccessUpdated":
+			if not _has_bool(data, "requires_password"):
+				return "requires_password must be a bool"
+			return ""
+		"RoomJoinFailed", "OperationFailed":
+			if not _has_string(data, "reason"):
+				return "requires string reason"
+			return _validate_optional_error_code(data, result_type)
+		"ReconnectionFailed":
+			if not _has_string(data, "reason"):
+				return "requires string reason"
+			return _validate_required_error_code(data, result_type)
+		"SpectatorLeft":
+			return _validate_room_operation_spectator_left(data)
+	return ""
+
+
+static func _validate_room_operation_spectator_left(data: Dictionary) -> String:
+	if data.has("room_id") and data["room_id"] != null:
+		if not SFTypeUtils.is_canonical_uuid_text(data["room_id"]):
+			return "room_id must be a lowercase hyphenated UUID"
+	if (
+		data.has("room_code")
+		and data["room_code"] != null
+		and typeof(data["room_code"]) != TYPE_STRING
+	):
+		return "room_code must be a string"
+	var reason_error := SFTypesScript.validate_optional_spectator_reason(
+		data, "reason", "SpectatorLeft"
+	)
+	if not reason_error.is_empty():
+		return reason_error
+	return SFTypesScript.validate_spectators_array(data.get("current_spectators", []))
 
 
 static func _decode_reconnected(

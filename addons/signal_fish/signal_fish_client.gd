@@ -65,6 +65,15 @@ signal new_peer(peer_id: String, you_initiate: bool)
 ## Latest v3 plan wins. A relay plan with no peers resets the mesh floor.
 signal session_plan(plan: SFSessionTypesScript.SessionPlanInfo)
 signal peer_transport_status(peer_id: String, transport: int, connected: bool)
+## Graceful server-shutdown advisory (v3 only). Informational: the structured
+## close that follows stays authoritative; the client never acts on it.
+## [code]retry_after_secs[/code] is -1 when the server sent no hint.
+signal going_away(deadline_ms: int, retry_after_secs: int)
+## Exact delivery-accountability report (v3 only). Informational.
+signal delivery_report(report: SFSessionTypesScript.DeliveryReportInfo)
+## Terminal response for a room operation (v3 only). The client never issues
+## room operations yet, so any result is unsolicited and surfaced verbatim.
+signal room_operation_result(result: SFSessionTypesScript.RoomOperationResultInfo)
 
 enum ConnectionState {
 	DISCONNECTED,  # idle, no transport
@@ -1064,6 +1073,12 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			session_plan.emit(event.args[0])
 		&"peer_transport_status":
 			peer_transport_status.emit(event.args[0], event.args[1], event.args[2])
+		&"going_away":
+			going_away.emit(event.args[0], event.args[1])
+		&"delivery_report":
+			delivery_report.emit(event.args[0])
+		&"room_operation_result":
+			room_operation_result.emit(event.args[0])
 		&"reconnected":
 			# Once-per-dial: a duplicate `Reconnected` on any dial is hostile-
 			# server input (issue #71, #24 precedent) and must stay fully
