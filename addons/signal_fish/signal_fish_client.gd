@@ -817,9 +817,9 @@ func _on_transport_opened() -> void:
 		return
 	_connection_state = ConnectionState.CONNECTED
 	_session_state = SessionState.AUTHENTICATING
-	# Separate budgets: the dial window measured from the dial (issue #341),
+	# Separate budgets: the dial window measures from the dial (issue #341),
 	# and the AUTHENTICATING window measures from this open, so a slow dial
-	# must not eat the silence deadline that follows it.
+	# cannot eat the silence deadline that follows it.
 	_reset_heartbeat()
 	connected.emit()
 	if _connection_state != ConnectionState.CONNECTED:

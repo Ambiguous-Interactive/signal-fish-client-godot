@@ -253,9 +253,7 @@ func _test_auth_window_silence_is_a_dead_link() -> void:
 	)
 	transport.inject_open()
 	client._process(0.7)
-	_assert_connected(
-		client, true, "a slow dial does not shorten the auth window that follows it"
-	)
+	_assert_connected(client, true, "a slow dial does not shorten the auth window that follows it")
 	client._process(4.4)
 	if _assert_equal(1, failures.size(), "the post-dial auth window still bounds silence"):
 		_assert(failures[0].contains("auth timeout"), "the failure names the auth timeout")
