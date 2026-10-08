@@ -224,7 +224,7 @@ func _test_pre_auth_baselines_are_refused() -> void:
 		fake.inject_server_message(frame)
 		_assert_equal(1, errors.size(), "%s: refusal is loud" % event_type)
 		_assert_string_contains(
-			errors[0], "before Authenticated", "%s: refusal explains itself" % event_type
+			errors[0], "before an authenticated session", "%s: refusal explains itself" % event_type
 		)
 		_assert_equal([], join_events, "%s: join stays consumer-silent" % event_type)
 		_assert_equal(
@@ -247,6 +247,29 @@ func _test_pre_auth_baselines_are_refused() -> void:
 			"", client._context_auth_token, "%s: no reconnection identity retained" % event_type
 		)
 		_assert_equal(ERR_UNAUTHORIZED, client.ping(), "%s: send guard intact" % event_type)
+		var errors_after_guard := errors.size()
+		# Recovery: the refusal must not poison the dial. A legitimate
+		# `Authenticated` followed by the same baseline applies normally.
+		var expected_state: SignalFishClientScript.SessionState = (
+			SignalFishClientScript.SessionState.IN_ROOM_WAITING
+			if event_type == "RoomJoined"
+			else SignalFishClientScript.SessionState.SPECTATING
+		)
+		fake.inject_server_message(
+			{"type": "Authenticated", "data": _runner.call("_authenticated_data")}
+		)
+		fake.inject_server_message(frame)
+		_assert_equal([1], join_events, "%s: legitimate baseline applies after auth" % event_type)
+		_assert_equal(
+			errors_after_guard,
+			errors.size(),
+			"%s: no refusal for the legitimate baseline" % event_type
+		)
+		_assert_equal(
+			expected_state,
+			client.get_session_state(),
+			"%s: session state follows the baseline" % event_type
+		)
 		client.free()
 	_done()
 
@@ -294,7 +317,33 @@ func _test_mid_session_authentication_error_clears_room_state() -> void:
 	_assert_equal(
 		SignalFishClientScript.ConnectionState.CONNECTED,
 		client.get_connection_state(),
-		"the held-open socket keeps the link up"
+		"the held-open socket keeps the link up until the close cascade"
+	)
+	# The auth error must keep the baseline refusal armed for the rest of
+	# the dial (issue #340): a hostile baseline after the error must not
+	# forge state or rotate the retained reconnection identity.
+	var errors: Array[String] = []
+	client.protocol_error.connect(func(error: String) -> void: errors.append(error))
+	var forged: Dictionary = _runner.call(
+		"_room_joined_data", {"reconnection_token": "forged-room-token-not-secret"}
+	)
+	fake.inject_server_message({"type": "RoomJoined", "data": forged})
+	fake.inject_server_message({"type": "SpectatorJoined", "data": _spectator_joined_data()})
+	_assert_equal(2, errors.size(), "both post-error baselines are refused loudly")
+	_assert_string_contains(errors[0], "before an authenticated session", "room refusal message")
+	_assert_string_contains(
+		errors[1], "before an authenticated session", "spectator refusal message"
+	)
+	_assert_equal(
+		SignalFishClientScript.SessionState.UNAUTHENTICATED,
+		client.get_session_state(),
+		"post-error baselines cannot restore the session"
+	)
+	_assert_equal("", client.get_room_id(), "post-error baselines cannot forge the room")
+	_assert_equal(
+		_room_fixture_token(),
+		client._context_auth_token,
+		"post-error baselines cannot rotate the retained token"
 	)
 	client.free()
 	_done()

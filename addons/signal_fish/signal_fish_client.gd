@@ -1056,10 +1056,11 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			_clear_room_state()
 			authentication_error.emit(event.args[0], event.args[1])
 		&"room_joined":
-			# A baseline before `Authenticated` forges in-room state (the
-			# #100 class); loud refusal, nothing applied (#340, #108).
-			if not _authenticated_seen:
-				_emit_protocol_error("RoomJoined before Authenticated on this dial")
+			# A baseline before an authenticated session forges in-room state
+			# (#100, #340): loud refusal (#108 posture). Gated on the live
+			# session, not a dial latch: an AuthenticationError keeps it armed.
+			if not is_authenticated():
+				_emit_protocol_error("RoomJoined before an authenticated session on this dial")
 				return
 			# Every RoomJoined is an authoritative fresh baseline: consumers
 			# (the WebRTC mesh) rebuild on re-emission, so unlike
@@ -1153,17 +1154,16 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# server input (issue #71, #24 precedent) and must stay fully
 			# silent — consumers replay `missed_events`, so a second emission
 			# would double-apply game events. Upstream only sends `Reconnected`
-			# in response to the directed handshake, so an event arriving
-			# before this dial's handshake went out (e.g. after an
-			# `AuthenticationError`, issue #82) or on a normal-auth dial is
-			# equally hostile.
+			# for a directed handshake, so pre-handshake (issue #82) or
+			# normal-auth events are equally hostile.
 			if _reconnected_seen:
 				return
-			if not _reconnect_handshake_sent:
-				# An unsolicited `Reconnected` (no handshake on this dial) is
-				# hostile input; unlike the idempotent duplicate it must stay
-				# loud instead of silently dropped (issue #108).
-				_emit_protocol_error("Reconnected without a reconnect handshake on this dial")
+			if not _reconnect_handshake_sent or not is_authenticated():
+				# No handshake on this dial, or the session already died
+				# (issue #340): stays loud, not silently dropped (issue #108).
+				_emit_protocol_error(
+					"Reconnected without an authenticated reconnect handshake on this dial"
+				)
 				return
 			_reconnected_seen = true
 			var info: SFTypesScript.RoomJoinedInfo = event.args[0]
@@ -1191,9 +1191,9 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			reconnection_failed.emit(event.args[0], event.args[1])
 			_terminate_reconnection_attempt()
 		&"spectator_joined":
-			# Mirrors the room_joined pre-auth refusal (issue #340).
-			if not _authenticated_seen:
-				_emit_protocol_error("SpectatorJoined before Authenticated on this dial")
+			# Mirrors the room_joined refusal (issue #340).
+			if not is_authenticated():
+				_emit_protocol_error("SpectatorJoined before an authenticated session on this dial")
 				return
 			# Mirror of `room_joined`: no duplicate latch; every
 			# SpectatorJoined is an authoritative baseline (issue #107).

@@ -8,19 +8,6 @@ released version.
 
 ## [Unreleased]
 
-### Fixed
-
-- A room or spectator baseline that arrives before `Authenticated` on the
-  same dial is now refused with `protocol_error` instead of forging in-room
-  state. Upstream only sends a baseline after authentication, so nothing
-  legitimate changes; a hostile relay can no longer make the client report
-  a room (or retain a reconnection token) it never authenticated into.
-- A mid-session `AuthenticationError` now clears the room state (ids,
-  rosters, lobby cache, and the v3 signal-plan gate), matching what the
-  server-side close cascade already did. A relay that keeps the socket open
-  after the error no longer leaves the client reporting a room it can no
-  longer be in.
-
 ### Added
 
 - `max_outbound_frame_bytes` config (64 KiB default, the upstream server
@@ -40,6 +27,14 @@ released version.
   client never acts on them.
 
 ### Fixed
+
+- Room and spectator baselines are now refused with `protocol_error` unless
+  the dial holds an authenticated session (issues #340, #342). Upstream only
+  sends a baseline after authentication, so nothing legitimate changes; a
+  hostile relay can no longer forge in-room state before `Authenticated` or
+  after a mid-session `AuthenticationError`, and the error itself now clears
+  the room (ids, rosters, lobby cache, and the v3 signal-plan gate) instead
+  of leaving the client reporting a room it can no longer be in.
 
 - The AUTHENTICATING and CLOSING silence deadlines (issues #121, #126) now
   run even when the optional heartbeat is off (the default). A link that
