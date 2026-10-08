@@ -28,6 +28,15 @@ released version.
 
 ### Fixed
 
+- A silently dead link no longer wedges the client when the optional
+  heartbeat is off (the default). The AUTHENTICATING and CLOSING silence
+  deadlines (issues #121, #126) now always run on `pong_timeout_sec`: a
+  link that accepts and then sends nothing, or a close handshake the peer
+  never completes, fails as a transport failure so auto-reconnect can
+  engage. Only the ping cycle stays opt-in. A `close()` abort that races
+  the engine into the closed state now keeps the caller's reason, and a
+  re-entrant close from a packet handler no longer recurses per queued
+  packet.
 - Hostile input can no longer grow client memory without a bound (issue
   #335). The Steam bootstrap caps its fence set and pending requests, and
   drains at most 64 handshake packets per `poll` (`max_packets_per_poll`);

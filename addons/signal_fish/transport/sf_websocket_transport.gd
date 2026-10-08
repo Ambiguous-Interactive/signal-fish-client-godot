@@ -16,6 +16,15 @@ var _peer: SFWebSocketPeerAdapterScript = null
 var _opened_emitted := false
 var _closed_emitted := false
 var _failed_emitted := false
+# Guards the drain against re-entrant close()/poll() from a packet handler:
+# the queued remainder stays with the outer drain instead of recursing once
+# per queued packet.
+var _drain_active := false
+# The latest consumer close request; a pre-open abort must name it no matter
+# when the engine reaches STATE_CLOSED (issue #119).
+var _close_requested := false
+var _requested_close_code := 1000
+var _requested_close_reason := ""
 
 
 func connect_to_url(url: String) -> Error:
@@ -76,6 +85,9 @@ func get_ready_state() -> int:
 func close(code := 1000, reason := "") -> void:
 	if _peer == null or _is_terminal():
 		return
+	_close_requested = true
+	_requested_close_code = code
+	_requested_close_reason = reason
 	var state: int = _peer.get_ready_state()
 	if state == WebSocketPeer.STATE_CLOSED:
 		# Issue #101: a consumer close must not race queued frames out of the
@@ -104,6 +116,7 @@ func _reset_session_flags() -> void:
 	_opened_emitted = false
 	_closed_emitted = false
 	_failed_emitted = false
+	_close_requested = false
 
 
 func _make_peer() -> SFWebSocketPeerAdapterScript:
@@ -147,6 +160,15 @@ func _drain_queued_then_close() -> void:
 
 
 func _drain_packets() -> bool:
+	if _drain_active:
+		return false
+	_drain_active = true
+	var drained := _drain_queued_packets()
+	_drain_active = false
+	return drained
+
+
+func _drain_queued_packets() -> bool:
 	if _peer == null or _is_terminal():
 		return false
 	var drained := 0
@@ -167,6 +189,14 @@ func _handle_closed_state() -> void:
 	if _is_terminal():
 		return
 	if not _opened_emitted:
+		if _close_requested:
+			_fail_current_session(
+				_preopen_close_message(_requested_close_code, _requested_close_reason),
+				false,
+				_requested_close_code,
+				_requested_close_reason
+			)
+			return
 		_fail_current_session(_closed_error_message(), false)
 		return
 	_emit_closed_once()

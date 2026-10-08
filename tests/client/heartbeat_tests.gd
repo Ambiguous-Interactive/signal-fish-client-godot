@@ -39,6 +39,7 @@ func run_all() -> void:
 		_test_auth_window_silence_is_a_dead_link,
 		_test_auth_landing_disarms_the_watchdog,
 		_test_closing_silence_is_a_dead_link,
+		_test_default_config_bounds_the_silence_windows,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -350,6 +351,115 @@ func _test_auth_landing_disarms_the_watchdog() -> void:
 
 
 ## An authenticated in-room session (reconnection identity captured).
+func _test_default_config_bounds_the_silence_windows() -> void:
+	# Issues #121/#126 with the heartbeat off: both silence deadlines send
+	# nothing, so they must not depend on the opt-in ping cadence. A link
+	# that accepts and then silences must fail past the pong deadline and
+	# let auto-reconnect engage instead of wedging every recovery entry.
+	var config: SignalFishConfigScript = _runner.call("_make_config")
+	config.pong_timeout_sec = 5.0
+
+	# AUTHENTICATING window: an open link that never delivers Authenticated.
+	var client: SignalFishClientScript = _runner.call("_connect_new_client", config)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_open()
+	var failures: Array[String] = []
+	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	client._process(4.9)
+	_assert_connected(client, true, "inside the default-config auth window the link waits")
+	client._process(0.2)
+	if _assert_equal(1, failures.size(), "default-config auth silence fails the link"):
+		_assert(
+			failures[0].contains("heartbeat auth timeout"), "the failure names the auth timeout"
+		)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"the stranded default-config auth window ends FAILED"
+	)
+	client.free()
+
+	# CLOSING window: a close handshake the peer never completes. The user's
+	# close must win: the deadline fails the link without redialing.
+	client = _authenticated_client(config)
+	transport = client.transport
+	transport.hold_close = true
+	client.set_auto_reconnect(true)
+	failures = []
+	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	var disconnects: Array[String] = []
+	client.disconnected.connect(
+		func(_code: int, _reason: String) -> void: disconnects.append("disconnected")
+	)
+	client.close()
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSING,
+		client.get_connection_state(),
+		"a held default-config close leaves the client CLOSING"
+	)
+	client._process(4.9)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CLOSING,
+		client.get_connection_state(),
+		"inside the default-config closing window the client waits"
+	)
+	client._process(0.2)
+	if _assert_equal(1, failures.size(), "a default-config close that never completes fails"):
+		_assert(
+			failures[0].contains("heartbeat close timeout"), "the failure names the close timeout"
+		)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"the stranded default-config closing window ends FAILED"
+	)
+	_assert_equal([], disconnects, "a failed close is not reported as a clean disconnect")
+	client._process(30.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"a user close never redials after the close deadline"
+	)
+	client.free()
+
+	# Auto-reconnect payoff: a reconnect dial that opens and then silences in
+	# AUTHENTICATING re-arms the retry budget instead of stalling the episode.
+	client = _make_auth_watchdog_reconnect_client(config)
+	var live_transport: SFFakeTransportScript = client.transport
+	live_transport.inject_failure("dead link")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"the dead link arms the retry"
+	)
+	client.transport = SFFakeTransportScript.new()
+	client._process(1.0)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTING,
+		client.get_connection_state(),
+		"the retry redials"
+	)
+	transport = client.transport
+	transport.inject_open()
+	client._process(4.9)
+	_assert_connected(client, true, "the default-config watchdog spares a live reconnect dial")
+	client._process(0.2)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		client.get_connection_state(),
+		"an auth-window death on a default-config reconnect dial re-arms the retry"
+	)
+	client.transport = SFFakeTransportScript.new()
+	client._process(1.25)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTING,
+		client.get_connection_state(),
+		"auto-reconnect redials the stranded default-config dial"
+	)
+	client.free()
+	_done()
+
+
 func _make_auth_watchdog_reconnect_client(config: SignalFishConfigScript) -> SignalFishClientScript:
 	var client: SignalFishClientScript = _runner.call("_connect_new_client", config)
 	var transport: SFFakeTransportScript = client.transport

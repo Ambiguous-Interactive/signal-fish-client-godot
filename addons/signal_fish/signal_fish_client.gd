@@ -668,7 +668,7 @@ func _process(delta: float) -> void:
 
 
 func _tick_heartbeat(delta: float) -> void:
-	if _config == null or _config.heartbeat_interval_sec <= 0.0:
+	if _config == null:
 		return
 	if _connection_state == ConnectionState.CLOSING:
 		# Polling surfaces nothing while the close handshake hangs, and every
@@ -691,7 +691,10 @@ func _tick_heartbeat(delta: float) -> void:
 		if _heartbeat_elapsed >= _config.pong_timeout_sec:
 			_on_transport_failed("heartbeat auth timeout")
 		return
-	if not is_authenticated():
+	# Both deadlines above send nothing, so unlike the ping cycle below they
+	# run with the heartbeat off (issues #121 and #126); only the beat
+	# cadence is opt-in.
+	if _config.heartbeat_interval_sec <= 0.0 or not is_authenticated():
 		_reset_heartbeat()
 		return
 	if _awaiting_pong:

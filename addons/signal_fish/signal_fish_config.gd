@@ -78,9 +78,11 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 
 ## Optional dead-link heartbeat (PLAN §4.7): seconds between automatic
 ## [code]Ping[/code]s while the session is authenticated and connected.
-## [code]0[/code] (default) disables the heartbeat entirely. Silent link
+## [code]0[/code] (default) disables the ping cycle. Silent link
 ## death (NAT rebinding, radio loss) produces no WebSocket close, so without
 ## this the client stays "connected" forever and auto-reconnect never fires.
+## The [code]AUTHENTICATING[/code] and [code]CLOSING[/code] silence deadlines
+## (issues #121, #126) always run regardless of this knob: they send nothing.
 ## Runs from [code]_process[/code] like the reconnect backoff: the client
 ## node must be in the tree (or the ticks driven manually).
 @export var heartbeat_interval_sec: float = 0.0
@@ -91,8 +93,10 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## ([signal SignalFishClient.connection_failed]), so opt-in auto-reconnect
 ## engages. The same silence deadline covers the AUTHENTICATING window,
 ## where protocol Ping is not allowed but a link that never delivers
-## [code]Authenticated[/code] is just as dead (issue #121). Used only when
-## [member heartbeat_interval_sec] is on.
+## [code]Authenticated[/code] is just as dead (issue #121), and the CLOSING
+## window, where a close handshake that never completes strands every
+## recovery entry (issue #126). Both windows are bounded by this knob even
+## when [member heartbeat_interval_sec] is off.
 @export var pong_timeout_sec: float = 10.0
 
 ## Highest protocol version advertised with [code]Authenticate[/code]
