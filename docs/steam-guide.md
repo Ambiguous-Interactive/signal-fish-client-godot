@@ -66,9 +66,12 @@ Steam's rendezvous authenticates the connecting identity (the claim is
 Steam's, not the peer's), so the host only checks that the connecting id was
 advertised on the room's lane. An unknown requester waits `accept_grace_sec`
 (default 5 s) for its advertisement and is refused when it never comes; zero
-refuses every requester that was not already advertised. The advertised set
-only grows during a session: a member that leaves keeps its entry until the
-session ends.
+refuses every requester that was not already advertised. Advertisements
+belong to the member that published them and leave with them, and the host
+id is only consumed from the room's authority, so one hostile member can
+neither redirect the session nor poison the fence set. An id that keeps
+re-requesting without ever being advertised is refused for the rest of the
+session after a few grace windows.
 
 ## Channels
 

@@ -69,6 +69,11 @@ true)`. Embedding was broken in 4.14/3.29 and fixed later; auto-init plus
 - Failure paths leave established Steam sessions to the game; a half-open
   dial and a pending fence request close on every teardown. `stop()`
   closes everything.
+- The fence is tenanted (issue #338): an advertisement belongs to the room
+  player that published it and leaves with them (player_left and every
+  room baseline reconcile the set), the host lane is only consumed from the
+  room's authority, and repeat fence requesters burn out after
+  `MAX_REQUEST_ATTEMPTS` grace windows. The dotnet adapter's set only grows.
 
 ## Open items
 

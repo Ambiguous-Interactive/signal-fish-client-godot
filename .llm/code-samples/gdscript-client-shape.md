@@ -182,7 +182,7 @@ steam.poll()                                     # or leave _process to drive it
 steam.stop()
 # Config: accept_grace_sec (5), host_id_timeout_sec (30),
 # steam_connect_timeout_sec (30), steam_channel (1), max_packets_per_poll (64),
-# steam (injectable seam).
+# max_bytes_per_poll (256 KiB), steam (injectable seam).
 # Signals: steam_host_id_received(steam_id), steam_host_connected(steam_id),
 # steam_peer_connected(steam_id), steam_peer_disconnected(steam_id),
 # coordination_failed(reason).

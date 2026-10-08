@@ -20,7 +20,11 @@ released version.
   Signal Fish room. The room is the membership fence; the bootstrap exchanges
   role-scoped SteamId64s on the game-data lane, fences the host's Steam
   accepts behind that exchange, and hands established sessions to the game.
-  Requires the GodotSteam GDExtension; the relay-only client stays unchanged.
+  The lane is fenced too: the host id is only consumed from the room's
+  authority, an advertisement leaves with the member that published it, and
+  hostile requesters burn out instead of holding fence slots forever
+  (issue #338). Requires the GodotSteam GDExtension; the relay-only client
+  stays unchanged.
 - Three new v3 signals: `going_away` (graceful server-drain advisory),
   `delivery_report` (per-class delivery counters plus omission gaps), and
   `room_operation_result` (surfaced verbatim). All are informational; the

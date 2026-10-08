@@ -25,9 +25,6 @@ and checks within about one hour. Session cadence:
 
 Ordered most-gameplay-impacting first; each is one session-sized PR.
 
-- [ ] #338 Steam bootstrap hostile-input bounds: bind the host lane to the
-      authority player (HIGH), per-player advertisement tenancy, handshake
-      byte budget, pending-slot re-arm caps.
 - [ ] #343 transport residuals for direct `SFWebSocketTransport` users:
       zero `max_packets_per_poll` livelock clamp; optional send cap
       (drop-vs-fail is a design call).
