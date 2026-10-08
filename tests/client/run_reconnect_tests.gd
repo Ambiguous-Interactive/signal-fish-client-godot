@@ -1076,6 +1076,9 @@ func _test_dial_contract_survives_authentication_error() -> void:
 	# Issue #108: the hostile post-error Reconnected is loud, not silent; the
 	# AuthenticationError and hostile Authenticated contribute no errors.
 	_assert_equal(1, errors.size(), "exactly the hostile Reconnected is reported")
+	_assert_string_contains(
+		errors[0], "authenticated reconnect handshake", "refusal names the missing handshake"
+	)
 	client.free()
 	_done()
 
