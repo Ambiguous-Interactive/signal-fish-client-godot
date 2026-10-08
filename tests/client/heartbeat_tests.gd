@@ -40,6 +40,7 @@ func run_all() -> void:
 		_test_auth_landing_disarms_the_watchdog,
 		_test_closing_silence_is_a_dead_link,
 		_test_default_config_bounds_the_silence_windows,
+		_test_post_auth_error_silence_is_a_dead_link,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -457,6 +458,67 @@ func _test_default_config_bounds_the_silence_windows() -> void:
 		"auto-reconnect redials the stranded default-config dial"
 	)
 	client.free()
+	_done()
+
+
+func _test_post_auth_error_silence_is_a_dead_link() -> void:
+	# Issue #346: a mid-session AuthenticationError leaves the client
+	# CONNECTED + UNAUTHENTICATED, where the ping cycle is disarmed and every
+	# recovery entry refuses. The honest server closes the link right after
+	# the error; a relay that holds the socket open must not wedge the
+	# client forever, so the same pong deadline the AUTHENTICATING window
+	# uses fails the link and arms auto-reconnect.
+	for heartbeat_interval_sec: float in [0.0, 10.0]:
+		var config: SignalFishConfigScript = _runner.call("_make_config")
+		config.heartbeat_interval_sec = heartbeat_interval_sec
+		config.pong_timeout_sec = 5.0
+		var client := _authenticated_client(config)
+		var transport: SFFakeTransportScript = client.transport
+		(
+			transport
+			. inject_server_message(
+				{
+					"type": "RoomJoined",
+					"data": _runner.call("_room_joined_data", {"reconnection_token": "ae-token"}),
+				}
+			)
+		)
+		client.set_auto_reconnect(true)
+		transport.inject_server_message(
+			{
+				"type": "AuthenticationError",
+				"data": {"error": "session revoked", "error_code": "UNAUTHORIZED"}
+			}
+		)
+		_assert_equal(
+			SignalFishClientScript.SessionState.UNAUTHENTICATED,
+			client.get_session_state(),
+			"the error lands the session in UNAUTHENTICATED"
+		)
+		var failures: Array[String] = []
+		client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+		client._process(4.9)
+		_assert_connected(client, true, "inside the post-error window the link waits")
+		client._process(0.2)
+		if _assert_equal(1, failures.size(), "post-error silence fails the link"):
+			_assert(
+				failures[0].contains("heartbeat auth timeout"),
+				"the failure names the auth silence deadline"
+			)
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.FAILED,
+			client.get_connection_state(),
+			"the held-open post-error link ends FAILED"
+		)
+		_assert_equal(null, client.transport, "the dead link is torn down")
+		client.transport = SFFakeTransportScript.new()
+		client._process(1.0)
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.CONNECTING,
+			client.get_connection_state(),
+			"auto-reconnect redials the held-open link"
+		)
+		client.free()
 	_done()
 
 
