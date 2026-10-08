@@ -203,7 +203,7 @@ steam.stop()
   the link down so consumers always observe a terminal disconnect.
 - The optional heartbeat (`heartbeat_interval_sec`) pings while connected +
   authenticated; a missing `pong` past `pong_timeout_sec` is treated as a
-  dead link (silent link death produces no WebSocket close). The
-  AUTHENTICATING, post-`AuthenticationError`, and CLOSING silence windows
-  use the same deadline even with the heartbeat off.
+  dead link (silent link death produces no WebSocket close). The CONNECTING
+  dial, AUTHENTICATING, post-`AuthenticationError`, and CLOSING silence
+  windows use the same deadline even with the heartbeat off.
 - Logs redact tokens/ids by default (`sf_log.gd`).

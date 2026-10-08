@@ -41,6 +41,8 @@ func run_all() -> void:
 		_test_closing_silence_is_a_dead_link,
 		_test_default_config_bounds_the_silence_windows,
 		_test_post_auth_error_silence_is_a_dead_link,
+		_test_refocus_delta_drains_buffered_progress_first,
+		_test_dial_silence_is_a_dead_link,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -524,6 +526,199 @@ func _test_post_auth_error_silence_is_a_dead_link() -> void:
 		)
 		client.free()
 	_done()
+
+
+func _test_refocus_delta_drains_buffered_progress_first() -> void:
+	# Issue #341: a hidden browser tab suspends rAF, so the first frame after
+	# refocus carries the whole hidden duration as one delta. Frames the peer
+	# already delivered sit buffered in the socket; they must drain before the
+	# watchdog judges liveness, or a tab hidden inside AUTHENTICATING or
+	# CLOSING fails a session whose completion already arrived.
+	for close_case: bool in [false, true]:
+		var config: SignalFishConfigScript = _runner.call("_make_config")
+		config.pong_timeout_sec = 5.0
+		var client: SignalFishClientScript = _runner.call("_connect_new_client", config)
+		var stale: SFFakeTransportScript = client.transport
+		stale.inject_failure("swap in the queued transport")
+		var transport: QueuedTransport = QueuedTransport.new()
+		client.transport = transport
+		if not _assert_equal(
+			OK, client.connect_to_server("ws://example.test/socket"), "queued transport dials"
+		):
+			client.free()
+			continue
+		transport.inject_open()
+		transport.queued_messages.append(
+			{"type": "Authenticated", "data": _runner.call("_authenticated_data")}
+		)
+		var failures: Array[String] = []
+		client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+		var disconnects: Array[String] = []
+		client.disconnected.connect(
+			func(_code: int, _reason: String) -> void: disconnects.append("d")
+		)
+		if close_case:
+			client._process(0.1)
+			transport.hold_close = true
+			client.close()
+			_assert_equal(
+				SignalFishClientScript.ConnectionState.CLOSING,
+				client.get_connection_state(),
+				"a held close leaves the refocus client CLOSING"
+			)
+			transport.queued_close_code = 1000
+			transport.queued_close_reason = ""
+		client._process(60.0)
+		_assert(failures.is_empty(), "the buffered progress spares the refocus delta")
+		if close_case:
+			_assert_equal(
+				SignalFishClientScript.ConnectionState.CLOSED,
+				client.get_connection_state(),
+				"the buffered close completes on the refocus frame"
+			)
+			_assert_equal(1, disconnects.size(), "the buffered close still reports the disconnect")
+		else:
+			_assert_connected(client, true, "the buffered auth lands on the refocus frame")
+		client.free()
+	_done()
+
+
+func _test_dial_silence_is_a_dead_link() -> void:
+	# Issue #341: the CONNECTING dial was the last unbounded watchdog window.
+	# A dial that never completes (black-holed SYN, accept without upgrade)
+	# left the client CONNECTING forever with every recovery entry refusing;
+	# past the pong deadline it must fail through the standard transport path
+	# so auto-reconnect counts the attempt and redials.
+	for heartbeat_interval_sec: float in [0.0, 10.0]:
+		var config: SignalFishConfigScript = _runner.call("_make_config")
+		config.heartbeat_interval_sec = heartbeat_interval_sec
+		config.pong_timeout_sec = 5.0
+
+		# A dial that never opens.
+		var client: SignalFishClientScript = _runner.call("_connect_new_client", config)
+		var failures: Array[String] = []
+		client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+		client._process(4.9)
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.CONNECTING,
+			client.get_connection_state(),
+			"inside the dial window the client waits"
+		)
+		client._process(0.2)
+		if _assert_equal(1, failures.size(), "a dial that never completes fails"):
+			_assert(
+				failures[0].contains("heartbeat dial timeout"), "the failure names the dial timeout"
+			)
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.FAILED,
+			client.get_connection_state(),
+			"the stranded dial ends FAILED"
+		)
+		_assert_equal(null, client.transport, "the timed-out dial is torn down")
+		client.free()
+
+		# Auto-reconnect payoff: the redial after a hidden-tab-sized countdown
+		# frame starts its own window, and a timed-out retry dial re-arms the
+		# budget instead of stalling the episode.
+		client = _make_auth_watchdog_reconnect_client(config)
+		client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+		var live: SFFakeTransportScript = client.transport
+		live.inject_failure("dead link")
+		failures.clear()
+		client.transport = SFFakeTransportScript.new()
+		client._process(60.0)
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.CONNECTING,
+			client.get_connection_state(),
+			"the refocus frame redials and the fresh dial survives it"
+		)
+		client._process(4.9)
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.CONNECTING,
+			client.get_connection_state(),
+			"the fresh dial's window measures from the dial"
+		)
+		client._process(0.2)
+		if _assert_equal(1, failures.size(), "the stranded retry dial fails"):
+			_assert(
+				failures[0].contains("heartbeat dial timeout"),
+				"the retry failure names the dial timeout"
+			)
+		client.transport = SFFakeTransportScript.new()
+		client._process(1.25)
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.CONNECTING,
+			client.get_connection_state(),
+			"a timed-out dial counts as an attempt and re-arms the retry"
+		)
+		client.free()
+
+		# A user close during the dial still wins: the CLOSING deadline fails
+		# the held close without redialing.
+		client = _runner.call("_connect_new_client", config)
+		var dial_transport: SFFakeTransportScript = client.transport
+		dial_transport.hold_close = true
+		client.close()
+		client._process(30.0)
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.FAILED,
+			client.get_connection_state(),
+			"a user close during the dial ends the session"
+		)
+		_assert_equal(null, client.transport, "the closed dial is torn down")
+		client.free()
+
+	# A synchronous redial starts its own watchdog window: no deadline from
+	# the dead link survives into the fresh dial.
+	var fresh_config: SignalFishConfigScript = _runner.call("_make_config")
+	fresh_config.pong_timeout_sec = 5.0
+	var redial_client: SignalFishClientScript = _runner.call("_connect_new_client", fresh_config)
+	var dead: SFFakeTransportScript = redial_client.transport
+	dead.inject_open()
+	redial_client._process(4.9)
+	dead.inject_failure("dead link")
+	redial_client.transport = SFFakeTransportScript.new()
+	redial_client.connect_to_server("ws://example.test/socket")
+	redial_client._process(0.2)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTING,
+		redial_client.get_connection_state(),
+		"a redial does not inherit the dead link's clock"
+	)
+	redial_client._process(4.7)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTING,
+		redial_client.get_connection_state(),
+		"the redial's window measures from the dial"
+	)
+	redial_client._process(0.2)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.FAILED,
+		redial_client.get_connection_state(),
+		"and the redial still dies past its own window"
+	)
+	redial_client.free()
+	_done()
+
+
+class QueuedTransport:
+	extends "res://tests/transport/sf_fake_transport.gd"
+
+	## Buffers progress until the next poll(): a real transport's delivered
+	## frames wait in the engine buffer, so one frame can carry both a
+	## refocus-sized delta and the peer's answer (issue #341).
+	var queued_messages: Array[Dictionary] = []
+	var queued_close_code := -1
+	var queued_close_reason := ""
+
+	func poll() -> void:
+		for message: Dictionary in queued_messages:
+			inject_server_message(message)
+		queued_messages.clear()
+		if queued_close_code >= 0:
+			inject_close(queued_close_code, queued_close_reason)
+			queued_close_code = -1
+			queued_close_reason = ""
 
 
 func _make_auth_watchdog_reconnect_client(config: SignalFishConfigScript) -> SignalFishClientScript:

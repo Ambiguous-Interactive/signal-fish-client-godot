@@ -657,26 +657,33 @@ func _refuse_pre_v3(action: String) -> bool:
 
 
 func _process(delta: float) -> void:
-	if _reconnect_timer_running:
+	# Snapshot at frame start: a retry armed by this frame's poll or tick
+	# spends its backoff from the next frame on, never on this same delta.
+	var countdown_armed := _reconnect_timer_running
+	# Poll first: a web refocus frame carries the whole hidden duration as one
+	# delta, and buffered link progress (auth, pong, close completion) must
+	# drain before the watchdog judges liveness (issue #341).
+	if _config != null and _config.auto_poll:
+		poll()
+	_tick_heartbeat(delta)
+	if countdown_armed and _reconnect_timer_running:
 		_reconnect_delay_remaining -= delta
 		if _reconnect_delay_remaining <= 0.0:
 			_reconnect_timer_running = false
 			_start_auto_reconnect()
-	_tick_heartbeat(delta)
-	if _config != null and _config.auto_poll:
-		poll()
 
 
 func _tick_heartbeat(delta: float) -> void:
 	if _config == null:
 		return
-	if _connection_state == ConnectionState.CLOSING:
-		# Polling surfaces nothing while the close handshake hangs, and every
-		# recovery entry refuses with ERR_BUSY while CLOSING: without this
-		# bound a silently dead link strands the client forever (issue #126).
+	if _connection_state in [ConnectionState.CONNECTING, ConnectionState.CLOSING]:
+		# A dial or close handshake that never completes strands the client in
+		# a state where every recovery entry refuses with ERR_BUSY (issues
+		# #341, #126): silence past the pong deadline fails the link.
 		_heartbeat_elapsed += delta
 		if _heartbeat_elapsed >= _config.pong_timeout_sec:
-			_on_transport_failed("heartbeat close timeout")
+			var window := "dial" if _connection_state == ConnectionState.CONNECTING else "close"
+			_on_transport_failed("heartbeat %s timeout" % window)
 		return
 	if _connection_state != ConnectionState.CONNECTED:
 		_reset_heartbeat()
@@ -810,10 +817,6 @@ func _on_transport_opened() -> void:
 		return
 	_connection_state = ConnectionState.CONNECTED
 	_session_state = SessionState.AUTHENTICATING
-	# The heartbeat clock belongs to this link alone: a synchronous redial
-	# (fake transports, failed dials) can skip the idle ticks that would
-	# otherwise reset a pending pong deadline from the previous link.
-	_reset_heartbeat()
 	connected.emit()
 	if _connection_state != ConnectionState.CONNECTED:
 		return
@@ -1420,6 +1423,11 @@ func _session_state_for_lobby(lobby_state: int) -> SessionState:
 
 
 func _reset_session() -> void:
+	# The heartbeat clock belongs to one link alone: a fresh session (a dial,
+	# a failure cascade) must not inherit a pending deadline from the old one,
+	# and a synchronous redial can skip the idle ticks that would otherwise
+	# reset it (issues #121, #341).
+	_reset_heartbeat()
 	_session_state = SessionState.UNAUTHENTICATED
 	_clear_room_state()
 
