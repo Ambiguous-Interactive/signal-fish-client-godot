@@ -92,6 +92,7 @@ func _run() -> void:
 		_test_reconnected_clears_signal_plan_gate,
 		_test_unsolicited_reconnected_is_loud,
 		_test_dial_contract_survives_authentication_error,
+		_test_post_error_reconnected_is_loud,
 		_test_duplicate_protocol_info_is_fully_silent,
 		_test_handshake_send_failure_resolves_attempt,
 		_test_handshake_send_failure_killing_link_cascades,
@@ -334,6 +335,7 @@ func _test_manual_reconnect_dial_refreshes_auto_reconnect_context() -> void:
 	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_open()
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	var data := _room_joined_data()
 	data["reconnection_token"] = TOKEN_V1
 	transport.inject_server_message({"type": "RoomJoined", "data": data})
@@ -379,6 +381,7 @@ func _test_reconnect_reuses_last_dialed_url() -> void:
 		_assert_equal(OK, client.connect_to_server(connect_url), "%s: connect" % case[0])
 		var transport: SFFakeTransportScript = client.transport
 		transport.inject_open()
+		transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 		var data := _room_joined_data()
 		data["reconnection_token"] = TOKEN_V1
 		transport.inject_server_message({"type": "RoomJoined", "data": data})
@@ -1073,6 +1076,49 @@ func _test_dial_contract_survives_authentication_error() -> void:
 	# Issue #108: the hostile post-error Reconnected is loud, not silent; the
 	# AuthenticationError and hostile Authenticated contribute no errors.
 	_assert_equal(1, errors.size(), "exactly the hostile Reconnected is reported")
+	_assert_string_contains(
+		errors[0], "authenticated reconnect handshake", "refusal names the missing handshake"
+	)
+	client.free()
+	_done()
+
+
+func _test_post_error_reconnected_is_loud() -> void:
+	# Issue #340 (reconnect-dial variant): an AuthenticationError after this
+	# dial's handshake went out must keep the baseline latches disarmed — a
+	# hostile `Reconnected` is loud and applies nothing (issue #108).
+	var client := _make_reconnect_client(TOKEN_V1, false)
+	var errors := _track_protocol_errors(client)
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	var emissions: Array[int] = [0]
+	client.reconnected.connect(
+		func(
+			_info: SFTypesScript.RoomJoinedInfo, _missed: Array[SFTypesScript.DecodedEvent]
+		) -> void:
+			emissions[0] += 1
+	)
+	transport.inject_server_message(
+		{
+			"type": "AuthenticationError",
+			"data": {"error": "session revoked", "error_code": "UNAUTHORIZED"}
+		}
+	)
+	var hostile := _room_joined_data({"lobby_state": "lobby"})
+	hostile["reconnection_token"] = TOKEN_V2
+	hostile["missed_events"] = []
+	transport.inject_server_message({"type": "Reconnected", "data": hostile})
+	_assert_equal(0, emissions[0], "post-error Reconnected applies nothing")
+	_assert_equal(1, errors.size(), "post-error Reconnected is loud")
+	_assert_string_contains(
+		errors[0], "authenticated reconnect handshake", "refusal names the missing handshake"
+	)
+	_assert_equal(
+		SignalFishClientScript.SessionState.UNAUTHENTICATED,
+		client.get_session_state(),
+		"session stays unauthenticated"
+	)
+	_assert_equal(TOKEN_V1, client._context_auth_token, "retained identity not rotated")
 	client.free()
 	_done()
 
@@ -1373,6 +1419,7 @@ func _test_failure_driven_exhaustion_and_budget_recovery() -> void:
 	var data := _room_joined_data()
 	data["reconnection_token"] = TOKEN_V1
 	transport = client.transport
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	transport.inject_server_message({"type": "RoomJoined", "data": data})
 	_assert_equal(0, client._auto_reconnect_attempts, "fresh baseline restarts the budget")
 	transport.inject_close(4999, "dropped")
@@ -1434,8 +1481,16 @@ func _make_client(
 	transport.inject_open()
 	match baseline_mode:
 		"tokenless":
+			# Upstream sends a baseline only after `Authenticated`; model
+			# that order here (issue #340 scaffolding).
+			transport.inject_server_message(
+				{"type": "Authenticated", "data": _authenticated_data()}
+			)
 			transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
 		"token":
+			transport.inject_server_message(
+				{"type": "Authenticated", "data": _authenticated_data()}
+			)
 			var data := _room_joined_data()
 			data["reconnection_token"] = TOKEN_V1
 			transport.inject_server_message({"type": "RoomJoined", "data": data})

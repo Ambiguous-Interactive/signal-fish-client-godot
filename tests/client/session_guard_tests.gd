@@ -9,6 +9,7 @@ extends RefCounted
 const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
+const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 var _failures: Array[String] = []
@@ -31,6 +32,8 @@ func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_roomless_lobby_state_change_is_inert,
 		_test_cross_flow_left_events_are_inert,
+		_test_pre_auth_baselines_are_refused,
+		_test_mid_session_authentication_error_clears_room_state,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -185,6 +188,167 @@ func _spectator_joined_data() -> Dictionary:
 	}
 
 
+## Issue #340: a baseline that precedes this dial's `Authenticated` is
+## hostile input forging in-room state (the #100 class). Upstream only ever
+## sends a baseline after `Authenticated` on a legitimate dial (fresh join
+## and reconnect alike), so the refusal is safe: it must be loud
+## (protocol_error), apply no room state, retain no reconnection identity,
+## keep the join signal silent, and leave the send guard closed.
+func _test_pre_auth_baselines_are_refused() -> void:
+	var cases := [
+		[
+			"RoomJoined",
+			{
+				"type": "RoomJoined",
+				"data":
+				_runner.call("_room_joined_data", {"reconnection_token": _room_fixture_token()})
+			},
+			"room_joined",
+		],
+		[
+			"SpectatorJoined",
+			{"type": "SpectatorJoined", "data": _spectator_joined_data()},
+			"spectator_joined",
+		],
+	]
+	for case: Array in cases:
+		var event_type: String = case[0]
+		var join_signal: String = case[2]
+		var frame: Dictionary = case[1]
+		var client := _connected_client()
+		var fake: SFFakeTransportScript = client.transport
+		var errors: Array[String] = []
+		client.protocol_error.connect(func(error: String) -> void: errors.append(error))
+		var join_events: Array[int] = []
+		client.connect(join_signal, func(_info: Variant) -> void: join_events.append(1))
+		fake.inject_server_message(frame)
+		_assert_equal(1, errors.size(), "%s: refusal is loud" % event_type)
+		_assert_string_contains(
+			errors[0], "before an authenticated session", "%s: refusal explains itself" % event_type
+		)
+		_assert_equal([], join_events, "%s: join stays consumer-silent" % event_type)
+		_assert_equal(
+			SignalFishClientScript.SessionState.AUTHENTICATING,
+			client.get_session_state(),
+			"%s: session state untouched" % event_type
+		)
+		_assert_equal(false, client.is_authenticated(), "%s: stays unauthenticated" % event_type)
+		_assert_equal("", client.get_room_id(), "%s: room id not forged" % event_type)
+		_assert_equal("", client.get_room_code(), "%s: room code not forged" % event_type)
+		_assert_equal("", client.get_player_id(), "%s: player id not forged" % event_type)
+		_assert_equal([], client.get_players(), "%s: player roster not forged" % event_type)
+		_assert_equal([], client.get_spectators(), "%s: spectator roster not forged" % event_type)
+		_assert_equal(
+			SFTypesScript.LobbyState.UNKNOWN,
+			client.get_lobby_state(),
+			"%s: lobby cache untouched" % event_type
+		)
+		_assert_equal(
+			"", client._context_auth_token, "%s: no reconnection identity retained" % event_type
+		)
+		_assert_equal(ERR_UNAUTHORIZED, client.ping(), "%s: send guard intact" % event_type)
+		var errors_after_guard := errors.size()
+		# Recovery: the refusal must not poison the dial. A legitimate
+		# `Authenticated` followed by the same baseline applies normally.
+		var expected_state: SignalFishClientScript.SessionState = (
+			SignalFishClientScript.SessionState.IN_ROOM_WAITING
+			if event_type == "RoomJoined"
+			else SignalFishClientScript.SessionState.SPECTATING
+		)
+		fake.inject_server_message(
+			{"type": "Authenticated", "data": _runner.call("_authenticated_data")}
+		)
+		fake.inject_server_message(frame)
+		_assert_equal([1], join_events, "%s: legitimate baseline applies after auth" % event_type)
+		_assert_equal(
+			errors_after_guard,
+			errors.size(),
+			"%s: no refusal for the legitimate baseline" % event_type
+		)
+		_assert_equal(
+			expected_state,
+			client.get_session_state(),
+			"%s: session state follows the baseline" % event_type
+		)
+		client.free()
+	_done()
+
+
+## Issue #342: a mid-session AuthenticationError tears the room state down
+## (mirroring the room_left posture). The real server closes the link after
+## an auth failure, but a relay that holds the socket open must not leave
+## the client reporting a room it can no longer be in.
+func _test_mid_session_authentication_error_clears_room_state() -> void:
+	var client := _in_room_client()
+	var fake: SFFakeTransportScript = client.transport
+	var auth_error_events: Array[int] = []
+	client.authentication_error.connect(
+		func(_message: String, _code: int) -> void: auth_error_events.append(1)
+	)
+	# Arm the v3 signal-plan gate first: the error must disarm it with the room.
+	fake.inject_server_message(
+		{
+			"type": "SessionPlan",
+			"data": ClientFixtures.session_plan_data("40000000-0000-0000-0000-000000000004")
+		}
+	)
+	_assert_equal(true, client._session_plan_seen, "plan gate armed before the error")
+	fake.inject_server_message(
+		{
+			"type": "AuthenticationError",
+			"data": {"error": "session revoked", "error_code": "UNAUTHORIZED"}
+		}
+	)
+	_assert_equal([1], auth_error_events, "authentication_error surfaces once")
+	_assert_equal(
+		SignalFishClientScript.SessionState.UNAUTHENTICATED,
+		client.get_session_state(),
+		"session falls back to unauthenticated"
+	)
+	_assert_equal(false, client.is_authenticated(), "is_authenticated reports false")
+	_assert_equal("", client.get_room_id(), "room id cleared")
+	_assert_equal("", client.get_room_code(), "room code cleared")
+	_assert_equal("", client.get_player_id(), "player id cleared")
+	_assert_equal([], client.get_players(), "player roster cleared")
+	_assert_equal([], client.get_spectators(), "spectator roster cleared")
+	_assert_equal(SFTypesScript.LobbyState.UNKNOWN, client.get_lobby_state(), "lobby cache cleared")
+	_assert_equal(false, client._session_plan_seen, "v3 signal-plan gate disarmed")
+	_assert_equal("", client._session_plan_generation, "plan generation cleared")
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTED,
+		client.get_connection_state(),
+		"the held-open socket keeps the link up until the close cascade"
+	)
+	# The auth error must keep the baseline refusal armed for the rest of
+	# the dial (issue #340): a hostile baseline after the error must not
+	# forge state or rotate the retained reconnection identity.
+	var errors: Array[String] = []
+	client.protocol_error.connect(func(error: String) -> void: errors.append(error))
+	var forged: Dictionary = _runner.call(
+		"_room_joined_data", {"reconnection_token": "forged-room-token-not-secret"}
+	)
+	fake.inject_server_message({"type": "RoomJoined", "data": forged})
+	fake.inject_server_message({"type": "SpectatorJoined", "data": _spectator_joined_data()})
+	_assert_equal(2, errors.size(), "both post-error baselines are refused loudly")
+	_assert_string_contains(errors[0], "before an authenticated session", "room refusal message")
+	_assert_string_contains(
+		errors[1], "before an authenticated session", "spectator refusal message"
+	)
+	_assert_equal(
+		SignalFishClientScript.SessionState.UNAUTHENTICATED,
+		client.get_session_state(),
+		"post-error baselines cannot restore the session"
+	)
+	_assert_equal("", client.get_room_id(), "post-error baselines cannot forge the room")
+	_assert_equal(
+		_room_fixture_token(),
+		client._context_auth_token,
+		"post-error baselines cannot rotate the retained token"
+	)
+	client.free()
+	_done()
+
+
 func _room_fixture_id() -> String:
 	return "20000000-0000-0000-0000-000000000001"
 
@@ -201,4 +365,11 @@ func _assert_equal(expected: Variant, actual: Variant, label: String) -> bool:
 	if expected == actual:
 		return true
 	_failures.append("%s: expected %s, got %s" % [label, var_to_str(expected), var_to_str(actual)])
+	return false
+
+
+func _assert_string_contains(haystack: String, needle: String, label: String) -> bool:
+	if haystack.contains(needle):
+		return true
+	_failures.append("%s: expected %s to contain %s" % [label, haystack, needle])
 	return false
