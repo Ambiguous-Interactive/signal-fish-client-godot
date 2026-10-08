@@ -28,6 +28,14 @@ released version.
 
 ### Fixed
 
+- Switching back to a hidden browser tab no longer kills the session.
+  Frames the server already delivered now drain before the silence
+  watchdog runs (auto-poll, the default), so a refocus frame no longer
+  judges the link dead while the answer sits in the socket (issue #341).
+- A dial that never completes now fails past `pong_timeout_sec`
+  (`heartbeat dial timeout`) instead of wedging the client in CONNECTING
+  forever. Auto-reconnect counts it as a failed attempt and redials
+  (issue #341).
 - Room and spectator baselines are now refused with `protocol_error` unless
   the dial holds an authenticated session (issues #340, #342). Upstream only
   sends a baseline after authentication, so nothing legitimate changes; a

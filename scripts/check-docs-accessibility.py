@@ -213,6 +213,28 @@ def valid_drawer_focus(state: DrawerState) -> bool:
     )
 
 
+def restored_phone_toc(state: DrawerState) -> bool:
+    return bool(
+        state["tocVisible"]
+        and abs(abs(state["scrollLeft"]) - state["maxScroll"]) <= 0.5
+        and str(state["focusLabel"]).startswith("Back from Installation")
+        and valid_drawer_focus(state)
+    )
+
+
+async def wait_for_restored_phone_toc(page: Page) -> DrawerState:
+    # The reopened drawer settles its selected-item focus across animation
+    # frames; a resize racing that move strands focus on the first link and
+    # skips the selected-item scroll (CI failure with identical content).
+    state = await drawer_focus_state(page)
+    for _ in range(100):
+        if restored_phone_toc(state):
+            return state
+        await page.wait_for_timeout(50)
+        state = await drawer_focus_state(page)
+    return state
+
+
 async def wait_for_drawer_modal_focus(page: Page) -> DrawerState:
     # The drawer checkbox changes before its animation-frame focus move.
     state = await drawer_focus_state(page)
@@ -372,13 +394,9 @@ async def check_drawer_resize(page: Page, origin: str, direction: str) -> None:
     )
 
     await page.set_viewport_size({"width": 800, "height": 800})
-    await settle_shell(page)
-    state = await drawer_focus_state(page)
+    state = await wait_for_restored_phone_toc(page)
     expect_state(
-        state["tocVisible"]
-        and abs(abs(state["scrollLeft"]) - state["maxScroll"]) <= 0.5
-        and str(state["focusLabel"]).startswith("Back from Installation")
-        and valid_drawer_focus(state),
+        restored_phone_toc(state),
         f"{direction}: phone resize did not restore the selected TOC geometry",
         state,
     )
