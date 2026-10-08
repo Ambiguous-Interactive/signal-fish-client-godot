@@ -685,15 +685,13 @@ func _tick_heartbeat(delta: float) -> void:
 		# These windows cannot send Protocol Ping, and a duplicate
 		# `Authenticated` never restores a dead session (issue #24), so
 		# silence past the pong deadline is a dead link (issues #121 and
-		# #346), not a slow one. Time accrued here flows into the ping
-		# cycle, so the first post-auth ping may fire immediately.
+		# #346). Accrued time flows into the ping cycle.
 		_heartbeat_elapsed += delta
 		if _heartbeat_elapsed >= _config.pong_timeout_sec:
 			_on_transport_failed("heartbeat auth timeout")
 		return
-	# The deadlines above send nothing, so unlike the ping cycle below they
-	# run with the heartbeat off (issues #121, #126, and #346); only the
-	# beat cadence is opt-in.
+	# The deadlines above send nothing, so unlike the ping cycle they run
+	# with the heartbeat off (issues #121, #126, #346); the beat is opt-in.
 	if _config.heartbeat_interval_sec <= 0.0:
 		_reset_heartbeat()
 		return
@@ -1050,6 +1048,8 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 				protocol_info.emit(info)
 		&"authentication_error":
 			_session_state = SessionState.UNAUTHENTICATED
+			# The silence deadline measures from the error (issue #346).
+			_reset_heartbeat()
 			# A failed authentication kills any pending reconnect handshake;
 			# room state dies with the session too (issue #342).
 			_clear_reconnect_credentials()

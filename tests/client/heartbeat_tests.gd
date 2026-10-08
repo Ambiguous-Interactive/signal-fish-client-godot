@@ -484,6 +484,10 @@ func _test_post_auth_error_silence_is_a_dead_link() -> void:
 			)
 		)
 		client.set_auto_reconnect(true)
+		# Accrue ping-cycle time before the error: the deadline must measure
+		# from the error, so this residual must not fire it early (issue
+		# #346). The heartbeat-off leg accrues nothing and is the control.
+		client._process(4.9)
 		transport.inject_server_message(
 			{
 				"type": "AuthenticationError",
