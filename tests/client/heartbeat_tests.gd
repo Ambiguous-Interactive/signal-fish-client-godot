@@ -239,6 +239,27 @@ func _test_auth_window_silence_is_a_dead_link() -> void:
 	)
 	_assert_equal(null, client.transport, "the dead link is torn down")
 	client.free()
+	# The dial and the auth window are separate budgets: a slow dial must not
+	# eat the auth window, which measures from the open (issue #341 review).
+	client = _runner.call("_connect_new_client", config)
+	transport = client.transport
+	failures.clear()
+	client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+	client._process(4.5)
+	_assert_equal(
+		SignalFishClientScript.ConnectionState.CONNECTING,
+		client.get_connection_state(),
+		"inside the dial window a slow dial waits"
+	)
+	transport.inject_open()
+	client._process(0.7)
+	_assert_connected(
+		client, true, "a slow dial does not shorten the auth window that follows it"
+	)
+	client._process(4.4)
+	if _assert_equal(1, failures.size(), "the post-dial auth window still bounds silence"):
+		_assert(failures[0].contains("auth timeout"), "the failure names the auth timeout")
+	client.free()
 	_done()
 
 

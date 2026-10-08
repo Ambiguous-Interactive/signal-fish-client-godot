@@ -30,8 +30,8 @@ released version.
 
 - Switching back to a hidden browser tab no longer kills the session.
   Frames the server already delivered now drain before the silence
-  watchdog runs, so a refocus frame no longer judges the link dead while
-  the answer sits in the socket (issue #341).
+  watchdog runs (auto-poll, the default), so a refocus frame no longer
+  judges the link dead while the answer sits in the socket (issue #341).
 - A dial that never completes now fails past `pong_timeout_sec`
   (`heartbeat dial timeout`) instead of wedging the client in CONNECTING
   forever. Auto-reconnect counts it as a failed attempt and redials

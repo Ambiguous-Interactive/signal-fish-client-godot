@@ -81,8 +81,9 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## [code]0[/code] (default) disables the ping cycle. Silent link
 ## death (NAT rebinding, radio loss) produces no WebSocket close, so without
 ## this the client stays "connected" forever and auto-reconnect never fires.
-## The [code]AUTHENTICATING[/code] and [code]CLOSING[/code] silence deadlines
-## (issues #121, #126) always run regardless of this knob: they send nothing.
+## The [code]CONNECTING[/code], [code]AUTHENTICATING[/code], and
+## [code]CLOSING[/code] silence deadlines (issues #341, #121, #126) always
+## run regardless of this knob: they send nothing.
 ## Runs from [code]_process[/code] like the reconnect backoff: the client
 ## node must be in the tree (or the ticks driven manually).
 @export var heartbeat_interval_sec: float = 0.0
@@ -97,8 +98,10 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## (issue #121), and the CLOSING window, where a close handshake that never
 ## completes strands every recovery entry (issue #126). All of these windows
 ## are bounded by this knob even when [member heartbeat_interval_sec] is
-## off. A dial in progress also counts as silence, so raise this knob when
-## deployments legitimately dial slower than the default allows.
+## off. The dial and the authentication windows are separate budgets: the
+## dial window measures from the dial, and the authentication window
+## measures from the open, so a slow dial does not shorten the silence
+## deadline that follows it.
 @export var pong_timeout_sec: float = 10.0
 
 ## Highest protocol version advertised with [code]Authenticate[/code]
@@ -168,9 +171,9 @@ func validation_error() -> String:
 		return cap_error
 	if not is_finite(heartbeat_interval_sec) or heartbeat_interval_sec < 0.0:
 		return "heartbeat_interval_sec must be zero or a positive finite number"
-	# The AUTHENTICATING and CLOSING silence deadlines read this even with
-	# the heartbeat off, so the bound is unconditional; a non-finite value
-	# would disarm them (every comparison against NaN is false).
+	# The CONNECTING, AUTHENTICATING, and CLOSING silence deadlines read this
+	# even with the heartbeat off, so the bound is unconditional; a non-finite
+	# value would disarm them (every comparison against NaN is false).
 	if not is_finite(pong_timeout_sec) or pong_timeout_sec <= 0.0:
 		return "pong_timeout_sec must be a positive finite number"
 	return _v3_capabilities_error()
