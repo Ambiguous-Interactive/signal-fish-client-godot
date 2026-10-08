@@ -131,8 +131,8 @@ same key in sibling or nested maps still decodes.
 
 Method: three parallel paranoid audits (client state machine, mesh +
 Steam, transport + codecs) over the state machines, not the decoders;
-every finding re-verified line-by-line before coding. Shipped (PR
-#337): the #121/#126 silence deadlines un-gated from the opt-in
+every finding re-verified line-by-line before coding. Shipped in PR
+337: the #121/#126 silence deadlines un-gated from the opt-in
 heartbeat (the default config wedged forever on accept-then-silence or
 an uncompleted close handshake), a transport drain latch (a re-entrant
 handler close() recursed once per queued packet), pre-open close-reason
