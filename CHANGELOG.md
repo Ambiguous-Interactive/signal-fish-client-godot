@@ -46,6 +46,10 @@ released version.
   that races the engine into the closed state keeps the caller's reason,
   and a re-entrant close from a packet handler no longer recurses per
   queued packet.
+- The same silence deadline now covers a mid-session `AuthenticationError`
+  on a link the peer keeps open (issue #346). The client used to sit
+  CONNECTED with every recovery entry refusing; the link now fails past
+  `pong_timeout_sec` so auto-reconnect can engage.
 - Hostile input can no longer grow client memory without a bound (issue
   #335). The Steam bootstrap caps its fence set and pending requests, and
   drains at most 64 handshake packets per `poll` (`max_packets_per_poll`);

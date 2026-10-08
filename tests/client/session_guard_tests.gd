@@ -317,7 +317,7 @@ func _test_mid_session_authentication_error_clears_room_state() -> void:
 	_assert_equal(
 		SignalFishClientScript.ConnectionState.CONNECTED,
 		client.get_connection_state(),
-		"the held-open socket keeps the link up until the close cascade"
+		"the held-open socket keeps the link up inside the post-error silence window"
 	)
 	# The auth error must keep the baseline refusal armed for the rest of
 	# the dial (issue #340): a hostile baseline after the error must not
