@@ -47,7 +47,9 @@ client.authenticated.connect(func(_app, _org, _limits) -> void:
 - Reconnect: `reconnect_max_attempts` (default 5).
 - Heartbeat (off by default): `heartbeat_interval_sec` (0 = off),
   `pong_timeout_sec` - a silent link past the deadline is torn down as a
-  transport failure, so opt-in auto-reconnect can engage.
+  transport failure, so opt-in auto-reconnect can engage. The
+  authentication and close windows use the same deadline with the heartbeat
+  off; only the ping cycle is opt-in.
 - v3 session plan (omit to keep v2 wire bytes identical): `protocol_version`,
   `supported_transports`, `supported_topologies`, `requested_capabilities`.
 - `credential`: set in code only (never exported/persisted/serialized); rides
@@ -201,5 +203,7 @@ steam.stop()
   the link down so consumers always observe a terminal disconnect.
 - The optional heartbeat (`heartbeat_interval_sec`) pings while connected +
   authenticated; a missing `pong` past `pong_timeout_sec` is treated as a
-  dead link (silent link death produces no WebSocket close).
+  dead link (silent link death produces no WebSocket close). The
+  AUTHENTICATING and CLOSING silence windows use the same deadline even
+  with the heartbeat off.
 - Logs redact tokens/ids by default (`sf_log.gd`).

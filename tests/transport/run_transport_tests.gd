@@ -60,6 +60,8 @@ func _run() -> void:
 		_test_websocket_read_error_is_terminal_once,
 		_test_websocket_closed_state_delivers_queued_packets,
 		_test_close_at_closed_drains_queued_packets,
+		_test_handler_close_at_closed_terminates_outside_handlers,
+		_test_preopen_close_keeps_the_caller_reason_regardless_of_engine_timing,
 	]
 	CompletionGuard.self_check(self, _failures)
 	CompletionGuard.drive(self, cases, _failures)
@@ -760,6 +762,97 @@ func _test_close_at_closed_drains_queued_packets() -> void:
 	error_peer.packet_errors = [ERR_FILE_CORRUPT]
 	error_transport.close(1000, "consumer")
 	_assert_equal(["failed"], error_events, "read error during close-drain is terminal once")
+	_done()
+
+
+func _test_handler_close_at_closed_terminates_outside_handlers() -> void:
+	# A packet handler may close() re-entrantly (a kick path can only react
+	# from inside the packet it was handed). The drain must finish in the
+	# outer invocation and terminalize once from the outermost frame; the
+	# old per-invocation drain counter recursed once per queued packet
+	# instead, so a flood plus a closing handler drove the call depth to the
+	# script stack limit.
+	var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+	transport._peer = peer
+	var state := {"packets": 0, "closed": 0, "closed_inside_handler": false, "in_handler": false}
+	transport.packet_received.connect(
+		func(_payload: PackedByteArray, _is_text: bool) -> void:
+			state["packets"] += 1
+			state["in_handler"] = true
+			transport.close(4321, "kick")
+			state["in_handler"] = false
+	)
+	transport.closed.connect(
+		func(_code: int, _reason: String) -> void:
+			state["closed"] += 1
+			state["closed_inside_handler"] = state["in_handler"]
+	)
+	peer.ready_state = WebSocketPeer.STATE_OPEN
+	transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
+	peer.ready_state = WebSocketPeer.STATE_CLOSED
+	peer.packets = [PackedByteArray([1]), PackedByteArray([2]), PackedByteArray([3])]
+	transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+	_assert_equal(3, state["packets"], "handler close at closed delivers every queued packet")
+	_assert_equal(1, state["closed"], "handler close at closed terminalizes exactly once")
+	_assert_equal(
+		false,
+		state["closed_inside_handler"],
+		"handler close at closed never terminalizes inside a packet handler"
+	)
+	_done()
+
+
+func _test_preopen_close_keeps_the_caller_reason_regardless_of_engine_timing() -> void:
+	# Issue #119 class: a consumer abort before `opened` was observed must
+	# name the caller's reason whether the engine is still CONNECTING or
+	# already flipped to STATE_CLOSED ahead of the next poll. A relay-closed
+	# session with no consumer close keeps the relay's own reason.
+	var cases := [
+		["abort at CONNECTING", WebSocketPeer.STATE_CONNECTING, "before open: custom abort"],
+		[
+			"abort after the engine closed first",
+			WebSocketPeer.STATE_CLOSED,
+			"before open: custom abort",
+		],
+	]
+	for case: Array in cases:
+		var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+		var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+		peer.ready_state = case[1]
+		transport._peer = peer
+		var failures: Array[String] = []
+		transport.failed.connect(func(error: String) -> void: failures.append(error))
+		transport.close(4321, "custom abort")
+		_assert_equal(1, failures.size(), "%s: abort failure count" % case[0])
+		if not failures.is_empty():
+			var expected_fragment: String = case[2]
+			var abort_failure: String = failures[0]
+			_assert_string_contains(
+				abort_failure, expected_fragment, "%s: abort names the caller reason" % case[0]
+			)
+	# Without a consumer close, a relay that closed before the first poll
+	# still reports its own close reason — including on a later dial of the
+	# same transport, where the earlier abort request must not survive the
+	# session reset.
+	var relay_transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+	var relay_peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+	relay_peer.ready_state = WebSocketPeer.STATE_CONNECTING
+	relay_transport._peer = relay_peer
+	var relay_failures: Array[String] = []
+	relay_transport.failed.connect(func(error: String) -> void: relay_failures.append(error))
+	relay_transport.close(4321, "custom abort")
+	_assert_equal(OK, relay_transport.connect_to_url("ws://example.test/next"), "relay redial")
+	relay_transport._peer = relay_peer
+	relay_peer.close_calls.clear()
+	relay_peer.close_reason = "relay gave up"
+	relay_peer.ready_state = WebSocketPeer.STATE_CLOSED
+	relay_transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+	_assert_equal(2, relay_failures.size(), "relay-closed pre-open failure count")
+	if not relay_failures.is_empty():
+		_assert_string_contains(
+			relay_failures[1], "relay gave up", "relay-closed pre-open keeps the relay reason"
+		)
 	_done()
 
 

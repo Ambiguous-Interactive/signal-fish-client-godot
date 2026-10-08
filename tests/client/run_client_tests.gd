@@ -153,6 +153,27 @@ func _test_configure_validation() -> void:
 	_assert_equal(ERR_INVALID_DATA, client.configure(config), "zero packet cap rejected")
 
 	config.max_inbound_packets_per_poll = 8
+	# The AUTHENTICATING/CLOSING silence deadlines read the pong deadline even
+	# with the heartbeat off, so the bound is validated unconditionally.
+	config.pong_timeout_sec = 0.0
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "zero pong deadline rejected")
+	config.heartbeat_interval_sec = 10.0
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "zero pong deadline still rejected")
+	# A non-finite deadline would disarm the silence windows (every
+	# comparison against NaN is false), so both knobs refuse non-finite.
+	# Each knob is pinned with the other knob valid, so its own guard is the
+	# only one that can refuse the row.
+	config.pong_timeout_sec = 5.0
+	config.heartbeat_interval_sec = NAN
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "NaN heartbeat rejected")
+	config.heartbeat_interval_sec = INF
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "infinite heartbeat rejected")
+	config.heartbeat_interval_sec = 0.0
+	config.pong_timeout_sec = NAN
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "NaN pong deadline rejected")
+	config.pong_timeout_sec = INF
+	_assert_equal(ERR_INVALID_DATA, client.configure(config), "infinite pong deadline rejected")
+	config.pong_timeout_sec = 10.0
 	_assert_equal(OK, client.configure(config), "valid config accepted")
 
 	var connected := _make_in_room_client()

@@ -78,9 +78,11 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 
 ## Optional dead-link heartbeat (PLAN §4.7): seconds between automatic
 ## [code]Ping[/code]s while the session is authenticated and connected.
-## [code]0[/code] (default) disables the heartbeat entirely. Silent link
+## [code]0[/code] (default) disables the ping cycle. Silent link
 ## death (NAT rebinding, radio loss) produces no WebSocket close, so without
 ## this the client stays "connected" forever and auto-reconnect never fires.
+## The [code]AUTHENTICATING[/code] and [code]CLOSING[/code] silence deadlines
+## (issues #121, #126) always run regardless of this knob: they send nothing.
 ## Runs from [code]_process[/code] like the reconnect backoff: the client
 ## node must be in the tree (or the ticks driven manually).
 @export var heartbeat_interval_sec: float = 0.0
@@ -91,8 +93,10 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## ([signal SignalFishClient.connection_failed]), so opt-in auto-reconnect
 ## engages. The same silence deadline covers the AUTHENTICATING window,
 ## where protocol Ping is not allowed but a link that never delivers
-## [code]Authenticated[/code] is just as dead (issue #121). Used only when
-## [member heartbeat_interval_sec] is on.
+## [code]Authenticated[/code] is just as dead (issue #121), and the CLOSING
+## window, where a close handshake that never completes strands every
+## recovery entry (issue #126). Both windows are bounded by this knob even
+## when [member heartbeat_interval_sec] is off.
 @export var pong_timeout_sec: float = 10.0
 
 ## Highest protocol version advertised with [code]Authenticate[/code]
@@ -160,10 +164,13 @@ func validation_error() -> String:
 		cap_error = "reconnect_max_attempts must be positive"
 	if not cap_error.is_empty():
 		return cap_error
-	if heartbeat_interval_sec < 0.0:
-		return "heartbeat_interval_sec must not be negative"
-	if heartbeat_interval_sec > 0.0 and pong_timeout_sec <= 0.0:
-		return "pong_timeout_sec must be positive when the heartbeat is on"
+	if not is_finite(heartbeat_interval_sec) or heartbeat_interval_sec < 0.0:
+		return "heartbeat_interval_sec must be zero or a positive finite number"
+	# The AUTHENTICATING and CLOSING silence deadlines read this even with
+	# the heartbeat off, so the bound is unconditional; a non-finite value
+	# would disarm them (every comparison against NaN is false).
+	if not is_finite(pong_timeout_sec) or pong_timeout_sec <= 0.0:
+		return "pong_timeout_sec must be a positive finite number"
 	return _v3_capabilities_error()
 
 
