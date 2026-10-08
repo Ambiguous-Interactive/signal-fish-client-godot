@@ -1050,12 +1050,17 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 				protocol_info.emit(info)
 		&"authentication_error":
 			_session_state = SessionState.UNAUTHENTICATED
-			# A failed authentication also kills any pending reconnect
-			# handshake; the server closes the link after auth failures, so
-			# the normal close cascade takes over from here.
+			# A failed authentication kills any pending reconnect handshake;
+			# room state dies with the session too (issue #342).
 			_clear_reconnect_credentials()
+			_clear_room_state()
 			authentication_error.emit(event.args[0], event.args[1])
 		&"room_joined":
+			# A baseline before `Authenticated` forges in-room state (the
+			# #100 class); loud refusal, nothing applied (#340, #108).
+			if not _authenticated_seen:
+				_emit_protocol_error("RoomJoined before Authenticated on this dial")
+				return
 			# Every RoomJoined is an authoritative fresh baseline: consumers
 			# (the WebRTC mesh) rebuild on re-emission, so unlike
 			# Authenticated/Reconnected/ProtocolInfo there is no duplicate
@@ -1186,6 +1191,10 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			reconnection_failed.emit(event.args[0], event.args[1])
 			_terminate_reconnection_attempt()
 		&"spectator_joined":
+			# Mirrors the room_joined pre-auth refusal (issue #340).
+			if not _authenticated_seen:
+				_emit_protocol_error("SpectatorJoined before Authenticated on this dial")
+				return
 			# Mirror of `room_joined`: no duplicate latch; every
 			# SpectatorJoined is an authoritative baseline (issue #107).
 			var info: SFTypesScript.SpectatorJoinedInfo = event.args[0]

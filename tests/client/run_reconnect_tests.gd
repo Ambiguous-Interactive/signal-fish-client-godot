@@ -334,6 +334,7 @@ func _test_manual_reconnect_dial_refreshes_auto_reconnect_context() -> void:
 	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "connect")
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_open()
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	var data := _room_joined_data()
 	data["reconnection_token"] = TOKEN_V1
 	transport.inject_server_message({"type": "RoomJoined", "data": data})
@@ -379,6 +380,7 @@ func _test_reconnect_reuses_last_dialed_url() -> void:
 		_assert_equal(OK, client.connect_to_server(connect_url), "%s: connect" % case[0])
 		var transport: SFFakeTransportScript = client.transport
 		transport.inject_open()
+		transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 		var data := _room_joined_data()
 		data["reconnection_token"] = TOKEN_V1
 		transport.inject_server_message({"type": "RoomJoined", "data": data})
@@ -1373,6 +1375,7 @@ func _test_failure_driven_exhaustion_and_budget_recovery() -> void:
 	var data := _room_joined_data()
 	data["reconnection_token"] = TOKEN_V1
 	transport = client.transport
+	transport.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
 	transport.inject_server_message({"type": "RoomJoined", "data": data})
 	_assert_equal(0, client._auto_reconnect_attempts, "fresh baseline restarts the budget")
 	transport.inject_close(4999, "dropped")
@@ -1434,8 +1437,16 @@ func _make_client(
 	transport.inject_open()
 	match baseline_mode:
 		"tokenless":
+			# Upstream sends a baseline only after `Authenticated`; model
+			# that order here (issue #340 scaffolding).
+			transport.inject_server_message(
+				{"type": "Authenticated", "data": _authenticated_data()}
+			)
 			transport.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
 		"token":
+			transport.inject_server_message(
+				{"type": "Authenticated", "data": _authenticated_data()}
+			)
 			var data := _room_joined_data()
 			data["reconnection_token"] = TOKEN_V1
 			transport.inject_server_message({"type": "RoomJoined", "data": data})
