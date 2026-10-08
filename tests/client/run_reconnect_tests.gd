@@ -1086,8 +1086,7 @@ func _test_dial_contract_survives_authentication_error() -> void:
 func _test_post_error_reconnected_is_loud() -> void:
 	# Issue #340 (reconnect-dial variant): an AuthenticationError after this
 	# dial's handshake went out must keep the baseline latches disarmed — a
-	# hostile `Reconnected` on the held-open socket is loud and applies
-	# nothing, exactly like the unsolicited one (issue #108).
+	# hostile `Reconnected` is loud and applies nothing (issue #108).
 	var client := _make_reconnect_client(TOKEN_V1, false)
 	var errors := _track_protocol_errors(client)
 	var transport: SFFakeTransportScript = client.transport
