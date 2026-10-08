@@ -205,6 +205,10 @@ var _pong_elapsed := 0.0
 # True only while the last beat's send was accepted; a refused beat keeps
 # retrying each interval while the same pong deadline runs (issue #128).
 var _beat_in_flight := false
+## Set by [method _reset_heartbeat], cleared at the top of [method _process]:
+## a window reset mid-frame (during the poll) charges no part of that frame's
+## delta, so a refocus frame cannot kill a window it just opened.
+var _heartbeat_reset_this_frame := false
 # Effective negotiated game-data format. UNKNOWN = follow the configured
 # preference; the server may downgrade an unsupported preference to JSON at
 # Authenticate (an `Error{UnsupportedGameDataFormat}` event and/or an absence
@@ -660,6 +664,9 @@ func _process(delta: float) -> void:
 	# Snapshot at frame start: a retry armed by this frame's poll or tick
 	# spends its backoff from the next frame on, never on this same delta.
 	var countdown_armed := _reconnect_timer_running
+	# Only a reset that lands mid-frame (during the poll below) may charge no
+	# part of this delta; resets from earlier frames are real window time.
+	_heartbeat_reset_this_frame = false
 	# Poll first: a web refocus frame carries the whole hidden duration as one
 	# delta, and buffered link progress (auth, pong, close completion) must
 	# drain before the watchdog judges liveness (issue #341).
@@ -674,7 +681,7 @@ func _process(delta: float) -> void:
 
 
 func _tick_heartbeat(delta: float) -> void:
-	if _config == null:
+	if _config == null or _heartbeat_reset_this_frame:
 		return
 	if _connection_state in [ConnectionState.CONNECTING, ConnectionState.CLOSING]:
 		# A dial or close handshake that never completes strands the client in
@@ -723,6 +730,7 @@ func _tick_heartbeat(delta: float) -> void:
 
 
 func _reset_heartbeat() -> void:
+	_heartbeat_reset_this_frame = true
 	_heartbeat_elapsed = 0.0
 	_awaiting_pong = false
 	_pong_elapsed = 0.0

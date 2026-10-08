@@ -599,6 +599,32 @@ func _test_refocus_delta_drains_buffered_progress_first() -> void:
 		else:
 			_assert_connected(client, true, "the buffered auth lands on the refocus frame")
 		client.free()
+
+	# The open itself can land in the refocus poll: the window it opens starts
+	# with no accrued time, or the frame's delta kills it at once (issue #341
+	# review). The Authenticate only goes out during that poll, so nothing can
+	# be buffered behind it.
+	var open_config: SignalFishConfigScript = _runner.call("_make_config")
+	open_config.pong_timeout_sec = 5.0
+	var open_client: SignalFishClientScript = _runner.call("_connect_new_client", open_config)
+	var stale_dial: SFFakeTransportScript = open_client.transport
+	stale_dial.inject_failure("swap in the queued transport")
+	var open_transport: QueuedTransport = QueuedTransport.new()
+	open_client.transport = open_transport
+	if _assert_equal(
+		OK, open_client.connect_to_server("ws://example.test/socket"), "open-leg transport dials"
+	):
+		open_transport.queued_open = true
+		open_client._process(60.0)
+		_assert_connected(
+			open_client, true, "an open landing in the refocus poll starts a fresh window"
+		)
+		open_transport.inject_server_message(
+			{"type": "Authenticated", "data": _runner.call("_authenticated_data")}
+		)
+		open_client._process(0.2)
+		_assert_connected(open_client, true, "the answer to the fresh authenticate lands")
+	open_client.free()
 	_done()
 
 
@@ -727,10 +753,14 @@ class QueuedTransport:
 	## frames wait in the engine buffer, so one frame can carry both a
 	## refocus-sized delta and the peer's answer (issue #341).
 	var queued_messages: Array[Dictionary] = []
+	var queued_open := false
 	var queued_close_code := -1
 	var queued_close_reason := ""
 
 	func poll() -> void:
+		if queued_open:
+			queued_open = false
+			inject_open()
 		for message: Dictionary in queued_messages:
 			inject_server_message(message)
 		queued_messages.clear()
