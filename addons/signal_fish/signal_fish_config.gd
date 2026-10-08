@@ -164,10 +164,13 @@ func validation_error() -> String:
 		cap_error = "reconnect_max_attempts must be positive"
 	if not cap_error.is_empty():
 		return cap_error
-	if heartbeat_interval_sec < 0.0:
-		return "heartbeat_interval_sec must not be negative"
-	if heartbeat_interval_sec > 0.0 and pong_timeout_sec <= 0.0:
-		return "pong_timeout_sec must be positive when the heartbeat is on"
+	if not is_finite(heartbeat_interval_sec) or heartbeat_interval_sec < 0.0:
+		return "heartbeat_interval_sec must be zero or a positive finite number"
+	# The AUTHENTICATING and CLOSING silence deadlines read this even with
+	# the heartbeat off, so the bound is unconditional; a non-finite value
+	# would disarm them (every comparison against NaN is false).
+	if not is_finite(pong_timeout_sec) or pong_timeout_sec <= 0.0:
+		return "pong_timeout_sec must be a positive finite number"
 	return _v3_capabilities_error()
 
 
