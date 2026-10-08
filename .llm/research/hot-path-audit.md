@@ -127,6 +127,24 @@ capped-diagnostic vectors in the hostile matrix
 (`tests/protocol/binary_frame_tests.gd`); the refusal is per map, so the
 same key in sibling or nested maps still decodes.
 
+## Round 9: hostile-timing and session-state sweep (2026-10-08)
+
+Method: three parallel paranoid audits (client state machine, mesh +
+Steam, transport + codecs) over the state machines, not the decoders;
+every finding re-verified line-by-line before coding. Shipped (PR
+#337): the #121/#126 silence deadlines un-gated from the opt-in
+heartbeat (the default config wedged forever on accept-then-silence or
+an uncompleted close handshake), a transport drain latch (a re-entrant
+handler close() recursed once per queued packet), pre-open close-reason
+parity across the engine CLOSED race (issue #119 class), and
+unconditional positive-finite validation of both timing knobs (a
+previously-tolerated `pong_timeout_sec = 0` failed every session on its
+first tick; NaN disarms the deadlines). Verified-but-deferred findings
+live as issues #338-#343; the one measured-shaped amplification left is
+the mesh healing dedupe (#339, `Array.has` deep-compares every queued
+SDP per server-error event - linear time, attacker-amplified constant,
+outside round 6's super-linearity bar).
+
 ## Engine facts worth remembering
 
 - `StreamPeerBuffer.get_data(n)` returns an `[Error, PackedByteArray]` Array
