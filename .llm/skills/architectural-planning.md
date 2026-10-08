@@ -77,6 +77,11 @@ shrinking commit).
   complete the session in about one hour.
 - Finish the milestone's PR, checks, review feedback, progress entry, and
   main sync before ending the session.
+- A fully green PR - every CI check passing, no reviewer feedback left
+  unaddressed - is merged by the session itself (squash, the repo's merge
+  style). Resync with `git fetch origin && git reset --hard origin/main`
+  right after, so the next session starts from a clean local checkout.
+  Finished work is never left parked on an open PR.
 - Leave other milestones in `PLAN.md` for later sessions. Do not start a
   second milestone after the first one is complete.
 
