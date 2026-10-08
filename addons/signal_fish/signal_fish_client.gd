@@ -694,7 +694,7 @@ func _tick_heartbeat(delta: float) -> void:
 	# The deadlines above send nothing, so unlike the ping cycle below they
 	# run with the heartbeat off (issues #121, #126, and #346); only the
 	# beat cadence is opt-in.
-	if _config.heartbeat_interval_sec <= 0.0 or not is_authenticated():
+	if _config.heartbeat_interval_sec <= 0.0:
 		_reset_heartbeat()
 		return
 	if _awaiting_pong:
