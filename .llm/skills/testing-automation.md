@@ -41,10 +41,9 @@ These checks enforce:
 - Generator and linter both import the shared
   `scripts/lib/LlmHarness.psm1` module instead of redefining helpers.
 - Pre-commit hook detects untracked generated files in addition to unstaged
-  modifications, so a fresh-from-generator file cannot slip through.
-- Generated-file status parsing treats Git porcelain index/worktree columns as
-  separate fields. Staged-only generated changes do not need worktree staging;
-  untracked or worktree-dirty generated files do.
+  modifications, so a fresh-from-generator file cannot slip through; the
+  porcelain index/worktree columns are parsed separately, so staged-only
+  changes need no worktree staging while untracked or worktree-dirty do.
 - Local hook entry points pass `-AutoFix`; CI and `agent-check.ps1` pass
   `-NoAutoFix`. `-SkipStagedCheck` means an outer wrapper validates content
   outside the local staging flow, not that Git lacks an index.
@@ -77,9 +76,8 @@ These checks enforce:
 - Stray artifact detection is single-sourced through
   `Get-LlmStagingArtifacts` (tracked + non-ignored) and
   `Get-LlmStrayWorkingTreeArtifacts` (includes gitignored junk like
-  `*.tmp`, `*.swp`, `.DS_Store`). Both helpers default to
-  `Get-LlmDefaultStrayPatterns`; the hook runner's `-AutoFix` uses the
-  broader scan.
+  `*.tmp`, `*.swp`, `.DS_Store`); both default to `Get-LlmDefaultStrayPatterns`
+  and the hook runner's `-AutoFix` uses the broader scan.
 - Tracked shebang scripts are checked at byte level and by `git check-attr`
   so PowerShell hook/reference scripts that can run directly on Unix stay LF.
 - POSIX hook bootstraps must create a private temp directory with `mktemp -d`
@@ -98,8 +96,7 @@ These checks enforce:
 - `.claude/settings.json` runs `.claude/hooks/parse-check-powershell.ps1`
   on every PowerShell write/edit so a stale-buffer corruption surfaces
   in the agent's tool_result on the next turn (exit 2 + JSON reason),
-  not at commit time. The `Stop` hook re-runs preflight as a final
-  defense.
+  not at commit time; the `Stop` hook re-runs preflight.
 - `scripts/validate-github-config.py` validates `.github/workflows/*.yml`
   and `.github/dependabot.yml` without network calls. It self-tests duplicate
   YAML-key rejection, preserves GitHub's `on:` key, rejects
@@ -218,6 +215,16 @@ marker suppresses every check on its own line. CI runs it arg-less (whole
 tree) in the docs markdownlint job; the local `changed` loop runs it with
 `--changed` (dirty docs only).
 
+Link-check gate (issue #352): `docs-validation.yml` `link-check` runs lychee
+with `fail: false` and a JSON report; `scripts/check-link-report.py` applies
+the policy. A 5xx from github.com is indeterminate - warned and re-checked
+on the next run - because the status says nothing about the URL; 4xx,
+timeouts, network errors, and other hosts stay strict. The script also
+replaces guarantees JSON mode loses: zero checked links fails (the action's
+failIfEmpty grep matches markdown output only), and per-file entries must
+reconcile with the summary totals so a lychee schema change fails loudly.
+Extend tolerated hosts only with measured data.
+
 A GDScript runtime error aborts only the running function - a green suite
 whose test died mid-way is a vacuous pass (issue 104). Two nets close the
 class: every test function ends with the owner's `_done()` and is driven
@@ -275,26 +282,19 @@ private handlers.
 
 ## Generated Files
 
-- Do not edit `.llm/index.md` by hand.
-- Do not edit the generated section in `.llm/context.md` by hand.
-- Regenerate after adding, deleting, or renaming any `.llm/**/*.md` file.
-  Non-Markdown `.llm` files are not included in the generated index.
+Never hand-edit `.llm/index.md` or the generated section in
+`.llm/context.md`; regenerate after adding, deleting, or renaming any
+`.llm/**/*.md` file (non-Markdown `.llm` files are not indexed).
 
-## Future Godot Tests
+## Godot Test Policy
 
-When runtime code exists, prefer a small deterministic suite before broad
-integration tests:
-
-- Protocol encode/decode fixtures pinned to upstream Signal Fish repository
-  paths and commits before runtime semantics are implemented.
-- Fake transport adapter tests covering connect, receive, send, close, error,
-  reconnect, and backpressure before live network tests.
-- Godot 4 smoke test for the `WebSocketPeer` adapter path (landed: `python3 -E scripts/run-runtime-checks.py smoke`).
-- Browser export manual check covering HTTPS hosting, `wss://`, WebSocket
-  `Origin`, mixed-content rejection, and no native-only socket assumptions.
-- Godot 3 smoke tests are not planned; the Godot 3.6 deferral (2026-10-06, `.llm/research/godot-targets.md`) stands.
+Prefer small deterministic suites before broad integration tests: fixtures
+pin upstream paths/commits (`.llm/research/protocol-fixtures.md`); fake
+transports precede live network tests; the browser-export checklist covers
+HTTPS, `wss://`, and `Origin`. Godot 3 tests stay deferred
+(`.llm/research/godot-targets.md`).
 
 ## CI Guidance
 
-Keep CI fast at repo bootstrap. Add heavier Godot matrix jobs once there is
-runtime code to validate.
+Keep CI fast: heavy or slow-lane jobs stay opt-in or cron-only, not on the
+PR gate.

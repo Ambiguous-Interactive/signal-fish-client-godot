@@ -45,10 +45,11 @@ jobs:
             - name: Docs style (ASCII, no LLM-isms)
               run: python3 scripts/check-docs-style.py
 
-            - name: Dependabot run handoff
+            - name: Workflow helper tests
               run: |
                   python3 tests/test_docs_deploy_wait.py
                   python3 tests/test_dependabot_auto_merge.py
+                  python3 tests/test_check_link_report.py
                   python3 -m unittest tests.test_workflow_gates
 
             - name: Run markdownlint
@@ -65,6 +66,9 @@ jobs:
             - name: Check out repository
               uses: actions/checkout@v7
 
+            # fail: false - the policy step below decides. lychee cannot
+            # scope accepted codes per URL; the policy tolerates a 5xx from
+            # github.com (issue #352) and stays strict on everything else.
             - name: Run lychee link checker
               uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
               with:
@@ -72,7 +76,12 @@ jobs:
                       --config .lychee.toml
                       "**/*.md"
                       "llms.txt"
-                  fail: true
+                  fail: false
+                  format: json
+                  output: lychee/out.json
+
+            - name: Apply link-check policy
+              run: python3 scripts/check-link-report.py lychee/out.json
 
     accessibility:
         name: Rendering + Accessibility

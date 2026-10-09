@@ -49,6 +49,9 @@ exclude = [
 
 # Accept all 2xx success codes and HTTP 429 (Too Many Requests) as valid:
 # the link exists, the server is just rate-limiting us.
+# 5xx handling is not set here: this global list cannot be scoped per URL,
+# so scripts/check-link-report.py decides (issue #352): a 5xx from
+# github.com is indeterminate and warned, everything else fails.
 # NOTE: Use range syntax "200..=299", not the shorthand "2xx" which is
 # only supported on the CLI, not in TOML config files.
 accept = ["200..=299", "429"]
