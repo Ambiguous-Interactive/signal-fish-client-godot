@@ -69,6 +69,14 @@ func run_all() -> void:
 		_test_advertised_peer_cap,
 		_test_pending_requests_cap,
 		_test_handshake_drain_cap,
+		_test_host_lane_requires_authority,
+		_test_authority_less_room_fails_fast,
+		_test_host_republishes_on_authority_grant,
+		_test_advertised_entries_leave_with_their_player,
+		_test_baseline_reconciles_advertised_roster,
+		_test_departed_member_unsaturates_the_fence_set,
+		_test_pending_request_burnout,
+		_test_handshake_byte_budget,
 		_test_freed_client_tears_down,
 	]
 	CompletionGuard.drive(self, cases, _failures)
@@ -837,12 +845,12 @@ func _test_advertised_peer_cap() -> void:
 	_assert_equal(OK, bootstrap.start(), "start")
 	var cap := SFTypeUtils.MAX_TRACKED_PEERS
 	for index: int in cap:
-		bootstrap._advertised_peers["7656119796026%05d" % index] = true
+		bootstrap._advertised_peers["7656119796026%05d" % index] = PLAYER_B
 	_advertise_peer(client, PLAYER_B, OTHER_ID)
 	_assert(not bootstrap._advertised_peers.has(OTHER_ID), "an over-cap id is not fenced")
 	_assert_equal(1, _game_data_send_count(client), "the refusal amplifies no re-publish")
 	# Tracked members are unaffected: their request still fences verbatim.
-	bootstrap._advertised_peers[PEER_ID] = true
+	bootstrap._advertised_peers[PEER_ID] = PLAYER_B
 	steam.request_session(int(PEER_ID))
 	_assert_equal([int(PEER_ID)], steam.accepts, "a tracked id fences normally")
 	bootstrap.free()
@@ -906,6 +914,386 @@ func _test_handshake_drain_cap() -> void:
 	_assert_equal(2, steam.queue.size(), "one poll drains at most the cap")
 	bootstrap.poll()
 	_assert_equal(0, steam.queue.size(), "the next poll drains the rest")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+## Issue #338: the host lane belongs to the room's authority - a host id from
+## any other sender is ignored, so one member can neither redirect the dial
+## nor kill the session with a changed id.
+
+
+func _test_host_lane_requires_authority() -> void:
+	var steam := FakeSteam.new(PEER_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.PEER, PEER_ID, steam
+	)
+	bootstrap.host_id_timeout_sec = 10.0
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	_advertise_host(client, PLAYER_B, OTHER_ID)
+	_assert_equal([], _captured(bootstrap, "steam_host_id_received"), "non-authority id ignored")
+	_assert_equal("", bootstrap.get_host_steam_id(), "nothing consumed")
+	_assert_equal([], steam.sends, "no dial")
+	_advertise_host(client, PLAYER_A, HOST_ID)
+	_assert_equal([HOST_ID], _captured(bootstrap, "steam_host_id_received"), "authority consumed")
+	_assert_equal(1, steam.sends.size(), "dialed the authority's id")
+	_advertise_host(client, PLAYER_B, OTHER_ID)
+	_assert_equal([], _captured(bootstrap, "coordination_failed"), "non-authority change ignored")
+	_assert_equal(true, bootstrap.is_coordinating(), "session survives")
+	_assert_equal(HOST_ID, bootstrap.get_host_steam_id(), "host id unchanged")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+## Issue #338: the host lane binds to the room's authority, so a room without
+## an authority holder has no fence - the coordination refuses up front,
+## instead of dying later in a misleading dial timeout.
+
+
+func _test_authority_less_room_fails_fast() -> void:
+	var steam: FakeSteam = null
+	var bootstrap: SFSteamIdentityBootstrapScript = null
+	var client: SignalFishClientScript = null
+	for role: SFSteamIdentityBootstrapScript.Role in [
+		SFSteamIdentityBootstrapScript.Role.PEER,
+		SFSteamIdentityBootstrapScript.Role.HOST,
+	]:
+		steam = FakeSteam.new(PEER_ID)
+		bootstrap = _make_bootstrap(role, PEER_ID, steam)
+		client = _runner.call("_make_authenticated_client")
+		var transport: SFFakeTransportScript = client.transport
+		(
+			transport
+			. inject_server_message(
+				{
+					"type": "RoomJoined",
+					"data": _runner.call("_room_joined_data", {"supports_authority": false}),
+				}
+			)
+		)
+		client.poll()
+		_assert_equal(OK, bootstrap.attach(client), "attach %s" % role)
+		_assert_equal(
+			ERR_UNAVAILABLE,
+			bootstrap.start(),
+			"a room joined before start is refused (%s role)" % role
+		)
+		_assert_equal(false, bootstrap.is_coordinating(), "not coordinating (%s role)" % role)
+		_assert_equal(
+			[], _captured(bootstrap, "coordination_failed"), "no failure signal (%s role)" % role
+		)
+		bootstrap.free()
+		client.free()
+
+		steam = FakeSteam.new(PEER_ID)
+		bootstrap = _make_bootstrap(role, PEER_ID, steam)
+		client = _runner.call("_make_authenticated_client")
+		_assert_equal(OK, bootstrap.attach(client), "attach %s" % role)
+		_assert_equal(OK, bootstrap.start(), "start before the join (%s role)" % role)
+		transport = client.transport
+		(
+			transport
+			. inject_server_message(
+				{
+					"type": "RoomJoined",
+					"data": _runner.call("_room_joined_data", {"supports_authority": false}),
+				}
+			)
+		)
+		client.poll()
+		_assert_equal(
+			["the room has no authority to fence the host lane with"],
+			_captured(bootstrap, "coordination_failed"),
+			"authority-less baseline refused (%s role)" % role
+		)
+		_assert_equal(false, bootstrap.is_coordinating(), "coordination stopped (%s role)" % role)
+		bootstrap.free()
+		client.free()
+	_done()
+
+
+## Bugbot, PR #349: a grant landing after the session-live publish would
+## leave peers ignoring every host envelope until a later join; the grant
+## itself re-publishes.
+
+
+func _test_host_republishes_on_authority_grant() -> void:
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID
+	)
+	var client: SignalFishClientScript = _runner.call("_make_authenticated_client")
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start outside a room")
+	_assert_equal(0, _game_data_send_count(client), "nothing published before a room")
+	var player: Dictionary = _runner.call("_player", PLAYER_A, "A")
+	player["is_authority"] = false
+	var transport: SFFakeTransportScript = client.transport
+	(
+		transport
+		. inject_server_message(
+			{
+				"type": "RoomJoined",
+				"data":
+				_runner.call(
+					"_room_joined_data", {"current_players": [player], "is_authority": false}
+				),
+			}
+		)
+	)
+	client.poll()
+	_assert_equal(1, _game_data_send_count(client), "the session-live publish precedes the grant")
+	(
+		transport
+		. inject_server_message(
+			{
+				"type": "AuthorityChanged",
+				"data": {"authority_player": PLAYER_A, "you_are_authority": true},
+			}
+		)
+	)
+	client.poll()
+	_assert_equal(2, _game_data_send_count(client), "the grant re-publishes")
+	_assert_equal(
+		SFSteamIdentityScript.host_envelope(HOST_ID),
+		_last_game_data_payload(client),
+		"the grant publish carries the host id"
+	)
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+## Issue #338: an advertisement belongs to the member that published it and
+## leaves with them - a departed member's ids cannot fence sessions, and an
+## established session stays with the game.
+
+
+func _test_advertised_entries_leave_with_their_player() -> void:
+	var steam := FakeSteam.new(HOST_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	var other_peer_id := "76561197960265752"
+	_advertise_peer(client, PLAYER_B, PEER_ID)
+	_advertise_peer(client, PLAYER_B, other_peer_id)
+	steam.request_session(int(PEER_ID))
+	_assert_equal([int(PEER_ID)], steam.accepts, "fenced")
+	_advertise_peer(client, PLAYER_A, OTHER_ID)
+	_leave_player(client, PLAYER_B)
+	_assert(not bootstrap._advertised_peers.has(PEER_ID), "leaver's entry dropped")
+	_assert(not bootstrap._advertised_peers.has(other_peer_id), "leaver's other entry dropped")
+	_assert(bootstrap._advertised_peers.has(OTHER_ID), "staying member's entry kept")
+	_assert_equal([], steam.closes, "the established session stays with the game")
+	_assert_equal([], _captured(bootstrap, "steam_peer_disconnected"), "no drop signal")
+	bootstrap.accept_grace_sec = 5.0
+	steam.request_session(int(other_peer_id))
+	_assert_equal([int(PEER_ID)], steam.accepts, "a departed id is not fenced on sight")
+	bootstrap._process(5.1)
+	_assert_equal([int(other_peer_id)], steam.closes, "a departed id expires refused")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+## Issue #338: a room baseline is the membership truth - entries whose owner
+## is absent from the fresh roster leave with it (a missed player_left).
+
+
+func _test_baseline_reconciles_advertised_roster() -> void:
+	var steam := FakeSteam.new(HOST_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	var transport: SFFakeTransportScript = client.transport
+	var baseline: Dictionary = _runner.call("_room_joined_data")
+	_advertise_peer(client, PLAYER_B, PEER_ID)
+	transport.inject_server_message({"type": "RoomJoined", "data": baseline})
+	client.poll()
+	_assert(not bootstrap._advertised_peers.has(PEER_ID), "absent owner's entry dropped")
+	_advertise_peer(client, PLAYER_A, OTHER_ID)
+	transport.inject_server_message({"type": "RoomJoined", "data": baseline})
+	client.poll()
+	_assert(bootstrap._advertised_peers.has(OTHER_ID), "rostered member's entry kept")
+	_assert_equal(true, bootstrap.is_coordinating(), "reconciliation is not a failure")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+## Issue #338: the poisoning unwound - one member's garbage-id flood leaves
+## with them, and the fence admits legitimate ids again.
+
+
+func _test_departed_member_unsaturates_the_fence_set() -> void:
+	var steam := FakeSteam.new(HOST_ID)
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam
+	)
+	var client := _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	var cap := SFTypeUtils.MAX_TRACKED_PEERS
+	for index: int in cap:
+		bootstrap._advertised_peers["7656119796029%05d" % index] = PLAYER_B
+	_advertise_peer(client, PLAYER_A, OTHER_ID)
+	_assert(not bootstrap._advertised_peers.has(OTHER_ID), "the saturated set refuses")
+	_leave_player(client, PLAYER_B)
+	_assert_equal(0, bootstrap._advertised_peers.size(), "the departed flood drained")
+	_advertise_peer(client, PLAYER_A, OTHER_ID)
+	_assert(bootstrap._advertised_peers.has(OTHER_ID), "the fence admits the id again")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+## Issue #338: an id that re-requests faster than the grace expires burns out
+## - after MAX_REQUEST_ATTEMPTS windows its requests are refused for the rest
+## of the session, freeing the slot for legitimate requesters. Accept clears
+## the count, so a dropped member starts clean.
+
+
+func _test_pending_request_burnout() -> void:
+	var steam: FakeSteam = null
+	var bootstrap: SFSteamIdentityBootstrapScript = null
+	var client: SignalFishClientScript = null
+	for spacing_sec: float in [1.0, 6.0]:
+		steam = FakeSteam.new(HOST_ID)
+		bootstrap = _make_bootstrap(SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam)
+		bootstrap.accept_grace_sec = 5.0
+		client = _in_room_client()
+		_assert_equal(OK, bootstrap.attach(client), "attach %s" % spacing_sec)
+		_assert_equal(OK, bootstrap.start(), "start %s" % spacing_sec)
+		var attempts := SFSteamIdentityBootstrapScript.MAX_REQUEST_ATTEMPTS
+		for attempt: int in attempts:
+			steam.request_session(int(OTHER_ID))
+			bootstrap._process(spacing_sec)
+		var closes_before := steam.closes.size()
+		steam.request_session(int(OTHER_ID))
+		_assert_equal(
+			closes_before + 1,
+			steam.closes.size(),
+			"the exhausted id is refused (%s s spacing)" % spacing_sec
+		)
+		_assert(
+			not bootstrap._pending_requests.has(OTHER_ID),
+			"the refusal frees the slot (%s s spacing)" % spacing_sec
+		)
+		steam.request_session(int(OTHER_ID))
+		_assert_equal(
+			closes_before + 2,
+			steam.closes.size(),
+			"the refusal is permanent (%s s spacing)" % spacing_sec
+		)
+		_assert_equal(
+			attempts,
+			bootstrap._request_attempts.get(OTHER_ID, 0),
+			"a refused request burns no attempts (%s s spacing)" % spacing_sec
+		)
+		steam.request_session(int(PEER_ID))
+		_assert(
+			bootstrap._pending_requests.has(PEER_ID),
+			"a fresh id gets a window (%s s spacing)" % spacing_sec
+		)
+		bootstrap.free()
+		client.free()
+
+	steam = FakeSteam.new(HOST_ID)
+	bootstrap = _make_bootstrap(SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam)
+	client = _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	steam.request_session(int(OTHER_ID))
+	bootstrap._process(5.1)
+	_assert_equal([int(OTHER_ID)], steam.closes, "the window expired refused")
+	_advertise_peer(client, PLAYER_B, OTHER_ID)
+	steam.request_session(int(OTHER_ID))
+	_assert_equal([int(OTHER_ID)], steam.accepts, "fenced")
+	_assert_equal(0, bootstrap._request_attempts.size(), "accept clears the count")
+	steam.fail_session(int(OTHER_ID), 4)
+	_leave_player(client, PLAYER_B)
+	steam.request_session(int(OTHER_ID))
+	_assert(bootstrap._pending_requests.has(OTHER_ID), "a dropped member re-enters a window")
+	bootstrap.free()
+	client.free()
+
+	steam = FakeSteam.new(HOST_ID)
+	bootstrap = _make_bootstrap(SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID, steam)
+	client = _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start")
+	for index: int in SFTypeUtils.MAX_TRACKED_PEERS:
+		bootstrap._request_attempts["7656119796030%05d" % index] = 1
+	steam.request_session(int(OTHER_ID))
+	_assert_equal([int(OTHER_ID)], steam.closes, "accounting at cap refuses a new id")
+	_assert(not bootstrap._pending_requests.has(OTHER_ID), "no window for the new id")
+	_assert(not bootstrap._request_attempts.has(OTHER_ID), "the refusal adds no entry")
+	bootstrap.free()
+	client.free()
+	_done()
+
+
+## Issue #338: the pump also drains at most max_bytes_per_poll bytes per
+## poll, so max-size packets cannot turn one poll into tens of megabytes. A
+## packet larger than the remaining budget still drains alone; the rest of
+## the queue waits for the next poll.
+
+
+func _test_handshake_byte_budget() -> void:
+	var cases := [
+		{"packet_bytes": 200000, "queued": 3, "first_poll": 2},
+		{"packet_bytes": 300000, "queued": 2, "first_poll": 1},
+	]
+	var steam: FakeSteam = null
+	var bootstrap: SFSteamIdentityBootstrapScript = null
+	var client: SignalFishClientScript = null
+	for case: Dictionary in cases:
+		steam = FakeSteam.new(PEER_ID)
+		bootstrap = _make_bootstrap(SFSteamIdentityBootstrapScript.Role.PEER, PEER_ID, steam)
+		bootstrap.max_bytes_per_poll = 262144
+		client = _in_room_client()
+		_assert_equal(OK, bootstrap.attach(client), "attach %s" % case["packet_bytes"])
+		_assert_equal(OK, bootstrap.start(), "start %s" % case["packet_bytes"])
+		_advertise_host(client, PLAYER_A, HOST_ID)
+		var packet_bytes: int = case["packet_bytes"]
+		var payload := PackedByteArray()
+		payload.resize(packet_bytes)
+		payload.fill(0x41)
+		for index: int in case["queued"]:
+			steam.queue_packet(int(HOST_ID), payload)
+		bootstrap.poll()
+		_assert_equal(
+			case["queued"] - case["first_poll"],
+			steam.queue.size(),
+			"the budget stops the drain (%s)" % case["packet_bytes"]
+		)
+		_assert_equal(
+			case["first_poll"] * case["packet_bytes"],
+			steam.bytes_read,
+			"drained bytes (%s)" % case["packet_bytes"]
+		)
+		bootstrap.poll()
+		_assert_equal(
+			0, steam.queue.size(), "the next poll drains the rest (%s)" % case["packet_bytes"]
+		)
+		bootstrap.free()
+		client.free()
+
+	steam = FakeSteam.new(PEER_ID)
+	bootstrap = _make_bootstrap(SFSteamIdentityBootstrapScript.Role.PEER, PEER_ID, steam)
+	bootstrap.max_bytes_per_poll = 0
+	client = _in_room_client()
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(ERR_INVALID_PARAMETER, bootstrap.start(), "zero byte budget refused")
 	bootstrap.free()
 	client.free()
 	_done()
@@ -993,6 +1381,12 @@ func _join_player(client: SignalFishClientScript, player_id: String) -> void:
 	client.poll()
 
 
+func _leave_player(client: SignalFishClientScript, player_id: String) -> void:
+	var transport: SFFakeTransportScript = client.transport
+	transport.inject_server_message({"type": "PlayerLeft", "data": {"player_id": player_id}})
+	client.poll()
+
+
 func _game_data_send_count(client: SignalFishClientScript) -> int:
 	var transport: SFFakeTransportScript = client.transport
 	var count := 0
@@ -1042,6 +1436,7 @@ class FakeSteam:
 	var accepts: Array[int] = []
 	var closes: Array[int] = []
 	var queue: Array[Dictionary] = []
+	var bytes_read := 0
 	var session_states: Dictionary = {}
 	var send_result := true
 	var accept_result := true
@@ -1081,12 +1476,20 @@ class FakeSteam:
 		return true
 
 	func getAvailableP2PPacketSize(_channel: int) -> int:
-		return queue.size()
+		# Real semantics: the byte size of the next queued packet, 0 when none.
+		if queue.is_empty():
+			return 0
+		var next: Dictionary = queue[0]
+		var data: PackedByteArray = next["data"]
+		return data.size()
 
 	func readP2PPacket(_packet_size: int, _channel: int) -> Dictionary:
 		if queue.is_empty():
 			return {}
-		return queue.pop_front()
+		var frame: Dictionary = queue.pop_front()
+		var data: PackedByteArray = frame["data"]
+		bytes_read += data.size()
+		return frame
 
 	func getP2PSessionState(remote_steam_id: int) -> Dictionary:
 		if not session_states.has(remote_steam_id):

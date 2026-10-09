@@ -7,7 +7,9 @@
 # send_game_data_binary ships with the P2 binary milestone) intentionally
 # exceed the default of 20. get_authority_player joined with issue #147 so
 # games read the authority off the client instead of tracking a signal.
-max-public-methods: 31
+# get_supports_authority joined with issue #338 so the Steam bootstrap reads
+# the room's authority flag off the client instead of tracking baselines.
+max-public-methods: 32
 
 # max-file-lines: the headless test runners are single-file SceneTree scripts
 # with table-driven cases; the limit keeps each transport area in one runner
@@ -20,7 +22,8 @@ max-public-methods: 31
 # @warning_ignore markers; the client alone holds 58 of them.
 # 1550 -> 1600: the client gained the issue-#333 outbound frame-cap gates.
 # 1600 -> 1620: the client gained the issue-#341 dial-deadline window.
-max-file-lines: 1620
+# 1620 -> 1640: the client gained the issue-#338 authority-flag accessor.
+max-file-lines: 1640
 
 # max-returns: the headless smoke runner sequences async waits with
 # early-return guards so a timed-out step skips every dependent step; the

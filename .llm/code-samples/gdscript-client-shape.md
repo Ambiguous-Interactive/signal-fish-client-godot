@@ -74,6 +74,7 @@ func get_room_code() -> String
 func get_lobby_state() -> int                   # SFTypes.LobbyState
 func get_players() -> Array                     # Array[SFTypes.PlayerInfo]
 func get_authority_player() -> String           # "" while nobody holds authority
+func get_supports_authority() -> bool           # latest baseline's authority-holder slot
 func get_spectators() -> Array                  # Array[SFTypes.SpectatorInfo]
 func get_buffered_amount() -> int
 ```
@@ -182,7 +183,7 @@ steam.poll()                                     # or leave _process to drive it
 steam.stop()
 # Config: accept_grace_sec (5), host_id_timeout_sec (30),
 # steam_connect_timeout_sec (30), steam_channel (1), max_packets_per_poll (64),
-# steam (injectable seam).
+# max_bytes_per_poll (256 KiB), steam (injectable seam).
 # Signals: steam_host_id_received(steam_id), steam_host_connected(steam_id),
 # steam_peer_connected(steam_id), steam_peer_disconnected(steam_id),
 # coordination_failed(reason).

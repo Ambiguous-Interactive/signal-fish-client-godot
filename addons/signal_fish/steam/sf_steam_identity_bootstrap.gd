@@ -19,7 +19,9 @@ extends Node
 ## claim is Steam's, not the peer's), so the host only checks that the
 ## connecting id was advertised on the room's lane - an unknown requester
 ## waits [member accept_grace_sec] for its advertisement and is refused if it
-## never comes.
+## never comes. The lane itself is fenced too: the published host id is only
+## consumed from the room's authority, and an advertisement belongs to the
+## member that published it, leaving with them (issue #338).
 ##
 ## The Steam side rides GodotSteam's classic P2P API, resolved at
 ## [method start] through the [code]Steam[/code] Engine singleton (or the
@@ -39,7 +41,9 @@ extends Node
 ## Live-session failures surface as [signal coordination_failed] and stop the
 ## coordination (the signals stop with it). Membership enforcement beyond the
 ## accept fence - room leave/rejoin races, the host leaving while peers hold
-## connections - stays the game's job.
+## connections - stays the game's job. The room must have authority enabled:
+## the host lane binds to the room's authority, and a room without one is
+## refused by [method start] or fails with its first baseline (issue #338).
 
 ## The published host id arrived on the lane. Informational: the bootstrap
 ## dials by itself.
@@ -51,9 +55,9 @@ signal steam_peer_connected(steam_id: String)
 ## A fenced peer's Steam session went down (best-effort detection).
 signal steam_peer_disconnected(steam_id: String)
 ## A live-session failure stopped the coordination: the room connection
-## closed, the room session ended, the authority left the host, the published
-## host id changed mid-session, the host Steam session closed, or a Steam
-## dial timed out or failed.
+## closed, the room session ended, the room has no authority holder, the
+## authority left the host, the published host id changed mid-session, the
+## host Steam session closed, or a Steam dial timed out or failed.
 signal coordination_failed(reason: String)
 
 ## Who this node coordinates as: the [enum Role.HOST] fences Steam accepts
@@ -76,6 +80,17 @@ const P2P_SEND_RELIABLE := 2
 ## consuming them must not spin the frame (issue #335).
 const DEFAULT_MAX_PACKETS_PER_POLL := 64
 
+## Handshake bytes drained per [method poll], the inbound 256 KiB frame
+## philosophy: a hostile id queuing max-size packets must not turn one poll
+## into tens of megabytes of allocations (issue #338).
+const DEFAULT_MAX_BYTES_PER_POLL := 262144
+
+## Grace windows (the first request plus re-arms) one id may consume before
+## its further requests are refused for the rest of the session. An id that
+## re-requests faster than the grace expires would otherwise hold a pending
+## slot forever (issue #338).
+const MAX_REQUEST_ATTEMPTS := 8
+
 const _POKE_BYTE := 0x53
 const _ACK_BYTE := 0x41
 
@@ -95,6 +110,11 @@ var steam_connect_timeout_sec: float = 30.0
 var steam_channel: int = 1
 ## Handshake packets drained per [method poll] (issue #335).
 var max_packets_per_poll: int = DEFAULT_MAX_PACKETS_PER_POLL
+## Handshake bytes drained per [method poll] (issue #338). A packet larger
+## than the remaining budget still drains alone: classic P2P offers no
+## peek-and-skip, so the per-poll residual is one packet of whatever size the
+## seam reports, and the rest of the queue waits for the next poll.
+var max_bytes_per_poll: int = DEFAULT_MAX_BYTES_PER_POLL
 ## Duck-typed Steam seam (the GodotSteam singleton surface). Null resolves
 ## [code]Engine.get_singleton("Steam")[/code] at [method start]; tests inject
 ## a fake. Never reference the bare [code]Steam[/code] identifier: the script
@@ -113,12 +133,16 @@ var _awaiting_host_id := false
 var _host_id_deadline_sec := 0.0
 var _awaiting_ack := false
 var _ack_deadline_sec := 0.0
-# Host state: the advertised-membership set only grows during a session (a
-# member that leaves keeps its entry until the session ends), matching the
-# dotnet adapter's fence semantics. Bounded at MAX_TRACKED_PEERS like every
+# Host state: the advertised-membership set is owned by the room player that
+# published the id and leaves with them (player_left and every room baseline
+# reconcile it; issue #338), bounded at MAX_TRACKED_PEERS like every
 # wire-driven roster (issue #335).
 var _advertised_peers: Dictionary = {}
 var _pending_requests: Dictionary = {}
+# Grace windows consumed per id. A refusal keeps counting so a re-request
+# loop burns out instead of holding a pending slot forever; an accept clears
+# the id (issue #338). Bounded at MAX_TRACKED_PEERS.
+var _request_attempts: Dictionary = {}
 var _connected_peers: Dictionary = {}
 # Sessions report connecting/inactive while Steam sets the channel up, so a
 # peer drop is only reported for a session that was seen active (or that
@@ -138,6 +162,7 @@ func attach(client: SignalFishClientScript) -> Error:
 	client.room_joined.connect(_on_client_room_joined)
 	client.room_left.connect(_on_client_room_left)
 	client.player_joined.connect(_on_client_player_joined)
+	client.player_left.connect(_on_client_player_left)
 	client.game_data_received.connect(_on_client_game_data)
 	client.authority_changed.connect(_on_client_authority_changed)
 	client.disconnected.connect(_on_client_disconnected)
@@ -150,6 +175,7 @@ func detach() -> void:
 		_client.room_joined.disconnect(_on_client_room_joined)
 		_client.room_left.disconnect(_on_client_room_left)
 		_client.player_joined.disconnect(_on_client_player_joined)
+		_client.player_left.disconnect(_on_client_player_left)
 		_client.game_data_received.disconnect(_on_client_game_data)
 		_client.authority_changed.disconnect(_on_client_authority_changed)
 		_client.disconnected.disconnect(_on_client_disconnected)
@@ -171,6 +197,7 @@ func start() -> Error:
 		or steam_connect_timeout_sec < 0.0
 		or steam_channel < 0
 		or max_packets_per_poll < 1
+		or max_bytes_per_poll < 1
 	):
 		return ERR_INVALID_PARAMETER
 	if steam == null:
@@ -187,6 +214,11 @@ func start() -> Error:
 				+ " and initialize Steamworks before start()"
 			)
 		)
+		return ERR_UNAVAILABLE
+	# The same authority-less refusal the baseline path applies, for a room
+	# the client joined before start() (Bugbot, PR #349).
+	if _client_is_in_room() and not _client.get_supports_authority():
+		SFLogScript.error("steam bootstrap: the room has no authority to fence the host lane with")
 		return ERR_UNAVAILABLE
 	_local_id = str(steam.call("getSteamID"))
 	if not SFSteamIdentityScript.is_valid_steam_id(_local_id):
@@ -294,8 +326,15 @@ func _publish(lane_key: String) -> void:
 		)
 
 
-func _on_client_room_joined(_info: SFTypesScript.RoomJoinedInfo) -> void:
+func _on_client_room_joined(info: SFTypesScript.RoomJoinedInfo) -> void:
 	if _coordinating and _client != null:
+		# The host lane binds to the room's authority (issue #338): a room
+		# without one has no fence for the lane, so the coordination refuses
+		# here instead of dying later in a misleading dial timeout.
+		if not info.supports_authority:
+			_fail_coordination("the room has no authority to fence the host lane with")
+			return
+		_reconcile_advertised_roster(info)
 		_on_session_live()
 
 
@@ -314,12 +353,41 @@ func _on_client_player_joined(_player: SFTypesScript.PlayerInfo) -> void:
 		)
 
 
+func _on_client_player_left(player_id: String) -> void:
+	if not _coordinating:
+		return
+	for peer_id: String in _advertised_peers.keys():
+		if _advertised_peers[peer_id] == player_id:
+			_advertised_peers.erase(peer_id)
+
+
+## A room baseline is the membership truth: fence entries whose owner is no
+## longer in the roster leave with it, so a missed player_left cannot leave a
+## stale entry behind (issue #338). Only room players are fenced: an owner
+## that appears in later baselines solely as a spectator leaves too.
+func _reconcile_advertised_roster(info: SFTypesScript.RoomJoinedInfo) -> void:
+	var members := {}
+	for player: SFTypesScript.PlayerInfo in info.current_players:
+		members[player.id] = true
+	for peer_id: String in _advertised_peers.keys():
+		if not members.has(_advertised_peers[peer_id]):
+			_advertised_peers.erase(peer_id)
+
+
 func _on_client_game_data(from_player: String, data: Variant) -> void:
 	if not _coordinating:
 		return
 	var host_id := SFSteamIdentityScript.read_host(data)
 	if not host_id.is_empty():
-		_consume_host_id(host_id)
+		# The host lane belongs to the room's authority: a host id consumed
+		# from any other sender would let one member redirect every dial, or
+		# kill the whole session with one changed id (issue #338).
+		if from_player == _client.get_authority_player():
+			_consume_host_id(host_id)
+		else:
+			SFLogScript.debug(
+				"steam bootstrap: host id from non-authority %s ignored" % from_player
+			)
 		return
 	var peer_id := SFSteamIdentityScript.read_peer(data)
 	if not peer_id.is_empty():
@@ -327,8 +395,15 @@ func _on_client_game_data(from_player: String, data: Variant) -> void:
 
 
 func _on_client_authority_changed(_authority_player: String, you_are_authority: bool) -> void:
-	if _coordinating and role == Role.HOST and not you_are_authority:
-		_fail_coordination("authority left the host; the fence has no holder")
+	if not _coordinating or role != Role.HOST:
+		return
+	if you_are_authority:
+		# A grant landing after the session-live publish would leave peers
+		# ignoring every host envelope until a later join re-publishes; the
+		# grant itself re-publishes (Bugbot, PR #349).
+		_publish(SFSteamIdentityScript.HOST_LANE_KEY)
+		return
+	_fail_coordination("authority left the host; the fence has no holder")
 
 
 func _on_client_disconnected(_code: int, _reason: String) -> void:
@@ -350,6 +425,12 @@ func _on_steam_session_request(remote_steam_id: int) -> void:
 	if accept_grace_sec <= 0.0:
 		_refuse_request(remote_steam_id, "id not advertised on the lane")
 		return
+	# An id that keeps re-requesting must not hold a pending slot forever:
+	# once it has consumed MAX_REQUEST_ATTEMPTS grace windows, its further
+	# requests are refused for the rest of the session (issue #338).
+	if _request_attempts.get(peer_id, 0) >= MAX_REQUEST_ATTEMPTS:
+		_refuse_request(remote_steam_id, "request attempts exhausted for the session")
+		return
 	# The cap only refuses new waiters: a repeat request from an id already
 	# in the grace window just re-arms its deadline (Bugbot, PR #336).
 	if not _pending_requests.has(peer_id):
@@ -358,6 +439,15 @@ func _on_steam_session_request(remote_steam_id: int) -> void:
 				remote_steam_id, "pending fence requests at cap %d" % SFTypeUtils.MAX_TRACKED_PEERS
 			)
 			return
+		if (
+			not _request_attempts.has(peer_id)
+			and _request_attempts.size() >= SFTypeUtils.MAX_TRACKED_PEERS
+		):
+			_refuse_request(
+				remote_steam_id, "request accounting at cap %d" % SFTypeUtils.MAX_TRACKED_PEERS
+			)
+			return
+	_request_attempts[peer_id] = _request_attempts.get(peer_id, 0) + 1
 	_pending_requests[peer_id] = _elapsed_sec + accept_grace_sec
 
 
@@ -425,7 +515,7 @@ func _advertise_peer(peer_id: String, from_player: String) -> void:
 				)
 			)
 			return
-		_advertised_peers[peer_id] = true
+		_advertised_peers[peer_id] = from_player
 	if _pending_requests.has(peer_id):
 		_accept_peer(peer_id)
 	# The advertisement proves a peer is coordinating without a fresh join
@@ -436,6 +526,9 @@ func _advertise_peer(peer_id: String, from_player: String) -> void:
 
 func _accept_peer(peer_id: String) -> void:
 	_pending_requests.erase(peer_id)
+	# A fenced id is a member: its window count is spent, so a session that
+	# drops and re-requests starts clean (issue #338).
+	_request_attempts.erase(peer_id)
 	if _connected_peers.has(peer_id):
 		return
 	var accepted: Variant = steam.call("acceptP2PSessionWithUser", peer_id.to_int())
@@ -474,9 +567,13 @@ func _expire_pending_requests() -> void:
 
 func _pump_handshake_channel() -> void:
 	var size: int = steam.call("getAvailableP2PPacketSize", steam_channel)
-	var drained := 0
-	while size > 0 and drained < max_packets_per_poll:
-		drained += 1
+	var drained_packets := 0
+	var drained_bytes := 0
+	while size > 0 and drained_packets < max_packets_per_poll:
+		if drained_bytes >= max_bytes_per_poll:
+			break
+		drained_packets += 1
+		drained_bytes += size
 		var packet: Variant = steam.call("readP2PPacket", size, steam_channel)
 		size = steam.call("getAvailableP2PPacketSize", steam_channel)
 		if typeof(packet) != TYPE_DICTIONARY:
@@ -611,6 +708,7 @@ func _reset_coordination() -> void:
 	_elapsed_sec = 0.0
 	_advertised_peers = {}
 	_pending_requests = {}
+	_request_attempts = {}
 	_connected_peers = {}
 	_ever_active_peers = {}
 

@@ -156,6 +156,7 @@ var _pinned_secrets := 0
 var _player_id := ""
 var _room_id := ""
 var _room_code := ""
+var _supports_authority := false
 var _lobby_state: int = SFTypesScript.LobbyState.UNKNOWN
 var _players: Array[SFTypesScript.PlayerInfo] = []
 var _spectators: Array[SFTypesScript.SpectatorInfo] = []
@@ -429,6 +430,13 @@ func get_authority_player() -> String:
 		if player.is_authority:
 			return player.id
 	return ""
+
+
+## Whether the latest room baseline reports an authority holder slot
+## (issue #338). False while no room is joined; stays in step with
+## [signal room_joined] exactly like [method get_players] does.
+func get_supports_authority() -> bool:
+	return _supports_authority
 
 
 func get_buffered_amount() -> int:
@@ -1302,6 +1310,7 @@ func _apply_room_info(info: SFTypesScript.RoomJoinedInfo) -> void:
 	_room_code = info.room_code
 	_player_id = info.player_id
 	_lobby_state = info.lobby_state
+	_supports_authority = info.supports_authority
 	# Duplicate the rosters so later presence updates never mutate the payload
 	# objects already handed to consumers.
 	_players = info.current_players.duplicate()
@@ -1331,6 +1340,7 @@ func _clear_room_state() -> void:
 	_room_code = ""
 	_player_id = ""
 	_lobby_state = SFTypesScript.LobbyState.UNKNOWN
+	_supports_authority = false
 	_players = []
 	_spectators = []
 	# Plans are room-scoped (issue #120): the plan gate dies with the room.

@@ -90,6 +90,7 @@ func _run() -> void:
 		_test_connected_handler_close_does_not_crash,
 		_test_presence_and_data_events,
 		_test_authority_flags_track_authority_changed,
+		_test_supports_authority_tracks_baseline,
 		_test_spectator_flow,
 		_test_reconnected_restores_room_state,
 		_test_backpressure_returns_busy_and_drops,
@@ -745,6 +746,28 @@ func _test_presence_and_data_events() -> void:
 		events,
 		"presence and data events surface with typed payloads"
 	)
+	client.free()
+	_done()
+
+
+func _test_supports_authority_tracks_baseline() -> void:
+	# Issue #338: consumers (the Steam bootstrap) read the room's
+	# authority-holder flag off the client instead of tracking baselines; it
+	# follows the latest baseline and dies with the room.
+	var client := _make_authenticated_client()
+	_assert_equal(false, client.get_supports_authority(), "no room, no flag")
+	var fake: SFFakeTransportScript = client.transport
+	fake.inject_server_message(
+		{"type": "RoomJoined", "data": _room_joined_data({"supports_authority": false})}
+	)
+	client.poll()
+	_assert_equal(false, client.get_supports_authority(), "authority-less baseline")
+	fake.inject_server_message({"type": "RoomJoined", "data": _room_joined_data()})
+	client.poll()
+	_assert_equal(true, client.get_supports_authority(), "authoritative baseline")
+	fake.inject_server_message({"type": "RoomLeft", "data": {}})
+	client.poll()
+	_assert_equal(false, client.get_supports_authority(), "the room takes the flag")
 	client.free()
 	_done()
 

@@ -31,9 +31,9 @@ point here unless a tool requires a tiny wrapper format.
   `git fetch origin && git reset --hard origin/main`. Squash merges rewrite
   history, so commits parked on local `main` are what force recurring
   merge-conflict resolutions.
-- Complete one milestone per session, targeting one hour. Finish its PR,
-  checks, progress log, and main sync, then end the session. Put remaining
-  work in `PLAN.md` for a later session.
+- One milestone per session (about one hour): finish its PR, checks,
+  progress log, merge, and main sync, then end. The green-PR merge contract
+  (merge a fully green PR, then resync): `.llm/skills/architectural-planning.md`.
 - Keep `.llm` Markdown files and known pointer files at or below 300 lines.
 - Add `description`, `triggers`, and `category` frontmatter to every `.llm` Markdown file except generated `.llm/index.md`.
 - Update generated indexes after adding, removing, or renaming `.llm`

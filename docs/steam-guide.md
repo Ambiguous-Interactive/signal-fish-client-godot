@@ -39,10 +39,11 @@ bootstrap.start()
 ```
 
 The host publishes its SteamId64 when the room session goes live and
-re-publishes on every later join and whenever a peer's advertisement arrives
-(a peer can start coordinating after the host's publish), so late joiners
-never depend on timing. It also requests the authority: the fence needs a
-stable holder, and authority leaving the host fails the coordination.
+re-publishes on its authority grant, on every later join, and whenever a
+peer's advertisement arrives (a peer can start coordinating after the
+host's publish), so late joiners never depend on timing. It also requests
+the authority: the fence needs a stable holder, and authority leaving the
+host fails the coordination.
 
 Peer:
 
@@ -62,13 +63,18 @@ is uninitialized, so a silent no-op can never look like a fenced session.
 
 ## The fence
 
-Steam's rendezvous authenticates the connecting identity (the claim is
-Steam's, not the peer's), so the host only checks that the connecting id was
-advertised on the room's lane. An unknown requester waits `accept_grace_sec`
-(default 5 s) for its advertisement and is refused when it never comes; zero
-refuses every requester that was not already advertised. The advertised set
-only grows during a session: a member that leaves keeps its entry until the
-session ends.
+The room must have authority enabled (`supports_authority`): the host lane
+binds to the room's authority, and a room without one is refused by `start()`
+or fails with its first baseline. Steam's rendezvous authenticates the
+connecting identity (the claim is Steam's, not the peer's), so the host only
+checks that the connecting id was advertised on the room's lane. An unknown
+requester waits `accept_grace_sec` (default 5 s) for its advertisement and
+is refused when it never comes; zero refuses every requester that was not
+already advertised. Advertisements belong to the member that published them
+and leave with them, and the host id is only consumed from the room's
+authority, so one hostile member can neither redirect the session nor poison
+the fence set. An id that keeps re-requesting without ever being advertised
+is refused for the rest of the session after a few grace windows.
 
 ## Channels
 
@@ -98,19 +104,20 @@ the bootstrap channel.
 | `steam_connect_timeout_sec` | How long the dial may take before failing. Zero waits forever.                                   |
 | `steam_channel`             | The P2P channel the handshake uses. The game owns the rest.                                      |
 | `max_packets_per_poll`      | Handshake packets drained per `poll`. The rest waits for the next poll.                          |
+| `max_bytes_per_poll`        | Handshake bytes drained per `poll` (256 KiB). A larger packet still drains alone.                |
 | `steam`                     | Injectable Steam seam; tests substitute a fake, games leave it null.                             |
 
 ## Failure modes
 
 `coordination_failed` fires and the coordination stops when the room
-connection closes, the room session ends, the authority leaves the host, the
-published host id changes mid-session, the host Steam session closes, or a
-dial times out or fails. A dial that never completed and a fence request
-still pending close their Steam sessions; an established session always
-belongs to the game. `stop()` closes every session the bootstrap opened.
-Membership enforcement beyond the accept fence (room leave and
-rejoin races, the host leaving while peers hold connections) stays the
-game's job.
+connection closes, the room session ends, the room has no authority holder,
+the authority leaves the host, the published host id changes mid-session,
+the host Steam session closes, or a dial times out or fails. A dial that
+never completed and a fence request still pending close their Steam
+sessions; an established session always belongs to the game. `stop()` closes
+every session the bootstrap opened. Membership enforcement beyond the accept
+fence (room leave and rejoin races, the host leaving while peers hold
+connections) stays the game's job.
 
 Because the classic P2P API has no session-closed callback, disconnects are
 detected by watching `getP2PSessionState` during `poll()` - best effort, and

@@ -877,7 +877,11 @@ class LinkedSteam:
 		return true
 
 	func getAvailableP2PPacketSize(_channel: int) -> int:
-		return received.size()
+		if received.is_empty():
+			return 0
+		var next: Dictionary = received[0]
+		var data: PackedByteArray = next["data"]
+		return data.size()
 
 	func readP2PPacket(_packet_size: int, _channel: int) -> Dictionary:
 		if received.is_empty():
