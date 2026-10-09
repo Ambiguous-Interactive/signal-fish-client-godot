@@ -123,6 +123,13 @@ class LinkReportPolicyTests(unittest.TestCase):
         tolerated, hard = policy.evaluate(report(("timeout_map", TIMEOUT)))
         self.assertEqual((tolerated, len(hard)), ([], 1))
 
+    def test_mixed_maps_are_both_evaluated(self) -> None:
+        tolerated, hard = policy.evaluate(
+            report(("error_map", GITHUB_5XX), ("timeout_map", TIMEOUT))
+        )
+        self.assertEqual(len(tolerated), 1)
+        self.assertEqual(len(hard), 1)
+
     def test_zero_checked_links_fails(self) -> None:
         # The action's failIfEmpty grep only matches its markdown output, so
         # JSON mode relies on this rejection.
@@ -180,7 +187,9 @@ class MainExitTests(unittest.TestCase):
                     ),
                     0,
                 )
-                self.assertIn("not verified", summary_path.read_text(encoding="utf-8"))
+                summary_text = summary_path.read_text(encoding="utf-8")
+                self.assertIn("not verified", summary_text)
+                self.assertIn("https://github.com/example/repo/releases", summary_text)
                 summary_path.write_text("", encoding="utf-8")
                 self.assertEqual(
                     policy.main(
@@ -191,7 +200,9 @@ class MainExitTests(unittest.TestCase):
                     ),
                     1,
                 )
-                self.assertIn("Broken links", summary_path.read_text(encoding="utf-8"))
+                summary_text = summary_path.read_text(encoding="utf-8")
+                self.assertIn("Broken links", summary_text)
+                self.assertIn("doc.md:3", summary_text)
 
     def test_unwritable_summary_warns_without_changing_the_gate(self) -> None:
         with tempfile.TemporaryDirectory() as name:
@@ -237,32 +248,37 @@ class MainExitTests(unittest.TestCase):
     def test_exit_codes(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             tmp = Path(name)
-            self.assertEqual(
-                policy.main(["check-link-report.py", self.write_report(tmp, "{not json")]), 1
-            )
-            self.assertEqual(
-                policy.main(["check-link-report.py", self.write_report(tmp, "[1, 2]")]), 1
-            )
-            self.assertEqual(policy.main(["check-link-report.py", str(tmp / "missing.json")]), 1)
-            self.assertEqual(
-                policy.main(
-                    [
-                        "check-link-report.py",
-                        self.write_report(tmp, json.dumps(report(("error_map", HTTP_FAILURE)))),
-                    ]
-                ),
-                1,
-            )
-            self.assertEqual(
-                policy.main(
-                    [
-                        "check-link-report.py",
-                        self.write_report(tmp, json.dumps(report(("error_map", GITHUB_5XX)))),
-                    ]
-                ),
-                0,
-            )
-            self.assertEqual(policy.main(["check-link-report.py"]), 2)
+            # Keep fixture writes out of a real job summary when this runs
+            # under Actions.
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(tmp / "summary.md")}):
+                self.assertEqual(
+                    policy.main(["check-link-report.py", self.write_report(tmp, "{not json")]), 1
+                )
+                self.assertEqual(
+                    policy.main(["check-link-report.py", self.write_report(tmp, "[1, 2]")]), 1
+                )
+                self.assertEqual(
+                    policy.main(["check-link-report.py", str(tmp / "missing.json")]), 1
+                )
+                self.assertEqual(
+                    policy.main(
+                        [
+                            "check-link-report.py",
+                            self.write_report(tmp, json.dumps(report(("error_map", HTTP_FAILURE)))),
+                        ]
+                    ),
+                    1,
+                )
+                self.assertEqual(
+                    policy.main(
+                        [
+                            "check-link-report.py",
+                            self.write_report(tmp, json.dumps(report(("error_map", GITHUB_5XX)))),
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(policy.main(["check-link-report.py"]), 2)
 
 
 if __name__ == "__main__":
