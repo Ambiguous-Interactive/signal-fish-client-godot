@@ -21,13 +21,6 @@ Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:
 `.llm/skills/architectural-planning.md`.
 
-### Issue debt (round-9 #161 sweep residue)
-
-Ordered most-gameplay-impacting first; each is one session-sized PR.
-
-- [ ] #339 mesh relay dedupe: stamp relayed payloads with a per-peer
-      sequence id instead of deep-comparing queued SDP per server-error.
-
 ### Post-v1 (P7, gated)
 
 Steam live-validation path (2026-10-06 feasibility research; the issues
