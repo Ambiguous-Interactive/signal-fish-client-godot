@@ -56,7 +56,7 @@ def failure_entries(report: dict[str, object]) -> list[Failure]:
             for item in items:
                 status = record(record(item).get("status"))
                 code = status.get("code")
-                if code is not None and not isinstance(code, int):
+                if code is not None and (isinstance(code, bool) or not isinstance(code, int)):
                     raise ValueError(f"non-integer status code for {item!r}")
                 entries.append(
                     (
@@ -153,7 +153,7 @@ def main(argv: list[str]) -> int:
         try:
             with open(summary_path, "a", encoding="utf-8") as handle:
                 handle.write("\n".join(summary) + "\n")
-        except OSError as error:
+        except (OSError, ValueError) as error:
             print(f"link-report: could not write job summary: {error}", file=sys.stderr)
     if hard:
         print(f"link-report: {len(hard)} broken link(s)", file=sys.stderr)

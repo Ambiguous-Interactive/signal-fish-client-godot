@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
+import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check-link-report.py"
 SPEC = importlib.util.spec_from_file_location("check_link_report", SCRIPT)
@@ -55,12 +59,13 @@ def report(
     *routed: tuple[str, dict[str, object]],
     total: int = 3,
     errors: int | None = None,
-    timeouts: int = 0,
+    timeouts: int | None = None,
 ) -> dict[str, object]:
+    counted_errors = sum(1 for map_name, _ in routed if map_name == "error_map")
     out: dict[str, object] = {
         "total": total,
-        "errors": len(routed) if errors is None else errors,
-        "timeouts": timeouts,
+        "errors": counted_errors if errors is None else errors,
+        "timeouts": (len(routed) - counted_errors) if timeouts is None else timeouts,
     }
     for map_name, failure in routed:
         file_map = cast("dict[str, object]", out.setdefault(map_name, {}))
@@ -151,6 +156,8 @@ class LinkReportPolicyTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "non-integer status code"):
             policy.evaluate(report(("error_map", {**HTTP_FAILURE, "status": {"code": "404"}})))
+        with self.assertRaisesRegex(ValueError, "non-integer status code"):
+            policy.evaluate(report(("error_map", {**HTTP_FAILURE, "status": {"code": True}})))
 
 
 class MainExitTests(unittest.TestCase):
@@ -158,6 +165,74 @@ class MainExitTests(unittest.TestCase):
         path = tmp / "report.json"
         path.write_text(payload, encoding="utf-8")
         return str(path)
+
+    def test_summary_covers_tolerated_and_hard(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            tmp = Path(name)
+            summary_path = tmp / "summary.md"
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary_path)}):
+                self.assertEqual(
+                    policy.main(
+                        [
+                            "check-link-report.py",
+                            self.write_report(tmp, json.dumps(report(("error_map", GITHUB_5XX)))),
+                        ]
+                    ),
+                    0,
+                )
+                self.assertIn("not verified", summary_path.read_text(encoding="utf-8"))
+                summary_path.write_text("", encoding="utf-8")
+                self.assertEqual(
+                    policy.main(
+                        [
+                            "check-link-report.py",
+                            self.write_report(tmp, json.dumps(report(("error_map", HTTP_FAILURE)))),
+                        ]
+                    ),
+                    1,
+                )
+                self.assertIn("Broken links", summary_path.read_text(encoding="utf-8"))
+
+    def test_unwritable_summary_warns_without_changing_the_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            tmp = Path(name)
+            stderr = io.StringIO()
+            with (
+                patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(tmp)}),
+                redirect_stderr(stderr),
+            ):
+                self.assertEqual(
+                    policy.main(
+                        [
+                            "check-link-report.py",
+                            self.write_report(tmp, json.dumps(report(("error_map", HTTP_FAILURE)))),
+                        ]
+                    ),
+                    1,
+                )
+            self.assertIn("could not write job summary", stderr.getvalue())
+
+    def test_unwritable_summary_survives_encoding_errors(self) -> None:
+        lone_surrogate = {**GITHUB_5XX, "url": "https://github.com/a/b\ud800"}
+        with tempfile.TemporaryDirectory() as name:
+            tmp = Path(name)
+            stderr = io.StringIO()
+            with (
+                patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(tmp / "summary.md")}),
+                redirect_stderr(stderr),
+            ):
+                self.assertEqual(
+                    policy.main(
+                        [
+                            "check-link-report.py",
+                            self.write_report(
+                                tmp, json.dumps(report(("error_map", lone_surrogate)))
+                            ),
+                        ]
+                    ),
+                    0,
+                )
+            self.assertIn("could not write job summary", stderr.getvalue())
 
     def test_exit_codes(self) -> None:
         with tempfile.TemporaryDirectory() as name:
