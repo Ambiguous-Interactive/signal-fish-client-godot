@@ -64,6 +64,7 @@ func run_all() -> void:
 		_test_closing_window_suppresses_sends,
 		_test_transport_status_boundary_survives_backpressure,
 		_test_refused_relays_recover,
+		_test_rate_limit_healing_stays_bounded,
 		_test_teardown_paths,
 		_test_dropped_peer_connections_are_freed,
 		_test_out_of_tree_free_does_not_leak,
@@ -1140,6 +1141,13 @@ func _test_refused_relays_recover() -> void:
 	var waiting_baseline: int = waiting_transport.sent_text.size()
 	waiting_pc.emit_session_description_created("offer", "v=0")
 	_inject_server_error(waiting_client, "SIGNAL_RATE_LIMITED")
+	# The queued healing relay must not double-queue on the next error
+	# (issue #339): dedupe skips a payload that is already pending.
+	_inject_server_error(waiting_client, "SIGNAL_RATE_LIMITED")
+	var waiting_entry: SFWebRTCMeshScript._MeshPeer = waiting_mesh._peers[PLAYER_B]
+	_assert_equal(
+		1, waiting_entry.pending_signals.size(), "a queued healing relay is not double-queued"
+	)
 	waiting_mesh.poll()
 	_assert_equal(
 		waiting_baseline + 1,
@@ -1203,6 +1211,56 @@ func _test_refused_relays_recover() -> void:
 	)
 	pair_mesh.free()
 	pair_client.free()
+	_done()
+
+
+## Issue #339: rate-limited healing used to deep-compare every queued relay
+## payload per server-error event (peers x queue depth x payload bytes).
+## Dedupe is now a per-entry flag, so one hostile volley over a maxed roster
+## stays far below the pin. Measured on the session-188 machine: the volley
+## cost ~1300-1400ms with the deep-compare dedupe, ~13ms with the flag; the
+## 250ms bound keeps ~19x headroom over the fixed cost and trips ~5x below
+## the regression it guards against.
+
+
+func _test_rate_limit_healing_stays_bounded() -> void:
+	var cap := SFTypeUtils.MAX_TRACKED_PEERS
+	var client := _make_in_room_client()
+	var errors := _track_protocol_errors(client)
+	var mesh := _make_mesh()
+	_attach(mesh, client)
+	var roster: Array[Dictionary] = []
+	for index: int in cap:
+		roster.append(_peer("000000bb-0000-0000-0000-%012d" % index, index % 2 == 0))
+	_inject_plan(client, roster)
+	_assert_equal(cap, mesh.get_peer_count(), "the hostile roster fills the cap")
+	var fake_transport: SFFakeTransportScript = client.transport
+	fake_transport.buffered_amount = 262145  # over the client's 256 KiB cap
+	var depth := SFWebRTCMeshScript.MAX_PENDING_RELAYS
+	for pc: FakePeerConnection in _mesh_peers(mesh):
+		pc.emit_session_description_created("offer", "v=0")
+		for index: int in depth - 1:
+			# Distinct payloads force the old dedupe to walk the whole queue:
+			# an early content match would hide the scan.
+			pc.emit_ice_candidate_created("", index, "cand-%s-%d" % ["x".repeat(4096), index])
+	var volleys := 32
+	var start := Time.get_ticks_msec()
+	for _volley: int in volleys:
+		_inject_server_error(client, "SIGNAL_RATE_LIMITED")
+	var elapsed := Time.get_ticks_msec() - start
+	for uuid: String in mesh._peers:
+		var entry: SFWebRTCMeshScript._MeshPeer = mesh._peers[uuid]
+		_assert_equal(depth, entry.pending_signals.size(), "healing dedupes at the cap")
+	_assert_equal(cap, errors.size(), "healing adds no error beyond the direct refusals")
+	_assert(
+		elapsed <= 250,
+		(
+			"%d healing events over %d x %d queued relays took %dms (bound 250ms)"
+			% [volleys, cap, depth, elapsed]
+		)
+	)
+	mesh.free()
+	client.free()
 	_done()
 
 

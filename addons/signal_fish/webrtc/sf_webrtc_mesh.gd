@@ -502,6 +502,9 @@ func _send_signal_to(entry: _MeshPeer, payload: Dictionary) -> void:
 	# candidate: a server-refused relay re-queues exactly this payload.
 	entry.last_relayed = payload
 	entry.has_last_relayed = true
+	# The flag is re-derived by the queue operations below; a payload that
+	# never lands in the queue (cap drop, successful send) stays un-pending.
+	entry.last_relayed_pending = false
 	if not entry.pending_signals.is_empty():
 		# Order matters (an Offer must precede its candidates at the remote),
 		# and hammering a backpressured link would spam protocol_error: queue
@@ -530,6 +533,7 @@ func _enqueue_relay(entry: _MeshPeer, payload: Dictionary) -> void:
 		)
 		return
 	entry.pending_signals.append(payload)
+	entry.last_relayed_pending = is_same(payload, entry.last_relayed)
 	if entry.pending_signals.size() == 1:
 		entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
 
@@ -553,13 +557,16 @@ func _drain_relay(entry: _MeshPeer) -> void:
 					)
 				)
 				entry.pending_signals.clear()
+				entry.last_relayed_pending = false
 				entry.relay_attempts = 0
 				entry.relay_due_msec = 0
 				entry.relay_dropped = true
 			else:
 				entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
 			return
-		entry.pending_signals.pop_front()
+		var delivered: Dictionary = entry.pending_signals.pop_front()
+		if is_same(delivered, entry.last_relayed):
+			entry.last_relayed_pending = false
 		entry.relay_attempts = 0
 
 
@@ -573,12 +580,13 @@ func _on_client_server_error(_message: String, error_code: int) -> void:
 		var entry: _MeshPeer = _peers[uuid]
 		if entry.relay_dropped or not entry.has_last_relayed:
 			continue
-		if entry.pending_signals.has(entry.last_relayed):
+		if entry.last_relayed_pending:
 			continue
 		if entry.pending_signals.size() >= MAX_PENDING_RELAYS:
 			continue
 		# The server-refused payload predates the queued local sends.
 		entry.pending_signals.push_front(entry.last_relayed)
+		entry.last_relayed_pending = true
 		entry.relay_due_msec = Time.get_ticks_msec() + signal_retry_msec
 
 
@@ -637,3 +645,10 @@ class _MeshPeer:
 	var relay_dropped: bool = false
 	var last_relayed: Dictionary = {}
 	var has_last_relayed: bool = false
+	# Whether last_relayed is still in pending_signals. Tracked by identity at
+	# the queue mutation sites so rate-limit healing never deep-compares the
+	# queue (issue #339: peers x queue depth x payload bytes per event).
+	# Identity is narrower than the content equality it replaces: a
+	# content-equal copy may be re-queued once, which the documented
+	# redelivery tolerance (redelivered ICE/SDP are idempotent) covers.
+	var last_relayed_pending: bool = false
