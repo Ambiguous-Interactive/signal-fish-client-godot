@@ -224,8 +224,8 @@ def restored_phone_toc(state: DrawerState) -> bool:
 
 async def wait_for_restored_phone_toc(page: Page) -> DrawerState:
     # The reopened drawer settles its selected-item focus across animation
-    # frames; a resize racing that move strands focus on the first link and
-    # skips the selected-item scroll (CI failure with identical content).
+    # frames, and the site script's post-resize settle pass adds one more
+    # frame (#354); poll instead of sampling once.
     state = await drawer_focus_state(page)
     for _ in range(100):
         if restored_phone_toc(state):
