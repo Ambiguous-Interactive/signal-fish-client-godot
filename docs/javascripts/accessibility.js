@@ -482,9 +482,17 @@
 
     enhanceShell();
     let resizeFrame;
+    let settleFrame;
     window.addEventListener("resize", () => {
         cancelAnimationFrame(resizeFrame);
-        resizeFrame = requestAnimationFrame(enhanceShell);
+        cancelAnimationFrame(settleFrame);
+        resizeFrame = requestAnimationFrame(() => {
+            enhanceShell();
+            // One frame can measure mid-flip panel geometry when a resize
+            // crosses a breakpoint (#354); the settle pass re-checks scope,
+            // focus, and alignment against final layout.
+            settleFrame = requestAnimationFrame(enhanceShell);
+        });
     });
     if (typeof document$ !== "undefined") {
         document$.subscribe(enhanceShell);
