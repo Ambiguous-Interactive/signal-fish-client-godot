@@ -23,6 +23,8 @@ func poll() -> void:
 	pass
 
 
+## Contract: `ERR_BUSY` is the sanctioned non-terminal backpressure refusal
+## (drop, stay live, no `failed`); every other non-OK return must emit `failed`.
 func send_text(_text: String) -> Error:
 	push_error("SFTransport.send_text() must be implemented by a transport adapter")
 	return ERR_UNAVAILABLE
