@@ -40,22 +40,29 @@ TIMEOUT: dict[str, object] = {
 }
 NETWORK_ERROR: dict[str, object] = {
     "url": "http://github.com/example/repo/wiki",
-    "status": {"text": "Network error: Connection refused", "details": "Connection refused"},
+    "status": {
+        "text": (
+            "Network error: Connection refused - server may be down or port "
+            "blocked (error sending request for url (http://github.com/example/repo/wiki))"
+        ),
+        "details": "Connection refused - server may be down or port blocked",
+    },
     "span": {"line": 2},
 }
 
 
 def report(
-    *failures: dict[str, object], total: int = 3, errors: int | None = None, timeouts: int = 0
+    *routed: tuple[str, dict[str, object]],
+    total: int = 3,
+    errors: int | None = None,
+    timeouts: int = 0,
 ) -> dict[str, object]:
     out: dict[str, object] = {
         "total": total,
-        "errors": len(failures) if errors is None else errors,
+        "errors": len(routed) if errors is None else errors,
         "timeouts": timeouts,
     }
-    for failure in failures:
-        status = cast("dict[str, object]", failure.get("status") or {})
-        map_name = "error_map" if "code" in status else "timeout_map"
+    for map_name, failure in routed:
         file_map = cast("dict[str, object]", out.setdefault(map_name, {}))
         failures_for_file = cast("list[object]", file_map.setdefault("doc.md", []))
         failures_for_file.append(failure)
@@ -68,16 +75,24 @@ class LinkReportPolicyTests(unittest.TestCase):
         self.assertEqual((tolerated, hard), ([], []))
 
     def test_only_github_5xx_is_indeterminate(self) -> None:
-        tolerated, hard = policy.evaluate(report(GITHUB_5XX))
+        tolerated, hard = policy.evaluate(report(("error_map", GITHUB_5XX)))
         self.assertEqual(len(tolerated), 1)
         self.assertEqual(hard, [])
 
     def test_hard_failures(self) -> None:
         # github.com 4xx, other-host 5xx, timeouts, network errors: the URL
-        # result is known, so the gate stays strict (issue #352).
-        for failure in (HTTP_FAILURE, EXTERNAL_5XX, TIMEOUT, NETWORK_ERROR):
-            with self.subTest(url=failure["url"]):
-                tolerated, hard = policy.evaluate(report(failure))
+        # result is known, so the gate stays strict (issue #352). Each
+        # failure is routed to the map lychee v0.24.2 actually uses: only
+        # timeouts go to timeout_map; network errors land in error_map
+        # with no status code.
+        for map_name, fixture in (
+            ("error_map", HTTP_FAILURE),
+            ("error_map", EXTERNAL_5XX),
+            ("timeout_map", TIMEOUT),
+            ("error_map", NETWORK_ERROR),
+        ):
+            with self.subTest(url=fixture["url"]):
+                tolerated, hard = policy.evaluate(report((map_name, fixture)))
                 self.assertEqual(tolerated, [])
                 self.assertEqual(len(hard), 1)
 
@@ -90,36 +105,36 @@ class LinkReportPolicyTests(unittest.TestCase):
         ):
             with self.subTest(url=url):
                 failure = {**HTTP_FAILURE, "url": url, "status": {"text": "503", "code": 503}}
-                tolerated, _ = policy.evaluate(report(failure))
+                tolerated, _ = policy.evaluate(report(("error_map", failure)))
                 self.assertEqual(tolerated, [])
 
     def test_uppercase_github_host_is_tolerated(self) -> None:
         tolerated, _ = policy.evaluate(
-            report({**GITHUB_5XX, "url": "https://GitHub.com/example/repo/releases"})
+            report(("error_map", {**GITHUB_5XX, "url": "https://GitHub.com/example/repo/releases"}))
         )
         self.assertEqual(len(tolerated), 1)
 
     def test_timeout_only_report_is_hard(self) -> None:
-        tolerated, hard = policy.evaluate(report(TIMEOUT))
+        tolerated, hard = policy.evaluate(report(("timeout_map", TIMEOUT)))
         self.assertEqual((tolerated, len(hard)), ([], 1))
 
     def test_zero_checked_links_fails(self) -> None:
         # The action's failIfEmpty grep only matches its markdown output, so
         # JSON mode relies on this rejection.
         with self.assertRaisesRegex(ValueError, "checked 0 links"):
-            policy.evaluate(report(errors=0, total=0))
+            policy.evaluate(report(total=0))
 
     def test_summary_total_drift_fails(self) -> None:
         # A lychee output-schema change must fail loudly, never drop a
         # failure class silently.
         with self.assertRaisesRegex(ValueError, "schema changed"):
-            policy.evaluate(report(GITHUB_5XX, errors=2))
+            policy.evaluate(report(("error_map", GITHUB_5XX), errors=2))
         with self.assertRaisesRegex(ValueError, "schema changed"):
-            policy.evaluate(report(GITHUB_5XX, errors=0))
+            policy.evaluate(report(("error_map", GITHUB_5XX), errors=0))
 
     def test_non_integer_totals_fail(self) -> None:
         with self.assertRaisesRegex(ValueError, "not an integer"):
-            policy.evaluate(report(GITHUB_5XX, errors="2"))  # type: ignore[arg-type]
+            policy.evaluate(report(("error_map", GITHUB_5XX), errors="2"))  # type: ignore[arg-type]
 
     def test_malformed_report_fails(self) -> None:
         malformed: dict[str, object] = {
@@ -130,8 +145,12 @@ class LinkReportPolicyTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "not a mapping"):
             policy.evaluate(malformed)
+        with self.assertRaisesRegex(ValueError, "not a list"):
+            policy.evaluate(
+                {"total": 3, "errors": 1, "timeouts": 0, "error_map": {"doc.md": "boom"}}
+            )
         with self.assertRaisesRegex(ValueError, "non-integer status code"):
-            policy.evaluate(report({**HTTP_FAILURE, "status": {"code": "404"}}))
+            policy.evaluate(report(("error_map", {**HTTP_FAILURE, "status": {"code": "404"}})))
 
 
 class MainExitTests(unittest.TestCase):
@@ -146,19 +165,25 @@ class MainExitTests(unittest.TestCase):
             self.assertEqual(
                 policy.main(["check-link-report.py", self.write_report(tmp, "{not json")]), 1
             )
+            self.assertEqual(
+                policy.main(["check-link-report.py", self.write_report(tmp, "[1, 2]")]), 1
+            )
             self.assertEqual(policy.main(["check-link-report.py", str(tmp / "missing.json")]), 1)
             self.assertEqual(
                 policy.main(
                     [
                         "check-link-report.py",
-                        self.write_report(tmp, json.dumps(report(HTTP_FAILURE))),
+                        self.write_report(tmp, json.dumps(report(("error_map", HTTP_FAILURE)))),
                     ]
                 ),
                 1,
             )
             self.assertEqual(
                 policy.main(
-                    ["check-link-report.py", self.write_report(tmp, json.dumps(report(GITHUB_5XX)))]
+                    [
+                        "check-link-report.py",
+                        self.write_report(tmp, json.dumps(report(("error_map", GITHUB_5XX)))),
+                    ]
                 ),
                 0,
             )

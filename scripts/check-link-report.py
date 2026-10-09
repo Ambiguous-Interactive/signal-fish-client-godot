@@ -49,7 +49,11 @@ def failure_entries(report: dict[str, object]) -> list[Failure]:
         if not isinstance(failures, dict):
             raise ValueError(f"lychee report {source!r} is not a mapping")
         for file, items in failures.items():
-            for item in items or []:
+            if items is None:
+                continue
+            if not isinstance(items, list):
+                raise ValueError(f"lychee report {source!r}[{file!r}] is not a list")
+            for item in items:
                 status = record(record(item).get("status"))
                 code = status.get("code")
                 if code is not None and not isinstance(code, int):
@@ -99,16 +103,26 @@ def evaluate(report: dict[str, object]) -> tuple[list[Failure], list[Failure]]:
 
 def load_report(path: str) -> dict[str, object]:
     with open(path, "rb") as handle:
-        return cast("dict[str, object]", json.loads(handle.read().decode("utf-8")))
+        parsed = json.loads(handle.read().decode("utf-8"))
+    if not isinstance(parsed, dict):
+        raise ValueError("report is not a JSON object")
+    return cast("dict[str, object]", parsed)
 
 
-def summary_lines(tolerated: list[Failure]) -> list[str]:
-    lines = [
-        "GitHub returned 5xx for these URLs, so they were not verified.",
-        "Nothing to fix; the next run re-checks them.",
-        "",
-    ]
-    lines.extend(f"- `{file}:{line}` {url}" for file, line, url, _, _ in tolerated)
+def summary_lines(tolerated: list[Failure], hard: list[Failure]) -> list[str]:
+    lines: list[str] = []
+    if tolerated:
+        lines += [
+            "GitHub returned 5xx for these URLs, so they were not verified.",
+            "Nothing to fix; the next run re-checks them.",
+            "",
+        ]
+        lines.extend(f"- `{file}:{line}` {url}" for file, line, url, _, _ in tolerated)
+    if hard:
+        if lines:
+            lines.append("")
+        lines.append("Broken links:")
+        lines.extend(f"- `{file}:{line}` {url} - {text}" for file, line, url, _, text in hard)
     return lines
 
 
@@ -133,14 +147,19 @@ def main(argv: list[str]) -> int:
             f"link-report: {len(tolerated)} indeterminate (github.com 5xx), "
             "re-checked on the next run"
         )
-        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-        if summary_path:
+    summary = summary_lines(tolerated, hard)
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary and summary_path:
+        try:
             with open(summary_path, "a", encoding="utf-8") as handle:
-                handle.write("\n".join(summary_lines(tolerated)) + "\n")
+                handle.write("\n".join(summary) + "\n")
+        except OSError as error:
+            print(f"link-report: could not write job summary: {error}", file=sys.stderr)
     if hard:
         print(f"link-report: {len(hard)} broken link(s)", file=sys.stderr)
         return 1
-    print("link-report: all checked links resolved")
+    if not tolerated:
+        print("link-report: all checked links resolved")
     return 0
 
 

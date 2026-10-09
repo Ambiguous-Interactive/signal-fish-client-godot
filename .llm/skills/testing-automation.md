@@ -219,11 +219,13 @@ Link-check gate (issue #352): `docs-validation.yml` `link-check` runs lychee
 with `fail: false` and a JSON report; `scripts/check-link-report.py` applies
 the policy. A 5xx from github.com is indeterminate - warned and re-checked
 on the next run - because the status says nothing about the URL; 4xx,
-timeouts, network errors, and other hosts stay strict. The script also
-replaces guarantees JSON mode loses: zero checked links fails (the action's
-failIfEmpty grep matches markdown output only), and per-file entries must
-reconcile with the summary totals so a lychee schema change fails loudly.
-Extend tolerated hosts only with measured data.
+timeouts, network errors, and other hosts stay strict. Known residual: an
+episode that also 5xxs other GitHub hosts (e.g. raw.githubusercontent.com)
+still hard-fails; widen the host list only after such an episode is
+measured. The script also replaces guarantees JSON mode loses: zero checked
+links fails (the action's failIfEmpty grep matches markdown output only),
+and per-file entries must reconcile with the summary totals so a lychee
+schema change fails loudly.
 
 A GDScript runtime error aborts only the running function - a green suite
 whose test died mid-way is a vacuous pass (issue 104). Two nets close the
@@ -293,8 +295,3 @@ pin upstream paths/commits (`.llm/research/protocol-fixtures.md`); fake
 transports precede live network tests; the browser-export checklist covers
 HTTPS, `wss://`, and `Origin`. Godot 3 tests stay deferred
 (`.llm/research/godot-targets.md`).
-
-## CI Guidance
-
-Keep CI fast: heavy or slow-lane jobs stay opt-in or cron-only, not on the
-PR gate.
