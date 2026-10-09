@@ -11,6 +11,12 @@ const SESSION_RESET_CLOSE_CODE := 1000
 const SESSION_RESET_CLOSE_REASON := "transport session reset"
 
 var max_packets_per_poll := DEFAULT_MAX_PACKETS_PER_POLL
+## Optional outbound backpressure cap for direct transport users: with more
+## than this many engine-buffered bytes, sends drop with `ERR_BUSY` and the
+## session stays live instead of an engine send failure ending it on web.
+## Default `0` disables the cap; leave it at `0` when driving through
+## `SignalFishClient`, which frames its own cap (issue #343).
+var max_buffered_bytes := 0
 
 var _peer: SFWebSocketPeerAdapterScript = null
 var _opened_emitted := false
@@ -25,6 +31,7 @@ var _drain_active := false
 var _close_requested := false
 var _requested_close_code := 1000
 var _requested_close_reason := ""
+var _warned_nonpositive_drain_cap := false
 
 
 func connect_to_url(url: String) -> Error:
@@ -55,6 +62,8 @@ func poll() -> void:
 func send_text(text: String) -> Error:
 	if not _can_send():
 		return ERR_UNCONFIGURED
+	if _over_send_cap():
+		return ERR_BUSY
 	var error: Error = _peer.send_text(text)
 	if error != OK:
 		_fail_current_session("failed to send WebSocket text frame: %s" % error_string(error))
@@ -64,6 +73,8 @@ func send_text(text: String) -> Error:
 func send_binary(bytes: PackedByteArray) -> Error:
 	if not _can_send():
 		return ERR_UNCONFIGURED
+	if _over_send_cap():
+		return ERR_BUSY
 	var error: Error = _peer.send_binary(bytes)
 	if error != OK:
 		_fail_current_session("failed to send WebSocket binary frame: %s" % error_string(error))
@@ -172,7 +183,7 @@ func _drain_queued_packets() -> bool:
 	if _peer == null or _is_terminal():
 		return false
 	var drained := 0
-	while _peer.get_available_packet_count() > 0 and drained < max_packets_per_poll:
+	while _peer.get_available_packet_count() > 0 and drained < _drain_cap():
 		var packet: PackedByteArray = _peer.get_packet()
 		var error: Error = _peer.get_packet_error()
 		if error != OK:
@@ -234,6 +245,31 @@ func _fail_current_session(
 
 func _is_terminal() -> bool:
 	return _closed_emitted or _failed_emitted
+
+
+func _drain_cap() -> int:
+	if max_packets_per_poll >= 1:
+		return max_packets_per_poll
+	if not _warned_nonpositive_drain_cap:
+		_warned_nonpositive_drain_cap = true
+		push_warning(
+			(
+				(
+					"SFWebSocketTransport: max_packets_per_poll %d is not positive;"
+					+ " clamping to 1 packet per poll"
+				)
+				% max_packets_per_poll
+			)
+		)
+	return 1
+
+
+func _over_send_cap() -> bool:
+	return (
+		_peer != null
+		and max_buffered_bytes > 0
+		and _peer.get_current_outbound_buffered_amount() > max_buffered_bytes
+	)
 
 
 func _can_send() -> bool:

@@ -10,6 +10,11 @@ released version.
 
 ### Added
 
+- Optional `SFWebSocketTransport.max_buffered_bytes` send cap for direct
+  transport users: with the engine buffering more than the cap, sends drop
+  with `ERR_BUSY` and the session stays live instead of an engine send
+  failure ending it. Default `0` disables the cap; leave it at `0` when
+  driving through `SignalFishClient`, which frames its own cap.
 - `max_outbound_frame_bytes` config (64 KiB default, the upstream server
   default): one outbound text or binary frame over the cap is refused
   locally with `protocol_error` and `ERR_INVALID_DATA`, and nothing is
@@ -33,6 +38,11 @@ released version.
 
 ### Fixed
 
+- A non-positive `SFWebSocketTransport.max_packets_per_poll` no longer
+  silently disables the drain forever. Direct transport users now get a
+  one-per-instance warning and a clamp to one packet per poll, so queued
+  frames still deliver and a closed session still reaches `closed`
+  (issue #343).
 - Switching back to a hidden browser tab no longer kills the session.
   Frames the server already delivered now drain before the silence
   watchdog runs (auto-poll, the default), so a refocus frame no longer

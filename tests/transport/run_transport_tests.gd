@@ -62,6 +62,8 @@ func _run() -> void:
 		_test_close_at_closed_drains_queued_packets,
 		_test_handler_close_at_closed_terminates_outside_handlers,
 		_test_preopen_close_keeps_the_caller_reason_regardless_of_engine_timing,
+		_test_websocket_nonpositive_drain_cap_clamps_to_one,
+		_test_websocket_buffered_send_cap_drops_without_failing,
 	]
 	CompletionGuard.self_check(self, _failures)
 	CompletionGuard.drive(self, cases, _failures)
@@ -853,6 +855,90 @@ func _test_preopen_close_keeps_the_caller_reason_regardless_of_engine_timing() -
 		_assert_string_contains(
 			relay_failures[1], "relay gave up", "relay-closed pre-open keeps the relay reason"
 		)
+	_done()
+
+
+## Issue #343: a non-positive `max_packets_per_poll` used to disable the
+## drain forever — no packets at OPEN, and a CLOSED session that never
+## reached `closed`. The drain must clamp the cap to 1 and always progress.
+func _test_websocket_nonpositive_drain_cap_clamps_to_one() -> void:
+	# Cases: [label, cap].
+	var cases := [
+		["zero cap", 0],
+		["negative cap", -3],
+	]
+	for case: Array in cases:
+		var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+		var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+		transport._peer = peer
+		transport.max_packets_per_poll = case[1]
+		var events: Array = []
+		var packets: Array[String] = []
+		transport.opened.connect(func() -> void: events.append("opened"))
+		transport.failed.connect(func(_error: String) -> void: events.append("failed"))
+		transport.closed.connect(
+			func(code: int, reason: String) -> void: events.append(["closed", code, reason])
+		)
+		transport.packet_received.connect(
+			func(_payload: PackedByteArray, _is_text: bool) -> void: packets.append("packet")
+		)
+		peer.ready_state = WebSocketPeer.STATE_OPEN
+		peer.packets = [PackedByteArray([1]), PackedByteArray([2])]
+		transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
+		_assert_equal(
+			1, packets.size(), "%s: first poll delivers exactly the clamped packet" % case[0]
+		)
+		_assert(
+			transport._warned_nonpositive_drain_cap,
+			"%s: the clamp warning fired once for the session" % case[0]
+		)
+		peer.ready_state = WebSocketPeer.STATE_CLOSED
+		peer.close_code = 1000
+		peer.close_reason = "gone"
+		transport._handle_polled_state(WebSocketPeer.STATE_CLOSED)
+		_assert_equal(2, packets.size(), "%s: closed drain delivers the remainder" % case[0])
+		_assert_equal(
+			["opened", ["closed", 1000, "gone"]], events, "%s: session terminates" % case[0]
+		)
+	_done()
+
+
+## Issue #343: the optional transport-level buffered-send cap. Default 0
+## disables it. Over the cap, a send drops with ERR_BUSY without touching
+## the engine or failing the session — the same soft backpressure contract
+## the client applies at its layer.
+func _test_websocket_buffered_send_cap_drops_without_failing() -> void:
+	# Cases: [label, cap, buffered bytes].
+	var cases := [
+		["cap disabled", 0, 500],
+		["at the cap", 10, 10],
+		["over the cap", 10, 11],
+	]
+	for case: Array in cases:
+		var transport: SFWebSocketTransportScript = SFWebSocketTransportScript.new()
+		var peer: TestWebSocketPeerAdapterScript = TestWebSocketPeerAdapterScript.new()
+		transport._peer = peer
+		transport.max_buffered_bytes = case[1]
+		peer.buffered_amount = case[2]
+		var failures: Array[String] = []
+		transport.failed.connect(func(_error: String) -> void: failures.append("failed"))
+		peer.ready_state = WebSocketPeer.STATE_OPEN
+		transport._handle_polled_state(WebSocketPeer.STATE_OPEN)
+		var over_cap: bool = case[1] > 0 and case[2] > case[1]
+		var expected: Error = ERR_BUSY if over_cap else OK
+		_assert_equal(expected, transport.send_text("hello"), "%s: text send result" % case[0])
+		var text_sends := 0 if over_cap else 1
+		_assert_equal(text_sends, peer.sent_text.size(), "%s: engine text sends" % case[0])
+		_assert_equal(
+			expected,
+			transport.send_binary(PackedByteArray([1])),
+			"%s: binary send result" % case[0]
+		)
+		var binary_sends := 0 if over_cap else 1
+		_assert_equal(binary_sends, peer.sent_binary.size(), "%s: engine binary sends" % case[0])
+		_assert_equal([], failures, "%s: session stays live" % case[0])
+		peer.buffered_amount = 0
+		_assert_equal(OK, transport.send_text("again"), "%s: send resumes after drain" % case[0])
 	_done()
 
 

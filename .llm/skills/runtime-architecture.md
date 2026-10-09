@@ -153,7 +153,9 @@ clobber generalized into standing rules:
 - `SFWebSocketTransport` wraps `WebSocketPeer` through
   `sf_websocket_peer_adapter.gd` (injectable for tests); emits `opened` once,
   emits `closed` once with code/reason, treats post-open read/send failures as
-  terminal `failed`.
+  terminal `failed`. The drain clamps a non-positive `max_packets_per_poll`
+  to 1 (warning once); the opt-in `max_buffered_bytes` send cap refuses sends
+  with `ERR_BUSY` without failing the session (issue #343).
 - `SFFakeTransport` powers deterministic client tests: injected open/text/
   binary/close/failure, recorded sends, no network or timers.
 

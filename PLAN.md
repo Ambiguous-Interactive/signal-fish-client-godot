@@ -25,9 +25,6 @@ and checks within about one hour. Session cadence:
 
 Ordered most-gameplay-impacting first; each is one session-sized PR.
 
-- [ ] #343 transport residuals for direct `SFWebSocketTransport` users:
-      zero `max_packets_per_poll` livelock clamp; optional send cap
-      (drop-vs-fail is a design call).
 - [ ] #339 mesh relay dedupe: stamp relayed payloads with a per-peer
       sequence id instead of deep-comparing queued SDP per server-error.
 
