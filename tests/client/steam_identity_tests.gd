@@ -71,6 +71,7 @@ func run_all() -> void:
 		_test_handshake_drain_cap,
 		_test_host_lane_requires_authority,
 		_test_authority_less_room_fails_fast,
+		_test_host_republishes_on_authority_grant,
 		_test_advertised_entries_leave_with_their_player,
 		_test_baseline_reconciles_advertised_roster,
 		_test_departed_member_unsaturates_the_fence_set,
@@ -963,10 +964,37 @@ func _test_authority_less_room_fails_fast() -> void:
 	]:
 		steam = FakeSteam.new(PEER_ID)
 		bootstrap = _make_bootstrap(role, PEER_ID, steam)
-		client = _in_room_client()
-		_assert_equal(OK, bootstrap.attach(client), "attach %s" % role)
-		_assert_equal(OK, bootstrap.start(), "start %s" % role)
+		client = _runner.call("_make_authenticated_client")
 		var transport: SFFakeTransportScript = client.transport
+		(
+			transport
+			. inject_server_message(
+				{
+					"type": "RoomJoined",
+					"data": _runner.call("_room_joined_data", {"supports_authority": false}),
+				}
+			)
+		)
+		client.poll()
+		_assert_equal(OK, bootstrap.attach(client), "attach %s" % role)
+		_assert_equal(
+			ERR_UNAVAILABLE,
+			bootstrap.start(),
+			"a room joined before start is refused (%s role)" % role
+		)
+		_assert_equal(false, bootstrap.is_coordinating(), "not coordinating (%s role)" % role)
+		_assert_equal(
+			[], _captured(bootstrap, "coordination_failed"), "no failure signal (%s role)" % role
+		)
+		bootstrap.free()
+		client.free()
+
+		steam = FakeSteam.new(PEER_ID)
+		bootstrap = _make_bootstrap(role, PEER_ID, steam)
+		client = _runner.call("_make_authenticated_client")
+		_assert_equal(OK, bootstrap.attach(client), "attach %s" % role)
+		_assert_equal(OK, bootstrap.start(), "start before the join (%s role)" % role)
+		transport = client.transport
 		(
 			transport
 			. inject_server_message(
@@ -980,11 +1008,62 @@ func _test_authority_less_room_fails_fast() -> void:
 		_assert_equal(
 			["the room has no authority to fence the host lane with"],
 			_captured(bootstrap, "coordination_failed"),
-			"authority-less room refused (%s role)" % role
+			"authority-less baseline refused (%s role)" % role
 		)
 		_assert_equal(false, bootstrap.is_coordinating(), "coordination stopped (%s role)" % role)
 		bootstrap.free()
 		client.free()
+	_done()
+
+
+## Bugbot, PR #349: a grant landing after the session-live publish would
+## leave peers ignoring every host envelope until a later join; the grant
+## itself re-publishes.
+
+
+func _test_host_republishes_on_authority_grant() -> void:
+	var bootstrap: SFSteamIdentityBootstrapScript = _make_bootstrap(
+		SFSteamIdentityBootstrapScript.Role.HOST, HOST_ID
+	)
+	var client: SignalFishClientScript = _runner.call("_make_authenticated_client")
+	_assert_equal(OK, bootstrap.attach(client), "attach")
+	_assert_equal(OK, bootstrap.start(), "start outside a room")
+	_assert_equal(0, _game_data_send_count(client), "nothing published before a room")
+	var player: Dictionary = _runner.call("_player", PLAYER_A, "A")
+	player["is_authority"] = false
+	var transport: SFFakeTransportScript = client.transport
+	(
+		transport
+		. inject_server_message(
+			{
+				"type": "RoomJoined",
+				"data":
+				_runner.call(
+					"_room_joined_data", {"current_players": [player], "is_authority": false}
+				),
+			}
+		)
+	)
+	client.poll()
+	_assert_equal(1, _game_data_send_count(client), "the session-live publish precedes the grant")
+	(
+		transport
+		. inject_server_message(
+			{
+				"type": "AuthorityChanged",
+				"data": {"authority_player": PLAYER_A, "you_are_authority": true},
+			}
+		)
+	)
+	client.poll()
+	_assert_equal(2, _game_data_send_count(client), "the grant re-publishes")
+	_assert_equal(
+		SFSteamIdentityScript.host_envelope(HOST_ID),
+		_last_game_data_payload(client),
+		"the grant publish carries the host id"
+	)
+	bootstrap.free()
+	client.free()
 	_done()
 
 

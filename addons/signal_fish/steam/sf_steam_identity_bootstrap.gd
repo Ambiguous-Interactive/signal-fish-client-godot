@@ -42,8 +42,8 @@ extends Node
 ## coordination (the signals stop with it). Membership enforcement beyond the
 ## accept fence - room leave/rejoin races, the host leaving while peers hold
 ## connections - stays the game's job. The room must have authority enabled:
-## the host lane binds to the room's authority, and a baseline without one
-## fails the coordination up front (issue #338).
+## the host lane binds to the room's authority, and a room without one is
+## refused by [method start] or fails with its first baseline (issue #338).
 
 ## The published host id arrived on the lane. Informational: the bootstrap
 ## dials by itself.
@@ -214,6 +214,11 @@ func start() -> Error:
 				+ " and initialize Steamworks before start()"
 			)
 		)
+		return ERR_UNAVAILABLE
+	# The same authority-less refusal the baseline path applies, for a room
+	# the client joined before start() (Bugbot, PR #349).
+	if _client_is_in_room() and not _client.get_supports_authority():
+		SFLogScript.error("steam bootstrap: the room has no authority to fence the host lane with")
 		return ERR_UNAVAILABLE
 	_local_id = str(steam.call("getSteamID"))
 	if not SFSteamIdentityScript.is_valid_steam_id(_local_id):
@@ -390,8 +395,15 @@ func _on_client_game_data(from_player: String, data: Variant) -> void:
 
 
 func _on_client_authority_changed(_authority_player: String, you_are_authority: bool) -> void:
-	if _coordinating and role == Role.HOST and not you_are_authority:
-		_fail_coordination("authority left the host; the fence has no holder")
+	if not _coordinating or role != Role.HOST:
+		return
+	if you_are_authority:
+		# A grant landing after the session-live publish would leave peers
+		# ignoring every host envelope until a later join re-publishes; the
+		# grant itself re-publishes (Bugbot, PR #349).
+		_publish(SFSteamIdentityScript.HOST_LANE_KEY)
+		return
+	_fail_coordination("authority left the host; the fence has no holder")
 
 
 func _on_client_disconnected(_code: int, _reason: String) -> void:

@@ -39,10 +39,11 @@ bootstrap.start()
 ```
 
 The host publishes its SteamId64 when the room session goes live and
-re-publishes on every later join and whenever a peer's advertisement arrives
-(a peer can start coordinating after the host's publish), so late joiners
-never depend on timing. It also requests the authority: the fence needs a
-stable holder, and authority leaving the host fails the coordination.
+re-publishes on its authority grant, on every later join, and whenever a
+peer's advertisement arrives (a peer can start coordinating after the
+host's publish), so late joiners never depend on timing. It also requests
+the authority: the fence needs a stable holder, and authority leaving the
+host fails the coordination.
 
 Peer:
 
@@ -63,8 +64,8 @@ is uninitialized, so a silent no-op can never look like a fenced session.
 ## The fence
 
 The room must have authority enabled (`supports_authority`): the host lane
-binds to the room's authority, and a baseline without an authority holder
-fails the coordination up front. Steam's rendezvous authenticates the
+binds to the room's authority, and a room without one is refused by `start()`
+or fails with its first baseline. Steam's rendezvous authenticates the
 connecting identity (the claim is Steam's, not the peer's), so the host only
 checks that the connecting id was advertised on the room's lane. An unknown
 requester waits `accept_grace_sec` (default 5 s) for its advertisement and
