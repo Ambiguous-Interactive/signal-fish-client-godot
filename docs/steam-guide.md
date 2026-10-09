@@ -67,14 +67,13 @@ binds to the room's authority, and a baseline without an authority holder
 fails the coordination up front. Steam's rendezvous authenticates the
 connecting identity (the claim is Steam's, not the peer's), so the host only
 checks that the connecting id was advertised on the room's lane. An unknown
-requester waits `accept_grace_sec`
-(default 5 s) for its advertisement and is refused when it never comes; zero
-refuses every requester that was not already advertised. Advertisements
-belong to the member that published them and leave with them, and the host
-id is only consumed from the room's authority, so one hostile member can
-neither redirect the session nor poison the fence set. An id that keeps
-re-requesting without ever being advertised is refused for the rest of the
-session after a few grace windows.
+requester waits `accept_grace_sec` (default 5 s) for its advertisement and
+is refused when it never comes; zero refuses every requester that was not
+already advertised. Advertisements belong to the member that published them
+and leave with them, and the host id is only consumed from the room's
+authority, so one hostile member can neither redirect the session nor poison
+the fence set. An id that keeps re-requesting without ever being advertised
+is refused for the rest of the session after a few grace windows.
 
 ## Channels
 
@@ -110,14 +109,14 @@ the bootstrap channel.
 ## Failure modes
 
 `coordination_failed` fires and the coordination stops when the room
-connection closes, the room session ends, the authority leaves the host, the
-published host id changes mid-session, the host Steam session closes, or a
-dial times out or fails. A dial that never completed and a fence request
-still pending close their Steam sessions; an established session always
-belongs to the game. `stop()` closes every session the bootstrap opened.
-Membership enforcement beyond the accept fence (room leave and
-rejoin races, the host leaving while peers hold connections) stays the
-game's job.
+connection closes, the room session ends, the room has no authority holder,
+the authority leaves the host, the published host id changes mid-session,
+the host Steam session closes, or a dial times out or fails. A dial that
+never completed and a fence request still pending close their Steam
+sessions; an established session always belongs to the game. `stop()` closes
+every session the bootstrap opened. Membership enforcement beyond the accept
+fence (room leave and rejoin races, the host leaving while peers hold
+connections) stays the game's job.
 
 Because the classic P2P API has no session-closed callback, disconnects are
 detected by watching `getP2PSessionState` during `poll()` - best effort, and
