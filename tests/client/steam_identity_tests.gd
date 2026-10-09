@@ -70,6 +70,7 @@ func run_all() -> void:
 		_test_pending_requests_cap,
 		_test_handshake_drain_cap,
 		_test_host_lane_requires_authority,
+		_test_authority_less_room_fails_fast,
 		_test_advertised_entries_leave_with_their_player,
 		_test_baseline_reconciles_advertised_roster,
 		_test_departed_member_unsaturates_the_fence_set,
@@ -944,6 +945,46 @@ func _test_host_lane_requires_authority() -> void:
 	_assert_equal(HOST_ID, bootstrap.get_host_steam_id(), "host id unchanged")
 	bootstrap.free()
 	client.free()
+	_done()
+
+
+## Issue #338: the host lane binds to the room's authority, so a room without
+## an authority holder has no fence - the coordination refuses up front,
+## instead of dying later in a misleading dial timeout.
+
+
+func _test_authority_less_room_fails_fast() -> void:
+	var steam: FakeSteam = null
+	var bootstrap: SFSteamIdentityBootstrapScript = null
+	var client: SignalFishClientScript = null
+	for role: SFSteamIdentityBootstrapScript.Role in [
+		SFSteamIdentityBootstrapScript.Role.PEER,
+		SFSteamIdentityBootstrapScript.Role.HOST,
+	]:
+		steam = FakeSteam.new(PEER_ID)
+		bootstrap = _make_bootstrap(role, PEER_ID, steam)
+		client = _in_room_client()
+		_assert_equal(OK, bootstrap.attach(client), "attach %s" % role)
+		_assert_equal(OK, bootstrap.start(), "start %s" % role)
+		var transport: SFFakeTransportScript = client.transport
+		(
+			transport
+			. inject_server_message(
+				{
+					"type": "RoomJoined",
+					"data": _runner.call("_room_joined_data", {"supports_authority": false}),
+				}
+			)
+		)
+		client.poll()
+		_assert_equal(
+			["the room has no authority to fence the host lane with"],
+			_captured(bootstrap, "coordination_failed"),
+			"authority-less room refused (%s role)" % role
+		)
+		_assert_equal(false, bootstrap.is_coordinating(), "coordination stopped (%s role)" % role)
+		bootstrap.free()
+		client.free()
 	_done()
 
 

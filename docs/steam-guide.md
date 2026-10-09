@@ -62,9 +62,12 @@ is uninitialized, so a silent no-op can never look like a fenced session.
 
 ## The fence
 
-Steam's rendezvous authenticates the connecting identity (the claim is
-Steam's, not the peer's), so the host only checks that the connecting id was
-advertised on the room's lane. An unknown requester waits `accept_grace_sec`
+The room must have authority enabled (`supports_authority`): the host lane
+binds to the room's authority, and a baseline without an authority holder
+fails the coordination up front. Steam's rendezvous authenticates the
+connecting identity (the claim is Steam's, not the peer's), so the host only
+checks that the connecting id was advertised on the room's lane. An unknown
+requester waits `accept_grace_sec`
 (default 5 s) for its advertisement and is refused when it never comes; zero
 refuses every requester that was not already advertised. Advertisements
 belong to the member that published them and leave with them, and the host
@@ -101,6 +104,7 @@ the bootstrap channel.
 | `steam_connect_timeout_sec` | How long the dial may take before failing. Zero waits forever.                                   |
 | `steam_channel`             | The P2P channel the handshake uses. The game owns the rest.                                      |
 | `max_packets_per_poll`      | Handshake packets drained per `poll`. The rest waits for the next poll.                          |
+| `max_bytes_per_poll`        | Handshake bytes drained per `poll` (256 KiB). A larger packet still drains alone.                |
 | `steam`                     | Injectable Steam seam; tests substitute a fake, games leave it null.                             |
 
 ## Failure modes

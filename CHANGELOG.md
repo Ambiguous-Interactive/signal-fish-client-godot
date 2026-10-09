@@ -21,8 +21,9 @@ released version.
   role-scoped SteamId64s on the game-data lane, fences the host's Steam
   accepts behind that exchange, and hands established sessions to the game.
   The lane is fenced too: the host id is only consumed from the room's
-  authority, an advertisement leaves with the member that published it, and
-  hostile requesters burn out instead of holding fence slots forever
+  authority (a room without one fails the coordination up front), an
+  advertisement leaves with the member that published it, and hostile
+  requesters burn out instead of holding fence slots forever
   (issue #338). Requires the GodotSteam GDExtension; the relay-only client
   stays unchanged.
 - Three new v3 signals: `going_away` (graceful server-drain advisory),

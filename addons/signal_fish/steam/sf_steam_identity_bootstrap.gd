@@ -41,7 +41,9 @@ extends Node
 ## Live-session failures surface as [signal coordination_failed] and stop the
 ## coordination (the signals stop with it). Membership enforcement beyond the
 ## accept fence - room leave/rejoin races, the host leaving while peers hold
-## connections - stays the game's job.
+## connections - stays the game's job. The room must have authority enabled:
+## the host lane binds to the room's authority, and a baseline without one
+## fails the coordination up front (issue #338).
 
 ## The published host id arrived on the lane. Informational: the bootstrap
 ## dials by itself.
@@ -53,9 +55,9 @@ signal steam_peer_connected(steam_id: String)
 ## A fenced peer's Steam session went down (best-effort detection).
 signal steam_peer_disconnected(steam_id: String)
 ## A live-session failure stopped the coordination: the room connection
-## closed, the room session ended, the authority left the host, the published
-## host id changed mid-session, the host Steam session closed, or a Steam
-## dial timed out or failed.
+## closed, the room session ended, the room has no authority holder, the
+## authority left the host, the published host id changed mid-session, the
+## host Steam session closed, or a Steam dial timed out or failed.
 signal coordination_failed(reason: String)
 
 ## Who this node coordinates as: the [enum Role.HOST] fences Steam accepts
@@ -110,8 +112,8 @@ var steam_channel: int = 1
 var max_packets_per_poll: int = DEFAULT_MAX_PACKETS_PER_POLL
 ## Handshake bytes drained per [method poll] (issue #338). A packet larger
 ## than the remaining budget still drains alone: classic P2P offers no
-## peek-and-skip, so the per-poll residual is bounded by Steam's fragment
-## size, and the rest of the queue waits for the next poll.
+## peek-and-skip, so the per-poll residual is one packet of whatever size the
+## seam reports, and the rest of the queue waits for the next poll.
 var max_bytes_per_poll: int = DEFAULT_MAX_BYTES_PER_POLL
 ## Duck-typed Steam seam (the GodotSteam singleton surface). Null resolves
 ## [code]Engine.get_singleton("Steam")[/code] at [method start]; tests inject
@@ -321,6 +323,12 @@ func _publish(lane_key: String) -> void:
 
 func _on_client_room_joined(info: SFTypesScript.RoomJoinedInfo) -> void:
 	if _coordinating and _client != null:
+		# The host lane binds to the room's authority (issue #338): a room
+		# without one has no fence for the lane, so the coordination refuses
+		# here instead of dying later in a misleading dial timeout.
+		if not info.supports_authority:
+			_fail_coordination("the room has no authority to fence the host lane with")
+			return
 		_reconcile_advertised_roster(info)
 		_on_session_live()
 
@@ -350,7 +358,8 @@ func _on_client_player_left(player_id: String) -> void:
 
 ## A room baseline is the membership truth: fence entries whose owner is no
 ## longer in the roster leave with it, so a missed player_left cannot leave a
-## stale entry behind (issue #338).
+## stale entry behind (issue #338). Only room players are fenced: an owner
+## that appears in later baselines solely as a spectator leaves too.
 func _reconcile_advertised_roster(info: SFTypesScript.RoomJoinedInfo) -> void:
 	var members := {}
 	for player: SFTypesScript.PlayerInfo in info.current_players:
