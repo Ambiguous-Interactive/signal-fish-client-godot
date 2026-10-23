@@ -222,7 +222,7 @@ Plan callbacks see the reset and relay gameplay succeeds. Game-owned Direct
 socket teardown and forced publication races remain open in #358.
 
 For #356, apply the local-only
-[`spectator_detach_fault.patch`](../tests/fixtures/spectator_detach_fault.patch)
+[`spectator_detach_fault.patch`](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/2c6224599a4460e18bbc00ed0872138d60b43be0/tests/fixtures/spectator_detach_fault.patch)
 to an isolated checkout of server
 `182cb234c7aa601be3c2aad881948b3c5b853aaa`. Build with Rust 1.94.0. The patch
 inserts assertions inside the existing caught local-completion transaction.
