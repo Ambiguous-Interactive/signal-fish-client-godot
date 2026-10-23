@@ -11,8 +11,8 @@
 </p>
 
 A pure-GDScript client for the [Signal Fish](https://github.com/Ambiguous-Interactive/signal-fish-server)
-protocol. Drop the `addons/signal_fish` folder into any Godot 4 project - no C#, no
-GDExtension, no compilation - and it runs everywhere Godot runs, including web exports.
+protocol. Drop the `addons/signal_fish` folder into any Godot 4 project. The relay
+client needs no C#, GDExtension, or compilation and supports web exports.
 Run the open-source server yourself, or try [Signal Fish Cloud](https://signalfish.network)
 hosting (beta).
 
@@ -134,9 +134,9 @@ mesh.attach(client)
 multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
 ```
 
-Godot 4 ships WebRTC on every platform (browser exports use the browser's own),
-so the mesh needs no extra dependencies. The core server-relayed client stays
-zero-native either way.
+Browser exports use browser WebRTC. Native mesh builds need the
+[Godot WebRTC extension](https://github.com/godotengine/webrtc-native).
+The core server-relayed client needs no native extension.
 
 ## Demo
 

@@ -17,6 +17,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
+- [ ] Complete native and web packet-boundary acceptance for replaced mesh
+      peers (#364) and fixed-server spectator detach recovery (#356).
 - [ ] Complete live server acceptance for spectator delivery (#368), Direct
       metadata publication races (#358), and concurrent embedded-host
       transport reports (#367).
