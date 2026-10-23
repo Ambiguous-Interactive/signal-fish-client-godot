@@ -97,9 +97,14 @@ down even when its peer connection stays connected. A new plan generation
 can create a replacement link. Applications still drive their
 `MultiplayerAPI` or poll the multiplayer peer to deliver gameplay packets.
 
-These channel names and negotiated ids are Godot's multiplayer contract.
-Compatibility with clients that create their own channel layout requires a
-separate interop check.
+Use the same Godot channel layout at both ends. The server's
+[browser](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/182cb234c7aa601be3c2aad881948b3c5b853aaa/clients/browser/src/page/engine.ts)
+and
+[native](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/182cb234c7aa601be3c2aad881948b3c5b853aaa/clients/native/src/engine.rs)
+reference engines create two in-band channels, `reliable` and `unreliable`.
+Their responders adopt remote channel announcements. Godot's negotiated
+channels do not send these announcements. Use server relay for these
+pairings; direct mesh interoperability with those engines is unverified.
 
 ## Demo
 
@@ -117,6 +122,23 @@ preset. The default Web preset excludes tests.
 The drill creates two real loopback peers, sends gameplay packets, closes
 each required channel while the peer connection stays connected, and checks
 transport reports before and after multiplayer polling. Each new generation
-must restore gameplay, and a Relay plan must remove old links. Success prints
-`WEBRTC_CHANNEL_DRILL_PASS`. This drill uses local signaling and does not
-validate a live Signal Fish server or cross-client channel compatibility.
+must restore gameplay, and a Relay plan must remove old links.
+
+The drill also queues real packets before fresh `PlayerJoined` and
+`PlayerReconnected` epochs. It checks packets visible through the multiplayer
+peer and packets waiting in the data channel before multiplayer polling.
+Fresh membership removes both queues from the mesh. Duplicate epochs keep
+the live peer. Delayed old-generation work stays fenced until a new plan
+restores gameplay. Packets already read by the application remain under
+application control.
+
+Godot 4.3 passed these controls on Linux arm64 with webrtc-native
+1.2.2-stable and in Chrome 154. A reference-style responder reached SCTP
+connection with zero in-band channel announcements from the Godot offerer.
+This checks the channel-layout boundary; it does not run either full
+reference client. Native-to-browser and cross-client gameplay remain
+unverified.
+
+Success prints `WEBRTC_CHANNEL_DRILL_PASS`. This drill uses local signaling;
+live Signal Fish server delivery and remote-channel resource limits require
+separate acceptance.
