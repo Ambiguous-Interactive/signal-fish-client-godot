@@ -18,8 +18,15 @@ themes.
    runs through Docker. No host shell, Node, or PowerShell is required.
    Windows, macOS, and Linux hosts need Docker in Linux container mode.
    Both ARM64 and x86-64 use native images and tool binaries.
-3. Open this repository in VS Code.
-4. When prompted, choose **Reopen in Container**. (Or run the
+3. On a WSLg host, open local VS Code **Preferences: Open User Settings
+   (JSON)** and set `"dev.containers.mountWaylandSocket": false` before
+   opening the container. This headless environment needs no display socket.
+   The setting applies to all dev containers opened by this VS Code profile.
+   It has application scope; workspace settings and
+   `customizations.vscode.settings` cannot apply it during container creation.
+   See [the upstream restart issue](https://github.com/microsoft/vscode-remote-release/issues/10094).
+4. Open this repository in VS Code.
+5. When prompted, choose **Reopen in Container**. (Or run the
    `Dev Containers: Reopen in Container` command.)
 
 First build pulls the base image, installs system libs, downloads the pinned
@@ -275,6 +282,16 @@ local one is what the shared file ships).
 
 ## Troubleshooting
 
+- **Restart fails with `error mounting ... /tmp/vscode-wayland-*.sock`:**
+  VS Code added a host display socket when the container was created. WSL
+  or Docker Desktop can invalidate that socket between sessions. Set
+  `"dev.containers.mountWaylandSocket": false` in local VS Code User Settings,
+  then run **Dev Containers: Rebuild Container** from the local folder.
+  Back up files stored only inside the container before rebuilding. The
+  workspace bind mount and named volumes persist. A restart keeps the old
+  mount; changing `post-start.py` cannot fix an OCI mount failure because
+  Docker fails before running container commands. Rebuilding from cached
+  layers is sufficient.
 - **Container fails to create with `env file ... not found`:** the
   create-time guard should have created `.env.local` from `.env.example`
   through Docker; if the guard itself failed (missing example file), create it manually with

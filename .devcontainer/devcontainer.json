@@ -2,6 +2,9 @@
 // Reference: https://aka.ms/devcontainer.json
 {
   "name": "Signal Fish Godot Client",
+  // Before opening on a WSLg host, set dev.containers.mountWaylandSocket
+  // to false in local VS Code User Settings. See README.md. This application
+  // setting cannot be applied through customizations.vscode.settings.
   "build": {
     "dockerfile": "Dockerfile",
     "context": ".",
