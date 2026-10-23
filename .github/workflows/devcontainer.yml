@@ -37,9 +37,16 @@ jobs:
                   SF_TEST_DOCKER: "1"
               run: python3 .devcontainer/test_portability.py
             - name: Build and open container
-              run: npx --yes @devcontainers/cli@0.89.0 up --workspace-folder .
-            - name: Verify installed tools and restart
+              id: open
               run: |
+                  npx --yes @devcontainers/cli@0.89.0 up --workspace-folder . > "$RUNNER_TEMP/devcontainer-up.json"
+                  node -e 'const fs = require("fs"); const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (result.outcome !== "success" || !result.containerId) process.exit(1); fs.appendFileSync(process.env.GITHUB_OUTPUT, `container_id=${result.containerId}\n`);' "$RUNNER_TEMP/devcontainer-up.json"
+            - name: Verify installed tools and restart
+              env:
+                  CONTAINER_ID: ${{ steps.open.outputs.container_id }}
+              run: |
+                  docker stop "$CONTAINER_ID"
+                  docker start "$CONTAINER_ID"
                   npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \
                     python3 .devcontainer/install-agent-tools.py --verify
                   npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \

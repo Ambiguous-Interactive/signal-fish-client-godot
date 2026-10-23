@@ -300,6 +300,47 @@ class Portability(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("SF_TEST_DOCKER") == "1", "set SF_TEST_DOCKER=1")
 class DockerBehavior(unittest.TestCase):
+    def test_restart_without_display_socket(self) -> None:
+        docker = shutil.which("docker")
+        if docker is None:
+            self.fail("SF_TEST_DOCKER requires Docker on PATH")
+        with tempfile.TemporaryDirectory(prefix="sf display restart ") as folder:
+            display = Path(folder) / "wayland-0"
+            display.write_text("temporary display endpoint", encoding="utf-8")
+            for mount_display in (True, False):
+                command = [docker, "create", "--network=none"]
+                if mount_display:
+                    command.extend(["--mount", f"type=bind,source={display},target=/tmp/wayland-0"])
+                command.extend(["python:3.12-slim-bookworm", "python3", "--version"])
+                created = subprocess.run(
+                    command, check=True, capture_output=True, text=True, timeout=30
+                )
+                container = created.stdout.strip()
+                try:
+                    subprocess.run(
+                        [docker, "start", "--attach", container],
+                        check=True,
+                        capture_output=True,
+                        timeout=30,
+                    )
+                    display.unlink(missing_ok=True)
+                    restarted = subprocess.run(
+                        [docker, "start", "--attach", container],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    if mount_display:
+                        self.assertNotEqual(restarted.returncode, 0)
+                        self.assertIn("mount", restarted.stderr.lower())
+                    else:
+                        self.assertEqual(restarted.returncode, 0, restarted.stderr)
+                        self.assertIn("Python 3.12", restarted.stdout + restarted.stderr)
+                finally:
+                    subprocess.run(
+                        [docker, "rm", "--force", container], check=True, capture_output=True
+                    )
+
     def test_bootstrap_and_offline_restart(self) -> None:
         with tempfile.TemporaryDirectory(prefix="sf container ' spaces ") as folder:
             workspace = Path(folder)
