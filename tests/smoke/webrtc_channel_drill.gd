@@ -91,7 +91,7 @@ func _check_membership_boundary(kind: String, queued_in_multiplayer: bool) -> bo
 	if _meshes[1].get_peer_count() != 1 or receiver.get_peer(remote_id) != old_peer:
 		_failures.append(kind + ": duplicate epoch replaced a live peer")
 		return false
-	_drive_multiplayer = queued_in_multiplayer
+	_drive_multiplayer = false
 	if not await _queue_old_packet(sender, receiver, channel, queued_in_multiplayer):
 		return false
 	_announce_membership(kind, 2)
