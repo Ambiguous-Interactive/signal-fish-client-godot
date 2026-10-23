@@ -17,6 +17,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
+- [ ] Complete live server acceptance for spectator delivery (#368), Direct
+      metadata publication races (#358), and concurrent embedded-host
+      transport reports (#367).
+
 Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:
 `.llm/skills/architectural-planning.md`.

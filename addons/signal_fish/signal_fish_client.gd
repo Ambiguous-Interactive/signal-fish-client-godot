@@ -467,14 +467,14 @@ func join_room(params: JoinRoomParams) -> Error:
 
 
 func leave_room() -> Error:
-	var guard := _guard_session_send("leave_room")
+	var guard := _guard_player_send("leave_room")
 	if guard != OK:
 		return guard
 	return _send_envelope(SFMessagesScript.leave_room(), "leave_room")
 
 
 func send_game_data(data: Variant) -> Error:
-	var guard := _guard_session_send("send_game_data")
+	var guard := _guard_player_send("send_game_data")
 	if guard != OK:
 		return guard
 	return _send_envelope(SFMessagesScript.game_data(data), "send_game_data")
@@ -490,7 +490,7 @@ func send_game_data(data: Variant) -> Error:
 ## downgraded the requested format (see [signal protocol_info]), the
 ## effective negotiation rules.
 func send_game_data_binary(bytes: PackedByteArray) -> Error:
-	var guard := _guard_session_send("send_game_data_binary")
+	var guard := _guard_player_send("send_game_data_binary")
 	if guard != OK:
 		return guard
 	if bytes.is_empty():
@@ -547,7 +547,7 @@ func send_game_data_binary(bytes: PackedByteArray) -> Error:
 
 
 func set_ready() -> Error:
-	var guard := _guard_session_send("set_ready")
+	var guard := _guard_player_send("set_ready")
 	if guard != OK:
 		return guard
 	return _send_envelope(SFMessagesScript.player_ready(), "set_ready")
@@ -559,21 +559,21 @@ func set_ready() -> Error:
 ## authority); failures surface through [signal server_error] with
 ## [code]GameStartNotReady[/code] / [code]GameStartForbidden[/code].
 func start_game() -> Error:
-	var guard := _guard_session_send("start_game")
+	var guard := _guard_player_send("start_game")
 	if guard != OK:
 		return guard
 	return _send_envelope(SFMessagesScript.start_game(), "start_game")
 
 
 func request_authority(become_authority: bool) -> Error:
-	var guard := _guard_session_send("request_authority")
+	var guard := _guard_player_send("request_authority")
 	if guard != OK:
 		return guard
 	return _send_envelope(SFMessagesScript.authority_request(become_authority), "request_authority")
 
 
 func provide_connection_info(info: SFTypesScript.ConnectionInfo) -> Error:
-	var guard := _guard_session_send("provide_connection_info")
+	var guard := _guard_player_send("provide_connection_info")
 	if guard != OK:
 		return guard
 	if info == null:
@@ -622,7 +622,7 @@ func leave_spectator() -> Error:
 ## while the peer waits (issue #330, rust-client parity). [param
 ## signal_payload] is forwarded verbatim.
 func send_signal(to_peer: String, generation: String, signal_payload: Variant) -> Error:
-	var guard := _guard_session_send("send_signal")
+	var guard := _guard_player_send("send_signal")
 	if guard != OK:
 		return guard
 	if _refuse_pre_v3("send_signal"):
@@ -643,7 +643,7 @@ func send_signal(to_peer: String, generation: String, signal_payload: Variant) -
 ## [method send_signal]. [param transport_kind] takes a
 ## [enum SFSessionTypes.TransportKind] value.
 func send_transport_status(transport_kind: int, is_up: bool) -> Error:
-	var guard := _guard_session_send("send_transport_status")
+	var guard := _guard_player_send("send_transport_status")
 	if guard != OK:
 		return guard
 	if _refuse_pre_v3("send_transport_status"):
@@ -1254,6 +1254,14 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			_emit_protocol_error("client has no handler for decoded event %s" % event.type_name)
 
 
+func _guard_player_send(action: String) -> Error:
+	var guard := _guard_session_send(action)
+	if guard == OK and _session_state == SessionState.SPECTATING:
+		_emit_protocol_error("%s is unavailable while spectating" % action)
+		return ERR_UNAUTHORIZED
+	return guard
+
+
 func _guard_session_send(action: String) -> Error:
 	if _session_state in [SessionState.UNAUTHENTICATED, SessionState.AUTHENTICATING]:
 		_emit_protocol_error("%s requires an authenticated session" % action)
@@ -1324,6 +1332,8 @@ func _apply_room_info(info: SFTypesScript.RoomJoinedInfo) -> void:
 
 
 func _apply_spectator_info(info: SFTypesScript.SpectatorJoinedInfo) -> void:
+	_player_id = ""
+	_supports_authority = false
 	_room_id = info.room_id
 	_room_code = info.room_code
 	_lobby_state = info.lobby_state

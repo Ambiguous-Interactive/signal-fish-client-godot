@@ -117,6 +117,7 @@ func attach(client: SignalFishClientScript) -> Error:
 	_client = client
 	_attached = true
 	client.room_joined.connect(_on_client_room_joined)
+	client.spectator_joined.connect(_on_client_spectator_joined)
 	client.session_plan.connect(_on_client_session_plan)
 	client.signal_received.connect(_on_client_signal_received)
 	client.new_peer.connect(_on_client_new_peer)
@@ -134,6 +135,7 @@ func detach() -> void:
 	if not _client_is_live():
 		return
 	_client.room_joined.disconnect(_on_client_room_joined)
+	_client.spectator_joined.disconnect(_on_client_spectator_joined)
 	_client.session_plan.disconnect(_on_client_session_plan)
 	_client.signal_received.disconnect(_on_client_signal_received)
 	_client.new_peer.disconnect(_on_client_new_peer)
@@ -235,12 +237,18 @@ func _on_client_room_joined(info: SFTypesScript.RoomJoinedInfo) -> void:
 	_ice_servers = info.ice_servers.duplicate()
 
 
+func _on_client_spectator_joined(_info: SFTypesScript.SpectatorJoinedInfo) -> void:
+	_reset_mesh()
+
+
 func _on_client_session_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 	# A plan is room-scoped (issue #120): a plan landing before any room
 	# baseline is off-contract server input, and applying it would open peer
 	# connections keyed on an empty local player id. The baseline re-arms
 	# the mesh, so dropping the stray plan loses nothing.
 	if _client == null or _client.get_room_id().is_empty():
+		return
+	if _client.get_session_state() == SignalFishClientScript.SessionState.SPECTATING:
 		return
 	_apply_plan(plan)
 

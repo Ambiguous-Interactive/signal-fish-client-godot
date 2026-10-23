@@ -35,6 +35,8 @@ func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_v3_config_advertises_capabilities,
 		_test_v3_events_surface,
+		_test_peer_transport_reports_keep_wire_order,
+		_test_peer_transport_reports_after_reconnect,
 		_test_v3_advisory_events_surface,
 		_test_v3_send_methods,
 		_test_signal_gate_tracks_plan_identity,
@@ -258,6 +260,117 @@ func _test_v3_events_surface() -> void:
 	_assert_equal(2, plans.size(), "relay reset plan surfaced")
 	var relay_plan: SFSessionTypesScript.SessionPlanInfo = plans[1]
 	_assert_equal(0, relay_plan.peers.size(), "relay reset plan has no peers")
+	client.free()
+	_done()
+
+
+func _test_peer_transport_reports_keep_wire_order() -> void:
+	for transport_case: Array in [
+		["webrtc", SFSessionTypesScript.TransportKind.WEBRTC],
+		["direct", SFSessionTypesScript.TransportKind.DIRECT],
+		["relay", SFSessionTypesScript.TransportKind.RELAY],
+	]:
+		for states: Array in [[true, false], [false, true], [true, true, false, false]]:
+			var client: SignalFishClientScript = _runner.call("_make_in_room_client")
+			var fake: SFFakeTransportScript = client.transport
+			var errors := _track_protocol_errors(client)
+			var trace: Array[Array] = []
+			client.peer_transport_status.connect(
+				func(peer_id: String, kind: int, connected: bool) -> void:
+					trace.append(["status", peer_id, kind, connected])
+			)
+			client.player_joined.connect(
+				func(player: SFTypesScript.PlayerInfo) -> void: trace.append(["joined", player.id])
+			)
+			client.player_reconnected.connect(
+				func(peer_id: String) -> void: trace.append(["reconnected", peer_id])
+			)
+			client.player_left.connect(
+				func(peer_id: String) -> void: trace.append(["left", peer_id])
+			)
+			var expected: Array[Array] = []
+			fake.inject_server_message(
+				{"type": "PlayerJoined", "data": {"player": ClientFixtures.player(PLAYER_B, "Bob")}}
+			)
+			expected.append(["joined", PLAYER_B])
+			for index: int in states.size():
+				if index == 1:
+					fake.inject_server_message(
+						{"type": "PlayerReconnected", "data": {"player_id": PLAYER_B}}
+					)
+					expected.append(["reconnected", PLAYER_B])
+				(
+					fake
+					. inject_server_message(
+						{
+							"type": "PeerTransportStatus",
+							"data":
+							{
+								"peer_id": PLAYER_B,
+								"transport": transport_case[0],
+								"connected": states[index]
+							},
+						}
+					)
+				)
+				expected.append(["status", PLAYER_B, transport_case[1], states[index]])
+			fake.inject_server_message({"type": "PlayerLeft", "data": {"player_id": PLAYER_B}})
+			expected.append(["left", PLAYER_B])
+			_assert_equal(
+				expected, trace, "%s reports retain wire order %s" % [transport_case[0], states]
+			)
+			_assert_equal(1, client.get_players().size(), "status reports preserve roster updates")
+			_assert_equal(
+				ClientFixtures.ROOM_ID, client.get_room_id(), "reports preserve room membership"
+			)
+			_assert_equal([], errors, "ordered reports and membership events decode cleanly")
+			client.free()
+	_done()
+
+
+func _test_peer_transport_reports_after_reconnect() -> void:
+	var client: SignalFishClientScript = _runner.call("_make_reconnect_dial_client")
+	var fake: SFFakeTransportScript = client.transport
+	var errors := _track_protocol_errors(client)
+	var trace: Array[Array] = []
+	client.reconnected.connect(
+		func(
+			_info: SFTypesScript.RoomJoinedInfo, missed: Array[SFTypesScript.DecodedEvent]
+		) -> void:
+			for event: SFTypesScript.DecodedEvent in missed:
+				trace.append(["replay", event.signal_name, event.args])
+	)
+	client.peer_transport_status.connect(
+		func(peer_id: String, kind: int, connected: bool) -> void:
+			trace.append(["live", peer_id, kind, connected])
+	)
+	var report := {
+		"type": "PeerTransportStatus",
+		"data": {"peer_id": PLAYER_B, "transport": "webrtc", "connected": true},
+	}
+	fake.inject_server_message(
+		{"type": "Authenticated", "data": ClientFixtures.authenticated_data()}
+	)
+	var baseline := ClientFixtures.room_joined_data()
+	baseline["missed_events"] = [report]
+	fake.inject_server_message({"type": "Reconnected", "data": baseline})
+	fake.inject_server_message(report)
+	report["data"]["connected"] = false
+	fake.inject_server_message(report)
+	var expected_kind := SFSessionTypesScript.TransportKind.WEBRTC
+	_assert_equal(
+		[
+			["replay", &"peer_transport_status", [PLAYER_B, expected_kind, true]],
+			["live", PLAYER_B, expected_kind, true],
+			["live", PLAYER_B, expected_kind, false],
+		],
+		trace,
+		"replay stays consumer-owned and live transport reports retain order after reconnect"
+	)
+	_assert_equal(
+		ClientFixtures.ROOM_ID, client.get_room_id(), "reports preserve restored membership"
+	)
+	_assert_equal([], errors, "reconnected transport reports decode cleanly")
 	client.free()
 	_done()
 

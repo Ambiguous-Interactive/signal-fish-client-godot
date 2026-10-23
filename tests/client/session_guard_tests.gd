@@ -6,6 +6,8 @@ extends RefCounted
 ## (issue #100). Receives the client runner so config/transport fakes stay in
 ## one place.
 
+const PLAYER_A := ClientFixtures.PLAYER_A
+
 const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
 const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
@@ -30,6 +32,8 @@ static func run(runner: Object) -> Array[String]:
 
 func run_all() -> void:
 	var cases: Array[Callable] = [
+		_test_spectator_baseline_ends_player_role,
+		_test_spectator_live_room_events,
 		_test_roomless_lobby_state_change_is_inert,
 		_test_cross_flow_left_events_are_inert,
 		_test_pre_auth_baselines_are_refused,
@@ -373,3 +377,117 @@ func _assert_string_contains(haystack: String, needle: String, label: String) ->
 		return true
 	_failures.append("%s: expected %s to contain %s" % [label, haystack, needle])
 	return false
+
+
+func _test_spectator_baseline_ends_player_role() -> void:
+	var client := _in_room_client()
+	var fake: SFFakeTransportScript = client.transport
+	fake.inject_server_message(
+		{"type": "SpectatorJoined", "data": ClientFixtures.spectator_joined_data()}
+	)
+	_assert_equal("", client.get_player_id(), "spectator baseline clears former player id")
+	_assert_equal(false, client.get_supports_authority(), "spectator has no authority slot")
+	var sent_before := fake.sent_text.size()
+	for row: Array in _runner.call("_send_method_cases"):
+		if (
+			row[0]
+			not in [
+				"leave_room",
+				"send_game_data",
+				"send_game_data_binary",
+				"set_ready",
+				"start_game",
+				"request_authority",
+				"provide_connection_info",
+				"send_signal",
+				"send_transport_status",
+			]
+		):
+			continue
+		var action: Callable = row[1]
+		_assert_equal(ERR_UNAUTHORIZED, action.call(client), "%s refuses spectator role" % row[0])
+	_assert_equal(sent_before, fake.sent_text.size(), "spectator commands send no text")
+	_assert_equal([], fake.sent_binary, "spectator commands send no binary")
+	_assert_equal(OK, client.ping(), "spectator can ping")
+	_assert_equal(OK, client.leave_spectator(), "spectator can leave")
+	fake.inject_server_message({"type": "RoomJoined", "data": ClientFixtures.room_joined_data()})
+	_assert_equal(PLAYER_A, client.get_player_id(), "later player baseline restores seat")
+	_assert_equal(OK, client.send_game_data({"turn": 1}), "later player can send")
+	client.free()
+	_done()
+
+
+func _test_spectator_live_room_events() -> void:
+	# Server #1139 routes public room events after the spectator baseline (#368).
+	var client := _authenticated_client()
+	var fake: SFFakeTransportScript = client.transport
+	var events: Array[String] = []
+	var errors: Array[String] = _runner.call("_track_protocol_errors", client)
+	client.spectator_joined.connect(
+		func(_info: SFTypesScript.SpectatorJoinedInfo) -> void:
+			_assert_equal(1, client.get_players().size(), "snapshot installed before signal")
+			events.append("baseline")
+	)
+	client.player_joined.connect(
+		func(_player_info: SFTypesScript.PlayerInfo) -> void:
+			_assert_equal(2, client.get_players().size(), "live roster installed before signal")
+			events.append("player")
+	)
+	client.authority_changed.connect(
+		func(authority: String, _you: bool) -> void:
+			_assert_equal(
+				authority, client.get_authority_player(), "authority cached before signal"
+			)
+			events.append("authority")
+	)
+	client.lobby_state_changed.connect(
+		func(state: int, _ready: PackedStringArray, _all_ready: bool) -> void:
+			_assert_equal(state, client.get_lobby_state(), "lobby cached before signal")
+			events.append("lobby")
+	)
+	client.game_starting.connect(
+		func(_peers: Array[SFTypesScript.PeerConnectionInfo]) -> void: events.append("starting")
+	)
+	client.game_data_received.connect(
+		func(sender: String, data: Variant) -> void:
+			_assert_equal(PLAYER_A, sender, "live sender preserved")
+			_assert_equal({"turn": 7.0}, data, "live gameplay preserved")
+			events.append("data")
+	)
+	var newcomer := "10000000-0000-0000-0000-000000000003"
+	for frame: Dictionary in [
+		{"type": "SpectatorJoined", "data": ClientFixtures.spectator_joined_data()},
+		{"type": "PlayerJoined", "data": {"player": ClientFixtures.player(newcomer, "Carol")}},
+		{
+			"type": "AuthorityChanged",
+			"data": {"authority_player": newcomer, "you_are_authority": false}
+		},
+		{
+			"type": "LobbyStateChanged",
+			"data":
+			{"lobby_state": "finalized", "ready_players": [PLAYER_A, newcomer], "all_ready": true}
+		},
+		{"type": "GameStarting", "data": {"peer_connections": [ClientFixtures.peer_connection()]}},
+		{"type": "GameData", "data": {"from_player": PLAYER_A, "data": {"turn": 7}}},
+		{"type": "PlayerReconnected", "data": {"player_id": newcomer}},
+		{"type": "PlayerLeft", "data": {"player_id": newcomer}},
+	]:
+		fake.inject_server_message(frame)
+	_assert_equal(
+		["baseline", "player", "authority", "lobby", "starting", "data"],
+		events,
+		"public event wire order"
+	)
+	_assert_equal([], errors, "live spectator events decode")
+	_assert_equal(1, client.get_players().size(), "live departure updates spectator roster")
+	_assert_equal("", client.get_authority_player(), "departed authority cleared")
+	_assert_equal(
+		SignalFishClientScript.SessionState.SPECTATING,
+		client.get_session_state(),
+		"public lifecycle preserves spectator role"
+	)
+	_assert_equal(
+		ERR_UNAUTHORIZED, client.send_game_data({}), "live data does not grant send permission"
+	)
+	client.free()
+	_done()

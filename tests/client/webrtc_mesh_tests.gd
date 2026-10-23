@@ -16,6 +16,7 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
+const SessionPlanAcceptanceTests = preload("res://tests/client/session_plan_acceptance_tests.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
@@ -72,6 +73,7 @@ func run_all() -> void:
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
+	_failures.append_array(SessionPlanAcceptanceTests.run(self))
 
 
 func _test_engine_api_parity() -> void:
