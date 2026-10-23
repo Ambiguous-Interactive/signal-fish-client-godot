@@ -1101,8 +1101,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# Off-flow RoomLeft must preserve the retained rejoin identity (#106).
 			if _session_state in _PLAYER_ROOM_STATES:
 				_clear_room_state()
-				# Leaving the room ends its rejoin identity; a later drop must
-				# not silently rejoin a room the consumer left.
+				# Leaving ends the identity used for automatic rejoin.
 				_capture_reconnect_context("", "", "")
 				_session_state = SessionState.AUTHENTICATED
 			room_left.emit()
@@ -1127,7 +1126,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			game_data_binary_received.emit(event.args[0], event.args[1], event.args[2])
 		&"authority_changed":
 			var authority_player: String = event.args[0]
-			_apply_authority_flags(authority_player)
+			_apply_player_flags("is_authority", PackedStringArray([authority_player]))
 			authority_changed.emit(authority_player, event.args[1])
 		&"authority_response":
 			authority_response.emit(event.args[0], event.args[1], event.args[2])
@@ -1136,6 +1135,8 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			# Lobby updates preserve the spectator role.
 			if not _room_id.is_empty():
 				_lobby_state = event.args[0]
+				var ready_players: PackedStringArray = event.args[1]
+				_apply_player_flags("is_ready", ready_players)
 				if _session_state != SessionState.SPECTATING:
 					_session_state = _session_state_for_lobby(_lobby_state)
 			lobby_state_changed.emit(event.args[0], event.args[1], event.args[2])
@@ -1304,8 +1305,7 @@ func _apply_room_info(info: SFTypesScript.RoomJoinedInfo) -> void:
 	_player_id = info.player_id
 	_lobby_state = info.lobby_state
 	_supports_authority = info.supports_authority
-	# Duplicate the rosters so later presence updates never mutate the payload
-	# objects already handed to consumers.
+	# Keep later roster changes out of previously emitted payloads.
 	_players = info.current_players.duplicate()
 	_bound_roster(_players, "current_players")
 	_player_epochs.clear()
@@ -1413,14 +1413,17 @@ func _remove_player(player_id: String) -> void:
 			return
 
 
-func _apply_authority_flags(authority_player: String) -> void:
+func _apply_player_flags(field: String, player_ids: PackedStringArray) -> void:
+	var selected := {}
+	for player_id: String in player_ids:
+		selected[player_id] = true
 	for index: int in _players.size():
 		var player: SFTypesScript.PlayerInfo = _players[index]
-		var flag: bool = player.id == authority_player
-		if player.is_authority == flag:
+		var flag: bool = selected.has(player.id)
+		if player.get(field) == flag:
 			continue
 		var raw: Dictionary = player.raw.duplicate(true)
-		raw["is_authority"] = flag
+		raw[field] = flag
 		_players[index] = SFTypesScript.PlayerInfo.new(raw)
 
 

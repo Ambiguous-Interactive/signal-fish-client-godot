@@ -38,6 +38,8 @@ released version.
 
 ### Fixed
 
+- Player readiness in cached rosters now updates before lobby signals (#376).
+
 - Spectator joins clear the previous player identity and mesh. Player
   commands now return `ERR_UNAUTHORIZED` while viewing (#368).
 - A non-positive `SFWebSocketTransport.max_packets_per_poll` no longer

@@ -87,6 +87,7 @@ func _run() -> void:
 		_test_authenticated_args_and_send_surface,
 		_test_duplicate_authenticated_is_once_per_dial,
 		_test_room_lifecycle_state_machine,
+		_test_readiness_roster_updates_before_signal,
 		_test_spectators_keep_lobby_updates_and_rosters_stay_stable,
 		_test_connected_handler_close_does_not_crash,
 		_test_presence_and_data_events,
@@ -575,6 +576,51 @@ func _test_room_lifecycle_state_machine() -> void:
 	_assert_equal("", client.get_player_id(), "player id cleared on leave")
 	_assert_equal([], client.get_players(), "roster cleared on leave")
 	client.free()
+	_done()
+
+
+func _test_readiness_roster_updates_before_signal() -> void:
+	for spectator: bool in [false, true]:
+		var client := _make_authenticated_client()
+		var fake: SFFakeTransportScript = client.transport
+		var baseline := _room_joined_data()
+		if spectator:
+			baseline = ClientFixtures.spectator_joined_data()
+		baseline["current_players"] = [_player(PLAYER_A, "A"), _player(PLAYER_B, "B")]
+		fake.inject_server_message(
+			{"type": "SpectatorJoined" if spectator else "RoomJoined", "data": baseline}
+		)
+		var original := client.get_players()
+		client.lobby_state_changed.connect(
+			func(_state: int, ready: PackedStringArray, _all: bool) -> void:
+				for player: SFTypesScript.PlayerInfo in client.get_players():
+					_assert_equal(
+						ready.has(player.id), player.is_ready, "ready before lobby signal"
+					)
+					_assert_equal(
+						player.is_ready, player.raw["is_ready"], "ready raw matches field"
+					)
+		)
+		for ready: Array in [
+			[PLAYER_A], [PLAYER_B], [PLAYER_A, PLAYER_B], [PLAYER_A, PLAYER_A], [], []
+		]:
+			fake.inject_server_message(
+				{
+					"type": "LobbyStateChanged",
+					"data":
+					{"lobby_state": "lobby", "ready_players": ready, "all_ready": ready.size() == 2}
+				}
+			)
+			for player: SFTypesScript.PlayerInfo in original:
+				_assert_equal(false, player.is_ready, "prior roster snapshot stays stable")
+		_assert_equal(2, client.get_players().size(), "ready list keeps roster membership")
+		if spectator:
+			_assert_equal(
+				SignalFishClientScript.SessionState.SPECTATING,
+				client.get_session_state(),
+				"ready retains spectator role"
+			)
+		client.free()
 	_done()
 
 

@@ -76,6 +76,9 @@ func get_spectators() -> Array                  # Array[SFTypes.SpectatorInfo]
 func get_buffered_amount() -> int
 ```
 
+Cached player readiness and authority flags update before their lobby and
+authority signals. Earlier roster snapshots keep their previous values.
+
 Cached rosters (players, spectators) and mesh peers stay capped at 256
 entries (`SFTypeUtils.MAX_TRACKED_PEERS`). Excess entries from a hostile
 or misbehaving relay are dropped: rosters surface one `protocol_error`

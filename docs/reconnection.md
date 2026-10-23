@@ -10,9 +10,12 @@ plus every event you missed.
 
 ## Reconnection tokens
 
-The server mints a `reconnection_token` in the `RoomJoined` payload and
-hands out a fresh one in every `Reconnected` payload. The latest token is
-the only valid one. The value surfaces on `RoomJoinedInfo.reconnection_token`.
+On v3, the server mints a `reconnection_token` in the `RoomJoined` payload
+and hands out a fresh one in every `Reconnected` payload. The latest token
+is the only valid one. The value surfaces on
+`RoomJoinedInfo.reconnection_token`. The measured server `182cb234` omits
+this field on v2. Check that a credential is available before directed
+reconnect; a successful v2 join alone does not provide one.
 
 ## Directed reconnect
 
