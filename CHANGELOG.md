@@ -38,6 +38,8 @@ released version.
 
 ### Fixed
 
+- Spectator joins clear the previous player identity and mesh. Player
+  commands now return `ERR_UNAUTHORIZED` while viewing (#368).
 - A non-positive `SFWebSocketTransport.max_packets_per_poll` no longer
   silently disables the drain forever. Direct transport users now get a
   one-per-instance warning and a clamp to one packet per poll, so queued

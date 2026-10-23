@@ -75,6 +75,18 @@ static func spectator(id: String, display_name: String) -> Dictionary:
 	return {"id": id, "name": display_name, "connected_at": "2026-05-29T00:00:01Z"}
 
 
+static func spectator_joined_data() -> Dictionary:
+	return {
+		"room_id": ROOM_ID,
+		"room_code": "ABC123",
+		"spectator_id": PLAYER_B,
+		"game_name": "reef-rally",
+		"current_players": [player(PLAYER_A, "Alice")],
+		"current_spectators": [],
+		"lobby_state": "waiting",
+	}
+
+
 static func peer_connection() -> Dictionary:
 	return {
 		"player_id": PLAYER_A,

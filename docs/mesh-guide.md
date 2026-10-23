@@ -43,11 +43,13 @@ multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
   `RoomJoined`/`Reconnected` (`RoomJoinedInfo.ice_servers`).
 - It rebuilds retained peers on a generation or role change, and drops
   peers absent from the latest plan.
-- It tears down on `room_joined` (a fresh baseline), `room_left`,
+- It tears down on `room_joined` (a fresh baseline), `spectator_joined`, `room_left`,
   `disconnected`, `connection_failed`, `reconnected`, and node exit. A
   replayed plan inside `missed_events` cannot revive an old mesh.
   `player_left` only drops the leaving peer; the rest of the mesh
   survives.
+- Spectators never open mesh links. Public `game_starting` events leave
+  viewing on the relay.
 - It calls `send_transport_status` on the client only at the aggregate
   0<->1 connected-peer boundaries.
 - A signaling relay refused by backpressure or rate-limited by the server
@@ -55,6 +57,20 @@ multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
   each) instead of being lost, so congestion cannot stall negotiation
   silently.
 - Peer ids derive deterministically from player UUIDs.
+
+## Direct plan updates
+
+Handle each `session_plan` signal when your game owns Direct sockets.
+A host can publish a replacement endpoint without a membership change.
+Stop using the previous endpoint and apply the new host, endpoint, and
+generation together. A Relay plan clears the endpoint and peer obligations;
+switch gameplay to the server relay. `SFWebRTCMesh` drops its links on
+Direct and Relay plans. It does not manage game-owned Direct sockets.
+
+`peer_transport_status` emits reports in received wire order, including
+duplicates. Consumers that cache status should replace it on each report.
+Replay reports arrive in `reconnected.missed_events` for the consumer to
+apply; they do not also emit as live status signals.
 
 ## Related signals
 

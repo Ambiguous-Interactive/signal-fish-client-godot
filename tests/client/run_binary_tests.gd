@@ -47,6 +47,7 @@ func _run() -> void:
 		_test_rkyv_pass_through,
 		_test_opaque_format_negotiation,
 		_test_server_format_downgrade,
+		_test_spectator_binary_delivery,
 	]
 	CompletionGuard.self_check(self, _failures)
 	CompletionGuard.drive(self, cases, _failures)
@@ -490,6 +491,74 @@ func _test_server_format_downgrade() -> void:
 	_assert_equal(0, closing_events.size(), "late binary frame surfaces nothing")
 	_assert_equal(0, closing_errors.size(), "late binary frame emits no error")
 	closing.free()
+	_done()
+
+
+func _test_spectator_binary_delivery() -> void:
+	for row: Array in [
+		[2, "message_pack", false],
+		[2, "message_pack", true],
+		[3, "message_pack", false],
+		[3, "message_pack", true],
+		[3, "rkyv", false],
+		[3, "protobuf", false],
+	]:
+		var version: int = row[0]
+		var format_token: String = row[1]
+		var decode: bool = row[2]
+		var label := "spectator v%d %s decode=%s" % [version, format_token, decode]
+		var config := _make_config()
+		config.protocol_version = version
+		config.game_data_format = format_token
+		config.decode_msgpack_payloads = decode
+		var client := _make_in_room_client_with(config)
+		var fake: SFFakeTransportScript = client.transport
+		var errors := _track_protocol_errors(client)
+		var info := _protocol_info()
+		info["protocol_version"] = version
+		info["capabilities"] = ["spectator_relay"] if version == 3 else []
+		info["game_data_formats"] = ["json", "message_pack", "rkyv", "protobuf"]
+		fake.inject_server_message({"type": "ProtocolInfo", "data": info})
+		fake.inject_server_message(
+			{"type": "SpectatorJoined", "data": ClientFixtures.spectator_joined_data()}
+		)
+		var events: Array[Array] = []
+		client.game_data_received.connect(
+			func(sender: String, data: Variant) -> void: events.append(["data", sender, data])
+		)
+		client.game_data_binary_received.connect(
+			func(sender: String, encoding: int, bytes: PackedByteArray) -> void:
+				events.append(["binary", sender, encoding, bytes])
+		)
+		var payload := PackedByteArray([0x81, 0xA1, 0x68, 0x2A])
+		var frame := _binary_frame(PLAYER_B, format_token, payload)
+		if version == 3:
+			frame = _v3_binary_frame(PLAYER_B, format_token, payload)
+		fake.inject_binary(frame)
+		var expected: Array[Array] = []
+		if decode:
+			expected.append(["data", PLAYER_B, {"h": 42}])
+		else:
+			expected.append(
+				[
+					"binary",
+					PLAYER_B,
+					SFTypesScript.GAME_DATA_ENCODING_FROM_STRING[format_token],
+					payload
+				]
+			)
+		_assert_equal(expected, events, label + " delivery order and sender")
+		_assert_equal([], errors, label + " decodes without error")
+		_assert_equal(
+			SignalFishClientScript.SessionState.SPECTATING,
+			client.get_session_state(),
+			label + " preserves role"
+		)
+		_assert_equal(
+			ERR_UNAUTHORIZED, client.send_game_data_binary(payload), label + " cannot send"
+		)
+		_assert_equal([], fake.sent_binary, label + " sends no binary frame")
+		client.free()
 	_done()
 
 

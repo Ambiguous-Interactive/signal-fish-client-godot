@@ -108,6 +108,11 @@ Room commands require an authenticated session. Sending one before
 authentication emits `protocol_error`, returns `ERR_UNAUTHORIZED`, and
 sends nothing.
 
+While `SPECTATING`, player commands (`leave_room`, game-data sends, ready,
+start, authority, connection info, signaling, and transport reports) return
+`ERR_UNAUTHORIZED` with `protocol_error` and send nothing. Use
+`leave_spectator` to end viewing. Ping and join requests stay available.
+
 `send_signal` and `send_transport_status` also require a negotiated v3
 connection. `send_signal` further requires the latest `session_plan`:
 the generation must equal the current plan's. No signal can be sent
@@ -115,6 +120,31 @@ before a plan arrives, after the room or dial ends, or after a fresh
 baseline until the next plan. Each refusal emits `protocol_error`,
 returns an `Error`, and sends nothing - a dropped frame would only
 surface as a generic server error while the peer waits.
+
+## Live spectators
+
+On protocol v3, check `info.capabilities.has("spectator_relay")` in your
+`protocol_info` handler before enabling live viewing. Older servers still
+support spectator snapshots. A successful join or v3 negotiation alone
+does not prove live delivery. Protocol v2 needs a verified server build or
+deployment contract; otherwise live support is unknown.
+
+The server change is [server PR #1139](https://github.com/Ambiguous-Interactive/signal-fish-server/pull/1139).
+After `spectator_joined`, public room events update the cached roster,
+lobby, and authority before their signals run. `game_starting` preserves
+the spectator role. Spectators receive relayed JSON and negotiated binary
+game data through the usual signals, with no `session_plan` required.
+MessagePack decode selects `game_data_received`; raw MessagePack and opaque
+v3 `rkyv`/`protobuf` use `game_data_binary_received`. JSON negotiation uses
+text GameData frames. Joining as a spectator clears any previous player ID
+and mesh.
+
+Games must relay their viewing state to spectators. Direct and WebRTC
+traffic is not mirrored. A late join supplies room metadata; the game must
+send its own application snapshot. Spectators have no seated reconnect
+token: join again after a lost connection. Live fixed-server acceptance,
+including delivery-class and leave/rejoin races, remains tracked in
+[#368](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/368).
 
 ## State machines
 
