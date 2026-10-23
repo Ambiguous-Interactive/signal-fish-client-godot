@@ -129,9 +129,38 @@ Godot 4.3 on Linux arm64 passed these live checks:
   still arrives. Duplicate and non-host metadata keep the current generation;
   Pong replies provide processing barriers on both connections.
 
-These checks cover normal live WebSocket histories. Concurrent server
-publication, delivery-class pressure, queued leave/room-switch races,
-embedded-host transport report concurrency and injected server detach
-failures remain separate acceptance work. This drill is opt-in and is
-outside `all`. The [mesh drill](mesh-guide.md#live-channel-drill)
-checks native and browser WebRTC packet boundaries separately.
+Additional drills use the same server setup:
+
+```bash
+godot --headless --path . --script tests/smoke/run_room_transition_acceptance.gd
+godot --headless --path . --script tests/smoke/run_live_transport_reports.gd
+```
+
+The room transition drill queues 80 real receive packets before dispatch,
+then pipelines spectator leave and join on one connection. It drains one
+packet per poll and checks terminal/baseline order, payload order and sender,
+room identity, new roster, and fresh gameplay after rejoining the first room.
+It covers v2/v3 JSON and raw MessagePack. It also overlaps Direct host endpoint
+updates with another player's join and leave. Current players converge on one
+fresh endpoint and generation; each observed plan uses the current roster.
+These overlapping socket requests do not force internal server race barriers.
+
+The transport report drill uses a v3 reporter, a relay-only v3 observer, and a
+v2 observer. It checks both state-transition orders, duplicate suppression,
+self/v2 exclusion, and fresh report state after reconnect. Gameplay on the
+same connection provides a processing barrier and confirms relay delivery.
+It covers serial WebSocket dispatch. Concurrent embedded-host dispatch remains
+open in [#367](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/367).
+The drill exposed the peer roster limitation in
+[#374](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/374).
+
+All three drills passed on Godot 4.3 Linux arm64 against the pinned server
+above. They accept the same optional base URL. Each phase has an eight-second
+deadline; the room transition watchdog is two minutes and the transport report
+watchdog is one minute. A failed phase exits nonzero.
+
+Server queue saturation, latest/volatile delivery, forced concurrent
+publication, reconnect/authority spectator histories and injected server detach
+failures remain separate acceptance work. These drills are opt-in and outside
+`all`. The [mesh drill](mesh-guide.md#live-channel-drill) checks native and
+browser WebRTC packet boundaries separately.
