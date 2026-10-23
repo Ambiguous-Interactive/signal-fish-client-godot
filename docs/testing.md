@@ -159,8 +159,42 @@ above. They accept the same optional base URL. Each phase has an eight-second
 deadline; the room transition watchdog is two minutes and the transport report
 watchdog is one minute. A failed phase exits nonzero.
 
+The recovery drill adds spectator authority, readiness, detach replay, and
+Direct reconnect histories:
+
+```bash
+godot --headless --path . --script tests/smoke/run_live_recovery_acceptance.gd
+```
+
+Against the same pinned server, Godot 4.3 Linux arm64 passed four spectator
+cases: v2/v3 observers with JSON/raw MessagePack and a v3 reconnecting player.
+Observers receive authority release/transfer, current cached readiness and
+peer return notifications while retaining the spectator role. After a second
+player disconnect, a viewer leaves. The viewer receives one
+terminal reply with room identity and reason, clears its session and retained
+identity, and connected players remove it from their roster. The returning
+player receives one decoded detach event in replay with the same identity,
+reason and terminal roster. Replay emits no live detach signal. A fresh
+spectator join receives the restored roster and gameplay from the returning
+player. The pinned server pre-issues reconnect credentials only on v3; these
+cases do not claim v2 directed reconnect coverage.
+
+Two further reconnect cycles overlap a Direct host endpoint update with peer
+reconnect. Both clients converge on the new endpoint and shared generation.
+Each fresh plan follows the reconnect baseline, the current credential rotates,
+and relay gameplay resumes. These are overlapping socket requests; they do not
+force an internal publication race. The incumbent roster limitation in #374
+remains open.
+
+The recovery drill uses the same optional base URL, eight-second waits and
+two-minute watchdog. Success prints `LIVE_SERVER_ACCEPTANCE_PASS`; any failed
+phase exits nonzero. It passed against the pinned server above. Ordinary
+voluntary detach and replay are covered; injected detach recovery, correlated
+recovery results, authoritative removal and server-drain ordering still need
+live fixtures for #356.
+
 Server queue saturation, latest/volatile delivery, forced concurrent
-publication, reconnect/authority spectator histories and injected server detach
-failures remain separate acceptance work. These drills are opt-in and outside
+publication and injected server detach failures remain separate acceptance work.
+These drills are opt-in and outside
 `all`. The [mesh drill](mesh-guide.md#live-channel-drill) checks native and
 browser WebRTC packet boundaries separately.

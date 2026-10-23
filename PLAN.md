@@ -17,7 +17,7 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Complete fixed-server spectator detach recovery (#356).
+- [ ] Complete injected spectator detach recovery and drain fixtures (#356).
 - [ ] Complete mesh channel interoperability with the reference engines (#355).
 - [ ] Complete spectator server delivery-pressure and concurrent publication (#368),
       forced Direct metadata publication races (#358), and concurrent
