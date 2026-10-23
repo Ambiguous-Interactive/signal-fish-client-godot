@@ -70,3 +70,68 @@ regression fails CI anywhere in the repo. The small set of statements that
 are not yet fully typed carry an explicit `@warning_ignore` marker naming
 exactly what they trigger: grep for `@warning_ignore` in `addons/` for the
 live list.
+
+## Live server acceptance (opt-in)
+
+`tests/smoke/run_live_server_acceptance.gd` drives real Godot clients through
+`SFWebSocketTransport`. Use an isolated local server. The drill creates rooms
+and changes their membership. It requires a server with `spectator_relay`
+and Direct endpoint refresh support.
+
+The measured server source is
+[`182cb234`](https://github.com/Ambiguous-Interactive/signal-fish-server/tree/182cb234c7aa601be3c2aad881948b3c5b853aaa).
+Build it with its pinned Rust toolchain:
+
+```bash
+git clone https://github.com/Ambiguous-Interactive/signal-fish-server.git
+cd signal-fish-server
+git checkout 182cb234c7aa601be3c2aad881948b3c5b853aaa
+cargo build --locked --bin signal-fish-server
+cp config.example.json config.json
+python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path("config.json")
+config = json.loads(path.read_text())
+config["session"]["default_topology"] = "host"
+config["session"]["enable_webrtc"] = False
+config["protocol"]["enable_rkyv_game_data"] = True
+config["protocol"]["enable_protobuf_game_data"] = True
+config["rate_limit"]["max_room_creations"] = 1000
+config["rate_limit"]["max_join_attempts"] = 1000
+path.write_text(json.dumps(config))
+PY
+./target/debug/signal-fish-server
+```
+
+From this client repository, in a second terminal:
+
+```bash
+godot --headless --path . --script tests/smoke/run_live_server_acceptance.gd
+```
+
+An optional argument after `--` selects the server base URL, for example
+`-- ws://127.0.0.1:3536`. Success prints `LIVE_SERVER_ACCEPTANCE_PASS` and
+exits zero. Each wait has an eight-second deadline and the drill has a
+two-minute watchdog. A failed phase exits nonzero.
+
+Godot 4.3 on Linux arm64 passed these live checks:
+
+- Spectator baseline state is installed before its signal. Live player
+  join/leave, lobby readiness, GameStarting and gameplay preserve spectator
+  role. Voluntary leave clears the room and returns to authenticated state.
+- Gameplay reaches spectators with the player's sender ID: v2/v3 JSON,
+  MessagePack raw bytes and decoded values, and opt-in v3 rkyv/protobuf bytes.
+  Raw binary signals carry the negotiated encoding.
+- Two Direct clients receive each fresh shared plan after a host endpoint
+  change, endpoint loss with a successor, and loss of the final endpoint.
+  The Relay reset clears host, endpoint, peers and ICE state. Relay gameplay
+  still arrives. Duplicate and non-host metadata keep the current generation;
+  Pong replies provide processing barriers on both connections.
+
+These checks cover normal live WebSocket histories. Concurrent server
+publication, delivery-class pressure, queued leave/room-switch races,
+embedded-host transport report concurrency and injected server detach
+failures remain separate acceptance work. This drill is opt-in and is
+outside `all`. The [mesh drill](mesh-guide.md#live-channel-drill)
+checks native and browser WebRTC packet boundaries separately.
