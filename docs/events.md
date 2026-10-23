@@ -92,6 +92,17 @@ new_spectator_joined(spectator, current_spectators, reason)
 spectator_disconnected(spectator_id, reason, current_spectators)
 ```
 
+A recovered server detach uses the same spectator events. `spectator_left`
+clears the viewing state before its signal; room members observe the removal
+through `spectator_disconnected`. A correlated `RoomOperationResult` remains
+informational. It preserves the operation ID and payload without changing roles.
+
+A reconnected player receives missed spectator removals in `missed_events`.
+The application replays those entries; they do not emit live signals again.
+During shutdown, queued terminal frames surface before `disconnected` when the
+engine retains them. Native Godot can discard data received with the close
+handshake in one poll. Server drain can also suppress detach notifications.
+
 ## Generic server errors
 
 ```gdscript

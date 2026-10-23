@@ -159,6 +159,7 @@ var _room_code := ""
 var _supports_authority := false
 var _lobby_state: int = SFTypesScript.LobbyState.UNKNOWN
 var _players: Array[SFTypesScript.PlayerInfo] = []
+var _player_epochs: Dictionary = {}
 var _spectators: Array[SFTypesScript.SpectatorInfo] = []
 # Credentials for the in-flight reconnect dial (sent on transport open instead
 # of Authenticate). Empty auth_token = the next open authenticates normally.
@@ -1085,15 +1086,10 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			if not is_authenticated():
 				_emit_protocol_error("RoomJoined before an authenticated session on this dial")
 				return
-			# Every RoomJoined is an authoritative fresh baseline: consumers
-			# (the WebRTC mesh) rebuild on re-emission, so unlike
-			# Authenticated/Reconnected/ProtocolInfo there is no duplicate
-			# latch here (issue #107, closed as intended behavior).
+			# Every RoomJoined replaces the baseline, including duplicates (#107).
 			var info: SFTypesScript.RoomJoinedInfo = event.args[0]
 			_apply_room_info(info)
-			# Rust clears plan state on every baseline (`set_room`): a stale
-			# generation from the previous baseline must not keep the gate
-			# armed across an off-contract re-baseline (issue #330).
+			# Rust `set_room` invalidates the prior plan's send gate (#330).
 			_session_plan_seen = false
 			_session_plan_generation = ""
 			_session_state = _session_state_for_lobby(_lobby_state)
@@ -1102,10 +1098,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"room_join_failed":
 			room_join_failed.emit(event.args[0], event.args[1])
 		&"room_left":
-			# Room-scoped (issue #106, #100 precedent): a `RoomLeft` for a
-			# session that holds no player room baseline is off-contract and
-			# must stay informational — wiping state or the retained
-			# reconnection identity here would silently disable auto-rejoin.
+			# Off-flow RoomLeft must preserve the retained rejoin identity (#106).
 			if _session_state in _PLAYER_ROOM_STATES:
 				_clear_room_state()
 				# Leaving the room ends its rejoin identity; a later drop must
@@ -1116,12 +1109,17 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"player_joined":
 			var player: SFTypesScript.PlayerInfo = event.args[0]
 			_upsert_player(player)
+			_remember_player_epoch(player.id, player.raw.get("epoch"))
 			player_joined.emit(player)
 		&"player_left":
 			var player_id: String = event.args[0]
 			_remove_player(player_id)
+			_player_epochs.erase(player_id)
 			player_left.emit(player_id)
 		&"player_reconnected":
+			var data: Dictionary = event.raw.get("data", {})
+			var player_id: String = event.args[0]
+			_remember_player_epoch(player_id, data.get("epoch"))
 			player_reconnected.emit(event.args[0])
 		&"game_data_received":
 			game_data_received.emit(event.args[0], event.args[1])
@@ -1134,11 +1132,8 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"authority_response":
 			authority_response.emit(event.args[0], event.args[1], event.args[2])
 		&"lobby_state_changed":
-			# A lobby update is room-scoped (issue #100): without a room
-			# baseline an off-contract frame must not touch cached state —
-			# an in-room session state with no baseline would defeat the
-			# pre-auth send guard. Spectators receive lobby updates too; only
-			# players map lobby state onto in-room session states.
+			# Require a room baseline to preserve pre-auth send guards (#100).
+			# Lobby updates preserve the spectator role.
 			if not _room_id.is_empty():
 				_lobby_state = event.args[0]
 				if _session_state != SessionState.SPECTATING:
@@ -1173,12 +1168,8 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 		&"room_operation_result":
 			room_operation_result.emit(event.args[0])
 		&"reconnected":
-			# Once-per-dial: a duplicate `Reconnected` on any dial is hostile-
-			# server input (issue #71, #24 precedent) and must stay fully
-			# silent — consumers replay `missed_events`, so a second emission
-			# would double-apply game events. Upstream only sends `Reconnected`
-			# for a directed handshake, so pre-handshake (issue #82) or
-			# normal-auth events are equally hostile.
+			# Duplicates would replay game events twice (#71, #24).
+			# Only a directed reconnect handshake permits this baseline (#82).
 			if _reconnected_seen:
 				return
 			if not _reconnect_handshake_sent or not is_authenticated():
@@ -1191,10 +1182,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			_reconnected_seen = true
 			var info: SFTypesScript.RoomJoinedInfo = event.args[0]
 			_apply_room_info(info)
-			# The pre-drop plan identity is dead on a re-dial, and replayed
-			# plans surface through [signal reconnected] only (never the
-			# session_plan dispatch), so sends stay gated until the next live
-			# plan — the same posture as the mesh teardown.
+			# Replayed plans stay informational; sends require a fresh live plan.
 			_session_plan_seen = false
 			_session_plan_generation = ""
 			_session_state = _session_state_for_lobby(_lobby_state)
@@ -1290,10 +1278,7 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 			)
 		)
 		return ERR_BUSY
-	# The encode boundary is the last-resort JSON-shape net: a payload that
-	# passed builder validation but cannot be serialized losslessly (an
-	# engine-only Variant deep inside ConnectionInfo.custom.data, a
-	# non-finite float) must surface here, never as an empty text frame.
+	# Reject unrepresentable nested Variants before sending an empty frame.
 	var wire := SFMessagesScript.encode(envelope)
 	if wire.is_empty():
 		_emit_protocol_error("%s: payload is not losslessly JSON-representable" % action)
@@ -1323,11 +1308,12 @@ func _apply_room_info(info: SFTypesScript.RoomJoinedInfo) -> void:
 	# objects already handed to consumers.
 	_players = info.current_players.duplicate()
 	_bound_roster(_players, "current_players")
+	_player_epochs.clear()
+	for player: SFTypesScript.PlayerInfo in _players:
+		_remember_player_epoch(player.id, player.raw.get("epoch"))
 	_spectators = info.current_spectators.duplicate()
 	_bound_roster(_spectators, "current_spectators")
-	# Retain the freshest reconnection identity for opt-in auto-reconnect.
-	# Every authoritative baseline replaces it; a baseline without a token
-	# clears it (upstream client_core.rs baseline handling).
+	# Rust client_core.rs replaces reconnect identity on every baseline.
 	_capture_reconnect_context(info.player_id, info.room_id, info.reconnection_token)
 
 
@@ -1339,6 +1325,9 @@ func _apply_spectator_info(info: SFTypesScript.SpectatorJoinedInfo) -> void:
 	_lobby_state = info.lobby_state
 	_players = info.current_players.duplicate()
 	_bound_roster(_players, "current_players")
+	_player_epochs.clear()
+	for player: SFTypesScript.PlayerInfo in _players:
+		_remember_player_epoch(player.id, player.raw.get("epoch"))
 	_spectators = info.current_spectators.duplicate()
 	_bound_roster(_spectators, "current_spectators")
 	# The protocol has no spectator reconnect: drop any retained identity.
@@ -1352,6 +1341,7 @@ func _clear_room_state() -> void:
 	_lobby_state = SFTypesScript.LobbyState.UNKNOWN
 	_supports_authority = false
 	_players = []
+	_player_epochs.clear()
 	_spectators = []
 	# Plans are room-scoped (issue #120): the plan gate dies with the room.
 	_session_plan_seen = false
@@ -1359,10 +1349,7 @@ func _clear_room_state() -> void:
 
 
 func _bound_roster(roster: Array, label: String) -> void:
-	# Joins and leaves stop at the first id match, so a repeated baseline id
-	# would strand stale entries (and pinned authority) forever. Keep the
-	# first occurrence of each id and refuse the rest loudly (#92, #273
-	# precedent).
+	# Duplicate ids would strand roster entries after a leave (#92, #273).
 	var seen := {}
 	var write := 0
 	for index: int in roster.size():
@@ -1388,6 +1375,22 @@ func _bound_roster(roster: Array, label: String) -> void:
 	_emit_protocol_error(
 		"%s exceeds %d entries; dropped %d" % [label, SFTypeUtils.MAX_TRACKED_PEERS, dropped]
 	)
+
+
+func _get_player_epoch(player_id: String) -> int:
+	return _player_epochs.get(player_id, -1)
+
+
+func _remember_player_epoch(player_id: String, value: Variant) -> void:
+	for player: SFTypesScript.PlayerInfo in _players:
+		if player.id != player_id:
+			continue
+		if SFTypeUtils.is_integral_number(value) and value >= 0 and value <= 4294967295:
+			var numeric_epoch: float = value
+			_player_epochs[player_id] = maxi(_get_player_epoch(player_id), int(numeric_epoch))
+		else:
+			_player_epochs.erase(player_id)
+		return
 
 
 func _upsert_player(player: SFTypesScript.PlayerInfo) -> void:
@@ -1455,10 +1458,7 @@ func _session_state_for_lobby(lobby_state: int) -> SessionState:
 
 
 func _reset_session() -> void:
-	# The heartbeat clock belongs to one link alone: a fresh session (a dial,
-	# a failure cascade) must not inherit a pending deadline from the old one,
-	# and a synchronous redial can skip the idle ticks that would otherwise
-	# reset it (issues #121, #341).
+	# Synchronous redials must not inherit prior heartbeat deadlines (#121, #341).
 	_reset_heartbeat()
 	_session_state = SessionState.UNAUTHENTICATED
 	_clear_room_state()
@@ -1607,10 +1607,7 @@ func _teardown_transport() -> void:
 		transport.packet_received.disconnect(_on_transport_packet)
 		transport.closed.disconnect(_on_transport_closed)
 		transport.failed.disconnect(_on_transport_failed)
-		# Signals are already unwired, so this close cannot re-enter a
-		# cascade: a torn-down attempt must never leak a live socket (the
-		# server would otherwise pin the session until its own timeout).
-		# Peer reclamation may prevent the close handshake from flushing (issue #24).
+		# Close after unwiring; reclamation may prevent handshake flushing (#24).
 		transport.close(1000, "client teardown")
 	transport = null
 

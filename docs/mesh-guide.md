@@ -48,6 +48,9 @@ multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
   replayed plan inside `missed_events` cannot revive an old mesh.
   `player_left` only drops the leaving peer; the rest of the mesh
   survives.
+- A fresh `player_joined` or `player_reconnected` epoch closes that peer's
+  old link and waits for a new plan generation. Duplicate known epochs keep
+  the link. Missing epochs cause the link to close and wait for a new plan.
 - Spectators never open mesh links. Public `game_starting` events leave
   viewing on the relay.
 - It calls `send_transport_status` on the client only at the aggregate
@@ -83,12 +86,37 @@ apply; they do not also emit as live status signals.
 
 ## Platform note
 
-Godot 4 ships WebRTC on every platform through the built-in libdatachannel
-module. Browser exports use the browser's own WebRTC. The mesh needs no
-extra dependencies or GDExtensions.
+Native Godot exports need a WebRTC GDExtension such as
+[webrtc-native](https://github.com/godotengine/webrtc-native). Browser exports
+use browser WebRTC.
+
+Godot's mesh creates three negotiated channels: `reliable` (id 1), `ordered`
+(id 2), and `unreliable` (id 3). Transport reports require all three channels
+to be open. Closing any required channel reports the last connected link
+down even when its peer connection stays connected. A new plan generation
+can create a replacement link. Applications still drive their
+`MultiplayerAPI` or poll the multiplayer peer to deliver gameplay packets.
+
+These channel names and negotiated ids are Godot's multiplayer contract.
+Compatibility with clients that create their own channel layout requires a
+separate interop check.
 
 ## Demo
 
 `demo/p2p.tscn` is the working example. It connects with a v3 config,
 attaches the mesh, and chats over mesh RPCs once a session plan lands. Run
 two instances joining the same room to see the peer connection form.
+
+## Live channel drill
+
+Run `godot --path . tests/smoke/webrtc_channel_drill.tscn` with a native
+WebRTC extension installed. For Web, export that scene as the main scene
+with `tests/smoke/webrtc_channel_drill.gd` included in a temporary export
+preset. The default Web preset excludes tests.
+
+The drill creates two real loopback peers, sends gameplay packets, closes
+each required channel while the peer connection stays connected, and checks
+transport reports before and after multiplayer polling. Each new generation
+must restore gameplay, and a Relay plan must remove old links. Success prints
+`WEBRTC_CHANNEL_DRILL_PASS`. This drill uses local signaling and does not
+validate a live Signal Fish server or cross-client channel compatibility.

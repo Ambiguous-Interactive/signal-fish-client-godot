@@ -1,8 +1,8 @@
 # Signal Fish Godot Client
 
 > Pure-GDScript Signal Fish protocol client for Godot 4. Drop-in addon: no C#,
-> no GDExtension, nothing to compile. Runs everywhere Godot runs, including
-> web exports.
+> no compilation or native extension for relay gameplay, including web exports.
+> Native WebRTC mesh builds need the Godot WebRTC extension.
 
 ## Core Context
 

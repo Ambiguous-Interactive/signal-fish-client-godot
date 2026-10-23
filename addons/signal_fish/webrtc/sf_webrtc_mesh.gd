@@ -40,17 +40,19 @@ extends Node
 ##   [signal connection_failed], [signal reconnected], and
 ##   [code]_exit_tree[/code]; a replayed plan inside [code]missed_events
 ##   [/code] can never revive it. [signal player_left] drops only the leaving
-##   peer — the rest of the mesh survives.
+##   peer — the rest of the mesh survives. Fresh [signal player_joined] or
+##   [signal player_reconnected] epochs retire that peer until a new plan
+##   generation arrives. Duplicate known epochs keep the existing link; an
+##   announcement without an epoch retires it conservatively.
 ##
 ## Peer ids: [method uuid_to_peer_id] maps each player UUID to a deterministic
 ## positive integer (FNV-1a), so every mesh member derives the same
 ## [MultiplayerAPI] ids without extra negotiation.
 ##
-## Platform notes: Godot 4 ships WebRTC on every platform (built-in
-## libdatachannel module); browser exports use the browser's own WebRTC. Data
-## channels come from [code]WebRTCMultiplayerPeer.create_mesh[/code] defaults
-## (one reliable ordered channel); relayed ICE candidates carry the candidate
-## string only, which matches that single default channel.
+## Platform notes: native exports need a WebRTC GDExtension; browser exports
+## use browser WebRTC. [WebRTCMultiplayerPeer] creates three negotiated data
+## channels: reliable, ordered, and unreliable. A peer counts as connected
+## only while every required channel is open.
 
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
@@ -99,6 +101,8 @@ var _attached := false
 var _plan: SFSessionTypesScript.SessionPlanInfo = null
 var _ice_servers: Array[SFSessionTypesScript.IceServerInfo] = []
 var _peers: Dictionary = {}
+var _retired_generations: Dictionary = {}
+var _known_peers: Dictionary = {}
 var _mp_peer: Object = null
 var _reported_connected := false
 var _status_retry_due_msec := 0
@@ -122,6 +126,8 @@ func attach(client: SignalFishClientScript) -> Error:
 	client.signal_received.connect(_on_client_signal_received)
 	client.new_peer.connect(_on_client_new_peer)
 	client.player_left.connect(_on_client_player_left)
+	client.player_joined.connect(_on_client_player_joined)
+	client.player_reconnected.connect(_on_client_player_reconnected)
 	client.room_left.connect(_on_client_room_left)
 	client.disconnected.connect(_on_client_disconnected)
 	client.connection_failed.connect(_on_client_connection_failed)
@@ -140,6 +146,8 @@ func detach() -> void:
 	_client.signal_received.disconnect(_on_client_signal_received)
 	_client.new_peer.disconnect(_on_client_new_peer)
 	_client.player_left.disconnect(_on_client_player_left)
+	_client.player_joined.disconnect(_on_client_player_joined)
+	_client.player_reconnected.disconnect(_on_client_player_reconnected)
 	_client.room_left.disconnect(_on_client_room_left)
 	_client.disconnected.disconnect(_on_client_disconnected)
 	_client.connection_failed.disconnect(_on_client_connection_failed)
@@ -291,6 +299,38 @@ func _on_client_new_peer(peer_id: String, you_initiate: bool) -> void:
 	_open_peer(peer_id, you_initiate)
 
 
+func _on_client_player_joined(player: SFTypesScript.PlayerInfo) -> void:
+	_retire_prior_incarnation(player.id)
+
+
+func _on_client_player_reconnected(player_id: String) -> void:
+	_retire_prior_incarnation(player_id)
+
+
+func _retire_prior_incarnation(player_id: String) -> void:
+	if _plan == null:
+		return
+	var entry: _MeshPeer = _peers.get(player_id)
+	if entry == null:
+		if _known_peers.has(player_id):
+			_retired_generations[player_id] = _plan.generation
+			return
+		for peer: SFSessionTypesScript.SessionPeerInfo in _plan.peers:
+			if peer.player_id != player_id:
+				continue
+			if _peers.size() + _retired_generations.size() < SFTypeUtils.MAX_TRACKED_PEERS:
+				_retired_generations[player_id] = _plan.generation
+			return
+		return
+	var epoch := _client._get_player_epoch(player_id)
+	if epoch != -1 and entry.epoch != -1 and epoch <= entry.epoch:
+		return
+	# Server #937: membership can precede its replacement plan. Retire the
+	# old physical link now and fence additive NewPeer until a fresh plan.
+	_retired_generations[player_id] = entry.generation
+	_drop_peer(player_id)
+
+
 func _on_client_player_left(player_id: String) -> void:
 	_drop_peer(player_id)
 
@@ -319,7 +359,12 @@ func _on_client_reconnected(
 
 
 func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
+	if _plan == null or _plan.generation != plan.generation:
+		_known_peers.clear()
 	_plan = plan
+	for uuid: String in _retired_generations.keys():
+		if _retired_generations[uuid] != plan.generation:
+			_retired_generations.erase(uuid)
 	_ice_servers = plan.ice_servers.duplicate()
 	if plan.transport != SFSessionTypesScript.TransportKind.WEBRTC:
 		# Only a webrtc plan carries peer connections for this mesh. A relay
@@ -362,6 +407,10 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 func _open_peer(uuid: String, initiate: bool) -> void:
 	if _client == null or uuid.is_empty() or uuid == _client.get_player_id():
 		return
+	if _retired_generations.has(uuid):
+		return
+	if not _known_peers.has(uuid) and _known_peers.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
+		return
 	var connection: Object = _make_peer_connection()
 	if connection == null:
 		return
@@ -380,6 +429,7 @@ func _open_peer(uuid: String, initiate: bool) -> void:
 	entry.connection = connection
 	entry.initiate = initiate
 	entry.generation = _plan.generation if _plan != null else ""
+	entry.epoch = _client._get_player_epoch(uuid)
 	error = multiplayer_peer.call("add_peer", connection, entry.peer_id)
 	if error != OK:
 		SFLogScript.error("mesh: add_peer refused (%d)" % error)
@@ -398,6 +448,7 @@ func _open_peer(uuid: String, initiate: bool) -> void:
 	var ice_created: Signal = connection.get("ice_candidate_created")
 	ice_created.connect(entry.ice_cb)
 	_peers[uuid] = entry
+	_known_peers[uuid] = true
 	if initiate:
 		connection.call("create_offer")
 
@@ -407,7 +458,7 @@ func _drop_peer(uuid: String) -> void:
 	if entry == null:
 		return
 	_peers.erase(uuid)
-	if _mp_peer != null:
+	if _mp_peer != null and _mp_peer.call("has_peer", entry.peer_id):
 		_mp_peer.call("remove_peer", entry.peer_id)
 	if entry.session_cb.is_valid():
 		var session_created: Signal = entry.connection.get("session_description_created")
@@ -422,6 +473,8 @@ func _drop_peer(uuid: String) -> void:
 
 func _reset_mesh() -> void:
 	_plan = null
+	_retired_generations.clear()
+	_known_peers.clear()
 	_ice_servers = []
 	for uuid: String in _peers.keys():
 		_drop_peer(uuid)
@@ -470,10 +523,25 @@ func _update_transport_status() -> void:
 
 
 func _count_connected_peers() -> int:
+	if _mp_peer == null:
+		return 0
 	var connected := 0
 	for uuid: String in _peers:
 		var entry: _MeshPeer = _peers[uuid]
-		if entry.connection.call("get_connection_state") == WebRTCPeerConnection.STATE_CONNECTED:
+		if entry.connection.call("get_connection_state") != WebRTCPeerConnection.STATE_CONNECTED:
+			continue
+		if not _mp_peer.call("has_peer", entry.peer_id):
+			continue
+		# A closed data channel can leave the connection connected (#365).
+		# Inspect physical channel state even before MultiplayerAPI polls.
+		var peer: Dictionary = _mp_peer.call("get_peer", entry.peer_id)
+		var channels: Array = peer["channels"]
+		var channels_open := not channels.is_empty()
+		for channel: Object in channels:
+			if channel.call("get_ready_state") != WebRTCDataChannel.STATE_OPEN:
+				channels_open = false
+				break
+		if channels_open:
 			connected += 1
 	return connected
 
@@ -645,6 +713,7 @@ class _MeshPeer:
 	var connection: Object = null
 	var initiate: bool = false
 	var generation: String = ""
+	var epoch: int = -1
 	var session_cb: Callable = Callable()
 	var ice_cb: Callable = Callable()
 	var pending_signals: Array[Dictionary] = []

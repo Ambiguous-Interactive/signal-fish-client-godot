@@ -16,6 +16,8 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
+const MeshIncarnationTests = preload("res://tests/client/mesh_incarnation_tests.gd")
+const MeshChannelTests = preload("res://tests/client/mesh_channel_tests.gd")
 const SessionPlanAcceptanceTests = preload("res://tests/client/session_plan_acceptance_tests.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
@@ -74,12 +76,16 @@ func run_all() -> void:
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
 	_failures.append_array(SessionPlanAcceptanceTests.run(self))
+	_failures.append_array(MeshChannelTests.run(self))
+	_failures.append_array(MeshIncarnationTests.run(self))
 
 
 func _test_engine_api_parity() -> void:
 	# Fakes duck-type the engine classes: a renamed engine method would silently
 	# false-pass, so fail loudly if the API the mesh calls drifts.
-	for method: String in ["create_mesh", "add_peer", "remove_peer", "close"]:
+	for method: String in [
+		"create_mesh", "add_peer", "remove_peer", "has_peer", "get_peer", "close"
+	]:
 		_assert(
 			ClassDB.class_has_method("WebRTCMultiplayerPeer", method),
 			"WebRTCMultiplayerPeer.%s exists" % method
@@ -1526,6 +1532,9 @@ class FakePeerConnection:
 	var poll_calls := 0
 	var closed := false
 	var live_at_creation := 0
+	var channels: Array[FakeDataChannel] = [
+		FakeDataChannel.new(), FakeDataChannel.new(), FakeDataChannel.new()
+	]
 
 	func initialize(configuration: Variant) -> Error:
 		initialize_config = configuration
@@ -1561,6 +1570,14 @@ class FakePeerConnection:
 		ice_candidate_created.emit(media, index, name)
 
 
+class FakeDataChannel:
+	extends RefCounted
+	var state: int = WebRTCDataChannel.STATE_OPEN
+
+	func get_ready_state() -> int:
+		return state
+
+
 class FakeMultiplayerPeer:
 	extends RefCounted
 	## Duck-typed WebRTCMultiplayerPeer double.
@@ -1570,6 +1587,7 @@ class FakeMultiplayerPeer:
 	var add_peer_result: Error = OK
 	var added: Array[Array] = []
 	var removed: Array[int] = []
+	var peers: Dictionary = {}
 	var closed := false
 
 	func create_mesh(unique_id: int) -> Error:
@@ -1579,10 +1597,21 @@ class FakeMultiplayerPeer:
 
 	func add_peer(connection: Variant, unique_id: int) -> Error:
 		added.append([connection, unique_id])
+		if add_peer_result == OK:
+			peers[unique_id] = connection
 		return add_peer_result
 
 	func remove_peer(unique_id: int) -> void:
 		removed.append(unique_id)
+		peers.erase(unique_id)
+
+	func has_peer(unique_id: int) -> bool:
+		return peers.has(unique_id)
+
+	func get_peer(unique_id: int) -> Dictionary:
+		var connection: FakePeerConnection = peers[unique_id]
+		return {"connection": connection, "channels": connection.channels}
 
 	func close() -> void:
 		closed = true
+		peers.clear()

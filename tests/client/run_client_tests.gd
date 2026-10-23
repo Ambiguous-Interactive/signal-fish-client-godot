@@ -14,6 +14,7 @@ const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_con
 const HeartbeatTestsScript = preload("res://tests/client/heartbeat_tests.gd")
 const DiagnosticsLogTestsScript = preload("res://tests/client/diagnostics_log_tests.gd")
 const SessionStateBoundTestsScript = preload("res://tests/client/session_state_bound_tests.gd")
+const SpectatorDetachTestsScript = preload("res://tests/client/spectator_detach_tests.gd")
 const SessionGuardTestsScript = preload("res://tests/client/session_guard_tests.gd")
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
 const WebrtcMeshTestsScript = preload("res://tests/client/webrtc_mesh_tests.gd")
@@ -114,6 +115,7 @@ func _run() -> void:
 	_failures.append_array(DiagnosticsLogTestsScript.run(self))
 	_failures.append_array(SessionStateBoundTestsScript.run(self))
 	_failures.append_array(SessionGuardTestsScript.run(self))
+	_failures.append_array(SpectatorDetachTestsScript.run(self))
 	_failures.append_array(WebrtcMeshTestsScript.run(self))
 	_failures.append_array(SteamIdentityTestsScript.run(self))
 	_run_completed = true

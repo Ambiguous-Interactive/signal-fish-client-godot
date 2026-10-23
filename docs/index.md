@@ -12,8 +12,9 @@ description: "Connect Godot 4 games to the Signal Fish multiplayer signaling ser
 
 A drop-in Godot 4 addon for the Signal Fish protocol. Copy one folder, add a
 `SignalFishClient` node, and connect, join rooms, and relay game data with
-typed methods and signals. No C#, no GDExtension, nothing to compile - it
-runs everywhere Godot runs, including web exports.
+typed methods and signals. The relay client needs no C#, GDExtension, or
+compilation and supports web exports. Native mesh builds need the
+[Godot WebRTC extension](https://github.com/godotengine/webrtc-native).
 
 !!! note "AI disclosure"
 
