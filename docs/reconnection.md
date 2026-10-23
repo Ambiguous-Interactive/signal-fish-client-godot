@@ -56,6 +56,16 @@ server cannot overflow the script stack.
 
 On failure the client emits `reconnection_failed(reason, error_code)`.
 
+## Peer roster limitation
+
+On server `182cb234`, a disconnected player leaves other clients' cached
+rosters. The `PlayerReconnected` frame carries its ID and epoch, which do not restore
+the missing name, readiness or authority fields in `get_players()`. The
+returning client receives its own full baseline and can exchange gameplay.
+Applications should handle the peer return signal separately from cached
+roster display. Full roster recovery is tracked in
+[#374](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/374).
+
 ## Auto-reconnect
 
 Auto-reconnect is off by default. Turn it on per client:
