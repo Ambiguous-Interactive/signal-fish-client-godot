@@ -1,0 +1,26 @@
+--- a/src/server/spectator_service.rs
++++ b/src/server/spectator_service.rs
+@@ -1279,6 +1279,11 @@
+         let mut delivery = None;
+         let mut publication_completed = false;
+         let local_completion = std::panic::AssertUnwindSafe(async {
++            assert_ne!(
++                std::env::var("SF_GODOT_DETACH_FAULT").as_deref(),
++                Ok("after_remove"),
++                "Godot acceptance: after durable removal"
++            );
+             #[cfg(test)]
+             self.trigger_spectator_detach_panic_for_test(
+                 SpectatorDetachPanicPoint::DetachAfterDurableRemove,
+@@ -1295,6 +1300,11 @@
+                 None => true,
+             };
+             self.spectator_rooms.remove(player_id);
++            assert_ne!(
++                std::env::var("SF_GODOT_DETACH_FAULT").as_deref(),
++                Ok("after_local"),
++                "Godot acceptance: after local completion"
++            );
+             #[cfg(test)]
+             self.trigger_spectator_detach_panic_for_test(
+                 SpectatorDetachPanicPoint::DetachAfterLocalCompletion,

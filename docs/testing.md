@@ -189,12 +189,74 @@ remains open.
 The recovery drill uses the same optional base URL, eight-second waits and
 two-minute watchdog. Success prints `LIVE_SERVER_ACCEPTANCE_PASS`; any failed
 phase exits nonzero. It passed against the pinned server above. Ordinary
-voluntary detach and replay are covered; injected detach recovery, correlated
-recovery results, authoritative removal and server-drain ordering still need
-live fixtures for #356.
+voluntary detach and replay are covered. Correlated recovery results and
+authoritative removal still need live fixtures for #356. The fault and drain drill below covers both local
+completion panic points and terminal-before-close ordering.
 
-Server queue saturation, latest/volatile delivery, forced concurrent
-publication and injected server detach failures remain separate acceptance work.
+Server queue saturation, latest/volatile delivery and forced concurrent
+publication remain separate acceptance work.
 These drills are opt-in and outside
 `all`. The [mesh drill](mesh-guide.md#live-channel-drill) checks native and
 browser WebRTC packet boundaries separately.
+
+The pressure drill adds two-sender fan-in and selected-host departure:
+
+```bash
+godot --headless --path . --script tests/smoke/run_live_pressure_acceptance.gd
+```
+
+It passed on Godot 4.3 Linux arm64 against server `182cb234`. Four v2/v3
+JSON/raw MessagePack cases queue 80 real socket frames at an incumbent
+spectator while a second spectator joins. Dispatch drains one frame per poll.
+Checks cover exact sender counts, per-sender order, one membership delta,
+baseline-before-data, cached rosters and fresh gameplay. v2 carries the full
+roster in membership deltas; v3 carries compact deltas with an empty roster
+array (`src/websocket/sending.rs` at the pinned server commit). This measures client
+receive backlog. Server queue saturation and latest/volatile delivery remain
+open in #368.
+
+A three-player Direct case removes the selected host. Both survivors receive
+a fresh shared generation and the successor's endpoint. Removing the remaining
+endpoints produces a shared Relay reset with no host, endpoint, peers or ICE.
+Plan callbacks see the reset and relay gameplay succeeds. Game-owned Direct
+socket teardown and forced publication races remain open in #358.
+
+For #356, apply the local-only
+[`spectator_detach_fault.patch`](../tests/fixtures/spectator_detach_fault.patch)
+to an isolated checkout of server
+`182cb234c7aa601be3c2aad881948b3c5b853aaa`. Build with Rust 1.94.0. The patch
+inserts assertions inside the existing caught local-completion transaction.
+Use it only for acceptance. It adds no fault switch to the shipped addon.
+
+```bash
+# From the isolated server checkout, with the config above:
+git apply /path/to/signal-fish-client-godot/tests/fixtures/spectator_detach_fault.patch
+cargo build --locked --bin signal-fish-server
+SF_GODOT_DETACH_FAULT=after_remove SIGNAL_FISH__SERVER__DRAIN_GRACE_SECS=2 \
+  target/debug/signal-fish-server
+# In another terminal, from the Godot client checkout:
+godot --headless --path . --script tests/smoke/run_live_recovery_acceptance.gd
+```
+
+Repeat with `SF_GODOT_DETACH_FAULT=after_local`. Each mode passed all four
+spectator recovery cases and the two Direct reconnect cycles. Server logs
+confirmed the chosen fault and local recovery. The existing recovery oracle
+checks exactly one terminal reply, live roster removal and replay detach,
+room identity, reason, retained identity cleanup and fresh spectator gameplay.
+These injections exercise the upstream repair; a request-triggered panic is
+unproven. Registration retry/exhaustion and authoritative removal remain open.
+
+The same isolated server can then run the drain case:
+
+```bash
+godot --headless --path . --script tests/smoke/run_live_pressure_acceptance.gd \
+  -- ws://127.0.0.1:3536 drain
+```
+
+When it prints `LIVE_DRAIN_READY`, send SIGTERM to that server process within
+eight seconds. The drill has already queued the spectator terminal reply at
+the engine peer. Both fault modes passed the exact signal order
+`SpectatorLeft`, `GoingAway`, `disconnected` with close code 4000 and cleared
+room/identity state. The server uses a two-second grace for this drill.
+Correlated recovery payloads retain their deterministic client coverage;
+correlated live admission remains unsupported. These drills are opt-in.
