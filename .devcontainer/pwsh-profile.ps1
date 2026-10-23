@@ -3,6 +3,10 @@
 # survives container rebuilds. The mount target is configured in
 # devcontainer.json (`/commandhistory`).
 
+if ($IsLinux -and (Test-Path '/usr/local/bin/codex')) {
+    $env:PATH = "/usr/local/bin:$env:PATH"
+}
+
 $psReadLineModule = Get-Module PSReadLine -ErrorAction SilentlyContinue
 if (-not $psReadLineModule) {
     try {

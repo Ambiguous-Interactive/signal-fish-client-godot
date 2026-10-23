@@ -67,13 +67,21 @@ setup.
   pwsh (the previous host-shell guard could block create on Windows).
   Ownership matching on the created file is best-effort: some bind mounts
   reject `chown`, and create must not fail for a cosmetic fix.
-- The installer installs each package with its own `npm install --global`
-  (npm treats one multi-package command as a single transaction, so one
-  failing postinstall used to roll back every package while leaving their
-  `bin` symlinks behind) and sweeps dangling `bin` links before probing and
-  after failed attempts, so a broken install degrades to "missing" (which the
-  next run reinstalls) instead of leaving PATH poisoned with commands that
-  fail exec with "No such file or directory".
+- The installer stages each package with its own `npm install --global`
+  in a fresh prefix and includes optional dependencies. A successful npm exit
+  is insufficient: npm can remove a failed optional native dependency and
+  exit 0. Each candidate must pass `--version` before activation; failed
+  activation restores the old package and command links. OverlayFS image-layer
+  directories use a copy fallback on `EXDEV`. Managed updates share a lock;
+  avoid concurrent manual npm installs. Broken executables trigger repair even
+  when the recorded version is current. Use
+  `python3 .devcontainer/install-agent-tools.py` for strict updates and repair;
+  vendor self-updaters bypass this protection.
+- `/usr/local/bin/codex` launches the npm CLI with `--no-daemon` when supported,
+  isolating terminal startup from shared app-server transport failures.
+  Explicit `--remote` connections and `SF_CODEX_SHARED_SERVER=1` pass through.
+  PATH puts this launcher before npm's `bin`; verification checks npm's own
+  binaries directly. Older version overrides without the flag pass through.
 - Health checks verdict on exit status, never on captured-output presence.
   The installer's verification runs each `--version` with stdout and stderr
   redirected to separate files: nonzero exit means broken (the first error

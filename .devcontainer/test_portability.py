@@ -49,6 +49,16 @@ def config() -> DevcontainerConfig:
 
 
 class Portability(unittest.TestCase):
+    def test_agent_update_regressions(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "test_agent_tools.py")],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_post_create_runs_strict_setup_and_offline_maintenance(self) -> None:
         spec = importlib.util.spec_from_file_location("post_create", ROOT / "post-create.py")
         if spec is None or spec.loader is None:
