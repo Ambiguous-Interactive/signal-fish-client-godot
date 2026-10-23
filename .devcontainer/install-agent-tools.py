@@ -52,7 +52,13 @@ def first_line(value: str) -> str:
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:
     try:
-        result = subprocess.run(args, text=True, capture_output=True, check=False)  # noqa: S603
+        result = subprocess.run(  # noqa: S603
+            args,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30 if args[-1:] == ("--version",) else None,
+        )
         if (
             len(args) > 1
             and args[0] == "npm"
@@ -63,6 +69,8 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
         return result
     except OSError as exc:
         return subprocess.CompletedProcess(args, 127, "", str(exc))
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 124, "", "version check timed out")
 
 
 class Installer:
@@ -169,7 +177,98 @@ class Installer:
         args = ["npm", "install", "--global"]
         if prefix is not None:
             args += ["--prefix", str(prefix)]
-        return [*args, "--no-audit", "--no-fund", *self.allow_scripts, spec]
+        return [*args, "--include=optional", "--no-audit", "--no-fund", *self.allow_scripts, spec]
+
+    def healthy(self, binary: Path) -> bool:
+        result, version = self.binary_version(binary)
+        return result.returncode == 0 and bool(version)
+
+    def install_candidate(self, spec: str, binary: str) -> bool:
+        # npm can drop a failed optional native dependency and still exit 0.
+        # A fresh prefix also avoids extracting children into a retiring parent.
+        with tempfile.TemporaryDirectory(prefix=".agent-tools-", dir=self.prefix) as folder:
+            scratch = Path(folder)
+            candidate = scratch / "candidate"
+            if run(*self.install_args(spec, candidate)).returncode != 0:
+                return False
+            candidate_bin = candidate / "bin" / binary
+            if not self.healthy(candidate_bin):
+                print(f"agent-tools: candidate {binary} failed --version", file=sys.stderr)
+                return False
+            package = package_name(spec)
+            source = candidate / "lib/node_modules" / package
+            target = self.prefix / "lib/node_modules" / package
+            try:
+                metadata = json.loads((source / "package.json").read_text())
+                bins = metadata.get("bin", {})
+                if isinstance(bins, str):
+                    bins = {package.rsplit("/", 1)[-1]: bins}
+                if not isinstance(bins, dict) or binary not in bins:
+                    raise ValueError("package does not declare its expected binary")
+                links = {}
+                for name, entry in bins.items():
+                    if not isinstance(name, str) or Path(name).name != name or name in (".", ".."):
+                        raise ValueError("invalid package binary name")
+                    if not isinstance(entry, str):
+                        raise ValueError("invalid package binary entry")
+                    entry_path = (source / entry).resolve(strict=True)
+                    relative = entry_path.relative_to(source.resolve(strict=True))
+                    links[self.bin_dir / name] = target / relative
+                if binary == "opencode" and major(self.binary_version(candidate_bin)[1]) != 2:
+                    raise ValueError("OpenCode candidate is not major 2")
+            except (OSError, ValueError, TypeError) as exc:
+                print(f"agent-tools: invalid candidate {package}: {exc}", file=sys.stderr)
+                return False
+            backup = self.prefix / f".agent-tools-backup-{scratch.name}"
+            saved_links = scratch / "previous-bins"
+            saved_links.mkdir()
+            moved = False
+            activated = False
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                self.bin_dir.mkdir(parents=True, exist_ok=True)
+                for link in links:
+                    if link.exists() or link.is_symlink():
+                        shutil.copy2(link, saved_links / link.name, follow_symlinks=False)
+                if target.exists() or target.is_symlink():
+                    # OverlayFS cannot rename some directories from image layers (EXDEV).
+                    shutil.move(str(target), str(backup))
+                    moved = True
+                source.rename(target)
+                activated = True
+                for link, entry in links.items():
+                    temporary = scratch / link.name
+                    temporary.symlink_to(os.path.relpath(entry, self.bin_dir))
+                    temporary.replace(link)
+                if not self.healthy(self.bin_dir / binary):
+                    raise RuntimeError(f"activated {binary} failed --version")
+                self.refresh_versions()
+                if moved:
+                    try:
+                        if backup.is_symlink():
+                            backup.unlink()
+                        else:
+                            shutil.rmtree(backup)
+                    except OSError as exc:
+                        print(
+                            f"agent-tools: WARNING: old package retained at {backup}: {exc}",
+                            file=sys.stderr,
+                        )
+                return True
+            except (OSError, RuntimeError) as exc:
+                if activated:
+                    target.rename(scratch / "rejected-package")
+                if moved:
+                    # Keep this backup outside TemporaryDirectory if restoration fails.
+                    backup.rename(target)
+                for link in links:
+                    saved = saved_links / link.name
+                    if saved.exists() or saved.is_symlink():
+                        saved.replace(link)
+                    elif activated:
+                        link.unlink(missing_ok=True)
+                print(f"agent-tools: activation failed; restored {package}: {exc}", file=sys.stderr)
+                return False
 
     def restore_v1(self, version: str) -> bool:
         run("npm", "uninstall", "--global", V2)
@@ -229,7 +328,6 @@ class Installer:
                 f"npm global prefix is not writable: {self.prefix}; rebuild the container instead of repairing with elevated npm"
             )
             return False
-        self.sweep_dangling_bins()
         return True
 
     def probe(self, spec: str, timeout: int) -> subprocess.CompletedProcess[str]:
@@ -305,10 +403,11 @@ class Installer:
             if (
                 not os.access(self.bin_dir / binary, os.X_OK)
                 or not installed
+                or not self.healthy(self.bin_dir / binary)
                 or (index == 1 and not self.active_v2())
                 or (latest and installed != latest)
             ):
-                install_specs.append(spec)
+                install_specs.append((spec, binary))
         if not install_specs:
             print("agent-tools: all agent CLIs are current; skipped npm install")
             return True
@@ -316,9 +415,9 @@ class Installer:
         failed = []
         delay = milliseconds("AGENT_TOOLS_RETRY_SLEEP_MS", 2000) / 1000
         attempts = 1 if self.mode == "--update" else 3
-        for spec in install_specs:
+        for spec, binary in install_specs:
             for attempt in range(1, attempts + 1):
-                if run(*self.install_args(spec)).returncode == 0:
+                if self.install_candidate(spec, binary):
                     self.refresh_versions()
                     break
                 self.sweep_dangling_bins()
@@ -339,8 +438,8 @@ class Installer:
     def verify(self) -> None:
         ready, missing = [], []
         for binary in BINARIES:
-            path = shutil.which(binary)
-            if path is None:
+            path = self.bin_dir / binary
+            if not os.access(path, os.X_OK):
                 missing.append(binary)
                 continue
             result, version = self.binary_version(path)
@@ -383,14 +482,26 @@ def main() -> int:
     try:
         if not installer.initialize():
             return 0
-        with tempfile.TemporaryDirectory() as directory:
-            if mode == "--verify":
-                installer.refresh_versions()
-            elif not installer.provision(Path(directory)):
-                return 0
-            installer.verify()
-    except RuntimeError:
-        return 1
+        # Serialize managed updates; keep renames and backups on the prefix filesystem.
+        import fcntl
+
+        installer.prefix.mkdir(parents=True, exist_ok=True)
+        with (installer.prefix / ".agent-tools.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return provision_locked(installer, mode)
+    except (RuntimeError, OSError) as exc:
+        print(f"agent-tools: ERROR: {exc}", file=sys.stderr)
+        return 0 if mode == "--update" else 1
+
+
+def provision_locked(installer: Installer, mode: str) -> int:
+    installer.sweep_dangling_bins()
+    with tempfile.TemporaryDirectory() as directory:
+        if mode == "--verify":
+            installer.refresh_versions()
+        elif not installer.provision(Path(directory)):
+            return 0
+        installer.verify()
     return 0
 
 

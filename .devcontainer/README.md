@@ -170,7 +170,28 @@ matrix sets 0).
   explicit best-effort update and Python dependency repair. uv rebuilds
   `.venv-ci` when needed. pip retains the bare Python user-site PyYAML repair.
 
-Use **Rebuild Container** for current agents. **Rebuild Without Cache** also
+To update or repair all four agents in an existing container, run:
+
+```bash
+python3 .devcontainer/install-agent-tools.py
+```
+
+This strict command stages each npm package in a fresh prefix with optional
+dependencies enabled. It checks `--version` before activation and after moving
+the package into place. A failed candidate leaves the installed package intact;
+failed activation restores the previous package and command links. Image-layer
+directories use a copy fallback when OverlayFS rejects rename with `EXDEV`.
+Managed updates share a lock. Avoid concurrent manual npm installs.
+Use this command for updates; vendor self-updaters bypass these checks.
+
+Terminal `codex` uses a launcher in `/usr/local/bin` that runs the npm CLI with
+`--no-daemon` when supported. It avoids coupling terminal sessions to a shared
+app-server socket. Explicit `--remote` connections pass through; set
+`SF_CODEX_SHARED_SERVER=1` to opt into the shared daemon. Older version overrides
+that lack `--no-daemon` pass through. Reopen the terminal after applying a new
+PowerShell profile.
+
+Use **Rebuild Container** to apply image changes. **Rebuild Without Cache** also
 refreshes the system packages and feature-installed tools. Godot and MCP
 servers keep their tested project versions. npm downloads use a BuildKit
 cache. Agent packages live under the user's home so Linux UID remapping
@@ -182,6 +203,14 @@ values, paths with spaces and quotes, and an offline restart through Docker.
 
 Authentication is intentionally not automated. Run each CLI interactively
 inside the container and sign in according to its vendor's docs.
+
+The 2026-10-22 Codex failure had two parts. The shared app-server connection
+reset during startup; its exact reset trigger was not captured. Separately,
+npm 11.19.0 logged extraction errors for `@openai/codex-linux-arm64`, removed
+that optional dependency, and exited 0. The wrapper package remained installed
+at 0.163.0, so a package-version check could miss the broken executable.
+Installing the same release in a fresh prefix passed. Health checks now
+schedule repairs even when the recorded package version is current.
 
 ## MCP servers
 
