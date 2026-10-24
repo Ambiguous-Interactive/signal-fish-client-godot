@@ -30,6 +30,11 @@ The client authenticates first and sends the `Reconnect` message once
 `Authenticated` arrives. Enforcing servers reject any pre-auth message, so
 this handshake order is not optional.
 
+The room response has its own `pong_timeout_sec` deadline, starting after
+`Authenticated`. If it expires, `connection_failed` reports
+`heartbeat reconnect timeout` and auto-reconnect can retry. The deadline runs
+with the heartbeat off and incoming `Pong` replies leave it unchanged.
+
 Two dial details matter when you rotate tokens:
 
 - The dial retargets the **last-dialed URL**, not `config.endpoint_url`.
@@ -90,6 +95,10 @@ Auto-reconnect is off by default. Turn it on per client:
 ```gdscript
 client.set_auto_reconnect(true)
 ```
+
+A fresh `connect_to_server()` starts a new session and clears the previous
+room's retry context and budget. Use `reconnect()` to restore a previous seat.
+A fresh dial refused for an invalid URL scheme preserves pending recovery.
 
 When enabled:
 

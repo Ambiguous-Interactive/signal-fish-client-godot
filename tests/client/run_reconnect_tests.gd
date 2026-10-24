@@ -62,6 +62,8 @@ func _init() -> void:
 
 func _run() -> void:
 	var cases: Array[Callable] = [
+		_test_reconnect_response_deadline,
+		_test_fresh_connect_ends_old_retry_episode,
 		_test_baseline_decodes,
 		_test_manual_reconnect_guards_and_wire_bytes,
 		_test_manual_reconnect_completes_and_refreshes_context,
@@ -106,6 +108,105 @@ func _run() -> void:
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
 	_run_completed = true
+
+
+func _test_reconnect_response_deadline() -> void:
+	for heartbeat: float in [0.0, 1.0]:
+		var client := _make_reconnect_client(TOKEN_V1)
+		client._config.heartbeat_interval_sec = heartbeat
+		client._config.pong_timeout_sec = 5.0
+		client.set_auto_reconnect(true)
+		var dial: SFFakeTransportScript = client.transport
+		_step(client, 4.9)
+		dial.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+		var failures: Array[String] = []
+		client.connection_failed.connect(func(error: String) -> void: failures.append(error))
+		for _tick: int in 4:
+			dial.inject_server_message({"type": "Pong"})
+			_step(client, 1.0)
+		_assert_equal([], failures, "authentication gives the room response a full window")
+		dial.inject_server_message({"type": "Pong"})
+		_step(client, 1.0)
+		_assert_equal(1, failures.size(), "missing room response fails even with live pongs")
+		_assert_equal(
+			SignalFishClientScript.ConnectionState.FAILED,
+			client.get_connection_state(),
+			"room response deadline ends the dial"
+		)
+		_assert(client._reconnect_timer_running, "missing room response schedules another attempt")
+		_assert_equal(["heartbeat reconnect timeout"], failures, "deadline explains its failure")
+		client._config.reconnect_max_attempts = 1
+		client.transport = SFFakeTransportScript.new()
+		_step(client, 1.0)
+		dial = client.transport
+		dial.inject_open()
+		dial.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+		_step(client, 5.0)
+		_assert(not client._reconnect_timer_running, "room response failures exhaust the budget")
+		_assert_equal(3, failures.size(), "two deadlines and exhaustion are reported")
+		client.free()
+	var recovered := _make_reconnect_client(TOKEN_V1)
+	recovered._config.pong_timeout_sec = 5.0
+	var live: SFFakeTransportScript = recovered.transport
+	live.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	_step(recovered, 4.9)
+	live.inject_server_message(
+		{"type": "Reconnected", "data": _room_joined_data({"missed_events": []})}
+	)
+	_step(recovered, 30.0)
+	_assert_equal(ROOM_ID, recovered.get_room_id(), "timely room response restores the seat")
+	_assert(recovered.is_connected_to_server(), "completed reconnect has no pending deadline")
+	recovered.free()
+	_assert_no_protocol_errors()
+	_done()
+
+
+func _test_fresh_connect_ends_old_retry_episode() -> void:
+	for target: String in ["", "ws://other.test/socket"]:
+		var client := _make_client(true, "token")
+		var old: SFFakeTransportScript = client.transport
+		old.inject_close(4999, "dropped")
+		client.transport = SFFakeTransportScript.new()
+		_assert_equal(OK, client.connect_to_server(target), "fresh connection starts")
+		var fresh: SFFakeTransportScript = client.transport
+		fresh.inject_open()
+		fresh.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+		fresh.inject_failure("new session dropped before joining")
+		_assert(not client._reconnect_timer_running, "fresh connection cannot retry an old room")
+		_assert_equal("", client._context_room_id, "fresh connection forgets old room")
+		_assert_equal("", client._context_auth_token, "fresh connection forgets old retry context")
+		client.transport = SFFakeTransportScript.new()
+		_assert_equal(OK, client.connect_to_server(target), "next fresh connection starts")
+		fresh = client.transport
+		fresh.inject_open()
+		fresh.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+		fresh.inject_server_message(
+			{"type": "RoomJoined", "data": _room_joined_data({"reconnection_token": TOKEN_V2})}
+		)
+		fresh.inject_failure("new room dropped")
+		_assert(client._reconnect_timer_running, "new baseline establishes its own retry episode")
+		_assert_equal(1, client._auto_reconnect_attempts, "new room gets a fresh retry budget")
+		_assert_equal(TOKEN_V2, client._context_auth_token, "new room owns recovery")
+		client.free()
+	var pending := _make_client(true, "token", false)
+	var errors := _track_protocol_errors(pending)
+	var pending_transport: SFFakeTransportScript = pending.transport
+	pending_transport.inject_close(4999, "dropped")
+	var remaining := pending._reconnect_delay_remaining
+	_assert_equal(
+		ERR_INVALID_PARAMETER,
+		pending.connect_to_server("https://example.test"),
+		"bad scheme refused"
+	)
+	_assert_equal(
+		remaining, pending._reconnect_delay_remaining, "refusal preserves the pending delay"
+	)
+	_assert(pending._reconnect_timer_running, "refusal preserves the pending retry")
+	_assert_equal(TOKEN_V1, pending._context_auth_token, "refusal preserves recovery context")
+	_assert_equal(1, errors.size(), "refused URL explains itself")
+	pending.free()
+	_assert_no_protocol_errors()
+	_done()
 
 
 ## Baseline decode matrices (tokens, v3 replay fields) live in the shared
@@ -787,7 +888,7 @@ func _test_handler_redial_failure_burns_one_attempt() -> void:
 			var dial: SFFakeTransportScript = SFFakeTransportScript.new()
 			dial.fail_on_connect = true
 			client.transport = dial
-			client.connect_to_server("ws://example.test/socket")
+			client.reconnect(PLAYER_A, ROOM_ID, TOKEN_V2)
 	)
 	var transport: SFFakeTransportScript = client.transport
 	transport.inject_close(4999, "dropped")

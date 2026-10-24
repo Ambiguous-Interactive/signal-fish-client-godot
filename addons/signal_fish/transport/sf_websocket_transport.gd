@@ -53,8 +53,9 @@ func poll() -> void:
 	if _peer == null or _is_terminal():
 		return
 
-	_peer.poll()
-	if _peer == null or _is_terminal():
+	var polled_peer: SFWebSocketPeerAdapterScript = _peer
+	polled_peer.poll()
+	if _peer != polled_peer or _is_terminal():
 		return
 	_handle_polled_state(_peer.get_ready_state())
 
@@ -142,8 +143,11 @@ func _is_valid_websocket_url(url: String) -> bool:
 func _handle_polled_state(state: int) -> void:
 	if _is_terminal():
 		return
+	var polled_peer: SFWebSocketPeerAdapterScript = _peer
 	if state == WebSocketPeer.STATE_OPEN:
 		_emit_opened_once()
+		if _peer != polled_peer or _is_terminal():
+			return
 
 	if state == WebSocketPeer.STATE_OPEN or state == WebSocketPeer.STATE_CLOSING:
 		if not _drain_packets():
@@ -182,6 +186,7 @@ func _drain_packets() -> bool:
 func _drain_queued_packets() -> bool:
 	if _peer == null or _is_terminal():
 		return false
+	var drained_peer: SFWebSocketPeerAdapterScript = _peer
 	var drained := 0
 	while _peer.get_available_packet_count() > 0 and drained < _drain_cap():
 		var packet: PackedByteArray = _peer.get_packet()
@@ -191,7 +196,7 @@ func _drain_queued_packets() -> bool:
 			return false
 		packet_received.emit(packet, _peer.was_string_packet())
 		drained += 1
-		if _peer == null or _is_terminal():
+		if _peer != drained_peer or _is_terminal():
 			return false
 	return true
 
