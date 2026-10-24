@@ -32,7 +32,6 @@ const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagno
 const MAX_DEPTH := SFTypeUtils.MAX_MESSAGE_DEPTH
 
 const _U64_CARRY := 18446744073709551616.0
-const _SIGNED_INT_WIDTHS := {0xD0: 1, 0xD1: 2, 0xD2: 4, 0xD3: 8}
 
 
 ## Decodes exactly one MessagePack value; trailing bytes are malformed.
@@ -77,7 +76,10 @@ static func _decode_value(peer: StreamPeerBuffer, depth: int, failure: Array[Str
 	if marker <= 0x9F:
 		return _read_counted_array(peer, marker & 0x0F, depth, failure)
 	if marker <= 0xBF:
-		return _read_string(peer, marker & 0x1F, failure)
+		var length := marker & 0x1F
+		if peer.get_available_bytes() < length:
+			return _fail(failure, "truncated MessagePack string")
+		return peer.get_utf8_string(length)
 	match marker:
 		0xC0:
 			return null
@@ -104,27 +106,41 @@ static func _decode_value(peer: StreamPeerBuffer, depth: int, failure: Array[Str
 				return _fail(failure, "MessagePack float is non-finite")
 			return double
 		0xCC:
-			return _read_uint(peer, 1, failure)
-		0xCD:
-			return _read_uint(peer, 2, failure)
-		0xCE:
-			return _read_uint(peer, 4, failure)
-		0xCF:
-			return _read_uint(peer, 8, failure)
-		0xD0, 0xD1, 0xD2, 0xD3:
-			var width: int = _SIGNED_INT_WIDTHS[marker]
-			if peer.get_available_bytes() < width:
+			if peer.get_available_bytes() < 1:
 				return _fail(failure, "truncated MessagePack integer")
-			var value := 0
-			if width == 1:
-				value = peer.get_8()
-			elif width == 2:
-				value = peer.get_16()
-			elif width == 4:
-				value = peer.get_32()
-			else:
-				value = peer.get_64()
-			return value
+			return peer.get_u8()
+		0xCD:
+			if peer.get_available_bytes() < 2:
+				return _fail(failure, "truncated MessagePack integer")
+			return peer.get_u16()
+		0xCE:
+			if peer.get_available_bytes() < 4:
+				return _fail(failure, "truncated MessagePack integer")
+			return peer.get_u32()
+		0xCF:
+			if peer.get_available_bytes() < 8:
+				return _fail(failure, "truncated MessagePack integer")
+			var unsigned := peer.get_u64()
+			# Godot wraps u64 above i64 max; keep serde's lossy JSON number.
+			if unsigned < 0:
+				return float(unsigned) + _U64_CARRY
+			return unsigned
+		0xD0:
+			if peer.get_available_bytes() < 1:
+				return _fail(failure, "truncated MessagePack integer")
+			return peer.get_8()
+		0xD1:
+			if peer.get_available_bytes() < 2:
+				return _fail(failure, "truncated MessagePack integer")
+			return peer.get_16()
+		0xD2:
+			if peer.get_available_bytes() < 4:
+				return _fail(failure, "truncated MessagePack integer")
+			return peer.get_32()
+		0xD3:
+			if peer.get_available_bytes() < 8:
+				return _fail(failure, "truncated MessagePack integer")
+			return peer.get_64()
 		0xD9:
 			return _read_sized_string(peer, 1, failure)
 		0xDA:
@@ -235,25 +251,6 @@ static func _read_length(peer: StreamPeerBuffer, width: int) -> int:
 	if width == 2:
 		return peer.get_u16()
 	return peer.get_u32()
-
-
-static func _read_uint(peer: StreamPeerBuffer, width: int, failure: Array[String]) -> Variant:
-	if peer.get_available_bytes() < width:
-		return _fail(failure, "truncated MessagePack integer")
-	var value := 0
-	if width == 1:
-		value = peer.get_u8()
-	elif width == 2:
-		value = peer.get_u16()
-	elif width == 4:
-		value = peer.get_u32()
-	else:
-		value = peer.get_u64()
-	# Godot ints are signed 64-bit: u64 above i64 max wraps negative, so it is
-	# surfaced as a float, matching serde's lossy JSON number for such values.
-	if value < 0:
-		return float(value) + _U64_CARRY
-	return value
 
 
 static func _encode_value(peer: StreamPeerBuffer, value: Variant, depth: int) -> String:

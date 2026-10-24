@@ -31,6 +31,7 @@ static func run() -> Array[String]:
 func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_msgpack_decode_vectors,
+		_test_msgpack_integer_widths,
 		_test_msgpack_hostile_vectors,
 		_test_msgpack_utf8_decode,
 		_test_msgpack_encode_widths,
@@ -99,6 +100,51 @@ func _test_msgpack_decode_vectors() -> void:
 		if not _assert(result_ok, true, "decode %s succeeds" % vector["label"]):
 			continue
 		_assert_equal(vector["want"], result["value"], "decode %s value" % vector["label"])
+	_done()
+
+
+func _test_msgpack_integer_widths() -> void:
+	var cases := [
+		[0xCC, 1, 255],
+		[0xCD, 2, 65535],
+		[0xCE, 4, 4294967295],
+		[0xCF, 8, 18446744073709551616.0],
+		[0xD0, 1, -1],
+		[0xD1, 2, -1],
+		[0xD2, 4, -1],
+		[0xD3, 8, -1],
+	]
+	for vector: Array in cases:
+		var bytes := PackedByteArray([vector[0]])
+		var width: int = vector[1]
+		for _byte: int in width:
+			bytes.append(0xff)
+		var result: Dictionary = SFMsgpackScript.decode(bytes)
+		_assert_equal(true, result["ok"], "integer marker %02x decodes" % vector[0])
+		_assert_equal(vector[2], result["value"], "integer marker %02x value" % vector[0])
+		_assert_equal(
+			typeof(vector[2]), typeof(result["value"]), "integer marker %02x type" % vector[0]
+		)
+		for length: int in range(1, width + 1):
+			var partial: Dictionary = SFMsgpackScript.decode(bytes.slice(0, length))
+			_assert_equal(false, partial["ok"], "partial integer is refused")
+			_assert_equal("truncated MessagePack integer", partial["error"], "partial width error")
+		bytes[1] = 0x7f
+		for index: int in range(2, bytes.size()):
+			bytes[index] = 0xff
+		var positive: Dictionary = SFMsgpackScript.decode(bytes)
+		_assert_equal(true, positive["ok"], "positive integer decodes")
+		_assert_equal(TYPE_INT, typeof(positive["value"]), "signed-range values retain int type")
+		var maximum := 9223372036854775807 if width == 8 else (1 << (width * 8 - 1)) - 1
+		_assert_equal(maximum, positive["value"], "integer width maximum")
+		if vector[0] >= 0xD0:
+			bytes[1] = 0x80
+			for index: int in range(2, bytes.size()):
+				bytes[index] = 0
+			var negative: Dictionary = SFMsgpackScript.decode(bytes)
+			var minimum := -9223372036854775807 - 1 if width == 8 else -(1 << (width * 8 - 1))
+			_assert_equal(true, negative["ok"], "negative integer decodes")
+			_assert_equal(minimum, negative["value"], "integer width minimum")
 	_done()
 
 
