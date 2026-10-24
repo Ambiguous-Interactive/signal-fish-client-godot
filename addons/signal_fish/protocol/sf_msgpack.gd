@@ -281,7 +281,7 @@ static func _encode_value(peer: StreamPeerBuffer, value: Variant, depth: int) ->
 			_encode_string(peer, text)
 		TYPE_PACKED_BYTE_ARRAY:
 			var bytes: PackedByteArray = value
-			_put_length(peer, -1, 0xC4, 0xC5, bytes.size(), -1)
+			_put_binary_length(peer, bytes.size())
 			peer.put_data(bytes)
 		TYPE_ARRAY:
 			var array: Array = value
@@ -340,28 +340,30 @@ static func _encode_integer(peer: StreamPeerBuffer, value: int) -> void:
 
 static func _encode_string(peer: StreamPeerBuffer, value: String) -> void:
 	var encoded := value.to_utf8_buffer()
-	_put_length(peer, 0xA0, 0xD9, 0xDA, encoded.size(), 0x1F)
+	var length := encoded.size()
+	if length <= 0x1F:
+		peer.put_u8(0xA0 | length)
+	elif length <= 0xFF:
+		peer.put_u8(0xD9)
+		peer.put_u8(length)
+	elif length <= 0xFFFF:
+		peer.put_u8(0xDA)
+		peer.put_u16(length)
+	else:
+		peer.put_u8(0xDB)
+		peer.put_u32(length)
 	peer.put_data(encoded)
 
 
-static func _put_length(
-	peer: StreamPeerBuffer,
-	fix_base: int,
-	u8_marker: int,
-	u16_marker: int,
-	length: int,
-	fix_max: int
-) -> void:
-	if fix_base >= 0 and length <= fix_max:
-		peer.put_u8(fix_base | length)
-	elif u8_marker >= 0 and length <= 0xFF:
-		peer.put_u8(u8_marker)
+static func _put_binary_length(peer: StreamPeerBuffer, length: int) -> void:
+	if length <= 0xFF:
+		peer.put_u8(0xC4)
 		peer.put_u8(length)
 	elif length <= 0xFFFF:
-		peer.put_u8(u16_marker)
+		peer.put_u8(0xC5)
 		peer.put_u16(length)
 	else:
-		peer.put_u8(u16_marker + 1)
+		peer.put_u8(0xC6)
 		peer.put_u32(length)
 
 

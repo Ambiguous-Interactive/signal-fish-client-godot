@@ -93,6 +93,16 @@ func _init() -> void:
 			int(2048.0 / count),
 			func() -> void: SFEnvelopeScript.encode(_snapshot_envelope)
 		)
+	for count: int in [8, 64, 256]:
+		var players: Array[Dictionary] = []
+		for index: int in count:
+			players.append({"id": index, "x": 1.5, "y": 2.25, "health": 100})
+		_snapshot_envelope = {"players": players}
+		_bench(
+			"msgpack_snapshot_%d" % count,
+			int(2048.0 / count),
+			func() -> void: SFMsgpackScript.encode(_snapshot_envelope)
+		)
 	_bench("msgpack_roundtrip", 20000, func() -> void: _msgpack_roundtrip())
 	quit(0)
 

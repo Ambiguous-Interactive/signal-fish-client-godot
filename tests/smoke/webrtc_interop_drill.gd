@@ -6,6 +6,7 @@ extends Node
 const MeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const ClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SessionScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
+const BURST_PACKETS := 256
 const PLAYERS: Array[String] = [
 	"10000000-0000-0000-0000-000000000001", "10000000-0000-0000-0000-000000000002"
 ]
@@ -27,6 +28,8 @@ var _phase := 0
 var _stage := "setup"
 var _received_modes: Dictionary = {}
 var _burst_received: Array[int] = [0]
+var _burst_sent := 0
+var _peak_queued := 0
 
 
 func _ready() -> void:
@@ -134,6 +137,8 @@ func _run_phase(phase: int) -> bool:
 	_phase = phase
 	_received_modes.clear()
 	_burst_received[0] = 0
+	_burst_sent = 0
+	_peak_queued = 0
 	var generation := "40000000-0000-0000-0000-%012d" % phase
 	var ready_marker := "ready-%d" % phase
 	var plan := SessionScript.SessionPlanInfo.new()
@@ -226,19 +231,14 @@ func _run_phase(phase: int) -> bool:
 
 
 func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
-	_stage = "send reliable burst"
 	var remote_id := MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
 	peer.set_target_peer(remote_id)
 	peer.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
 	var sizes: Array[int] = [1, 16, 255, 1200]
-	for sequence: int in 32:
-		var packet := _burst_packet(phase, _seat, sequence, sizes[sequence % sizes.size()])
-		if peer.put_packet(packet) != OK:
-			_fail("directed reliable burst send failed")
-			return false
 	if not await _wait_until(
-		"receive reliable burst",
+		"stream reliable gameplay",
 		func() -> bool:
+			_peak_queued = maxi(_peak_queued, peer.get_available_packet_count())
 			while peer.get_available_packet_count() > 0:
 				var sender := peer.get_packet_peer()
 				var mode := peer.get_packet_mode()
@@ -249,16 +249,26 @@ func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 					phase, 1 - _seat, sequence, sizes[sequence % sizes.size()]
 				)
 				if (
-					sequence >= 32
+					sequence >= BURST_PACKETS
 					or packet != expected
 					or sender != remote_id
 					or mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE
 					or channel != 0
 				):
-					_fail("directed reliable burst bytes, order or metadata differ")
+					_fail("directed reliable gameplay bytes, order or metadata differ")
 					return false
 				_burst_received[0] += 1
-			return _burst_received[0] == 32
+			for _batch: int in 4:
+				if _burst_sent == BURST_PACKETS:
+					break
+				var packet := _burst_packet(
+					phase, _seat, _burst_sent, sizes[_burst_sent % sizes.size()]
+				)
+				if peer.put_packet(packet) != OK:
+					_fail("directed reliable gameplay send failed")
+					return false
+				_burst_sent += 1
+			return _burst_received[0] == BURST_PACKETS and _burst_sent == BURST_PACKETS
 	):
 		return false
 	_pending.append({"marker": "burst-%d" % phase})
@@ -267,7 +277,12 @@ func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	):
 		return false
 	peer.set_target_peer(0)
-	print("interop reliable burst: seat=%d phase=%d 32 directed packets passed" % [_seat, phase])
+	print(
+		(
+			"interop reliable stream: seat=%d phase=%d packets=%d max_size=%d peak_queued=%d"
+			% [_seat, phase, BURST_PACKETS, 1200, _peak_queued]
+		)
+	)
 	return true
 
 
@@ -302,6 +317,8 @@ func _fail(reason: String) -> void:
 		"markers": _markers.keys(),
 		"received_modes": _received_modes.keys(),
 		"burst_received": _burst_received[0],
+		"burst_sent": _burst_sent,
+		"peak_queued": _peak_queued,
 		"pending_signals": _pending.size(),
 		"sending": _sending,
 		"receiving": _receiving,
