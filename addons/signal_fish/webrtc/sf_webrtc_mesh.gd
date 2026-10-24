@@ -37,7 +37,7 @@ extends Node
 ##   new-generation plan or membership change rebuilds the peer.
 ## - The mesh is torn down on [signal room_joined] (fresh baseline),
 ##   [signal room_left], [signal disconnected],
-##   [signal connection_failed], [signal reconnected], and
+##   [signal connection_failed], [signal authentication_error], [signal reconnected], and
 ##   [code]_exit_tree[/code]; a replayed plan inside [code]missed_events
 ##   [/code] can never revive it. [signal player_left] drops only the leaving
 ##   peer — the rest of the mesh survives. Fresh [signal player_joined] or
@@ -106,6 +106,7 @@ var _known_peers: Dictionary = {}
 var _mp_peer: Object = null
 var _reported_connected := false
 var _status_retry_due_msec := 0
+var _mesh_revision := 0
 
 
 ## Starts consuming a client's session-plan events. The client must stay
@@ -131,6 +132,7 @@ func attach(client: SignalFishClientScript) -> Error:
 	client.room_left.connect(_on_client_room_left)
 	client.disconnected.connect(_on_client_disconnected)
 	client.connection_failed.connect(_on_client_connection_failed)
+	client.authentication_error.connect(_on_client_authentication_error)
 	client.reconnected.connect(_on_client_reconnected)
 	client.server_error.connect(_on_client_server_error)
 	return OK
@@ -151,6 +153,7 @@ func detach() -> void:
 	_client.room_left.disconnect(_on_client_room_left)
 	_client.disconnected.disconnect(_on_client_disconnected)
 	_client.connection_failed.disconnect(_on_client_connection_failed)
+	_client.authentication_error.disconnect(_on_client_authentication_error)
 	_client.reconnected.disconnect(_on_client_reconnected)
 	_client.server_error.disconnect(_on_client_server_error)
 	_client = null
@@ -175,6 +178,9 @@ func poll() -> void:
 			continue
 		var error: Error = entry.connection.call("poll")
 		if not _check_peer_result(entry, "poll", error):
+			continue
+		if _peer_is_terminal(entry):
+			_drop_peer(uuid)
 			continue
 		_drain_relay(entry)
 	_update_transport_status()
@@ -356,6 +362,10 @@ func _on_client_connection_failed(_error: String) -> void:
 	_reset_mesh()
 
 
+func _on_client_authentication_error(_message: String, _error_code: int) -> void:
+	_reset_mesh()
+
+
 func _on_client_reconnected(
 	_info: SFTypesScript.RoomJoinedInfo, _missed_events: Array[SFTypesScript.DecodedEvent]
 ) -> void:
@@ -366,6 +376,9 @@ func _on_client_reconnected(
 
 
 func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
+	if _plan == null or _plan.generation != plan.generation or _plan.transport != plan.transport:
+		_mesh_revision += 1
+		_status_retry_due_msec = 0
 	if _plan == null or _plan.generation != plan.generation:
 		_known_peers.clear()
 	_plan = plan
@@ -490,6 +503,7 @@ func _drop_peer(uuid: String) -> void:
 
 
 func _reset_mesh() -> void:
+	_mesh_revision += 1
 	_plan = null
 	_retired_generations.clear()
 	_known_peers.clear()
@@ -527,17 +541,39 @@ func _update_transport_status() -> void:
 	if _status_retry_due_msec > now:
 		return
 	var client := _client
+	var revision := _mesh_revision
 	var sent: Error = client.send_transport_status(
 		SFSessionTypesScript.TransportKind.WEBRTC, wanted
 	)
-	if _client != client:
-		# A handler re-entrantly detached/reattached during the send:
-		# teardown already resolved the boundary for the old session.
+	if _client != client or _mesh_revision != revision:
+		# A callback replaced the room or plan while the send was in flight.
 		return
 	if sent == OK:
 		_reported_connected = wanted
 	else:
 		_status_retry_due_msec = now + transport_status_retry_msec
+
+
+func _peer_is_terminal(entry: _MeshPeer) -> bool:
+	var state: int = entry.connection.call("get_connection_state")
+	if (
+		state == WebRTCPeerConnection.STATE_DISCONNECTED
+		or state == WebRTCPeerConnection.STATE_FAILED
+		or state == WebRTCPeerConnection.STATE_CLOSED
+	):
+		return true
+	if _mp_peer == null or not _mp_peer.call("has_peer", entry.peer_id):
+		return true
+	var peer: Dictionary = _mp_peer.call("get_peer", entry.peer_id)
+	var channels: Array = peer["channels"]
+	for channel: Object in channels:
+		var channel_state: int = channel.call("get_ready_state")
+		if (
+			channel_state == WebRTCDataChannel.STATE_CLOSING
+			or channel_state == WebRTCDataChannel.STATE_CLOSED
+		):
+			return true
+	return false
 
 
 func _count_connected_peers() -> int:

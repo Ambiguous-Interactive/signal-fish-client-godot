@@ -111,8 +111,8 @@ and emits no connect signal. A later request can retry the handshake.
 ## Failure modes
 
 `coordination_failed` fires and the coordination stops when the room
-connection closes or fails, the room session ends, the room has no authority holder,
-the authority leaves the host, the published host id changes mid-session,
+connection closes or fails, the room session ends (including `authentication_error`),
+the room has no authority holder, the authority leaves the host, the published host id changes mid-session,
 the host Steam session closes, or a dial times out or fails. A dial that
 never completed and a fence request still pending close their Steam
 sessions; an established session always belongs to the game. `stop()` closes

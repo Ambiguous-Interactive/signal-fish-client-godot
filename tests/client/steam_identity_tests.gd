@@ -55,7 +55,7 @@ func run_all() -> void:
 		_test_peer_dial_and_host_id_timeouts,
 		_test_authority_loss_fails_host,
 		_test_room_loss_fails_coordination,
-		_test_transport_failure_stops_coordination,
+		_test_session_failure_stops_coordination,
 		_test_refused_handshake_reply_can_retry,
 		_test_pending_requests_close_on_teardown,
 		_test_accept_failure_closes_requester,
@@ -481,62 +481,85 @@ func _test_room_loss_fails_coordination() -> void:
 	_done()
 
 
-func _test_transport_failure_stops_coordination() -> void:
+func _test_session_failure_stops_coordination() -> void:
 	for role: SFSteamIdentityBootstrapScript.Role in [
 		SFSteamIdentityBootstrapScript.Role.HOST, SFSteamIdentityBootstrapScript.Role.PEER
 	]:
 		for established: bool in [false, true]:
-			var steam := FakeSteam.new(PEER_ID)
-			var bootstrap := _make_bootstrap(role, PEER_ID, steam)
-			var client := _in_room_client()
-			bootstrap.attach(client)
-			bootstrap.start()
-			if role == SFSteamIdentityBootstrapScript.Role.HOST:
-				if established:
-					_advertise_peer(client, PLAYER_B, PEER_ID)
-					steam.request_session(int(PEER_ID))
-				steam.request_session(int(OTHER_ID))
-			else:
-				_advertise_host(client, PLAYER_A, HOST_ID)
-				if established:
-					steam.queue_packet(int(HOST_ID), PackedByteArray([0x41]))
-					bootstrap.poll()
-			var transport: SFFakeTransportScript = client.transport
-			if established:
-				transport.fail_on_send = true
-				client.send_game_data({"move": 1})
-			else:
-				transport.inject_failure("socket read failed")
-			_assert_equal(
-				false, bootstrap.is_coordinating(), "transport failure stops coordination"
-			)
-			_assert_equal(
-				["the room connection failed"],
-				_captured(bootstrap, "coordination_failed"),
-				"failure reported once"
-			)
-			var closed: Array[int] = []
-			if role == SFSteamIdentityBootstrapScript.Role.HOST:
-				closed.append(int(OTHER_ID))
-			elif not established:
-				closed.append(int(HOST_ID))
-			_assert_equal(closed, steam.closes, "transport failure closes only unfinished sessions")
-			bootstrap.poll()
-			_assert_equal(
-				1, _captured(bootstrap, "coordination_failed").size(), "poll cannot repeat failure"
-			)
-			_assert_equal(
-				0,
-				steam.get_signal_connection_list("p2p_session_request").size(),
-				"Steam listener released"
-			)
-			bootstrap.detach()
-			client.free()
-			client = _in_room_client()
-			_assert_equal(OK, bootstrap.attach(client), "attach fresh room client")
-			_assert_equal(OK, bootstrap.start(), "fresh coordination can start")
-			bootstrap.free()
-			client.free()
+			for event: String in ["read_failure", "send_failure", "session_loss"]:
+				var steam := FakeSteam.new(PEER_ID)
+				var bootstrap := _make_bootstrap(role, PEER_ID, steam)
+				var client := _in_room_client()
+				bootstrap.attach(client)
+				bootstrap.start()
+				if role == SFSteamIdentityBootstrapScript.Role.HOST:
+					if established:
+						_advertise_peer(client, PLAYER_B, PEER_ID)
+						steam.request_session(int(PEER_ID))
+					steam.request_session(int(OTHER_ID))
+				else:
+					_advertise_host(client, PLAYER_A, HOST_ID)
+					if established:
+						steam.queue_packet(int(HOST_ID), PackedByteArray([0x41]))
+						bootstrap.poll()
+				var transport: SFFakeTransportScript = client.transport
+				if event == "send_failure":
+					transport.fail_on_send = true
+					client.send_game_data({"move": 1})
+				elif event == "session_loss":
+					transport.inject_server_message(
+						{
+							"type": "AuthenticationError",
+							"data": {"error": "session ended", "error_code": "UNAUTHORIZED"}
+						}
+					)
+				else:
+					transport.inject_failure("socket read failed")
+				_assert_equal(
+					false, bootstrap.is_coordinating(), "transport failure stops coordination"
+				)
+				_assert_equal(
+					[
+						(
+							"the room session ended"
+							if event == "session_loss"
+							else "the room connection failed"
+						)
+					],
+					_captured(bootstrap, "coordination_failed"),
+					"failure reported once"
+				)
+				var closed: Array[int] = []
+				if role == SFSteamIdentityBootstrapScript.Role.HOST:
+					closed.append(int(OTHER_ID))
+				elif not established:
+					closed.append(int(HOST_ID))
+				_assert_equal(
+					closed, steam.closes, "transport failure closes only unfinished sessions"
+				)
+				bootstrap.poll()
+				_assert_equal(
+					1,
+					_captured(bootstrap, "coordination_failed").size(),
+					"poll cannot repeat failure"
+				)
+				_assert_equal(
+					0,
+					steam.get_signal_connection_list("p2p_session_request").size(),
+					"Steam listener released"
+				)
+				bootstrap.detach()
+				_assert_equal(
+					0,
+					client.get_signal_connection_list("authentication_error").size(),
+					"detach releases session listener"
+				)
+				client.free()
+				client = _in_room_client()
+				_assert_equal(OK, bootstrap.attach(client), "attach fresh room client")
+				_assert_equal(OK, bootstrap.start(), "fresh coordination can start")
+				bootstrap.free()
+				client.free()
 	_done()
 
 

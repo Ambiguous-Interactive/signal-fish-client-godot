@@ -38,6 +38,10 @@ released version.
 
 ### Fixed
 
+- Dead WebRTC links release their channels and allow replacement plans (#393).
+- Fresh rooms and plans report mesh status without old retry delays (#394).
+- Room session loss stops WebRTC links and unfinished Steam setup (#395).
+
 - Steam coordination stops on room transport errors (#389).
 - Refused Steam handshake replies can retry without false connect signals (#390).
 - WebRTC setup errors release failed links and report the engine error (#391).
