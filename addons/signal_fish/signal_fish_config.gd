@@ -82,8 +82,8 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## death (NAT rebinding, radio loss) produces no WebSocket close, so without
 ## this the client stays "connected" forever and auto-reconnect never fires.
 ## The [code]CONNECTING[/code], [code]AUTHENTICATING[/code], and
-## [code]CLOSING[/code] silence deadlines (issues #341, #121, #126) always
-## run regardless of this knob: they send nothing.
+## [code]CLOSING[/code] silence deadlines always run. A directed reconnect
+## also has a room-response deadline, independent of incoming Pong replies.
 ## Runs from [code]_process[/code] like the reconnect backoff: the client
 ## node must be in the tree (or the ticks driven manually).
 @export var heartbeat_interval_sec: float = 0.0
@@ -101,7 +101,8 @@ const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_sessi
 ## off. The dial and the authentication windows are separate budgets: the
 ## dial window measures from the dial, and the authentication window
 ## measures from the open, so a slow dial does not shorten the silence
-## deadline that follows it.
+## deadline that follows it. A directed reconnect gets a separate full
+## window for its room response, starting when it sends Reconnect (#385).
 @export var pong_timeout_sec: float = 10.0
 
 ## Highest protocol version advertised with [code]Authenticate[/code]

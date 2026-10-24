@@ -706,14 +706,15 @@ func _tick_heartbeat(delta: float) -> void:
 	if _connection_state != ConnectionState.CONNECTED:
 		_reset_heartbeat()
 		return
-	if not is_authenticated():
-		# These windows cannot send Protocol Ping, and a duplicate
-		# `Authenticated` never restores a dead session (issue #24), so
-		# silence past the pong deadline is a dead link (issues #121 and
-		# #346). Accrued time flows into the ping cycle.
+	var waiting_for_room := (
+		_reconnect_handshake_sent and not _reconnected_seen and not _reconnect_auth_token.is_empty()
+	)
+	if not is_authenticated() or waiting_for_room:
+		# Pong proves link liveness, not completion of the room handshake (#385).
 		_heartbeat_elapsed += delta
 		if _heartbeat_elapsed >= _config.pong_timeout_sec:
-			_on_transport_failed("heartbeat auth timeout")
+			var window := "reconnect" if waiting_for_room else "auth"
+			_on_transport_failed("heartbeat %s timeout" % window)
 		return
 	# The deadlines above send nothing, so unlike the ping cycle they run
 	# with the heartbeat off (issues #121, #126, #346); the beat is opt-in.
@@ -789,6 +790,8 @@ func _open_transport(target: String) -> Error:
 		_clear_reconnect_credentials()
 		_emit_protocol_error(scheme_error)
 		return ERR_INVALID_PARAMETER
+	if _reconnect_auth_token.is_empty():
+		_cancel_auto_reconnect()
 	_last_dial_url = target
 	_user_close_requested = false
 	_reconnect_handshake_sent = false
@@ -798,9 +801,7 @@ func _open_transport(target: String) -> Error:
 	_reconnect_dial = not _reconnect_auth_token.is_empty()
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
 	_negotiated_protocol_version = 0
-	# A fresh dial supersedes any armed retry timer. The retry budget is NOT
-	# reset here: it resets only when a session actually re-establishes (a
-	# RoomJoined/Reconnected baseline), so exhaustion can terminate.
+	# Reconnect dials keep their budget until a room baseline arrives.
 	_reconnect_timer_running = false
 	_reset_session()
 	_connection_state = ConnectionState.CONNECTING
@@ -1051,6 +1052,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 						and _connection_state == ConnectionState.CONNECTED
 					):
 						_session_state = SessionState.AUTHENTICATED
+						_reset_heartbeat()
 						_reconnect_handshake_sent = true
 						if _send_reconnect() != OK:
 							_fail_reconnect_handshake()
@@ -1192,6 +1194,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 				)
 				return
 			_reconnected_seen = true
+			_reset_heartbeat()
 			var info: SFTypesScript.RoomJoinedInfo = event.args[0]
 			_apply_room_info(info)
 			# Replayed plans stay informational; sends require a fresh live plan.

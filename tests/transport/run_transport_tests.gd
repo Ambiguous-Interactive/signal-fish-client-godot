@@ -41,6 +41,7 @@ func _init() -> void:
 
 func _run() -> void:
 	var cases: Array[Callable] = [
+		_test_redial_during_poll_preserves_open_order,
 		_test_fake_connect_open_send_receive_and_close,
 		_test_fake_fail_on_send_mirrors_real_cascade,
 		_test_fake_reconnect_resets_terminal_flags,
@@ -69,6 +70,50 @@ func _run() -> void:
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
 	_run_completed = true
+
+
+func _test_redial_during_poll_preserves_open_order() -> void:
+	for phase: String in ["opened", "packet_open", "packet_closing", "packet_closed"]:
+		var transport := SFWebSocketTransportScript.new()
+		var old := TestWebSocketPeerAdapterScript.new()
+		var fresh := TestWebSocketPeerAdapterScript.new()
+		old.ready_state = WebSocketPeer.STATE_OPEN
+		fresh.ready_state = WebSocketPeer.STATE_OPEN
+		fresh.packets = [PackedByteArray([2])]
+		transport._peer = old
+		var events: Array[String] = []
+		transport.opened.connect(func() -> void: events.append("opened"))
+		transport.failed.connect(func(_error: String) -> void: events.append("failed"))
+		transport.closed.connect(func(_code: int, _reason: String) -> void: events.append("closed"))
+		transport.packet_received.connect(
+			func(payload: PackedByteArray, _is_text: bool) -> void:
+				events.append("packet-%d" % payload[0])
+		)
+		if phase != "opened":
+			transport.poll()
+		if phase == "packet_closing":
+			old.ready_state = WebSocketPeer.STATE_CLOSING
+		elif phase == "packet_closed":
+			old.ready_state = WebSocketPeer.STATE_CLOSED
+		old.packets = [PackedByteArray([1])]
+		var replace := func() -> void:
+			transport._peer = fresh
+			transport._reset_session_flags()
+		if phase == "opened":
+			transport.opened.connect(replace, CONNECT_ONE_SHOT)
+		else:
+			transport.packet_received.connect(
+				func(_payload: PackedByteArray, _is_text: bool) -> void: replace.call(),
+				CONNECT_ONE_SHOT
+			)
+		transport.poll()
+		_assert_equal(1, fresh.packets.size(), "%s: old poll leaves fresh packets queued" % phase)
+		transport.poll()
+		var expected := ["opened", "opened", "packet-2"]
+		if phase != "opened":
+			expected = ["opened", "packet-1", "opened", "packet-2"]
+		_assert_equal(expected, events, "%s: fresh packets follow their own opened signal" % phase)
+	_done()
 
 
 func _test_fake_connect_open_send_receive_and_close() -> void:

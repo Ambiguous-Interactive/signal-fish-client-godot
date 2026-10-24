@@ -38,6 +38,10 @@ released version.
 
 ### Fixed
 
+- Reconnect attempts time out when the room response never arrives (#385).
+- Fresh connections clear the previous room's automatic retry context (#386).
+- WebSocket redials emit `opened` before delivering new packets (#387).
+
 - Reconnecting peers restore cached player names, readiness and authority
   before callbacks on supported servers. Duplicate and older lifecycle
   updates preserve current roster state (#374).
