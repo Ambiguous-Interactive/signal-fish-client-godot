@@ -87,6 +87,14 @@ def checked(command: list[str], log: Path) -> None:
         raise RuntimeError(f"Command failed; see {log}")
 
 
+def check_output(output: str, directory: Path) -> None:
+    print(output)
+    if "WEBRTC_INTEROP_PASS" not in output or any(
+        token in output for token in ("SCRIPT ERROR", "PAGE_ERROR", "WEBRTC_INTEROP_FAIL")
+    ):
+        raise RuntimeError(f"Interoperability drill failed; see {directory}")
+
+
 def run(args: argparse.Namespace, directory: Path) -> None:
     native = directory / "native"
     web = directory / "web"
@@ -133,16 +141,11 @@ def run(args: argparse.Namespace, directory: Path) -> None:
             finally:
                 (directory / "browser.log").write_text("\n".join(messages))
                 browser.close()
+        check_output("\n".join(messages), directory)
         process.wait(timeout=20)
         native_log.flush()
         native_output = (directory / "native.log").read_text()
-        browser_output = "\n".join(messages)
-        for output in (native_output, browser_output):
-            print(output)
-            if "WEBRTC_INTEROP_PASS" not in output or any(
-                token in output for token in ("SCRIPT ERROR", "PAGE_ERROR", "WEBRTC_INTEROP_FAIL")
-            ):
-                raise RuntimeError(f"Interoperability drill failed; see {directory}")
+        check_output(native_output, directory)
         if process.returncode:
             raise RuntimeError(f"Native seat exited {process.returncode}")
         print("Native/browser interoperability passed; logs: " + str(directory))
