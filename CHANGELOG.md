@@ -38,6 +38,10 @@ released version.
 
 ### Fixed
 
+- Steam coordination stops on room transport errors (#389).
+- Refused Steam handshake replies can retry without false connect signals (#390).
+- WebRTC setup errors release failed links and report the engine error (#391).
+
 - Reconnect attempts time out when the room response never arrives (#385).
 - Fresh connections clear the previous room's automatic retry context (#386).
 - WebSocket redials emit `opened` before delivering new packets (#387).

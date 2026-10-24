@@ -82,7 +82,8 @@ The classic Steam P2P API is session-less: there is no listen call and no
 connect-success callback. The dial is a one-byte poke on the bootstrap
 channel (`steam_channel`, default 1), and the host's reply is the
 "connected" event. Run game traffic on your own channels; keep payloads off
-the bootstrap channel.
+the bootstrap channel. A refused host reply closes that unfinished session
+and emits no connect signal. A later request can retry the handshake.
 
 ## Signals
 
@@ -110,7 +111,7 @@ the bootstrap channel.
 ## Failure modes
 
 `coordination_failed` fires and the coordination stops when the room
-connection closes, the room session ends, the room has no authority holder,
+connection closes or fails, the room session ends, the room has no authority holder,
 the authority leaves the host, the published host id changes mid-session,
 the host Steam session closes, or a dial times out or fails. A dial that
 never completed and a fence request still pending close their Steam

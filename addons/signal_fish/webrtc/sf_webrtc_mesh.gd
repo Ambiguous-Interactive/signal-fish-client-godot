@@ -173,7 +173,9 @@ func poll() -> void:
 		var entry: _MeshPeer = _peers.get(uuid)
 		if entry == null:
 			continue
-		entry.connection.call("poll")
+		var error: Error = entry.connection.call("poll")
+		if not _check_peer_result(entry, "poll", error):
+			continue
 		_drain_relay(entry)
 	_update_transport_status()
 
@@ -272,14 +274,19 @@ func _on_client_signal_received(from_player: String, generation: String, payload
 	if typeof(payload) != TYPE_DICTIONARY:
 		return
 	var message: Dictionary = payload
-	if message.has("Offer"):
-		entry.connection.call("set_remote_description", "offer", str(message["Offer"]))
-	elif message.has("Answer"):
-		entry.connection.call("set_remote_description", "answer", str(message["Answer"]))
+	if message.has("Offer") or message.has("Answer"):
+		var type := "offer" if message.has("Offer") else "answer"
+		var sdp: String = str(message["Offer"] if type == "offer" else message["Answer"])
+		var error: Error = entry.connection.call("set_remote_description", type, sdp)
+		_check_peer_result(entry, "set_remote_description", error)
 	elif message.has("IceCandidate"):
 		# Matchbox convention relays the candidate string only; media and
 		# index are not part of the Signal Fish signal payload.
-		entry.connection.call("add_ice_candidate", "", 0, str(message["IceCandidate"]))
+		var error: Error = entry.connection.call(
+			"add_ice_candidate", "", 0, str(message["IceCandidate"])
+		)
+		if error != OK:
+			SFLogScript.warn("mesh: add_ice_candidate refused (%d)" % error)
 
 
 func _on_client_new_peer(peer_id: String, you_initiate: bool) -> void:
@@ -450,7 +457,18 @@ func _open_peer(uuid: String, initiate: bool) -> void:
 	_peers[uuid] = entry
 	_known_peers[uuid] = true
 	if initiate:
-		connection.call("create_offer")
+		error = connection.call("create_offer")
+		_check_peer_result(entry, "create_offer", error)
+
+
+func _check_peer_result(entry: _MeshPeer, operation: String, error: Error) -> bool:
+	if _peers.get(entry.uuid) != entry:
+		return false
+	if error == OK:
+		return true
+	_drop_peer(entry.uuid)
+	SFLogScript.error("mesh: %s refused (%d)" % [operation, error])
+	return false
 
 
 func _drop_peer(uuid: String) -> void:
@@ -549,13 +567,15 @@ func _count_connected_peers() -> int:
 func _on_peer_session_description(entry: _MeshPeer, type: String, sdp: String) -> void:
 	if _peers.get(entry.uuid) != entry:
 		return
-	entry.connection.call("set_local_description", type, sdp)
 	var payload: Dictionary = {}
 	if type == "offer":
 		payload["Offer"] = sdp
 	elif type == "answer":
 		payload["Answer"] = sdp
 	else:
+		return
+	var error: Error = entry.connection.call("set_local_description", type, sdp)
+	if not _check_peer_result(entry, "set_local_description", error):
 		return
 	_send_signal_to(entry, payload)
 
