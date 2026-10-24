@@ -218,8 +218,8 @@ open in #368.
 A three-player Direct case removes the selected host. Both survivors receive
 a fresh shared generation and the successor's endpoint. Removing the remaining
 endpoints produces a shared Relay reset with no host, endpoint, peers or ICE.
-Plan callbacks see the reset and relay gameplay succeeds. Game-owned Direct
-socket teardown and forced publication races remain open in #358.
+Plan callbacks see the reset and relay gameplay succeeds. Controlled publication is covered by the drill below. Game-owned Direct
+socket teardown remains open in #358.
 
 For #356, apply the local-only
 [`spectator_detach_fault.patch`](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/2c6224599a4460e18bbc00ed0872138d60b43be0/tests/fixtures/spectator_detach_fault.patch)
@@ -244,7 +244,8 @@ confirmed the chosen fault and local recovery. The existing recovery oracle
 checks exactly one terminal reply, live roster removal and replay detach,
 room identity, reason, retained identity cleanup and fresh spectator gameplay.
 These injections exercise the upstream repair; a request-triggered panic is
-unproven. Registration retry/exhaustion and authoritative removal remain open.
+unproven. The controlled drill below covers registration retry/exhaustion.
+Authoritative removal remains open.
 
 The same isolated server can then run the drain case:
 
@@ -260,3 +261,61 @@ the engine peer. Both fault modes passed the exact signal order
 room/identity state. The server uses a two-second grace for this drill.
 Correlated recovery payloads retain their deterministic client coverage;
 correlated live admission remains unsupported. These drills are opt-in.
+
+## Controlled lifecycle publication
+
+`tests/smoke/run_controlled_lifecycle_acceptance.gd` adds local server barriers
+for #356, #358 and #367. Use an isolated server checkout at
+`182cb234c7aa601be3c2aad881948b3c5b853aaa`, the config above, and Rust 1.94.0.
+Apply only `tests/fixtures/controlled_lifecycle.patch` for this drill.
+
+```bash
+# From the isolated server checkout:
+git apply /path/to/signal-fish-client-godot/tests/fixtures/controlled_lifecycle.patch
+cargo build --locked --bin signal-fish-server
+export SF_GODOT_BARRIER_DIR="$(mktemp -d)"
+printf '%s\n' "$SF_GODOT_BARRIER_DIR"
+SF_GODOT_BARRIER_DIR="$SF_GODOT_BARRIER_DIR" target/debug/signal-fish-server
+# In another terminal, from the Godot client checkout, set the printed path:
+export SF_GODOT_BARRIER_DIR=/path/printed/above
+godot --headless --path . --script tests/smoke/run_controlled_lifecycle_acceptance.gd
+```
+
+Run one drill per server and barrier directory. The server consumes `.arm`
+files, writes `.reached` files and waits for `.release` files. Each server
+wait has a 15-second limit. Each client wait has an eight-second limit and
+the full drill has a watchdog. Client cleanup releases held publication
+barriers. After testing, stop the server, remove the barrier directory and
+reverse the patch with `git apply -R`. Rebuild before using that checkout
+for ordinary server runs. The patch is acceptance instrumentation.
+
+The drill checks these new boundaries on Godot 4.3 Linux arm64:
+
+- #367: two real reports from one socket call the public server dispatcher
+  concurrently. The first pauses after state acceptance and before fanout.
+  The second reaches the report lock before release. Both true/false orders
+  reach the v3 observer in acceptance order; v2 receives no transport events.
+  Server assertions under the report lock check stored state at each queue
+  admission. A duplicate is suppressed. Both observers receive later gameplay.
+  The ordinary transport-report drill above covers reconnect generations.
+- #358: a Direct metadata transaction pauses inside the commit hook before
+  storing the endpoint. Join and leave each reach the room mutation lane
+  while it is held. No plan or membership change appears before release.
+  Clients converge on the fresh endpoint and generation; plan callbacks see
+  peers in the current roster, and relay gameplay succeeds afterward.
+- #356: the first registration attempt returns failure at the existing result
+  seam. A successful retry preserves terminal identity, reason, roster removal,
+  replay and fresh gameplay. A panic on retry exhausts publication and closes
+  the viewer once with `1000/unregistered`. No terminal acknowledgement is
+  sent through the unregistered generation. Room members still receive one
+  removal. Fresh authentication and spectator admission restore gameplay.
+  Both recovery and exhaustion run with v2 and v3 viewers.
+
+The server's normal WebSocket reader dispatches serially. The fixture starts
+transport-report tasks through the public library entry point to reproduce
+embedded-host concurrency. It preserves the production report, lifecycle,
+room and queue gates. The injected registration failures qualify recovery
+behavior at that seam; the drill does not establish a request-triggered
+coordinator failure. Authoritative spectator removal and correlated live
+admission remain open in #356. Controlled Direct reconnect publication and
+game-owned socket teardown remain open in #358. Browser interop is separate.

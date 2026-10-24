@@ -1,0 +1,188 @@
+diff --git a/src/server.rs b/src/server.rs
+index 1461114..88e1473 100644
+--- a/src/server.rs
++++ b/src/server.rs
+@@ -6393,3 +6393,35 @@ mod connect_token_tests {
+         assert!(!server.connect_token_required());
+     }
+ }
++
++pub fn godot_acceptance_take(name: &str) -> bool {
++    let Ok(dir) = std::env::var("SF_GODOT_BARRIER_DIR") else {
++        return false;
++    };
++    std::fs::remove_file(std::path::Path::new(&dir).join(format!("{name}.arm"))).is_ok()
++}
++
++pub fn godot_acceptance_mark(name: &str) {
++    let dir = std::env::var("SF_GODOT_BARRIER_DIR").unwrap();
++    std::fs::write(
++        std::path::Path::new(&dir).join(format!("{name}.reached")),
++        b"reached",
++    )
++    .unwrap();
++}
++
++pub async fn godot_acceptance_pause(name: &str) {
++    if !godot_acceptance_take(name) {
++        return;
++    }
++    godot_acceptance_mark(name);
++    let dir = std::env::var("SF_GODOT_BARRIER_DIR").unwrap();
++    let release = std::path::Path::new(&dir).join(format!("{name}.release"));
++    tokio::time::timeout(std::time::Duration::from_secs(15), async {
++        while !release.exists() {
++            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
++        }
++    })
++    .await
++    .expect("Godot acceptance barrier was not released");
++}
+diff --git a/src/server/message_router.rs b/src/server/message_router.rs
+index 6222fa1..72aebde 100644
+--- a/src/server/message_router.rs
++++ b/src/server/message_router.rs
+@@ -542,6 +542,9 @@ impl EnhancedGameServer {
+         else {
+             return;
+         };
++        if super::godot_acceptance_take("report-enter") {
++            super::godot_acceptance_mark("report-enter");
++        }
+         let _report_guard = lifecycle.lock_transport_reports().await;
+         let lifecycle_guard = lifecycle.lock().await;
+         if lifecycle.player_id() != *player_id
+@@ -564,7 +567,19 @@ impl EnhancedGameServer {
+         // identity, teardown) must not queue behind them. Recipient truth no
+         // longer depends on either gate — see the fan-out below.
+         drop(lifecycle_guard);
++        super::godot_acceptance_pause("report").await;
+         fan_out.deliver(self).await;
++        if std::env::var_os("SF_GODOT_BARRIER_DIR").is_some() {
++            assert_eq!(
++                self.client_transport_status(player_id),
++                Some((transport, connected))
++            );
++            super::godot_acceptance_mark(if connected {
++                "report-done-true"
++            } else {
++                "report-done-false"
++            });
++        }
+     }
+
+     /// Process a transport report after the caller has fixed the connection
+@@ -582,6 +597,9 @@ impl EnhancedGameServer {
+         match self.set_client_transport_status(player_id, transport, connected) {
+             TransportStatusUpdate::Changed => {}
+             TransportStatusUpdate::Duplicate => {
++                if super::godot_acceptance_take("report-duplicate") {
++                    super::godot_acceptance_mark("report-duplicate");
++                }
+                 tracing::debug!(
+                     %player_id,
+                     ?transport,
+diff --git a/src/server/room_service.rs b/src/server/room_service.rs
+index 985c29b..0e515d5 100644
+--- a/src/server/room_service.rs
++++ b/src/server/room_service.rs
+@@ -1470,6 +1470,9 @@ impl EnhancedGameServer {
+             return;
+         };
+         leave_span.record("room_id", tracing::field::display(room_id));
++        if super::godot_acceptance_take("leave-enter") {
++            super::godot_acceptance_mark("leave-enter");
++        }
+         let room_event_guard = self
+             .message_coordinator
+             .lock_room_event_mutation(&room_id)
+@@ -2124,6 +2127,9 @@ impl EnhancedGameServer {
+                 // transaction. Returning this owned guard to the handler keeps
+                 // a second join/leave/ready transition from observing the DB
+                 // member before its route and lifecycle event are published.
++                if super::godot_acceptance_take("join-enter") {
++                    super::godot_acceptance_mark("join-enter");
++                }
+                 room_event_guard = Some(
+                     self.message_coordinator
+                         .lock_room_event_mutation(&room_lane.id)
+diff --git a/src/server/session_policy.rs b/src/server/session_policy.rs
+index 111a34a..fcf64b8 100644
+--- a/src/server/session_policy.rs
++++ b/src/server/session_policy.rs
+@@ -1304,6 +1304,9 @@ impl EnhancedGameServer {
+                             vec![],
+                             Box::new(move || {
+                                 Box::pin(async move {
++                                    if metadata_update.is_some() {
++                                        super::godot_acceptance_pause("direct").await;
++                                    }
+                                     if let Some((player_id, info)) = metadata_update {
+                                         if !database.update_player_connection_info(&room_id, &player_id, info).await? {
+                                             return Ok(false);
+diff --git a/src/server/spectator_service.rs b/src/server/spectator_service.rs
+index c63da8d..921a8dd 100644
+--- a/src/server/spectator_service.rs
++++ b/src/server/spectator_service.rs
+@@ -1287,11 +1287,17 @@ impl SpectatorService {
+                 .connection_manager
+                 .advance_delivery_generation_local(player_id);
+             publication_completed = match delivery.as_ref() {
+-                Some(handle) => self
+-                    .message_coordinator
+-                    .register_local_client(*player_id, None, handle.clone())
+-                    .await
+-                    .is_ok(),
++                Some(handle) => {
++                    if super::godot_acceptance_take("detach-error") {
++                        super::godot_acceptance_mark("detach-error");
++                        false
++                    } else {
++                        self.message_coordinator
++                            .register_local_client(*player_id, None, handle.clone())
++                            .await
++                            .is_ok()
++                    }
++                }
+                 None => true,
+             };
+             self.spectator_rooms.remove(player_id);
+@@ -1315,10 +1321,15 @@ impl SpectatorService {
+             }
+             publication_completed = match delivery {
+                 Some(handle) => matches!(
+-                    std::panic::AssertUnwindSafe(
++                    std::panic::AssertUnwindSafe(async {
++                        if super::godot_acceptance_take("detach-retry-panic") {
++                            super::godot_acceptance_mark("detach-retry-panic");
++                            panic!("Godot acceptance: retry publication panic");
++                        }
+                         self.message_coordinator
+                             .register_local_client(*player_id, None, handle)
+-                    )
++                            .await
++                    })
+                     .catch_unwind()
+                     .await,
+                     Ok(Ok(()))
+diff --git a/src/websocket/connection.rs b/src/websocket/connection.rs
+index 722fb72..23257f7 100644
+--- a/src/websocket/connection.rs
++++ b/src/websocket/connection.rs
+@@ -3048,6 +3048,16 @@ async fn handle_socket_supervised(
+                                             .await;
+                                     }
+                                 },
++                                ClientMessage::TransportStatus { transport, connected }
++                                    if std::env::var_os("SF_GODOT_BARRIER_DIR").is_some() => {
++                                    let server = Arc::clone(&server_clone);
++                                    tokio::spawn(async move {
++                                        server.handle_client_message(
++                                            &active_player_id,
++                                            ClientMessage::TransportStatus { transport, connected },
++                                        ).await;
++                                    });
++                                }
+                                 other => {
+                                     server_clone
+                                         .handle_client_message_from_lifecycle(

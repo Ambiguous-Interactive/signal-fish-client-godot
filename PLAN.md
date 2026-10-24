@@ -17,12 +17,11 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Complete spectator removal, correlated recovery and registration-failure
-      fixtures (#356).
+- [ ] Complete spectator removal and correlated recovery fixtures (#356).
 - [ ] Complete mesh channel interoperability with the reference engines (#355).
 - [ ] Complete spectator server delivery-pressure and concurrent publication (#368),
-      forced Direct metadata publication races (#358), and concurrent
-      embedded-host transport reports (#367).
+      controlled Direct reconnect publication races and application socket
+      teardown (#358).
 - [ ] Restore observer roster metadata after a peer reconnects (#374).
 
 Next session: choose one item below as the sole milestone and finish its PR
