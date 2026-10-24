@@ -53,6 +53,23 @@ In **Settings -> Secrets and variables -> Actions**, set:
   Use a password without quotes, backslashes, or control characters.
 - Variable `GODOT_ASSET_LIBRARY_ASSET_ID` - `5489`.
 
+## Review the release draft
+
+Each push to `main` updates a draft in
+[Releases](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/releases).
+You can also run **Release Draft** from Actions.
+It collects merged addon, docs, and README changes since the last release.
+Dependency updates and `skip-changelog` PRs are excluded.
+
+PR labels `feature`, `enhancement`, or `added` select Added. Labels `bug`,
+`bugfix`, `fix`, or `regression` select Fixed. Conventional `feat:` and `fix:`
+titles select those sections too. Other changes go under Changed.
+Labels `major` and `minor` raise the suggested version; the default is patch.
+
+Review the draft and copy its user-facing entries into the new changelog
+section. Complete the release steps below to publish it with the addon ZIP.
+Publishing the draft in the GitHub UI skips packaging and store submission.
+
 ## Every release (automated)
 
 1. Make sure `CHANGELOG.md` has a section for the new version and
@@ -64,11 +81,15 @@ In **Settings -> Secrets and variables -> Actions**, set:
 3. The workflow:
    - validates the tag format,
    - cuts release notes from the matching `CHANGELOG.md` section,
-   - packages the addon zip and publishes the GitHub Release,
+   - packages the addon zip and publishes the matching draft, or creates a release,
    - submits a store edit with the new version and tag.
 
 Both downloads contain only `addons/`. Demo scenes and the full docs remain in
 the source repository.
+
+The release workflow rejects invalid versions, an existing tag on manual cuts,
+and an already published release. A draft stays unpublished if its ZIP upload
+fails. Publishing uses the reviewed changelog section as the final notes.
 
 No secrets configured? The store step skips with a log line and the GitHub
 Release still publishes.

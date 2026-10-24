@@ -40,6 +40,8 @@ var _fresh_frames: Array[PackedByteArray] = []
 var _miss_uuids: Array[PackedByteArray] = []
 var _msgpack_payload := {"x": 1.5, "hp": 99, "state": "running", "seq": 42}
 var _float_envelope_data := {}
+var _key_churn_envelopes: Array[Dictionary] = []
+var _key_churn_index := 0
 
 
 func _init() -> void:
@@ -70,6 +72,8 @@ func _init() -> void:
 	# (miss path plus memo maintenance).
 	_bench("encode_floats", 10000, func() -> void: _encode_floats())
 	_bench("encode_floats_cold", 5000, func() -> void: _encode_floats_cold())
+	_bench("encode_keys_cold", 10000, func() -> void: _encode_keys_cold())
+	_bench("encode_keys_churn", 20000, func() -> void: _encode_keys_churn())
 	_bench("msgpack_roundtrip", 20000, func() -> void: _msgpack_roundtrip())
 	quit(0)
 
@@ -235,6 +239,22 @@ func _encode_floats_cold() -> void:
 	var wire := SFEnvelopeScript.encode(_float_envelope_cached())
 	if wire.is_empty():
 		push_error("bench float envelope refused at encode")
+		quit(1)
+
+
+func _encode_keys_cold() -> void:
+	SFEnvelopeScript._key_memo.clear()
+	_encode_floats()
+
+
+func _encode_keys_churn() -> void:
+	if _key_churn_envelopes.is_empty():
+		for index: int in SFEnvelopeScript._KEY_MEMO_LIMIT * 2:
+			_key_churn_envelopes.append({"field_%d" % index: index})
+	var wire := SFEnvelopeScript.encode(_key_churn_envelopes[_key_churn_index])
+	_key_churn_index = (_key_churn_index + 1) % _key_churn_envelopes.size()
+	if wire.is_empty():
+		push_error("bench changing-key envelope refused at encode")
 		quit(1)
 
 

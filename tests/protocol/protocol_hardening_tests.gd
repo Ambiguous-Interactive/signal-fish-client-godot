@@ -38,6 +38,7 @@ func run_all() -> void:
 		_test_decode_raw_aliasing,
 		_test_optional_string_field_strictness,
 		_test_wire_payload_fidelity,
+		_test_encode_key_memo,
 		_test_encode_boundary_refusals,
 		_test_format_downgrade_diagnostics,
 	]
@@ -190,6 +191,39 @@ func _test_wire_payload_fidelity() -> void:
 	_assert_invalid_message(
 		over_bound, "must be JSON data", "over-deep game data refused at the builder"
 	)
+	_done()
+
+
+func _test_encode_key_memo() -> void:
+	var payload := {"": 1, 'quote"': 2, "slash\\": 3, "line\n": 4}
+	payload[String.chr(233)] = 5
+	payload[String.chr(0)] = 6
+	var envelope := SFEnvelopeScript.message("GameData", {"data": payload})
+	SFEnvelopeScript._key_memo.clear()
+	var first := SFEnvelopeScript.encode(envelope)
+	_assert_equal(
+		JSON.stringify(envelope, "", false, true), first, "key escaping matches engine bytes"
+	)
+	payload['quote"'] = 7
+	var changed := SFEnvelopeScript.encode(envelope)
+	_assert_equal(
+		JSON.stringify(envelope, "", false, true), changed, "warm keys preserve changed values"
+	)
+	for index: int in SFEnvelopeScript._KEY_MEMO_LIMIT + 1:
+		SFEnvelopeScript.encode({"field_%d" % index: index})
+	_assert_equal(changed, SFEnvelopeScript.encode(envelope), "key eviction preserves bytes")
+	_assert(
+		SFEnvelopeScript._key_memo.size() <= SFEnvelopeScript._KEY_MEMO_LIMIT,
+		"key memo stays within entry budget"
+	)
+	var long_key := "x".repeat(SFEnvelopeScript._KEY_MEMO_MAX_LENGTH + 1)
+	var long_envelope := {long_key: 8}
+	_assert_equal(
+		JSON.stringify(long_envelope, "", false, true),
+		SFEnvelopeScript.encode(long_envelope),
+		"long keys retain normal JSON escaping"
+	)
+	_assert(not SFEnvelopeScript._key_memo.has(long_key), "long keys bypass memo storage")
 	_done()
 
 

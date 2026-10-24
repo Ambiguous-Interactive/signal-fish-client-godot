@@ -1,0 +1,38 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+tag-prefix: v
+category-template: "### $TITLE"
+change-template: "- $TITLE (#$NUMBER)"
+change-title-escapes: '\<*_&'
+categories:
+  - type: pre-include
+    when:
+      paths: ["addons/**", "docs/**", "README.md"]
+  - type: pre-exclude
+    when:
+      labels: [dependencies, skip-changelog]
+  - title: Added
+    exclusive: true
+    when:
+      - labels: [feature, enhancement, added]
+      - conventional:
+          type: feat
+  - title: Fixed
+    exclusive: true
+    when:
+      - labels: [bug, bugfix, fix, regression]
+      - conventional:
+          type: fix
+  - title: Changed
+  - type: version-resolver
+    semver-increment: major
+    when:
+      label: major
+  - type: version-resolver
+    semver-increment: minor
+    when:
+      label: minor
+  - type: version-resolver
+    semver-increment: patch
+template: |
+  $CHANGES

@@ -136,9 +136,36 @@ Godot 4.3 passed these controls on Linux arm64 with webrtc-native
 1.2.2-stable and in Chrome 154. A reference-style responder reached SCTP
 connection with zero in-band channel announcements from the Godot offerer.
 This checks the channel-layout boundary; it does not run either full
-reference client. Native-to-browser and cross-client gameplay remain
+reference client. Cross-client gameplay with the reference engines remains
 unverified.
 
 Success prints `WEBRTC_CHANNEL_DRILL_PASS`. This drill uses local signaling;
 live Signal Fish server delivery and remote-channel resource limits require
 separate acceptance.
+
+## Native and browser interoperability
+
+Run the opt-in cross-runtime drill with the installed native extension:
+
+```bash
+python scripts/check-webrtc-interop.py --native-extension /path/to/webrtc_native
+```
+
+Install the matching Godot Web export templates and
+`requirements-docs-accessibility.txt`, then run `playwright install chromium`.
+Use `--godot` or `--chromium` to select local executables. `--output` selects
+the directory for the isolated projects and logs. The runner exports a
+temporary Web project, starts a native seat and Chromium, and relays local
+signaling over HTTP. Gameplay flows over real WebRTC channels.
+
+Both seats send and receive reliable, ordered-unreliable, and unreliable
+packets. The drill checks payloads, sender ids, transfer modes, negotiated
+channel labels and ids. Each seat takes a turn as offerer. A Relay plan
+removes each old link before the next generation restores gameplay. Final
+detach removes the multiplayer peer.
+
+Godot 4.3 on Linux arm64 with webrtc-native 1.2.2-stable and Chromium 154
+passed this native-to-browser drill. This covers local connectivity; TURN,
+wide-area networking and the server reference engines need separate drills.
+Success requires `WEBRTC_INTEROP_PASS` from both seats and a zero native
+exit code. The runner retains native and browser logs with the projects.
