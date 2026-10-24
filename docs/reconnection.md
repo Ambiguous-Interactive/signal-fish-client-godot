@@ -98,7 +98,7 @@ client.set_auto_reconnect(true)
 
 A fresh `connect_to_server()` starts a new session and clears the previous
 room's retry context and budget. Use `reconnect()` to restore a previous seat.
-A fresh dial refused for an invalid URL preserves any pending recovery.
+A fresh dial refused for an invalid URL scheme preserves pending recovery.
 
 When enabled:
 
