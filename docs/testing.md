@@ -189,8 +189,8 @@ remains open.
 The recovery drill uses the same optional base URL, eight-second waits and
 two-minute watchdog. Success prints `LIVE_SERVER_ACCEPTANCE_PASS`; any failed
 phase exits nonzero. It passed against the pinned server above. Ordinary
-voluntary detach and replay are covered. Correlated recovery results and
-authoritative removal still need live fixtures for #356. The fault and drain drill below covers both local
+voluntary detach and replay are covered. The publication drill below covers correlated recovery results and
+authoritative removal for #356. The fault and drain drill below covers both local
 completion panic points and terminal-before-close ordering.
 
 Server queue saturation, latest/volatile delivery and forced concurrent
@@ -218,8 +218,8 @@ open in #368.
 A three-player Direct case removes the selected host. Both survivors receive
 a fresh shared generation and the successor's endpoint. Removing the remaining
 endpoints produces a shared Relay reset with no host, endpoint, peers or ICE.
-Plan callbacks see the reset and relay gameplay succeeds. Controlled publication is covered by the drill below. Game-owned Direct
-socket teardown remains open in #358.
+Plan callbacks see the reset and relay gameplay succeeds. Controlled publication is covered by the drill below. The publication drill below checks game-owned Direct
+socket replacement and teardown.
 
 For #356, apply the local-only
 [`spectator_detach_fault.patch`](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/2c6224599a4460e18bbc00ed0872138d60b43be0/tests/fixtures/spectator_detach_fault.patch)
@@ -245,7 +245,7 @@ checks exactly one terminal reply, live roster removal and replay detach,
 room identity, reason, retained identity cleanup and fresh spectator gameplay.
 These injections exercise the upstream repair; a request-triggered panic is
 unproven. The controlled drill below covers registration retry/exhaustion.
-Authoritative removal remains open.
+The publication drill below covers authoritative removal.
 
 The same isolated server can then run the drain case:
 
@@ -259,8 +259,8 @@ eight seconds. The drill has already queued the spectator terminal reply at
 the engine peer. Both fault modes passed the exact signal order
 `SpectatorLeft`, `GoingAway`, `disconnected` with close code 4000 and cleared
 room/identity state. The server uses a two-second grace for this drill.
-Correlated recovery payloads retain their deterministic client coverage;
-correlated live admission remains unsupported. These drills are opt-in.
+The publication drill below covers recovered correlated payload decoding;
+SDK room-operation admission remains unsupported. These drills are opt-in.
 
 ## Controlled lifecycle publication
 
@@ -316,6 +316,57 @@ transport-report tasks through the public library entry point to reproduce
 embedded-host concurrency. It preserves the production report, lifecycle,
 room and queue gates. The injected registration failures qualify recovery
 behavior at that seam; the drill does not establish a request-triggered
-coordinator failure. Authoritative spectator removal and correlated live
-admission remain open in #356. Controlled Direct reconnect publication and
-game-owned socket teardown remain open in #358. Browser interop is separate.
+coordinator failure. The publication drill below adds authoritative spectator
+removal, correlated result decoding and controlled Direct reconnect publication. Browser interop
+is separate.
+
+### Gameplay publication boundaries
+
+Using the same patched server and barrier directory, run:
+
+```bash
+godot --headless --path . --script tests/smoke/run_publication_boundary_acceptance.gd
+```
+
+This drill passed with Godot 4.3 Linux arm64, client base `5abec3c` and
+server `182cb234` plus the checked-in `controlled_lifecycle.patch`:
+
+- #368: pause spectator admission before baseline registration while holding
+  the room mutation lane. A player join reaches that lane and waits. Gameplay
+  continues to an incumbent player. The new viewer receives no traffic before
+  publication. After release, it receives one baseline then one player delta,
+  a complete roster and fresh gameplay. Prior gameplay is absent from the
+  new viewer's history. The drill covers v2/v3 JSON and raw MessagePack.
+- #356: an administrative detach with reason `removed` recovers after the
+  first registration failure. v2/v3 viewers receive one terminal with the
+  original room identity and reason. A connected member receives one removal;
+  an absent v3 player receives that removal once in decoded replay. Replay
+  requires consumer dispatch. Readmission and gameplay succeed.
+- #356: a fixture sends one raw v3 `RoomOperation/LeaveSpectator` after
+  negotiating `room_operation_ids`. Recovery preserves operation identity,
+  `SpectatorLeft` payload, room identity, reason and roster. The SDK emits
+  one informational result and leaves its cached session unchanged. The
+  server removes the viewer from routing. This fixture adds no room-operation
+  API or admission support. The ordinary SDK uses `leave_spectator()`.
+- #358: pause a Direct endpoint commit while reconnect reaches the mutation
+  lane. Two reconnect cycles receive their baseline before fresh plans,
+  rotate the credential and converge on the new endpoint and generation.
+  A game-owned `StreamPeerTCP` connects to a real loopback listener. It sends
+  payloads after reconnect and running endpoint refresh. Service disconnect,
+  endpoint replacement and Relay reset close the prior socket; the listener
+  observes EOF. Relay gameplay continues after teardown.
+
+The added barriers are `spectator-baseline` and `reconnect-enter`.
+`spectator-remove.arm` makes the next spectating client's Ping call the
+existing administrative detach path with reason `removed`, then process the
+Ping normally. Combine it with `detach-error.arm` for recovery. This trigger
+is local acceptance instrumentation; it is absent from ordinary builds.
+The mutation, routing, registration retry and publication paths remain intact.
+The drill releases held barriers and closes application sockets on failure.
+All waits and the overall watchdog retain the bounds described above.
+
+Server delivery-pressure and latest/volatile behavior remain open in #368.
+The observer roster repair remains open in #374. This native TCP fixture
+provides no browser Direct-socket contract; browsers require supported
+browser transports. Direct reset room/reconnect lifecycle and stale-signal
+scope stays in #358.
