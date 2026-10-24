@@ -34,6 +34,7 @@ func run_all() -> void:
 		_test_msgpack_hostile_vectors,
 		_test_msgpack_utf8_decode,
 		_test_msgpack_encode_widths,
+		_test_msgpack_string_widths,
 		_test_msgpack_non_finite_refusal,
 		_test_msgpack_round_trip_matrix,
 		_test_v2_envelope_canonical_bytes,
@@ -297,6 +298,35 @@ func _test_msgpack_encode_widths() -> void:
 	var object_result: Dictionary = SFMsgpackScript.encode(RefCounted.new())
 	var object_result_ok: bool = object_result["ok"]
 	_assert(object_result_ok, false, "objects are rejected")
+	_done()
+
+
+func _test_msgpack_string_widths() -> void:
+	var cases := [
+		["", [0xA0]],
+		["x".repeat(31), [0xBF]],
+		["x".repeat(32), [0xD9, 32]],
+		["x".repeat(255), [0xD9, 255]],
+		["x".repeat(256), [0xDA, 1, 0]],
+		["x".repeat(65535), [0xDA, 255, 255]],
+		["x".repeat(65536), [0xDB, 0, 1, 0, 0]],
+		["猫".repeat(11), [0xD9, 33]],
+		["🐟".repeat(64), [0xDA, 1, 0]],
+	]
+	for vector: Array in cases:
+		var text: String = vector[0]
+		var header: Array = vector[1]
+		var expected := PackedByteArray(header)
+		expected.append_array(text.to_utf8_buffer())
+		var result := SFMsgpackScript.encode(text)
+		var encoded_ok: bool = result["ok"]
+		_assert(encoded_ok, true, "string width encode succeeds")
+		_assert_equal(expected, result["bytes"], "string length uses its UTF-8 byte width")
+		var expected_map := PackedByteArray([0x81])
+		expected_map.append_array(expected)
+		expected_map.append(7)
+		var map_result := SFMsgpackScript.encode({text: 7})
+		_assert_equal(expected_map, map_result["bytes"], "map key uses the same string width")
 	_done()
 
 

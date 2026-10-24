@@ -166,9 +166,10 @@ signaling over HTTP. Gameplay flows over real WebRTC channels.
 
 Both seats send and receive reliable, ordered-unreliable, and unreliable
 packets. The drill checks payloads, sender ids, transfer modes, negotiated
-channel labels and ids. Each seat also sends a directed burst of 32 reliable
-binary packets, from 1 to 1200 bytes. The receiver checks exact bytes,
-sequence, sender, transfer mode, and channel. Each seat takes a turn as offerer. A Relay plan
+channel labels and ids. Each seat also streams 256 directed reliable
+binary packets, from 1 to 1200 bytes, in batches of four per frame. The
+receiver checks exact bytes, sequence, sender, transfer mode, and channel.
+Each seat takes a turn as offerer. A Relay plan
 removes each old link before the next generation restores gameplay. Final
 detach removes the multiplayer peer.
 
@@ -177,3 +178,17 @@ passed this native-to-browser drill. This covers local connectivity; TURN,
 wide-area networking and the server reference engines need separate drills.
 Success requires `WEBRTC_INTEROP_PASS` from both seats and a zero native
 exit code. The runner retains native and browser logs with the projects.
+
+To investigate intermittent failures, use `--repeat 3` and retain `--output`.
+Add `--baseline /path/to/baseline-checkout` to compare that checkout's addon
+with the current addon. Both use the current drill, export settings, engine,
+extension, and browser. Trials alternate which version runs first. Each
+trial starts fresh seats and signaling queues. `summary.json` records each
+result, elapsed time, and log directory. A failed trial keeps the remaining
+comparisons running and makes the final command fail. Per-seat logs include
+the failure stage and channel states, sent and received packet counts, and
+peak queued packets. These queue peaks describe the drill workload.
+
+The earlier intermittent timeout still needs a captured recurrence and
+baseline comparison. Successful repeated trials establish the tested runs;
+they do not identify that timeout's cause.

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import ClassVar
@@ -59,8 +60,8 @@ class RelayHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def prepare(project: Path, extension: Path | None) -> None:
-    shutil.copytree(ROOT / "addons/signal_fish", project / "addons/signal_fish")
+def prepare(project: Path, extension: Path | None, addon_root: Path) -> None:
+    shutil.copytree(addon_root / "addons/signal_fish", project / "addons/signal_fish")
     if extension:
         shutil.copytree(extension, project / "addons/webrtc_native")
     tests = project / "tests/smoke"
@@ -95,11 +96,11 @@ def check_output(output: str, directory: Path) -> None:
         raise RuntimeError(f"Interoperability drill failed; see {directory}")
 
 
-def run(args: argparse.Namespace, directory: Path) -> None:
+def prepare_pair(args: argparse.Namespace, directory: Path, addon_root: Path) -> tuple[Path, Path]:
     native = directory / "native"
     web = directory / "web"
-    prepare(native, args.native_extension)
-    prepare(web, None)
+    prepare(native, args.native_extension, addon_root)
+    prepare(web, None, addon_root)
     for project in (native, web):
         checked(
             [args.godot, "--headless", "--path", str(project), "--editor", "--import"],
@@ -109,7 +110,17 @@ def run(args: argparse.Namespace, directory: Path) -> None:
         [args.godot, "--headless", "--path", str(web), "--export-debug", "Web"],
         web / "export.log",
     )
-    handler = functools.partial(RelayHandler, directory=str(web / "build/web"))
+    return native, web
+
+
+def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path) -> None:
+    directory.mkdir(parents=True)
+
+    class TrialRelayHandler(RelayHandler):
+        queues: ClassVar[list[list[object]]] = [[], []]
+        lock = threading.Lock()
+
+    handler = functools.partial(TrialRelayHandler, directory=str(web / "build/web"))
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -164,12 +175,61 @@ def run(args: argparse.Namespace, directory: Path) -> None:
             server.server_close()
 
 
+def positive_count(value: str) -> int:
+    count = int(value)
+    if count < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return count
+
+
+def run(args: argparse.Namespace, directory: Path) -> None:
+    sources = {"current": ROOT}
+    if args.baseline:
+        sources["baseline"] = args.baseline.resolve()
+    projects = {
+        name: prepare_pair(args, directory / name, source) for name, source in sources.items()
+    }
+    results: list[dict[str, object]] = []
+    for trial in range(1, args.repeat + 1):
+        order = list(projects)
+        if trial % 2 == 0:
+            order.reverse()
+        for name in order:
+            native, web = projects[name]
+            logs = directory / f"trial-{trial:03d}" / name
+            started = time.monotonic()
+            error = ""
+            try:
+                run_seats(args, logs, native, web)
+            except Exception as exc:  # Keep both sides of a failed comparison.
+                error = f"{type(exc).__name__}: {exc}"
+                print(f"{name} trial {trial} failed: {error}")
+            results.append(
+                {
+                    "source": name,
+                    "addon_root": str(sources[name]),
+                    "trial": trial,
+                    "passed": not error,
+                    "error": error,
+                    "elapsed_sec": round(time.monotonic() - started, 3),
+                    "logs": str(logs),
+                }
+            )
+            (directory / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
+    if any(not result["passed"] for result in results):
+        raise RuntimeError(f"Interoperability trial failed; see {directory / 'summary.json'}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", default="godot")
     parser.add_argument("--native-extension", type=Path, required=True)
     parser.add_argument("--chromium", help="Optional Playwright Chromium executable")
     parser.add_argument("--output", type=Path, help="Keep projects and logs in this new directory")
+    parser.add_argument("--repeat", type=positive_count, default=1, help="Trials per addon version")
+    parser.add_argument(
+        "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"
+    )
     args = parser.parse_args()
     directory = args.output or Path(tempfile.mkdtemp(prefix="sf-webrtc-interop-"))
     directory.mkdir(parents=True, exist_ok=True)
