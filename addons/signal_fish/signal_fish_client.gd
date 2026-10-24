@@ -160,6 +160,7 @@ var _supports_authority := false
 var _lobby_state: int = SFTypesScript.LobbyState.UNKNOWN
 var _players: Array[SFTypesScript.PlayerInfo] = []
 var _player_epochs: Dictionary = {}
+var _player_reconnects: Dictionary = {}
 var _spectators: Array[SFTypesScript.SpectatorInfo] = []
 # Credentials for the in-flight reconnect dial (sent on transport open instead
 # of Authenticate). Empty auth_token = the next open authenticates normally.
@@ -1107,6 +1108,7 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			room_left.emit()
 		&"player_joined":
 			var player: SFTypesScript.PlayerInfo = event.args[0]
+			_player_reconnects.erase(player.id)
 			_upsert_player(player)
 			_remember_player_epoch(player.id, player.raw.get("epoch"))
 			player_joined.emit(player)
@@ -1114,10 +1116,13 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 			var player_id: String = event.args[0]
 			_remove_player(player_id)
 			_player_epochs.erase(player_id)
+			_player_reconnects.erase(player_id)
 			player_left.emit(player_id)
 		&"player_reconnected":
 			var data: Dictionary = event.raw.get("data", {})
 			var player_id: String = event.args[0]
+			if not _apply_player_reconnect(player_id, data):
+				return
 			_remember_player_epoch(player_id, data.get("epoch"))
 			player_reconnected.emit(event.args[0])
 		&"game_data_received":
@@ -1309,6 +1314,7 @@ func _apply_room_info(info: SFTypesScript.RoomJoinedInfo) -> void:
 	_players = info.current_players.duplicate()
 	_bound_roster(_players, "current_players")
 	_player_epochs.clear()
+	_player_reconnects.clear()
 	for player: SFTypesScript.PlayerInfo in _players:
 		_remember_player_epoch(player.id, player.raw.get("epoch"))
 	_spectators = info.current_spectators.duplicate()
@@ -1326,6 +1332,7 @@ func _apply_spectator_info(info: SFTypesScript.SpectatorJoinedInfo) -> void:
 	_players = info.current_players.duplicate()
 	_bound_roster(_players, "current_players")
 	_player_epochs.clear()
+	_player_reconnects.clear()
 	for player: SFTypesScript.PlayerInfo in _players:
 		_remember_player_epoch(player.id, player.raw.get("epoch"))
 	_spectators = info.current_spectators.duplicate()
@@ -1342,6 +1349,7 @@ func _clear_room_state() -> void:
 	_supports_authority = false
 	_players = []
 	_player_epochs.clear()
+	_player_reconnects.clear()
 	_spectators = []
 	# Plans are room-scoped (issue #120): the plan gate dies with the room.
 	_session_plan_seen = false
@@ -1375,6 +1383,28 @@ func _bound_roster(roster: Array, label: String) -> void:
 	_emit_protocol_error(
 		"%s exceeds %d entries; dropped %d" % [label, SFTypeUtils.MAX_TRACKED_PEERS, dropped]
 	)
+
+
+func _apply_player_reconnect(player_id: String, data: Dictionary) -> bool:
+	var has_metadata: bool = data.get("player") != null
+	if _room_id.is_empty():
+		return not has_metadata
+	var epoch := SFTypeUtils.int_or_zero(data["epoch"]) if data.get("epoch") != null else -1
+	if epoch != -1 and epoch <= _get_player_epoch(player_id):
+		return false
+	if (
+		_player_reconnects.has(player_id)
+		and (epoch == -1 or _player_reconnects[player_id] == epoch)
+	):
+		return false
+	if has_metadata:
+		var metadata: Dictionary = data["player"]
+		_upsert_player(SFTypesScript.make_player_info(metadata))
+	for current: SFTypesScript.PlayerInfo in _players:
+		if current.id == player_id:
+			_player_reconnects[player_id] = epoch
+			return true
+	return not has_metadata
 
 
 func _get_player_epoch(player_id: String) -> int:

@@ -56,8 +56,12 @@ func _announce(fake: SFFakeTransportScript, kind: String, epoch: Variant) -> voi
 		data = {"player": ClientFixtures.player(PLAYER_B, "B")}
 		if epoch != null:
 			data["player"]["epoch"] = epoch
-	elif epoch != null:
-		data["epoch"] = epoch
+	else:
+		data["player"] = ClientFixtures.player(PLAYER_B, "Restored B")
+		if epoch != null:
+			data["epoch"] = epoch
+			data["player"]["epoch"] = epoch
+			data["player"]["seq"] = 0
 	fake.inject_server_message({"type": kind, "data": data})
 
 

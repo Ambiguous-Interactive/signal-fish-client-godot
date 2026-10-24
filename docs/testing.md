@@ -415,19 +415,62 @@ issue #374. It needs the ordinary fixed server above, with no instrumentation:
 godot --headless --path . --script tests/smoke/run_roster_recovery_acceptance.gd
 ```
 
-On server `182cb234`, this exits with failure for v2 and v3 observers.
-A seated observer, an incumbent spectator and a spectator admitted during
-absence all receive reconnect notifications and fresh gameplay, while their
-rosters omit the returning player. Two reconnect cycles check roster size,
-metadata before callbacks, current name/readiness/authority, observer role
-and terminal leave. The late spectator has never received the old metadata.
-[Server #1167](https://github.com/Ambiguous-Interactive/signal-fish-server/issues/1167)
-tracks the required metadata publication contract. Keep this drill outside
-`all` until that contract is repaired.
+Use server
+[`b264ec7`](https://github.com/Ambiguous-Interactive/signal-fish-server/tree/b264ec739400b299182eaa918dd6828fd611f3b9)
+with the ordinary config above. Godot 4.3 Linux arm64 passed six cases: v2/v3
+observers with JSON and raw/decoded MessagePack. A seated observer, an incumbent
+spectator and a spectator admitted during absence restore the current name,
+readiness and authority before each reconnect callback. Each case includes two
+reconnect cycles, exact resumed gameplay, spectator role and terminal leave.
+Reconnect emits no synthetic player join. Success prints
+`LIVE_SERVER_ACCEPTANCE_PASS`.
 
-The publication-boundary Direct drill now also reconnects after the Relay
-reset, receives gameplay, advertises a new endpoint and leaves the room.
-The ended session stays on Relay and the application socket stays closed.
-`session_plan_acceptance_tests.gd` covers historical Direct plans in replay,
-old peer callbacks and stale-generation signals after reset/reconnect and
-a fresh room baseline.
+Server `182cb234` omits the metadata and fails this drill. The new single-frame
+contract shipped in
+[server PR #1169](https://github.com/Ambiguous-Interactive/signal-fish-server/pull/1169).
+The deterministic client suite also covers missing/malformed metadata,
+ID/epoch/sequence matching, duplicates, older epochs, replay baseline precedence,
+room reset, bounded roster growth and mesh incarnation retirement.
+
+### Expired reconnect cleanup
+
+`tests/smoke/run_expired_cleanup_acceptance.gd` covers issue #357. In an isolated
+server checkout at `b264ec7`, use the config above with
+`server.reconnection_window` set to `1`. Apply this repository's
+`tests/fixtures/expired_cleanup.patch`, then rebuild:
+
+```bash
+# From the isolated server checkout:
+git apply /path/to/signal-fish-client-godot/tests/fixtures/expired_cleanup.patch
+cargo build --locked --bin signal-fish-server
+export SF_GODOT_EXPIRY_DIR="$(mktemp -d)"
+SF_GODOT_EXPIRY_DIR="$SF_GODOT_EXPIRY_DIR" target/debug/signal-fish-server
+```
+
+In another terminal, set `SF_GODOT_EXPIRY_DIR` to the same directory and run:
+
+```bash
+godot --headless --path . --script tests/smoke/run_expired_cleanup_acceptance.gd
+```
+
+A Ping with `prepare.arm` captures the server regression's controlled residue:
+the server removes a seat while retaining its socket, registers a pending
+reconnect, waits for expiry and snapshots its real cleanup candidate. It then
+sends `RoomLeft` and Pong. The client joins the same room with the same socket
+identity and receives a new `RoomJoined` credential. A Ping with `cleanup.arm`
+runs the saved candidate through the production cleanup method before Pong.
+The `cleaned` file reports zero removed seats.
+
+Godot 4.3 Linux arm64 passed four cases with v2/v3 observers and JSON/decoded
+MessagePack. The fresh seat becomes ready, sends exact gameplay and reconnects
+with its current credential. An ordinary expiry control refuses the expired
+membership and permits a fresh login/join. The actor uses v3 because this server
+pre-issues reconnect credentials on v3. V2 observer results qualify this tested
+server build. They do not imply v2 credential issuance.
+
+The fixture forces a server-side residue seam. It does not establish that
+ordinary remote messages can create the stale record. Candidate capture has a
+four-second deadline; client phases wait eight seconds, and the runner has a
+two-minute watchdog. Run one drill per server and directory. Stop the server,
+remove the directory, restore its config and reverse the patch after testing.
+The fixture is local acceptance instrumentation.

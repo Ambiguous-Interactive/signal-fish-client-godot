@@ -59,20 +59,28 @@ server cannot overflow the script stack.
 
 On failure the client emits `reconnection_failed(reason, error_code)`.
 
-## Peer roster limitation
+## Peer roster recovery
 
-On server `182cb234`, a disconnected player leaves other clients' cached
-rosters. The `PlayerReconnected` frame carries its ID and epoch, which do not restore
-the missing name, readiness or authority fields in `get_players()`. The
-returning client receives its own full baseline and can exchange gameplay.
-Applications should handle the peer return signal separately from cached
-roster display. Full roster recovery is tracked in
-[#374](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/374).
+Server [b264ec7](https://github.com/Ambiguous-Interactive/signal-fish-server/commit/b264ec739400b299182eaa918dd6828fd611f3b9)
+and newer include optional current `player` metadata in `PlayerReconnected`.
+The client restores `get_players()` before `player_reconnected(player_id)`.
+This includes name, readiness and authority for seated and spectator observers,
+including spectators admitted while the player was absent. No `player_joined`
+signal is emitted for this update.
 
-The opt-in roster recovery drill in [testing](testing.md#roster-recovery-contract)
-reproduces this for seated and spectator observers, including an observer
-admitted during the absence. The publication contract is tracked in
-[server #1167](https://github.com/Ambiguous-Interactive/signal-fish-server/issues/1167).
+Duplicate metadata updates preserve later readiness and authority changes. Older v3
+epochs are ignored. A departure permits the next reconnect, and a fresh room
+baseline clears the prior room's reconnect state. Replay remains available to
+the application; it never overwrites the authoritative `Reconnected` baseline.
+
+Older servers, including `182cb234`, can omit `player`. These notifications
+keep the existing signal without inventing missing roster metadata. A peer
+can resume gameplay while remaining absent from an observer's roster on such
+servers. Upgrade the server for full roster recovery. V2 has no incarnation
+field, so lifecycle ordering follows the server's ordered socket stream.
+
+The [live roster drill](testing.md#roster-recovery-contract) covers v2/v3 JSON
+and raw/decoded MessagePack with repeated reconnects and terminal leave.
 
 ## Auto-reconnect
 

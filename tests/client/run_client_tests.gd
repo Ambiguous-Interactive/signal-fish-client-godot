@@ -19,6 +19,7 @@ const SessionGuardTestsScript = preload("res://tests/client/session_guard_tests.
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
 const WebrtcMeshTestsScript = preload("res://tests/client/webrtc_mesh_tests.gd")
 const SteamIdentityTestsScript = preload("res://tests/client/steam_identity_tests.gd")
+const RosterRecoveryTests = preload("res://tests/client/roster_recovery_tests.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const FuzzDecodeTestsScript = preload("res://tests/protocol/fuzz_decode_tests.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
@@ -119,6 +120,7 @@ func _run() -> void:
 	_failures.append_array(SpectatorDetachTestsScript.run(self))
 	_failures.append_array(WebrtcMeshTestsScript.run(self))
 	_failures.append_array(SteamIdentityTestsScript.run(self))
+	_failures.append_array(RosterRecoveryTests.run(self))
 	_run_completed = true
 
 

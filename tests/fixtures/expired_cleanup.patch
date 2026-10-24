@@ -1,0 +1,68 @@
+diff --git a/src/server/message_router.rs b/src/server/message_router.rs
+index 6222fa1..c01379d 100644
+--- a/src/server/message_router.rs
++++ b/src/server/message_router.rs
+@@ -128,6 +128,55 @@ impl TransportStatusFanOut {
+ }
+ 
+ impl EnhancedGameServer {
++    async fn godot_expiry_fixture(self: &Arc<Self>, player_id: &PlayerId) {
++        let Ok(directory) = std::env::var("SF_GODOT_EXPIRY_DIR") else {
++            return;
++        };
++        let directory = std::path::Path::new(&directory);
++        if std::fs::remove_file(directory.join("prepare.arm")).is_ok() {
++            let lifecycle = self.connection_manager.client_lifecycle(player_id).unwrap();
++            let _guard = lifecycle.lock().await;
++            let room_id = self.get_client_room(player_id).await.unwrap();
++            self.leave_room_locked(player_id, false).await;
++            let manager = self.reconnection_manager().unwrap();
++            manager
++                .register_disconnection(*player_id, room_id, false, None, 0)
++                .await;
++            let candidates = tokio::time::timeout(std::time::Duration::from_secs(4), async {
++                loop {
++                    let candidates = manager.expired_cleanup_candidates().await;
++                    if candidates.contains(&(*player_id, room_id)) {
++                        break vec![(*player_id, room_id)];
++                    }
++                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
++                }
++            })
++            .await
++            .expect("fixture expiry deadline");
++            std::fs::write(
++                directory.join("candidates.json"),
++                serde_json::to_vec(&candidates).unwrap(),
++            )
++            .unwrap();
++            self.message_coordinator
++                .send_to_player(player_id, Arc::new(ServerMessage::RoomLeft))
++                .await
++                .unwrap();
++            std::fs::write(directory.join("prepared"), "ready").unwrap();
++            tracing::info!(%player_id, %room_id, "GODOT_EXPIRY_CANDIDATE_CAPTURED");
++        }
++        if std::fs::remove_file(directory.join("cleanup.arm")).is_ok() {
++            let candidates =
++                serde_json::from_slice(&std::fs::read(directory.join("candidates.json")).unwrap())
++                    .unwrap();
++            let removed = self
++                .cleanup_expired_reconnection_candidates(candidates)
++                .await;
++            std::fs::write(directory.join("cleaned"), removed.to_string()).unwrap();
++            tracing::info!(removed, "GODOT_EXPIRY_CLEANUP_FINISHED");
++        }
++    }
++
+     /// Handle incoming client message with enhanced coordination.
+     pub async fn handle_client_message(
+         self: &Arc<Self>,
+@@ -274,6 +323,7 @@ impl EnhancedGameServer {
+                 .await;
+             }
+             ClientMessage::Ping => {
++                self.godot_expiry_fixture(player_id).await;
+                 self.handle_ping_from_lifecycle(player_id, source_lifecycle)
+                     .await;
+             }

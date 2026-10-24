@@ -1,7 +1,7 @@
 extends "res://tests/smoke/run_live_recovery_acceptance.gd"
 # gdlint: disable=max-returns
 
-## Opt-in full-roster acceptance for #374. Fails on servers missing peer metadata.
+## Opt-in full-roster acceptance for #374. Requires server b264ec7 or newer.
 
 
 func _initialize() -> void:
@@ -14,24 +14,27 @@ func _initialize() -> void:
 
 func _run() -> void:
 	for version: int in [2, 3]:
-		if await _roster_recovery(version) != true:
-			_failures.append("roster history did not complete: v%d" % version)
-		_close_seats()
+		for format_name: String in ["json", "message_pack"]:
+			for decoded: bool in [false, true] if format_name == "message_pack" else [false]:
+				if await _roster_recovery(version, format_name, decoded) != true:
+					_failures.append("roster history did not complete: v%d" % version)
+				_close_seats()
 	_finish()
 
 
-func _roster_recovery(version: int) -> bool:
-	var host := _seat(version, "json", false)
-	var actor := _seat(3, "json", false)
-	var viewer := _seat(version, "json", false)
-	var late := _seat(version, "json", false)
+func _roster_recovery(version: int, format_name: String, decoded: bool) -> bool:
+	_case += 1
+	var host := _seat(version, format_name, decoded)
+	var actor := _seat(3, format_name, false)
+	var viewer := _seat(version, format_name, decoded)
+	var late := _seat(version, format_name, decoded)
 	var actor_log := _history(actor)
 	var host_log := _history(host)
 	var viewer_log := _history(viewer)
 	var late_log := _history(late)
 	if not await _wait(func() -> bool: return _logged_in(), "roster login"):
 		return false
-	var game := "godot-roster-%d-v%d" % [OS.get_process_id(), version]
+	var game := "godot-roster-%d-%d" % [OS.get_process_id(), _case]
 	_join_with_authority(host, game, "")
 	if not await _wait(func() -> bool: return host.joined, "roster room"):
 		return false
@@ -49,8 +52,22 @@ func _roster_recovery(version: int) -> bool:
 	_expect(host.client.set_ready() == OK and actor.client.set_ready() == OK, "roster readiness")
 	if not await _wait(func() -> bool: return viewer.all_ready, "roster ready flags"):
 		return false
+	_expect(host.client.request_authority(false) == OK, "release roster authority")
+	if not await _wait(
+		func() -> bool: return viewer_log.authorities.has(""), "vacant roster authority"
+	):
+		return false
+	_expect(actor.client.request_authority(true) == OK, "actor takes roster authority")
+	if not await _wait(
+		func() -> bool: return viewer_log.authorities.has(id), "actor roster authority"
+	):
+		return false
 	var callbacks: Array[Array] = []
+	var joins: Array[String] = []
 	for observer: Seat in [host, viewer, late]:
+		observer.client.player_joined.connect(
+			func(player: TypesScript.PlayerInfo) -> void: joins.append(player.id)
+		)
 		observer.client.player_reconnected.connect(
 			func(player_id: String) -> void:
 				var player := _find_player(observer, player_id)
@@ -134,13 +151,25 @@ func _roster_recovery(version: int) -> bool:
 					),
 					"current flags cached before reconnect callback"
 				)
-		_expect(actor.client.send_game_data({"cycle": cycle}) == OK, "roster recovery gameplay")
+		var payload := {"cycle": cycle}
+		var error := (
+			actor.client.send_game_data(payload)
+			if format_name == "json"
+			else actor.client.send_game_data_binary(_msgpack(payload))
+		)
+		_expect(error == OK, "roster recovery gameplay")
 		if not await _wait(
 			func() -> bool:
 				return viewer.data.size() == cycle + 1 and late.data.size() == cycle + 1,
 			"roster recovery live gameplay"
 		):
 			return false
+		for observer: Seat in [viewer, late]:
+			if format_name == "json" or decoded:
+				_expect(_same_payload(observer.data[cycle], payload), "exact recovered gameplay")
+			else:
+				_expect(observer.data[cycle] == _msgpack(payload), "exact raw recovered gameplay")
+		_expect(joins.is_empty(), "reconnect emits no synthetic player join")
 		_expect(
 			(
 				viewer.client.get_session_state() == ClientScript.SessionState.SPECTATING
@@ -163,8 +192,8 @@ func _roster_recovery(version: int) -> bool:
 		_expect(_find_player(observer, id) == null, "terminal leave removes actor")
 	print(
 		(
-			"LIVE_ROSTER_HISTORY v%d two reconnect cycles seated incumbent and late spectators"
-			% version
+			"LIVE_ROSTER_HISTORY v%d %s decoded=%s two cycles seated incumbent and late spectators"
+			% [version, format_name, decoded]
 		)
 	)
 	return true
