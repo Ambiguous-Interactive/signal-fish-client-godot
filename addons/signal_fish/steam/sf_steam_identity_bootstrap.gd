@@ -166,6 +166,7 @@ func attach(client: SignalFishClientScript) -> Error:
 	client.game_data_received.connect(_on_client_game_data)
 	client.authority_changed.connect(_on_client_authority_changed)
 	client.disconnected.connect(_on_client_disconnected)
+	client.connection_failed.connect(_on_client_connection_failed)
 	return OK
 
 
@@ -179,6 +180,7 @@ func detach() -> void:
 		_client.game_data_received.disconnect(_on_client_game_data)
 		_client.authority_changed.disconnect(_on_client_authority_changed)
 		_client.disconnected.disconnect(_on_client_disconnected)
+		_client.connection_failed.disconnect(_on_client_connection_failed)
 	_client = null
 	stop()
 
@@ -410,6 +412,10 @@ func _on_client_disconnected(_code: int, _reason: String) -> void:
 	_fail_coordination("the room connection closed")
 
 
+func _on_client_connection_failed(_error: String) -> void:
+	_fail_coordination("the room connection failed")
+
+
 func _on_steam_session_request(remote_steam_id: int) -> void:
 	if not _coordinating or role != Role.HOST:
 		_refuse_request(remote_steam_id, "not hosting")
@@ -538,16 +544,20 @@ func _accept_peer(peer_id: String) -> void:
 		steam.call("closeP2PSessionWithUser", peer_id.to_int())
 		SFLogScript.error("steam bootstrap: accept refused for %s" % peer_id)
 		return
-	_connected_peers[peer_id] = true
 	# The handshake reply is the peer-side "connected" event: the classic P2P
 	# API has no connect-success callback.
-	steam.call(
+	var sent: Variant = steam.call(
 		"sendP2PPacket",
 		peer_id.to_int(),
 		PackedByteArray([_ACK_BYTE]),
 		P2P_SEND_RELIABLE,
 		steam_channel
 	)
+	if not (sent is bool) or not sent:
+		steam.call("closeP2PSessionWithUser", peer_id.to_int())
+		SFLogScript.error("steam bootstrap: handshake reply refused for %s" % peer_id)
+		return
+	_connected_peers[peer_id] = true
 	steam_peer_connected.emit(peer_id)
 
 

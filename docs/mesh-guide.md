@@ -59,6 +59,9 @@ multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
   is re-queued and redelivered in order (retries wait out one interval
   each) instead of being lost, so congestion cannot stall negotiation
   silently.
+- Offer, SDP description, and poll errors close only the failed peer and log
+  the engine error. A later plan can open a fresh link. A refused ICE
+  candidate logs a warning and leaves the link available for other candidates.
 - Peer ids derive deterministically from player UUIDs.
 
 ## Direct plan updates

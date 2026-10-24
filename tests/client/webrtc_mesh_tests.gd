@@ -18,6 +18,7 @@ const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 const MeshIncarnationTests = preload("res://tests/client/mesh_incarnation_tests.gd")
 const MeshChannelTests = preload("res://tests/client/mesh_channel_tests.gd")
+const MeshSetupTests = preload("res://tests/client/mesh_setup_tests.gd")
 const SessionPlanAcceptanceTests = preload("res://tests/client/session_plan_acceptance_tests.gd")
 
 const PLAYER_A := "10000000-0000-0000-0000-000000000001"
@@ -77,6 +78,7 @@ func run_all() -> void:
 	CompletionGuard.check_registration(self, cases, _failures)
 	_failures.append_array(SessionPlanAcceptanceTests.run(self))
 	_failures.append_array(MeshChannelTests.run(self))
+	_failures.append_array(MeshSetupTests.run(self))
 	_failures.append_array(MeshIncarnationTests.run(self))
 
 
@@ -1525,6 +1527,7 @@ class FakePeerConnection:
 	var state: int = 0  # WebRTCPeerConnection.STATE_NEW
 	var initialize_config: Variant = null
 	var initialize_result: Error = OK
+	var refused_operation := ""
 	var create_offer_calls := 0
 	var local_description: Array[String] = []
 	var remote_description: Array[String] = []
@@ -1542,23 +1545,26 @@ class FakePeerConnection:
 
 	func create_offer() -> Error:
 		create_offer_calls += 1
-		return OK
+		return ERR_CANT_CREATE if refused_operation == "create_offer" else OK
 
-	func set_local_description(type: String, sdp: String) -> void:
+	func set_local_description(type: String, sdp: String) -> Error:
 		local_description = [type, sdp]
+		return ERR_CANT_CREATE if refused_operation == "set_local_description" else OK
 
-	func set_remote_description(type: String, sdp: String) -> void:
+	func set_remote_description(type: String, sdp: String) -> Error:
 		remote_description = [type, sdp]
+		return ERR_CANT_CREATE if refused_operation == "set_remote_description" else OK
 
 	func add_ice_candidate(media: String, index: int, name: String) -> Error:
 		added_candidates.append([media, index, name])
-		return OK
+		return ERR_CANT_CREATE if refused_operation == "add_ice_candidate" else OK
 
 	func get_connection_state() -> int:
 		return state
 
-	func poll() -> void:
+	func poll() -> Error:
 		poll_calls += 1
+		return ERR_CANT_CREATE if refused_operation == "poll" else OK
 
 	func close() -> void:
 		closed = true
