@@ -92,6 +92,8 @@ released version.
 
 ### Changed
 
+- JSON gameplay sends reuse escaped short field names to reduce repeated encoding work.
+
 - Sharper Asset Library description with a link to
   [signalfish.network](https://signalfish.network).
 - README and docs mention the hosted service next to the self-hosted server

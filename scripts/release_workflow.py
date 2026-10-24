@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -56,6 +57,54 @@ def publish(environment: dict[str, str]) -> None:
     event = required(environment, "GITHUB_EVENT_NAME")
     if event not in ("push", "workflow_dispatch"):
         raise ReleaseWorkflowError(f"unsupported release event: {event}")
+    releases = subprocess.run(  # noqa: S603
+        ["gh", "api", "--paginate", "--slurp", f"repos/{repo}/releases?per_page=100"],  # noqa: S607
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    matching = [
+        release
+        for page in json.loads(releases.stdout)
+        for release in page
+        if release["tag_name"] == version
+    ]
+    if matching:
+        if len(matching) != 1 or not matching[0]["draft"]:
+            raise ReleaseWorkflowError(f"release {version} already exists and is published")
+        subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "gh",
+                "release",
+                "upload",
+                version,
+                "--repo",
+                repo,
+                f"signal-fish-godot-{version}.zip",
+                "--clobber",
+            ],
+            check=True,
+        )
+        subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "gh",
+                "release",
+                "edit",
+                version,
+                "--repo",
+                repo,
+                "--target",
+                sha,
+                "--title",
+                version,
+                "--notes-file",
+                "release-notes.md",
+                "--draft=false",
+                "--latest",
+            ],
+            check=True,
+        )
+        return
     target = ["--verify-tag"] if event == "push" else ["--target", sha]
     result = subprocess.run(  # noqa: S603
         [  # noqa: S607
@@ -137,7 +186,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
         ):
             with self.subTest(event=event), patch("subprocess.run") as run:
                 run.return_value.returncode = 0
+                run.return_value.stdout = "[[]]"
                 publish({**base, "GITHUB_EVENT_NAME": event})
+                self.assertEqual(
+                    run.call_args_list[0].args[0],
+                    [
+                        "gh",
+                        "api",
+                        "--paginate",
+                        "--slurp",
+                        "repos/owner/repo/releases?per_page=100",
+                    ],
+                )
+                self.assertTrue(run.call_args_list[0].kwargs["check"])
                 args = run.call_args.args[0]
                 self.assertEqual(
                     args[:6], ["gh", "release", "create", "v1.2.3", "--repo", "owner/repo"]
@@ -147,6 +208,60 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 run.return_value.returncode = 1
                 with self.assertRaisesRegex(ReleaseWorkflowError, "gh release create failed"):
                     publish({**base, "GITHUB_EVENT_NAME": event})
+
+    def test_publish_matching_draft_after_upload(self) -> None:
+        environment = {
+            "VERSION": "v1.2.3",
+            "GITHUB_REPOSITORY": "owner/repo",
+            "GITHUB_SHA": "abc",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+        }
+        with patch("subprocess.run") as run:
+            run.return_value.stdout = json.dumps(
+                [
+                    [{"tag_name": "v1.2.4", "draft": True}],
+                    [{"tag_name": "v1.2.3", "draft": True}],
+                ]
+            )
+            publish(environment)
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertEqual(len(commands), 3)
+            self.assertEqual(commands[1][:4], ["gh", "release", "upload", "v1.2.3"])
+            self.assertEqual(commands[2][:4], ["gh", "release", "edit", "v1.2.3"])
+            self.assertIn("--draft=false", commands[2])
+            self.assertIn("--notes-file", commands[2])
+            self.assertEqual(commands[2][commands[2].index("--target") + 1], "abc")
+
+    def test_publish_preserves_draft_on_upload_failure(self) -> None:
+        environment = {
+            "VERSION": "v1.2.3",
+            "GITHUB_REPOSITORY": "owner/repo",
+            "GITHUB_SHA": "abc",
+            "GITHUB_EVENT_NAME": "push",
+        }
+        for published in (False, True):
+            with self.subTest(published=published), patch("subprocess.run") as run:
+                response = subprocess.CompletedProcess(
+                    [], 0, stdout=json.dumps([[{"tag_name": "v1.2.3", "draft": not published}]])
+                )
+                run.side_effect = [response, subprocess.CalledProcessError(1, "upload")]
+                expected = ReleaseWorkflowError if published else subprocess.CalledProcessError
+                with self.assertRaises(expected):
+                    publish(environment)
+                self.assertEqual(run.call_count, 1 if published else 2)
+
+    def test_publish_stops_when_release_lookup_fails(self) -> None:
+        environment = {
+            "VERSION": "v1.2.3",
+            "GITHUB_REPOSITORY": "owner/repo",
+            "GITHUB_SHA": "abc",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+        }
+        with patch("subprocess.run") as run:
+            run.side_effect = subprocess.CalledProcessError(1, "gh api")
+            with self.assertRaises(subprocess.CalledProcessError):
+                publish(environment)
+            run.assert_called_once()
 
     def test_asset_gate(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -191,7 +306,7 @@ def main() -> int:
     }
     try:
         actions[command](dict(os.environ))
-    except (OSError, ReleaseWorkflowError) as exc:
+    except (OSError, subprocess.CalledProcessError, ValueError, ReleaseWorkflowError) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
     return 0

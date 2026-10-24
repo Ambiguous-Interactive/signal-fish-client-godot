@@ -11,7 +11,12 @@ const INVALID_MESSAGE_TYPE := "__InvalidSignalFishMessage"
 # Bound memo growth under hostile input; zero bypasses the cache because float
 # keys cannot distinguish -0.0 from 0.0 (issue #161).
 const _FLOAT_MEMO_LIMIT := 256
+# Repeated gameplay field names share their JSON escaping across frames.
+const _KEY_MEMO_LIMIT := 256
+const _KEY_MEMO_MAX_LENGTH := 64
+
 static var _float_memo: Dictionary = {}
+static var _key_memo: Dictionary = {}
 
 
 static func message(type_name: String, data: Variant = null) -> Dictionary:
@@ -65,7 +70,15 @@ static func _stringify_value(value: Variant, depth: int) -> String:
 				var encoded := _stringify_value(value[key], depth + 1)
 				if encoded.is_empty():
 					return ""
-				fields.append(JSON.stringify(key, "", false, true) + ":" + encoded)
+				var text_key: String = key
+				var encoded_key: String = _key_memo.get(text_key, "")
+				if encoded_key.is_empty():
+					encoded_key = JSON.stringify(text_key, "", false, true)
+					if text_key.length() <= _KEY_MEMO_MAX_LENGTH:
+						if _key_memo.size() >= _KEY_MEMO_LIMIT:
+							_key_memo.clear()
+						_key_memo[text_key] = encoded_key
+				fields.append(encoded_key + ":" + encoded)
 			return "{" + ",".join(fields) + "}"
 		TYPE_ARRAY:
 			var entries := PackedStringArray()
