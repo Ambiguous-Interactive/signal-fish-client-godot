@@ -18,6 +18,7 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 ## Next work
 
 - [ ] Complete mesh channel interoperability with the reference engines (#355).
+- [ ] Capture the next native/browser timeout and compare it with a baseline (#396).
 
 Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:

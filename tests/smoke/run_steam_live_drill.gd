@@ -20,7 +20,7 @@ extends SceneTree
 ##  godot --headless --path . --script tests/smoke/run_steam_live_drill.gd ++
 ##   --mode=live --seat=host --endpoint=wss://example/socket --app=APP_ID
 ##   --player=Host [--game=signal-fish] [--room=CODE] [--out=drill.json]
-##   [--deadline-sec=60]
+##   [--deadline-sec=60] [--observe-sec=30]
 
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const SFFakeTransportScript = preload("res://tests/transport/sf_fake_transport.gd")
@@ -45,6 +45,7 @@ const ACCEPT_GRACE_SEC := 5.0
 const PUMP_DELTA_SEC := 0.2
 const REFUSAL_ROUNDS := 27
 const DEFAULT_DEADLINE_SEC := 60.0
+const AUTHORITY_LOSS_REASON := "authority left the host; the fence has no holder"
 # Covers an abort before any seat exists (live mode); the seat deadline
 # takes over once one does.
 const LIVE_WATCHDOG_MS := 10000
@@ -58,6 +59,7 @@ const KNOWN_KEYS: Array[String] = [
 	"room",
 	"out",
 	"deadline-sec",
+	"observe-sec",
 ]
 const CAPTURED_SIGNALS: Array[String] = [
 	"steam_host_id_received",
@@ -69,7 +71,7 @@ const CAPTURED_SIGNALS: Array[String] = [
 const USAGE := (
 	"usage: run_steam_live_drill.gd [--mode=fake|live] [--seat=host|peer]"
 	+ " [--endpoint=URL] [--app=APP_ID] [--player=NAME] [--game=NAME]"
-	+ " [--room=CODE] [--out=PATH] [--deadline-sec=SEC]"
+	+ " [--room=CODE] [--out=PATH] [--deadline-sec=SEC] [--observe-sec=SEC]"
 )
 
 var _assertions: Array[Dictionary] = []
@@ -160,14 +162,16 @@ func _live_args_checked(args: Dictionary) -> Dictionary:
 		_usage_error("the peer seat requires the host's --room code")
 		return {}
 	args["deadline_sec"] = DEFAULT_DEADLINE_SEC
-	if args.has("deadline-sec"):
-		# Args arrive as strings; a direct float assignment is a runtime
-		# type error, so validate the text first.
-		var raw_deadline: String = args["deadline-sec"]
-		if not raw_deadline.is_valid_float() or raw_deadline.to_float() <= 0.0:
-			_usage_error("--deadline-sec must be a positive number")
+	args["observe_sec"] = 0.0
+	for key: String in ["deadline-sec", "observe-sec"]:
+		if not args.has(key):
+			continue
+		var raw_seconds: String = args[key]
+		var seconds := raw_seconds.to_float()
+		if not raw_seconds.is_valid_float() or not is_finite(seconds) or seconds <= 0.0:
+			_usage_error("--%s must be a positive finite number" % key)
 			return {}
-		args["deadline_sec"] = raw_deadline.to_float()
+		args[key.replace("-", "_")] = seconds
 	return args
 
 
@@ -182,6 +186,7 @@ func _usage_error(detail: String) -> void:
 
 func _run_fake_loopback() -> void:
 	_phase_live_join_setup()
+	_phase_live_observation()
 	var host := _make_seat(SFSteamIdentityBootstrapScript.Role.HOST, HOST_STEAM_ID)
 	var peer := _make_seat(SFSteamIdentityBootstrapScript.Role.PEER, PEER_STEAM_ID)
 	_fake_seats = [host, peer]
@@ -250,6 +255,22 @@ func _phase_live_join_setup() -> void:
 		seat.dispose()
 	_live_seat = null
 	_args = saved_args
+
+
+func _phase_live_observation() -> void:
+	var saved_args := _args
+	var saved_clock := _clock_ms
+	var captures: Array[Dictionary] = [{"value": PEER_STEAM_ID, "at_ms": 100.0}]
+	_args = {"observe_sec": 2.0}
+	_clock_ms = 2099.0
+	_record_assert("live_observation_waits", _observation_pending(captures), "", "seat stays up")
+	_clock_ms = 2100.0
+	_record_assert("live_observation_ends", not _observation_pending(captures), "", "bounded wait")
+	_args = {}
+	_clock_ms = 100.0
+	_record_assert("live_default_finishes", not _observation_pending(captures), "", "default")
+	_args = saved_args
+	_clock_ms = saved_clock
 
 
 func _phase_publishes(host: DrillSeat, peer: DrillSeat) -> void:
@@ -507,17 +528,29 @@ func _pump_live() -> void:
 	_live_seat.client.poll()
 	if _finished:
 		return
+	var milestones: Array[Dictionary] = _live_seat.captures(_live_milestone)
 	var failures: Array[Dictionary] = _live_seat.captures("coordination_failed")
 	if not failures.is_empty():
-		_fail_live("coordination failed: %s" % _first_value(failures))
+		var observing: bool = _args.get("observe_sec", 0.0) > 0.0 and not milestones.is_empty()
+		if observing and _first_value(failures) == AUTHORITY_LOSS_REASON:
+			_record_checklist_from_captures()
+			_finish()
+		else:
+			_fail_live("coordination failed: %s" % _first_value(failures))
 		return
-	var milestones: Array[Dictionary] = _live_seat.captures(_live_milestone)
-	if milestones.is_empty() and not _deadline_hit():
-		return
+	if not _deadline_hit():
+		if milestones.is_empty() or _observation_pending(milestones):
+			return
 	if milestones.is_empty():
 		_pending("the deadline elapsed before %s" % _live_milestone)
 	_record_checklist_from_captures()
 	_finish()
+
+
+func _observation_pending(milestones: Array[Dictionary]) -> bool:
+	var observe_sec: float = _args.get("observe_sec", 0.0)
+	var connected_at: float = milestones[0]["at_ms"]
+	return _clock_ms < connected_at + observe_sec * 1000.0
 
 
 func _deadline_hit() -> bool:
@@ -562,7 +595,7 @@ func _record_checklist_from_captures() -> void:
 		)
 	# Only an authority-reason failure verifies this item: a spontaneous
 	# coordination failure is data, not a driven checklist pass.
-	var authority_reason := "authority left the host; the fence has no holder"
+	var authority_reason := AUTHORITY_LOSS_REASON
 	var failures: Array[Dictionary] = _live_seat.captures("coordination_failed")
 	if failures.is_empty():
 		_record("authority_loss_fails_coordination", "pending", "", "no authority loss was driven")
@@ -687,6 +720,8 @@ func _make_seat(role: SFSteamIdentityBootstrapScript.Role, steam_id: String) -> 
 func _on_seat_capture(value: String, seat: DrillSeat, signal_name: String) -> void:
 	var entries: Array[Dictionary] = seat.captured[signal_name]
 	entries.append({"value": value, "at_ms": _clock_ms})
+	if _args.get("mode") == "live":
+		print(JSON.stringify({"event": signal_name, "value": value, "elapsed_ms": _clock_ms}))
 
 
 func _join_fake_room(

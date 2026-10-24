@@ -181,12 +181,26 @@ Join the peer to the same room. The peer requires `--room`:
 godot --headless --path . --script tests/smoke/run_steam_live_drill.gd ++ --mode=live --seat=peer --endpoint=wss://your-relay/socket --app=your-app --player=Peer --room=CODE --out=peer.json
 ```
 
-The host seat finishes on `steam_peer_connected`, the peer seat on
-`steam_host_connected`. Failed checks exit 1, usage errors exit 2, and
+The host seat reaches its connection milestone on `steam_peer_connected`;
+the peer seat reaches it on `steam_host_connected`. Add `--observe-sec=30`
+to both commands to keep each seat polling for 30 seconds after its
+milestone. Set `--deadline-sec=120` to allow time for setup and observation.
+The overall deadline still bounds the run. The default exits at the
+connection milestone. Captured Steam signals print as JSON events during
+observation, so you can wait for both seats to connect before driving a drop.
+
+During observation, use your room controller to transfer authority away
+from the host. The expected authority-loss failure records that checklist
+item and ends observation. Other coordination failures still fail the run.
+To check peer leave detection, drive a Steam session drop while the host
+keeps observing. A room leave alone does not prove a Steam session drop.
+Keep unexercised items pending in the report.
+
+Failed checks exit 1, usage errors exit 2, and
 everything else exits 0: passed, and also pending. A seat with no Steam,
 one that runs out of `--deadline-sec`, or a run with unexercised checklist
 items reports `pending`. Reaching the connection milestone still leaves
-leave-detection and authority-loss checks to drive. Read the JSON report's
+leave-detection and authority-loss checks to drive during observation. Read the JSON report's
 `status` and each assertion's `outcome`, never the exit code alone.
 The report carries one row per recorded check, with elapsed times.
 
