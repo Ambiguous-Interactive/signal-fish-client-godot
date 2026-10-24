@@ -69,6 +69,11 @@ Applications should handle the peer return signal separately from cached
 roster display. Full roster recovery is tracked in
 [#374](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/374).
 
+The opt-in roster recovery drill in [testing](testing.md#roster-recovery-contract)
+reproduces this for seated and spectator observers, including an observer
+admitted during the absence. The publication contract is tracked in
+[server #1167](https://github.com/Ambiguous-Interactive/signal-fish-server/issues/1167).
+
 ## Auto-reconnect
 
 Auto-reconnect is off by default. Turn it on per client:
