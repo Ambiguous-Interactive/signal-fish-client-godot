@@ -39,10 +39,30 @@ index 1461114..88e1473 100644
 +    .expect("Godot acceptance barrier was not released");
 +}
 diff --git a/src/server/message_router.rs b/src/server/message_router.rs
-index 6222fa1..72aebde 100644
+index 6222fa1..0ec5754 100644
 --- a/src/server/message_router.rs
 +++ b/src/server/message_router.rs
-@@ -542,6 +542,9 @@ impl EnhancedGameServer {
+@@ -274,6 +274,19 @@ impl EnhancedGameServer {
+                 .await;
+             }
+             ClientMessage::Ping => {
++                if self.spectator_service.is_spectating(player_id)
++                    && super::godot_acceptance_take("spectator-remove")
++                {
++                    assert!(
++                        self.spectator_service
++                            .detach(
++                                player_id,
++                                crate::protocol::SpectatorStateChangeReason::Removed,
++                            )
++                            .await
++                    );
++                    super::godot_acceptance_mark("spectator-remove");
++                }
+                 self.handle_ping_from_lifecycle(player_id, source_lifecycle)
+                     .await;
+             }
+@@ -542,6 +555,9 @@ impl EnhancedGameServer {
          else {
              return;
          };
@@ -52,7 +72,7 @@ index 6222fa1..72aebde 100644
          let _report_guard = lifecycle.lock_transport_reports().await;
          let lifecycle_guard = lifecycle.lock().await;
          if lifecycle.player_id() != *player_id
-@@ -564,7 +567,19 @@ impl EnhancedGameServer {
+@@ -564,7 +580,19 @@ impl EnhancedGameServer {
          // identity, teardown) must not queue behind them. Recipient truth no
          // longer depends on either gate — see the fan-out below.
          drop(lifecycle_guard);
@@ -72,7 +92,7 @@ index 6222fa1..72aebde 100644
      }
 
      /// Process a transport report after the caller has fixed the connection
-@@ -582,6 +597,9 @@ impl EnhancedGameServer {
+@@ -582,6 +610,9 @@ impl EnhancedGameServer {
          match self.set_client_transport_status(player_id, transport, connected) {
              TransportStatusUpdate::Changed => {}
              TransportStatusUpdate::Duplicate => {
@@ -82,6 +102,20 @@ index 6222fa1..72aebde 100644
                  tracing::debug!(
                      %player_id,
                      ?transport,
+diff --git a/src/server/reconnection_service.rs b/src/server/reconnection_service.rs
+index 7e6d343..702a882 100644
+--- a/src/server/reconnection_service.rs
++++ b/src/server/reconnection_service.rs
+@@ -1079,6 +1079,9 @@ impl EnhancedGameServer {
+         // Reconnected baseline, and PlayerReconnected enqueue are one room
+         // mutation transaction. In particular, a ready/spectator/join snapshot
+         // cannot observe the restored DB member before its route is published.
++        if super::godot_acceptance_take("reconnect-enter") {
++            super::godot_acceptance_mark("reconnect-enter");
++        }
+         let mut room_event_guard = Some(
+             self.message_coordinator
+                 .lock_room_event_mutation(room_id)
 diff --git a/src/server/room_service.rs b/src/server/room_service.rs
 index 985c29b..0e515d5 100644
 --- a/src/server/room_service.rs
@@ -121,10 +155,18 @@ index 111a34a..fcf64b8 100644
                                          if !database.update_player_connection_info(&room_id, &player_id, info).await? {
                                              return Ok(false);
 diff --git a/src/server/spectator_service.rs b/src/server/spectator_service.rs
-index c63da8d..921a8dd 100644
+index c63da8d..75832b9 100644
 --- a/src/server/spectator_service.rs
 +++ b/src/server/spectator_service.rs
-@@ -1287,11 +1287,17 @@ impl SpectatorService {
+@@ -671,6 +671,7 @@ impl SpectatorService {
+                 let snapshot_room = current_room.clone();
+                 let snapshot_spectators = spectator_snapshot.clone();
+                 let connection_manager = Arc::clone(&self.connection_manager);
++                super::godot_acceptance_pause("spectator-baseline").await;
+                 let baseline_delivered = self
+                     .message_coordinator
+                     .register_local_spectator_with_initial_message_async(
+@@ -1287,11 +1288,17 @@ impl SpectatorService {
                  .connection_manager
                  .advance_delivery_generation_local(player_id);
              publication_completed = match delivery.as_ref() {
@@ -147,7 +189,7 @@ index c63da8d..921a8dd 100644
                  None => true,
              };
              self.spectator_rooms.remove(player_id);
-@@ -1315,10 +1321,15 @@ impl SpectatorService {
+@@ -1315,10 +1322,15 @@ impl SpectatorService {
              }
              publication_completed = match delivery {
                  Some(handle) => matches!(

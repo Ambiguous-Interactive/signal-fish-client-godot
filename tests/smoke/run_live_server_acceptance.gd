@@ -294,7 +294,13 @@ func _msgpack(payload: Dictionary) -> PackedByteArray:
 	return bytes
 
 
-func _seat(version: int, format_name: String, decoded: bool, direct := false) -> Seat:
+func _seat(
+	version: int,
+	format_name: String,
+	decoded: bool,
+	direct := false,
+	capabilities := PackedStringArray()
+) -> Seat:
 	var seat := Seat.new()
 	var config := ConfigScript.new()
 	config.app_id = "godot-live-acceptance"
@@ -302,6 +308,7 @@ func _seat(version: int, format_name: String, decoded: bool, direct := false) ->
 	config.game_data_format = format_name
 	config.decode_msgpack_payloads = decoded
 	config.auto_poll = false
+	config.requested_capabilities = capabilities
 	if direct:
 		config.supported_transports = PackedStringArray(["relay", "direct"])
 		config.supported_topologies = PackedStringArray(["relay", "host"])
