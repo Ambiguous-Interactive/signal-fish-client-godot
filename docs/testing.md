@@ -430,7 +430,7 @@ contract shipped in
 [server PR #1169](https://github.com/Ambiguous-Interactive/signal-fish-server/pull/1169).
 The deterministic client suite also covers missing/malformed metadata,
 ID/epoch/sequence matching, duplicates, older epochs, replay baseline precedence,
-room reset, bounded roster growth and mesh incarnation retirement.
+room reset, bounded roster/departure history and mesh incarnation retirement.
 
 ### Expired reconnect cleanup
 

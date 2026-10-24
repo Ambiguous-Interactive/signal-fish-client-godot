@@ -27,6 +27,8 @@ func run_all() -> void:
 		_test_legacy_and_room_boundaries,
 		_test_replay_preserves_authoritative_baseline,
 		_test_reconnect_roster_cap,
+		_test_departure_epoch_fences,
+		_test_departure_history_stays_bounded,
 	]
 	Guard.drive(self, cases, _failures)
 	Guard.check_registration(self, cases, _failures)
@@ -230,5 +232,60 @@ func _test_reconnect_roster_cap() -> void:
 	var players := client.get_players()
 	_assert(players.size() == TypeUtils.MAX_TRACKED_PEERS, "freed roster slot accepts reconnect")
 	_assert(players[players.size() - 1].id == Fixtures.PLAYER_B, "refused reconnect can retry")
+	client.free()
+	_done()
+
+
+func _test_departure_epoch_fences() -> void:
+	var client: Client = _runner.call("_make_in_room_client")
+	var returns: Array[String] = []
+	client.player_reconnected.connect(func(id: String) -> void: returns.append(id))
+	_inject(client, _frame(4))
+	var left := {"type": "PlayerLeft", "data": {"player_id": Fixtures.PLAYER_B, "epoch": 4}}
+	_inject(client, left)
+	_inject(client, _frame(4))
+	_assert(
+		client.get_players().size() == 1 and returns.size() == 1,
+		"old reconnect cannot resurrect departed epoch"
+	)
+	_inject(client, _frame(5))
+	_assert(
+		client.get_players().size() == 2 and returns.size() == 2,
+		"new incarnation can return after departure"
+	)
+	_inject(client, left)
+	_assert(client.get_players().size() == 2, "old departure cannot remove fresh incarnation")
+	left["data"]["epoch"] = 5
+	_inject(client, left)
+	_inject(client, _frame(5))
+	_assert(
+		client.get_players().size() == 1 and returns.size() == 2,
+		"terminal leave fences duplicate reconnect"
+	)
+	_inject(client, {"type": "RoomJoined", "data": Fixtures.room_joined_data()})
+	_inject(client, _frame(1))
+	_assert(
+		client.get_players().size() == 2 and returns.size() == 3,
+		"room baseline clears departed epoch fences"
+	)
+	client.free()
+	_done()
+
+
+func _test_departure_history_stays_bounded() -> void:
+	var client: Client = _runner.call("_make_in_room_client")
+	for index: int in TypeUtils.MAX_TRACKED_PEERS + 8:
+		var id := "000000bb-0000-0000-0000-%012d" % index
+		var frame := _frame(1)
+		frame["data"]["player_id"] = id
+		frame["data"]["player"]["id"] = id
+		_inject(client, frame)
+		_inject(client, {"type": "PlayerLeft", "data": {"player_id": id, "epoch": 1}})
+		_inject(client, frame)
+		_assert(client.get_players().size() == 1, "recent departed epoch stays terminal")
+	var retained: Dictionary = client.get("_departed_player_epochs")
+	_assert(retained.size() <= TypeUtils.MAX_TRACKED_PEERS, "departed epoch history stays bounded")
+	_inject(client, {"type": "RoomLeft"})
+	_assert(retained.is_empty(), "room exit releases departed epoch history")
 	client.free()
 	_done()

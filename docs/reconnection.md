@@ -69,7 +69,8 @@ including spectators admitted while the player was absent. No `player_joined`
 signal is emitted for this update.
 
 Duplicate metadata updates preserve later readiness and authority changes. Older v3
-epochs are ignored. A departure permits the next reconnect, and a fresh room
+epochs are ignored. Recent departed epochs stay fenced in bounded room history.
+A departure permits a newer reconnect, and a fresh room
 baseline clears the prior room's reconnect state. Replay remains available to
 the application; it never overwrites the authoritative `Reconnected` baseline.
 
