@@ -7,6 +7,7 @@ const MeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const ClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SessionScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const BURST_PACKETS := 256
+const STREAM_WINDOW := 32
 const PLAYERS: Array[String] = [
 	"10000000-0000-0000-0000-000000000001", "10000000-0000-0000-0000-000000000002"
 ]
@@ -30,6 +31,7 @@ var _received_modes: Dictionary = {}
 var _burst_received: Array[int] = [0]
 var _burst_sent := 0
 var _peak_queued := 0
+var _stage_started := 0
 
 
 func _ready() -> void:
@@ -57,7 +59,7 @@ func _ready() -> void:
 		_pending.append({"generation": generation, "payload": payload})
 	_mesh = MeshScript.new()
 	_mesh.attach(_client)
-	for phase: int in [1, 2]:
+	for phase: int in range(1, 8):
 		if not await _run_phase(phase):
 			_fail("gameplay phase %d failed" % phase)
 			return
@@ -146,7 +148,7 @@ func _run_phase(phase: int) -> bool:
 	plan.transport = SessionScript.TransportKind.WEBRTC
 	var remote := SessionScript.SessionPeerInfo.new()
 	remote.player_id = PLAYERS[1 - _seat]
-	remote.initiate = _seat == phase - 1
+	remote.initiate = _seat == (phase - 1) % 2
 	plan.peers.append(remote)
 	if not remote.initiate:
 		_mesh._apply_plan(plan)
@@ -165,7 +167,7 @@ func _run_phase(phase: int) -> bool:
 	var channels: Array = (
 		multiplayer_peer.get_peer(MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat]))["channels"]
 	)
-	_stage = "channel contract"
+	_start_stage("channel contract")
 	if channels.size() != 3:
 		_fail("expected three gameplay channels")
 		return false
@@ -183,7 +185,7 @@ func _run_phase(phase: int) -> bool:
 		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED,
 		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE
 	]
-	_stage = "send gameplay modes"
+	_start_stage("send gameplay modes")
 	for mode: int in modes:
 		multiplayer_peer.transfer_mode = mode as MultiplayerPeer.TransferMode
 		var payload := "phase=%d seat=%d mode=%d" % [phase, _seat, mode]
@@ -219,12 +221,40 @@ func _run_phase(phase: int) -> bool:
 		"signaling drained", func() -> bool: return _pending.is_empty() and not _sending
 	):
 		return false
-	_stage = "relay teardown"
+	if phase <= 6:
+		_start_stage("close required channel")
+		if _seat == (phase - 1) % 2:
+			var closed_channel: WebRTCDataChannel = channels[(phase - 1) >> 1]
+			closed_channel.close()
+		if not await _wait_until(
+			"closed channel releases link", func() -> bool: return _mesh.get_peer_count() == 0
+		):
+			return false
+		if multiplayer_peer.get_available_packet_count() != 0:
+			_fail("closed channel retained gameplay packets")
+			return false
+	_start_stage("relay teardown")
 	var relay := SessionScript.SessionPlanInfo.new()
 	relay.transport = SessionScript.TransportKind.RELAY
 	_mesh._apply_plan(relay)
+	_mesh.poll()
 	if _mesh.get_peer_count() != 0 or multiplayer_peer.get_available_packet_count() != 0:
 		_fail("relay teardown retained peers or packets")
+		return false
+	var expected_statuses: Array[bool] = []
+	for _completed: int in phase:
+		expected_statuses.append_array([true, false])
+	if _client.statuses != expected_statuses:
+		_fail("transport reports differ from link transitions")
+		return false
+	_pending.append({"marker": "released-%d" % phase})
+	if not await _wait_until(
+		"remote link released marker", func() -> bool: return _markers.has("released-%d" % phase)
+	):
+		return false
+	if not await _wait_until(
+		"release marker delivered", func() -> bool: return _pending.is_empty() and not _sending
+	):
 		return false
 	print("interop gameplay: seat=%d phase=%d all modes and relay teardown passed" % [_seat, phase])
 	return true
@@ -258,9 +288,15 @@ func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 					_fail("directed reliable gameplay bytes, order or metadata differ")
 					return false
 				_burst_received[0] += 1
+				if _burst_received[0] % STREAM_WINDOW == 0:
+					_pending.append({"marker": "stream-%d-%d" % [phase, _burst_received[0]]})
 			for _batch: int in 4:
 				if _burst_sent == BURST_PACKETS:
 					break
+				if _burst_sent >= STREAM_WINDOW:
+					var previous_window := _burst_sent - (_burst_sent % STREAM_WINDOW)
+					if not _markers.has("stream-%d-%d" % [phase, previous_window]):
+						break
 				var packet := _burst_packet(
 					phase, _seat, _burst_sent, sizes[_burst_sent % sizes.size()]
 				)
@@ -294,11 +330,23 @@ func _burst_packet(phase: int, seat: int, sequence: int, size: int) -> PackedByt
 	return packet
 
 
-func _wait_until(stage: String, condition: Callable) -> bool:
+func _start_stage(stage: String) -> void:
 	_stage = stage
-	var deadline := Time.get_ticks_msec() + 15000
+	_stage_started = Time.get_ticks_msec()
+	print("interop stage: seat=%d phase=%d stage=%s" % [_seat, _phase, stage])
+
+
+func _wait_until(stage: String, condition: Callable) -> bool:
+	_start_stage(stage)
+	var deadline := _stage_started + 15000
 	while not _failed and Time.get_ticks_msec() < deadline:
 		if condition.call():
+			print(
+				(
+					"interop ready: seat=%d phase=%d stage=%s elapsed_ms=%d"
+					% [_seat, _phase, stage, Time.get_ticks_msec() - _stage_started]
+				)
+			)
 			return true
 		await get_tree().process_frame
 	_fail("wait timed out")
@@ -313,6 +361,7 @@ func _fail(reason: String) -> void:
 		"seat": _seat,
 		"phase": _phase,
 		"stage": _stage,
+		"stage_elapsed_ms": Time.get_ticks_msec() - _stage_started,
 		"reason": reason,
 		"markers": _markers.keys(),
 		"received_modes": _received_modes.keys(),
@@ -322,6 +371,7 @@ func _fail(reason: String) -> void:
 		"pending_signals": _pending.size(),
 		"sending": _sending,
 		"receiving": _receiving,
+		"transport_reports": _client.statuses if _client != null else [],
 		"peers": []
 	}
 	if _mesh != null:
@@ -357,10 +407,12 @@ func _fail(reason: String) -> void:
 class DrillClient:
 	extends ClientScript
 	var relay: Callable
+	var statuses: Array[bool] = []
 
 	func send_signal(_to: String, generation: String, payload: Variant) -> Error:
 		relay.call(generation, payload)
 		return OK
 
-	func send_transport_status(_kind: int, _connected: bool) -> Error:
+	func send_transport_status(_kind: int, up: bool) -> Error:
+		statuses.append(up)
 		return OK

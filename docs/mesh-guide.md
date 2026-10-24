@@ -188,9 +188,17 @@ packets. The drill checks payloads, sender ids, transfer modes, negotiated
 channel labels and ids. Each seat also streams 256 directed reliable
 binary packets, from 1 to 1200 bytes, in batches of four per frame. The
 receiver checks exact bytes, sequence, sender, transfer mode, and channel.
-Each seat takes a turn as offerer. A Relay plan
-removes each old link before the next generation restores gameplay. Final
-detach removes the multiplayer peer.
+Seven generations alternate the offerer. In the first six, each seat closes
+each required channel once. Both seats must release the link and report it
+down before the next generation restores gameplay. The final generation uses
+a Relay plan to remove the link. Each generation must produce one up report
+and one down report per seat. Final detach removes the multiplayer peer.
+
+The stream allows at most 32 packets without a receiver acknowledgment.
+This bounds queued traffic when one runtime polls more slowly. An earlier
+unpaced run filled the browser receive buffer and dropped reliable packets
+while the browser waited for a signaling marker. Games should drain incoming
+packets each frame and pace sustained sends for their receiver's capacity.
 
 Godot 4.3 on Linux arm64 with webrtc-native 1.2.2-stable and Chromium 154
 passed this native-to-browser drill. This covers local connectivity; TURN,
@@ -205,8 +213,9 @@ extension, and browser. Trials alternate which version runs first. Each
 trial starts fresh seats and signaling queues. `summary.json` records each
 result, elapsed time, and log directory. A failed trial keeps the remaining
 comparisons running and makes the final command fail. Per-seat logs include
-the failure stage and channel states, sent and received packet counts, and
-peak queued packets. These queue peaks describe the drill workload.
+the failure stage and its elapsed time, channel states, sent and received
+packet counts, and peak queued packets. Successful stage timings are also
+retained. These queue peaks describe the drill workload.
 
 The earlier intermittent timeout still needs a captured recurrence and
 baseline comparison. Successful repeated trials establish the tested runs;

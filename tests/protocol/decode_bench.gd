@@ -43,6 +43,7 @@ var _float_envelope_data := {}
 var _key_churn_envelopes: Array[Dictionary] = []
 var _key_churn_index := 0
 var _snapshot_envelope: Dictionary = {}
+var _snapshot_bytes := PackedByteArray()
 var _moving_envelopes: Array[Dictionary] = []
 var _moving_index := 0
 
@@ -102,6 +103,16 @@ func _init() -> void:
 			"msgpack_snapshot_%d" % count,
 			int(2048.0 / count),
 			func() -> void: SFMsgpackScript.encode(_snapshot_envelope)
+		)
+		for index: int in count:
+			players[index]["id"] = 256 + index
+			players[index]["health"] = 1000
+		var encoded: Dictionary = SFMsgpackScript.encode(_snapshot_envelope)
+		_snapshot_bytes = encoded["bytes"]
+		_bench(
+			"msgpack_decode_snapshot_%d" % count,
+			int(2048.0 / count),
+			func() -> void: SFMsgpackScript.decode(_snapshot_bytes)
 		)
 	_bench("msgpack_roundtrip", 20000, func() -> void: _msgpack_roundtrip())
 	quit(0)
