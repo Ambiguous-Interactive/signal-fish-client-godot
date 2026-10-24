@@ -88,11 +88,14 @@ released version.
   distinct room passwords at 16, and the live credential re-pins on every
   dial so it is always redacted while in use.
 
+### Changed
+
+- Gameplay floats that change each frame encode faster.
+- JSON gameplay sends reuse escaped short field names to reduce repeated encoding work.
+
 ## [v0.1.1] - 2026-10-01
 
 ### Changed
-
-- JSON gameplay sends reuse escaped short field names to reduce repeated encoding work.
 
 - Sharper Asset Library description with a link to
   [signalfish.network](https://signalfish.network).

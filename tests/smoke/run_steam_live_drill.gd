@@ -156,6 +156,9 @@ func _live_args_checked(args: Dictionary) -> Dictionary:
 	if not args["seat"] in ["host", "peer"]:
 		_usage_error("--seat must be host or peer")
 		return {}
+	if args["seat"] == "peer" and str(args.get("room", "")).is_empty():
+		_usage_error("the peer seat requires the host's --room code")
+		return {}
 	args["deadline_sec"] = DEFAULT_DEADLINE_SEC
 	if args.has("deadline-sec"):
 		# Args arrive as strings; a direct float assignment is a runtime
@@ -178,6 +181,7 @@ func _usage_error(detail: String) -> void:
 
 
 func _run_fake_loopback() -> void:
+	_phase_live_join_setup()
 	var host := _make_seat(SFSteamIdentityBootstrapScript.Role.HOST, HOST_STEAM_ID)
 	var peer := _make_seat(SFSteamIdentityBootstrapScript.Role.PEER, PEER_STEAM_ID)
 	_fake_seats = [host, peer]
@@ -202,6 +206,50 @@ func _run_fake_loopback() -> void:
 		seat.dispose()
 	_fake_seats = []
 	_finish()
+
+
+func _phase_live_join_setup() -> void:
+	var saved_args := _args
+	for seat_name: String in ["host", "peer"]:
+		var seat := _make_seat(SFSteamIdentityBootstrapScript.Role.HOST, HOST_STEAM_ID)
+		_join_fake_room(seat, SFSteamIdentityBootstrapScript.Role.HOST, HOST_PLAYER)
+		_live_seat = seat
+		_args = {"seat": seat_name, "player": "Seat", "room": "ABC123"}
+		_on_live_authenticated("", "", SFTypesScript.RateLimitInfo.new())
+		var transport: SFFakeTransportScript = seat.client.transport
+		var text: String = transport.sent_text.back()
+		var request: Dictionary = JSON.parse_string(text)
+		var data: Dictionary = request["data"]
+		var matches: bool = (
+			request["type"] == "JoinRoom"
+			and data.get("supports_authority") == true
+			and data.get("room_code") == "ABC123"
+		)
+		_record_assert(
+			"live_%s_room_request" % seat_name,
+			matches,
+			request,
+			"live setup requests the shared authority-enabled room"
+		)
+		var saved_assertions := _assertions
+		_assertions = []
+		var host_captures: Array[Dictionary] = seat.captured["steam_peer_connected"]
+		var peer_captures: Array[Dictionary] = seat.captured["steam_host_connected"]
+		host_captures.append({"value": PEER_STEAM_ID, "at_ms": 1.0})
+		peer_captures.append({"value": HOST_STEAM_ID, "at_ms": 1.0})
+		_record_checklist_from_captures()
+		var pending := _has_pending_checks()
+		_assertions = saved_assertions
+		_checklist_recorded = false
+		_record_assert(
+			"live_%s_partial_checklist" % seat_name,
+			pending,
+			pending,
+			"a connected seat still has unexercised checklist items"
+		)
+		seat.dispose()
+	_live_seat = null
+	_args = saved_args
 
 
 func _phase_publishes(host: DrillSeat, peer: DrillSeat) -> void:
@@ -432,6 +480,7 @@ func _on_live_authenticated(
 	params.game_name = game_name
 	params.player_name = player_name
 	params.room_code = room_code
+	params.supports_authority = true
 	var error: Error = _live_seat.client.join_room(params)
 	if error != OK:
 		_fail_live("join_room refused (%d)" % error)
@@ -446,9 +495,6 @@ func _on_live_room_joined(info: SFTypesScript.RoomJoinedInfo) -> void:
 		root.add_child(_live_seat.bootstrap)
 		error = _live_seat.bootstrap.start()
 	if error != OK:
-		if _live_seat.bootstrap.is_inside_tree():
-			root.remove_child(_live_seat.bootstrap)
-		_live_seat.dispose()
 		_fail_live("bootstrap start failed (%d)" % error)
 
 
@@ -459,6 +505,8 @@ func _pump_live() -> void:
 	if steam != null and steam.has_method("run_callbacks"):
 		steam.call("run_callbacks")
 	_live_seat.client.poll()
+	if _finished:
+		return
 	var failures: Array[Dictionary] = _live_seat.captures("coordination_failed")
 	if not failures.is_empty():
 		_fail_live("coordination failed: %s" % _first_value(failures))
@@ -546,6 +594,8 @@ func _record_milestone(name: String, captures: Array[Dictionary], pending_detail
 
 
 func _record(name: String, outcome: String, value: Variant, detail: String) -> void:
+	if _args.get("mode") == "live":
+		print(JSON.stringify({"event": name, "outcome": outcome, "value": str(value)}))
 	(
 		_assertions
 		. append(
@@ -574,8 +624,15 @@ func _finish() -> void:
 	if _finished:
 		return
 	_finished = true
+	call_deferred("_complete_finish")
+
+
+func _complete_finish() -> void:
+	if _live_seat != null:
+		_live_seat.dispose()
+		_live_seat = null
 	var status := "failed" if _failed else "passed"
-	if not _failed and not _pending_reason.is_empty():
+	if not _failed and (not _pending_reason.is_empty() or _has_pending_checks()):
 		status = "pending"
 	var mode: String = _args.get("mode", "fake")
 	var seat_name: String = _args.get("seat", "loopback")
@@ -607,6 +664,13 @@ func _finish() -> void:
 	print(text)
 	print("steam live drill %s" % status)
 	quit(1 if _failed else 0)
+
+
+func _has_pending_checks() -> bool:
+	for assertion: Dictionary in _assertions:
+		if assertion["outcome"] == "pending":
+			return true
+	return false
 
 
 # -- fake loopback plumbing: seats, clock, room relay -------------------------
@@ -654,7 +718,11 @@ func _join_fake_room(
 						{
 							"player_id": player_id,
 							"is_authority": role == SFSteamIdentityBootstrapScript.Role.HOST,
-							"current_players": [ClientFixtures.player(player_id, "Seat")],
+							"current_players":
+							[
+								ClientFixtures.player(HOST_PLAYER, "Host"),
+								ClientFixtures.player(PEER_PLAYER, "Peer"),
+							],
 							"current_spectators": [],
 						}
 					)

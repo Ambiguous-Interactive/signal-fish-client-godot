@@ -39,6 +39,7 @@ func run_all() -> void:
 		_test_optional_string_field_strictness,
 		_test_wire_payload_fidelity,
 		_test_encode_key_memo,
+		_test_float_formatter_parity,
 		_test_encode_boundary_refusals,
 		_test_format_downgrade_diagnostics,
 	]
@@ -233,6 +234,28 @@ static func _float_from_bits(bits: int) -> float:
 	for offset: int in 8:
 		bytes[offset] = (bits >> (offset * 8)) & 0xFF
 	return bytes.decode_double(0)
+
+
+func _test_float_formatter_parity() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 161382
+	for index: int in 512:
+		var bits := (rng.randi() << 32) | rng.randi()
+		var value := _float_from_bits(bits)
+		if not is_finite(value):
+			continue
+		var wire := SFEnvelopeScript.encode({"value": value}, false)
+		if wire.is_empty():
+			var fixed: Variant = JSON.parse_string(String.num(value, 17))
+			var scientific: Variant = JSON.parse_string(JSON.stringify(value, "", false, true))
+			var both_lossy: bool = fixed != value and scientific != value
+			_assert(both_lossy, "float %d refused only when both formatters lose precision" % index)
+			continue
+		var decoded: Dictionary = JSON.parse_string(wire)
+		var back: Variant = decoded["value"]
+		var exact: bool = typeof(back) == TYPE_FLOAT and back == value
+		_assert(exact, "float %d survives the engine JSON parser exactly" % index)
+	_done()
 
 
 ## The encode boundary is the last-resort net for payloads that skip the

@@ -102,7 +102,7 @@ def run(args: argparse.Namespace, directory: Path) -> None:
     prepare(web, None)
     for project in (native, web):
         checked(
-            [args.godot, "--headless", "--path", str(project), "--editor", "--quit"],
+            [args.godot, "--headless", "--path", str(project), "--editor", "--import"],
             project / "import.log",
         )
     checked(

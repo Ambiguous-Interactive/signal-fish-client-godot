@@ -190,6 +190,8 @@ func _run_phase(phase: int) -> bool:
 	_pending.append({"marker": "received-%d" % phase})
 	if not await _wait_until(func() -> bool: return _markers.has("received-%d" % phase)):
 		return false
+	if not await _reliable_burst(multiplayer_peer, phase):
+		return false
 	if not await _wait_until(func() -> bool: return _pending.is_empty() and not _sending):
 		return false
 	var relay := SessionScript.SessionPlanInfo.new()
@@ -199,6 +201,57 @@ func _run_phase(phase: int) -> bool:
 		return false
 	print("interop gameplay: seat=%d phase=%d all modes and relay teardown passed" % [_seat, phase])
 	return true
+
+
+func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
+	var remote_id := MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+	peer.set_target_peer(remote_id)
+	peer.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
+	var sizes: Array[int] = [1, 16, 255, 1200]
+	for sequence: int in 32:
+		var packet := _burst_packet(phase, _seat, sequence, sizes[sequence % sizes.size()])
+		if peer.put_packet(packet) != OK:
+			_fail("directed reliable burst send failed")
+			return false
+	var received: Array[int] = [0]
+	if not await _wait_until(
+		func() -> bool:
+			while peer.get_available_packet_count() > 0:
+				var sender := peer.get_packet_peer()
+				var mode := peer.get_packet_mode()
+				var channel := peer.get_packet_channel()
+				var packet := peer.get_packet()
+				var sequence := received[0]
+				var expected := _burst_packet(
+					phase, 1 - _seat, sequence, sizes[sequence % sizes.size()]
+				)
+				if (
+					sequence >= 32
+					or packet != expected
+					or sender != remote_id
+					or mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+					or channel != 0
+				):
+					_fail("directed reliable burst bytes, order or metadata differ")
+					return false
+				received[0] += 1
+			return received[0] == 32
+	):
+		return false
+	_pending.append({"marker": "burst-%d" % phase})
+	if not await _wait_until(func() -> bool: return _markers.has("burst-%d" % phase)):
+		return false
+	peer.set_target_peer(0)
+	print("interop reliable burst: seat=%d phase=%d 32 directed packets passed" % [_seat, phase])
+	return true
+
+
+func _burst_packet(phase: int, seat: int, sequence: int, size: int) -> PackedByteArray:
+	var packet := PackedByteArray()
+	packet.resize(size)
+	for index: int in size:
+		packet[index] = (phase * 61 + seat * 37 + sequence * 17 + index) & 0xff
+	return packet
 
 
 func _wait_until(condition: Callable) -> bool:

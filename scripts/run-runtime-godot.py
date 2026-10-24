@@ -323,7 +323,11 @@ def steam_ext() -> int:
     except (OSError, RuntimeError) as exc:
         print(f"steam-ext toolchain failed: {exc}", file=sys.stderr)
         return 1
-    stages: list[tuple[str, str]] = [("groundwork", STEAM_GROUNDWORK), *SUITES.items()]
+    stages: list[tuple[str, str]] = [
+        ("groundwork", STEAM_GROUNDWORK),
+        ("drill", STEAM_LIVE_DRILL),
+        *SUITES.items(),
+    ]
     with tempfile.TemporaryDirectory(
         prefix="signal-fish-steam-ext-prep.",
         dir=os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(),

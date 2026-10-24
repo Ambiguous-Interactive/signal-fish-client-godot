@@ -160,7 +160,9 @@ signaling over HTTP. Gameplay flows over real WebRTC channels.
 
 Both seats send and receive reliable, ordered-unreliable, and unreliable
 packets. The drill checks payloads, sender ids, transfer modes, negotiated
-channel labels and ids. Each seat takes a turn as offerer. A Relay plan
+channel labels and ids. Each seat also sends a directed burst of 32 reliable
+binary packets, from 1 to 1200 bytes. The receiver checks exact bytes,
+sequence, sender, transfer mode, and channel. Each seat takes a turn as offerer. A Relay plan
 removes each old link before the next generation restores gameplay. Final
 detach removes the multiplayer peer.
 
