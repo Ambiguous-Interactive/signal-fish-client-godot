@@ -167,6 +167,7 @@ func attach(client: SignalFishClientScript) -> Error:
 	client.authority_changed.connect(_on_client_authority_changed)
 	client.disconnected.connect(_on_client_disconnected)
 	client.connection_failed.connect(_on_client_connection_failed)
+	client.authentication_error.connect(_on_client_authentication_error)
 	return OK
 
 
@@ -181,6 +182,7 @@ func detach() -> void:
 		_client.authority_changed.disconnect(_on_client_authority_changed)
 		_client.disconnected.disconnect(_on_client_disconnected)
 		_client.connection_failed.disconnect(_on_client_connection_failed)
+		_client.authentication_error.disconnect(_on_client_authentication_error)
 	_client = null
 	stop()
 
@@ -414,6 +416,10 @@ func _on_client_disconnected(_code: int, _reason: String) -> void:
 
 func _on_client_connection_failed(_error: String) -> void:
 	_fail_coordination("the room connection failed")
+
+
+func _on_client_authentication_error(_message: String, _error_code: int) -> void:
+	_fail_coordination("the room session ended")
 
 
 func _on_steam_session_request(remote_steam_id: int) -> void:

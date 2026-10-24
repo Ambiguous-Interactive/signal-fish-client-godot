@@ -44,8 +44,8 @@ multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
 - It rebuilds retained peers on a generation or role change, and drops
   peers absent from the latest plan.
 - It tears down on `room_joined` (a fresh baseline), `spectator_joined`, `room_left`,
-  `disconnected`, `connection_failed`, `reconnected`, and node exit. A
-  replayed plan inside `missed_events` cannot revive an old mesh.
+  `disconnected`, `connection_failed`, `authentication_error`, `reconnected`,
+  and node exit. A replayed plan inside `missed_events` cannot revive an old mesh.
   `player_left` only drops the leaving peer; the rest of the mesh
   survives.
 - A fresh `player_joined` or `player_reconnected` epoch closes that peer's
@@ -62,6 +62,9 @@ multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
 - Offer, SDP description, and poll errors close only the failed peer and log
   the engine error. A later plan can open a fresh link. A refused ICE
   candidate logs a warning and leaves the link available for other candidates.
+- Failed, disconnected, and closed connections, closed required channels, and
+  engine-removed peers release their links. A later plan can retry the same peer.
+- Status retry delays end when the room resets or its plan generation changes.
 - Peer ids derive deterministically from player UUIDs.
 
 ## Direct plan updates
@@ -96,8 +99,8 @@ use browser WebRTC.
 Godot's mesh creates three negotiated channels: `reliable` (id 1), `ordered`
 (id 2), and `unreliable` (id 3). Transport reports require all three channels
 to be open. Closing any required channel reports the last connected link
-down even when its peer connection stays connected. A new plan generation
-can create a replacement link. Applications still drive their
+down and releases the link even when its peer connection was connected. A later
+plan can create a replacement link. Applications still drive their
 `MultiplayerAPI` or poll the multiplayer peer to deliver gameplay packets.
 
 Use the same Godot channel layout at both ends. The server's

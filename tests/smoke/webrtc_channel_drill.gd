@@ -231,17 +231,17 @@ func _check_channel_closure(channel_index: int) -> bool:
 	)
 	_drive_multiplayer = false
 	channel.close()
+	var connection: WebRTCPeerConnection = peer["connection"]
+	if connection.get_connection_state() != WebRTCPeerConnection.STATE_CONNECTED:
+		_failures.append("closed-channel control lost its connected peer connection")
+		return false
 	if not await _wait_until(
 		func() -> bool: return channel.get_ready_state() == WebRTCDataChannel.STATE_CLOSED
 	):
 		_failures.append("required channel did not close")
 		return false
-	var connection: WebRTCPeerConnection = peer["connection"]
-	if connection.get_connection_state() != WebRTCPeerConnection.STATE_CONNECTED:
-		_failures.append("closed-channel control lost its connected peer connection")
-		return false
 	_meshes[0].poll()
-	if _clients[0].statuses.back() != false:
+	if _meshes[0].get_peer_count() != 0 or _clients[0].statuses.back() != false:
 		_failures.append("closed required channel still reported connected")
 		return false
 	var reports := _clients[0].statuses.size()
