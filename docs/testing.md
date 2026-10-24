@@ -149,8 +149,8 @@ The transport report drill uses a v3 reporter, a relay-only v3 observer, and a
 v2 observer. It checks both state-transition orders, duplicate suppression,
 self/v2 exclusion, and fresh report state after reconnect. Gameplay on the
 same connection provides a processing barrier and confirms relay delivery.
-It covers serial WebSocket dispatch. Concurrent embedded-host dispatch remains
-open in [#367](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/367).
+It covers serial WebSocket dispatch. The controlled lifecycle drill below
+covers concurrent embedded-host dispatch.
 The drill exposed the peer roster limitation in
 [#374](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/374).
 
@@ -193,10 +193,9 @@ voluntary detach and replay are covered. The publication drill below covers corr
 authoritative removal for #356. The fault and drain drill below covers both local
 completion panic points and terminal-before-close ordering.
 
-Server queue saturation, latest/volatile delivery and forced concurrent
-publication remain separate acceptance work.
-These drills are opt-in and outside
-`all`. The [mesh drill](mesh-guide.md#live-channel-drill) checks native and
+The controlled publication and server delivery-pressure drills below cover
+concurrent publication and queue policies. These drills are opt-in and
+outside `all`. The [mesh drill](mesh-guide.md#live-channel-drill) checks native and
 browser WebRTC packet boundaries separately.
 
 The pressure drill adds two-sender fan-in and selected-host departure:
@@ -212,8 +211,8 @@ Checks cover exact sender counts, per-sender order, one membership delta,
 baseline-before-data, cached rosters and fresh gameplay. v2 carries the full
 roster in membership deltas; v3 carries compact deltas with an empty roster
 array (`src/websocket/sending.rs` at the pinned server commit). This measures client
-receive backlog. Server queue saturation and latest/volatile delivery remain
-open in #368.
+receive backlog. The server delivery-pressure drill below covers queue
+saturation and latest/volatile delivery.
 
 A three-player Direct case removes the selected host. Both survivors receive
 a fresh shared generation and the successor's endpoint. Removing the remaining
