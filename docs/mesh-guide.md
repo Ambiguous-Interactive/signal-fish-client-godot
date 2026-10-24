@@ -110,7 +110,26 @@ and
 reference engines create two in-band channels, `reliable` and `unreliable`.
 Their responders adopt remote channel announcements. Godot's negotiated
 channels do not send these announcements. Use server relay for these
-pairings; direct mesh interoperability with those engines is unverified.
+pairings. Full reference-client gameplay sessions remain unverified.
+
+## Browser reference engine assessment
+
+A local check relayed signaling between `SFWebRTCMesh` and the server's
+[browser Engine at b264ec7](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/b264ec739400b299182eaa918dd6828fd611f3b9/clients/browser/src/page/engine.ts).
+It used Godot 4.3, Linux arm64 with webrtc-native 1.2.2-stable for native
+Godot, and Chromium 154. Each engine kept its outgoing signaling format.
+
+| Offerer          | Godot runtime  | Result                                              |
+| ---------------- | -------------- | --------------------------------------------------- |
+| Godot            | Native and Web | SCTP connected; reference gameplay channels absent. |
+| Reference Engine | Native         | Reference channels closed; Godot released the link. |
+| Reference Engine | Web            | Reliable and unreliable probes passed both ways.    |
+
+Godot's local transport report can be up when the reference Engine has no
+channels. Web runs also reported `addIceCandidate` errors. Keep mixed
+reference-client rooms on the server relay. The Web responder probes cover
+two channels; ordered traffic and full reference-client sessions still need
+validation. The native reference Engine needs a separate pairing check.
 
 ## Demo
 
