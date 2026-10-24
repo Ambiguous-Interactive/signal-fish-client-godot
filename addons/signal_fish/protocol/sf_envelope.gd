@@ -73,12 +73,12 @@ static func _stringify_value(value: Variant, depth: int) -> String:
 				var text_key: String = key
 				var encoded_key: String = _key_memo.get(text_key, "")
 				if encoded_key.is_empty():
-					encoded_key = JSON.stringify(text_key, "", false, true)
+					encoded_key = JSON.stringify(text_key, "", false, true) + ":"
 					if text_key.length() <= _KEY_MEMO_MAX_LENGTH:
 						if _key_memo.size() >= _KEY_MEMO_LIMIT:
 							_key_memo.clear()
 						_key_memo[text_key] = encoded_key
-				fields.append(encoded_key + ":" + encoded)
+				fields.append(encoded_key + encoded)
 			return "{" + ",".join(fields) + "}"
 		TYPE_ARRAY:
 			var entries := PackedStringArray()
@@ -107,9 +107,10 @@ static func _stringify_float(value: float) -> String:
 	if not is_finite(value):
 		return ""
 	var is_zero := value == 0.0
-	if not is_zero and _float_memo.has(value):
-		var cached: String = _float_memo[value]
-		return cached
+	if not is_zero:
+		var cached: String = _float_memo.get(value, "")
+		if not cached.is_empty():
+			return cached
 	# Godot's full_precision only covers top-level floats. Prove each nested
 	# value survives JSON parsing before it reaches the wire (issue #73).
 	# Engine JSON numbers use String::to_float (Godot core/io/json.cpp).
