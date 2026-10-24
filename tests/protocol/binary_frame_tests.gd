@@ -34,7 +34,7 @@ func run_all() -> void:
 		_test_msgpack_hostile_vectors,
 		_test_msgpack_utf8_decode,
 		_test_msgpack_encode_widths,
-		_test_msgpack_string_widths,
+		_test_msgpack_length_widths,
 		_test_msgpack_non_finite_refusal,
 		_test_msgpack_round_trip_matrix,
 		_test_v2_envelope_canonical_bytes,
@@ -301,7 +301,7 @@ func _test_msgpack_encode_widths() -> void:
 	_done()
 
 
-func _test_msgpack_string_widths() -> void:
+func _test_msgpack_length_widths() -> void:
 	var cases := [
 		["", [0xA0]],
 		["x".repeat(31), [0xBF]],
@@ -327,6 +327,22 @@ func _test_msgpack_string_widths() -> void:
 		expected_map.append(7)
 		var map_result := SFMsgpackScript.encode({text: 7})
 		_assert_equal(expected_map, map_result["bytes"], "map key uses the same string width")
+	for vector: Array in [
+		[0, [0xC4, 0]],
+		[255, [0xC4, 255]],
+		[256, [0xC5, 1, 0]],
+		[65535, [0xC5, 255, 255]],
+		[65536, [0xC6, 0, 1, 0, 0]],
+	]:
+		var size: int = vector[0]
+		var bytes := PackedByteArray()
+		bytes.resize(size)
+		bytes.fill(0xA5)
+		var header: Array = vector[1]
+		var expected := PackedByteArray(header)
+		expected.append_array(bytes)
+		var result := SFMsgpackScript.encode(bytes)
+		_assert_equal(expected, result["bytes"], "binary length uses the shortest width")
 	_done()
 
 
