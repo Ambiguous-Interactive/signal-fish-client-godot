@@ -1,0 +1,14 @@
+diff --git a/src/websocket/connection.rs b/src/websocket/connection.rs
+index 722fb72..8f91117 100644
+--- a/src/websocket/connection.rs
++++ b/src/websocket/connection.rs
+@@ -2155,6 +2155,9 @@ async fn handle_socket_supervised(
+                                 {
+                                     break;
+                                 }
++                                crate::server::godot_acceptance_pause(
++                                    &format!("writer-{current_player_id}"),
++                                ).await;
+                             }
+                             Ok(Some(message)) => {
+                                 // The receiver holds a batch in the shared queue

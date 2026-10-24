@@ -107,6 +107,10 @@ func _test_direct_endpoint_refresh_and_relay_reset() -> void:
 		client, [_peer(PLAYER_B, false)], "40000000-0000-0000-0000-000000000001", "webrtc", [STUN]
 	)
 	var old_peer: Object = _mesh_peers(mesh)[0]
+	var old_entries: Dictionary = mesh.get("_peers")
+	var old_entry: Object = old_entries[PLAYER_B]
+	var queued_session: Callable = old_entry.get("session_cb")
+	var queued_candidate: Callable = old_entry.get("ice_cb")
 	old_peer.set("state", 2)
 	mesh.poll()
 	var before := fake.sent_text.size()
@@ -225,6 +229,50 @@ func _test_direct_endpoint_refresh_and_relay_reset() -> void:
 	_assert_equal(
 		"192.0.2.10", plans[1].direct_endpoint.host, "later plans leave prior payloads intact"
 	)
+	var player_id := client.get_player_id()
+	var room_id := client.get_room_id()
+	fake.inject_close(4999, "reset link lost")
+	_assert(mesh.get("_plan") == null, "disconnect clears the Relay reset plan")
+	fake = SFFakeTransportScript.new()
+	client.transport = fake
+	_assert_equal(
+		OK, client.reconnect(player_id, room_id, "reset-test-token"), "reconnect after reset"
+	)
+	fake.inject_open()
+	fake.inject_server_message(
+		{"type": "Authenticated", "data": ClientFixtures.authenticated_data()}
+	)
+	var baseline := ClientFixtures.room_joined_data()
+	baseline["missed_events"] = [{"type": "SessionPlan", "data": plans[1].raw.duplicate(true)}]
+	fake.inject_server_message({"type": "Reconnected", "data": baseline})
+	_assert(mesh.get("_plan") == null, "historical Direct plan in replay stays inert")
+	_inject_plan(client, [], "40000000-0000-0000-0000-000000000007", "relay", [])
+	var reconnect_sends := fake.sent_text.size()
+	queued_session.call("offer", "old-after-reconnect")
+	queued_candidate.call("", 0, "old-after-reconnect")
+	for generation: String in [
+		"40000000-0000-0000-0000-000000000001",
+		"40000000-0000-0000-0000-000000000005",
+		"40000000-0000-0000-0000-000000000007",
+	]:
+		fake.inject_server_message(
+			{
+				"type": "Signal",
+				"data": {"from": PLAYER_B, "generation": generation, "signal": {"Offer": "stale"}}
+			}
+		)
+	fake.inject_server_message(
+		{"type": "NewPeer", "data": {"peer_id": PLAYER_B, "you_initiate": true}}
+	)
+	mesh.poll()
+	_assert_equal(
+		reconnect_sends, fake.sent_text.size(), "reset reconnect ignores old callbacks and signals"
+	)
+	_assert_equal(0, mesh.get_peer_count(), "reset reconnect cannot revive a peer")
+	_assert_equal(1, _mesh_peers(mesh).size(), "reset reconnect creates no physical connection")
+	_assert_equal(
+		OK, client.send_game_data({"after_reset_reconnect": true}), "reset reconnect relay send"
+	)
 	fake.inject_server_message({"type": "RoomLeft"})
 	_assert_equal(0, mesh.get_peer_count(), "leaving after reset remains clean")
 	_assert(mesh.get("_plan") == null, "room exit clears reset identity")
@@ -234,6 +282,24 @@ func _test_direct_endpoint_refresh_and_relay_reset() -> void:
 	)
 	_assert_equal(1, mesh.get_peer_count(), "fresh room can establish a new mesh")
 	var fresh_peer: Object = _mesh_peers(mesh).back()
+	var fresh_sends := fake.sent_text.size()
+	queued_session.call("offer", "old-room-offer")
+	queued_candidate.call("", 0, "old-room-candidate")
+	fake.inject_server_message(
+		{
+			"type": "Signal",
+			"data":
+			{
+				"from": PLAYER_B,
+				"generation": "40000000-0000-0000-0000-000000000001",
+				"signal": {"Offer": "old-room-offer"}
+			}
+		}
+	)
+	_assert_equal(fresh_sends, fake.sent_text.size(), "old callbacks stay inert in a new room")
+	_assert_equal(
+		[], fresh_peer.get("remote_description"), "old-generation signal cannot reach fresh peer"
+	)
 	_assert(fresh_peer != old_peer, "fresh room gets a new physical connection")
 	_assert_equal(
 		{"iceServers": [STUN]}, fresh_peer.get("initialize_config"), "fresh plan supplies ICE"

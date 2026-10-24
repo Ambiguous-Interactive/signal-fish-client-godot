@@ -18,9 +18,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 ## Next work
 
 - [ ] Complete mesh channel interoperability with the reference engines (#355).
-- [ ] Complete spectator server delivery-pressure and latest/volatile delivery (#368).
-- [ ] Complete Direct reset room/reconnect lifecycle and stale-signal acceptance (#358).
-- [ ] Restore observer roster metadata after a peer reconnects (#374).
+- [ ] Complete spectator reconnect roster recovery (#368, blocked on #374).
+- [ ] Restore observer roster metadata after a peer reconnects (#374; server #1167).
 
 Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:

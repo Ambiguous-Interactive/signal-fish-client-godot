@@ -495,8 +495,57 @@ func _direct_socket_reconnect() -> bool:
 	):
 		return false
 	_expect(_same_payload(host.data.back(), {"after_socket_reset": true}), "relay teardown payload")
+	var reset_token := peer_log.baseline.reconnection_token
+	peer.client.close()
+	if not await _wait(func() -> bool: return peer_log.closed == 3, "reset disconnect"):
+		return false
+	_expect(peer.client.reconnect(id, room, reset_token) == OK, "reconnect ended Direct session")
+	if not await _wait(
+		func() -> bool: return peer_log.restored == 3 and peer_log.plan_after_baseline,
+		"reset reconnect baseline"
+	):
+		return false
+	_expect(peer.client.ping() == OK and host.client.ping() == OK, "reset reconnect barriers")
+	var peer_pongs := peer.pongs + 1
+	var host_pongs := host.pongs + 1
+	if not await _wait(
+		func() -> bool: return peer.pongs == peer_pongs and host.pongs == host_pongs,
+		"reset reconnect publications drained"
+	):
+		return false
+	_expect(app.socket == null, "reset reconnect cannot revive the Direct socket")
+	_expect(
+		peer_log.baseline.reconnection_token != reset_token, "reset reconnect rotates credential"
+	)
+	for seat: Seat in [host, peer]:
+		var plan: SessionScript.SessionPlanInfo = seat.plans.back()
+		_expect(plan.transport == SessionScript.TransportKind.RELAY, "ended session stays Relay")
+		_expect(plan.direct_endpoint == null and plan.host.is_empty(), "reset path stays clear")
+	var plan_count := host.plans.size()
+	_endpoint(host, "127.0.0.1", old_listener.get_local_port())
+	_expect(host.client.ping() == OK, "ended session endpoint barrier")
+	if not await _wait(
+		func() -> bool: return host.pongs == host_pongs + 1, "ended metadata processed"
+	):
+		return false
+	_expect(host.plans.size() == plan_count, "new endpoint cannot restart an ended Direct session")
+	_expect(app.socket == null, "ended session endpoint cannot reopen application socket")
+	_expect(
+		peer.client.send_game_data({"after_reset_reconnect": true}) == OK, "reset reconnect relay"
+	)
+	if not await _wait(func() -> bool: return host.data.size() == 4, "reset reconnect gameplay"):
+		return false
+	_expect(
+		_same_payload(host.data.back(), {"after_reset_reconnect": true}), "reset reconnect payload"
+	)
+	_expect(peer.client.leave_room() == OK, "leave ended session")
+	if not await _wait(
+		func() -> bool: return peer.client.get_room_id().is_empty(), "reset room exit"
+	):
+		return false
+	_expect(app.socket == null, "room exit after reset keeps socket closed")
 	if _failures.is_empty():
-		print("LIVE_DIRECT_SOCKET_PASS forced reconnect overlap TCP replacement teardown relay")
+		print("LIVE_DIRECT_SOCKET_PASS TCP reset reconnect ended-session relay room exit")
 	return _failures.is_empty()
 
 

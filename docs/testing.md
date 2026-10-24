@@ -365,8 +365,70 @@ The mutation, routing, registration retry and publication paths remain intact.
 The drill releases held barriers and closes application sockets on failure.
 All waits and the overall watchdog retain the bounds described above.
 
-Server delivery-pressure and latest/volatile behavior remain open in #368.
-The observer roster repair remains open in #374. This native TCP fixture
-provides no browser Direct-socket contract; browsers require supported
-browser transports. Direct reset room/reconnect lifecycle and stale-signal
-scope stays in #358.
+The pressure drill below covers server delivery pressure. The observer
+roster repair remains open in #374. This native TCP fixture provides no
+browser Direct-socket contract; browsers require supported transports.
+
+### Server delivery pressure
+
+`tests/smoke/run_delivery_pressure_acceptance.gd` covers #368 at the server
+outbound queue. Use the isolated server, config and toolchain above. Apply
+`controlled_lifecycle.patch`, then `tests/fixtures/delivery_pressure.patch`.
+Set `websocket.send_queue_capacity` to `4` and keep
+`websocket.slow_consumer_timeout_ms` at `5000`. Rebuild the server and start
+it with a fresh `SF_GODOT_BARRIER_DIR`, shared with the client process:
+
+```bash
+godot --headless --path . --script tests/smoke/run_delivery_pressure_acceptance.gd
+```
+
+The added barrier is `writer-<spectator-id>`. After writing a control frame,
+the server writer waits before selecting another queue entry. The client
+arms only its spectator's writer and wakes it with Ping. The sender's Pong
+then proves that the server processed every ingress frame while the writer
+was held. The production queue admission, coalescing and reporting paths
+remain active. The drill releases the writer on failure. Reverse both patches
+and restore the queue config after testing.
+
+- v3 JSON latest: eight updates to one key produce the final value, exact
+  `latest_superseded` ranges for sequences 1-7 and matching typed counters.
+- v3 JSON volatile: a full four-entry queue evicts sequences 1-4 and delivers
+  the newest four values in order. Exact `volatile_dropped` ranges and typed
+  counters match. Both lossy cases publish the report before surviving data,
+  preserve the spectator role and receive fresh reliable gameplay afterward.
+- Reliable: five frames fill the four-entry queue and trigger one spectator
+  close with code 4002. The sender stays in its room. The viewer clears its
+  state, authenticates on a fresh connection, rejoins and receives fresh data.
+  The matrix covers v2/v3 JSON and raw/decoded MessagePack, plus v3 opaque
+  rkyv/protobuf. Opaque test bytes remain application-owned.
+
+Latest and volatile sends use a raw v3 text fixture. The public SDK send
+methods currently use reliable delivery. This drill adds no lossy-send API
+or binary delivery-metadata API. The v2 verdict applies to the pinned server
+build; v2 has no `spectator_relay` capability token.
+
+### Roster recovery contract
+
+`tests/smoke/run_roster_recovery_acceptance.gd` is an opt-in regression for
+issue #374. It needs the ordinary fixed server above, with no instrumentation:
+
+```bash
+godot --headless --path . --script tests/smoke/run_roster_recovery_acceptance.gd
+```
+
+On server `182cb234`, this exits with failure for v2 and v3 observers.
+A seated observer, an incumbent spectator and a spectator admitted during
+absence all receive reconnect notifications and fresh gameplay, while their
+rosters omit the returning player. Two reconnect cycles check roster size,
+metadata before callbacks, current name/readiness/authority, observer role
+and terminal leave. The late spectator has never received the old metadata.
+[Server #1167](https://github.com/Ambiguous-Interactive/signal-fish-server/issues/1167)
+tracks the required metadata publication contract. Keep this drill outside
+`all` until that contract is repaired.
+
+The publication-boundary Direct drill now also reconnects after the Relay
+reset, receives gameplay, advertises a new endpoint and leaves the room.
+The ended session stays on Relay and the application socket stays closed.
+`session_plan_acceptance_tests.gd` covers historical Direct plans in replay,
+old peer callbacks and stale-generation signals after reset/reconnect and
+a fresh room baseline.
