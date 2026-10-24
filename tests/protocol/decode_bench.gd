@@ -3,7 +3,7 @@ extends SceneTree
 ## Deterministic decode/encode hot-path micro-benchmark (issue #161).
 ## Opt-in, never part of CI suites: run with
 ##   godot --headless --path . --script tests/protocol/decode_bench.gd
-## Prints best-of-runs microseconds per operation for the campaign candidates.
+## Prints best and median microseconds per operation for the campaign candidates.
 
 const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
@@ -42,6 +42,9 @@ var _msgpack_payload := {"x": 1.5, "hp": 99, "state": "running", "seq": 42}
 var _float_envelope_data := {}
 var _key_churn_envelopes: Array[Dictionary] = []
 var _key_churn_index := 0
+var _snapshot_envelope: Dictionary = {}
+var _moving_envelopes: Array[Dictionary] = []
+var _moving_index := 0
 
 
 func _init() -> void:
@@ -74,6 +77,22 @@ func _init() -> void:
 	_bench("encode_floats_cold", 5000, func() -> void: _encode_floats_cold())
 	_bench("encode_keys_cold", 10000, func() -> void: _encode_keys_cold())
 	_bench("encode_keys_churn", 20000, func() -> void: _encode_keys_churn())
+	for frame: int in 512:
+		var coordinates := {}
+		for index: int in 16:
+			coordinates["axis_%d" % index] = frame * 32.0 + index * 1.5 + 0.25
+		_moving_envelopes.append({"type": "GameData", "data": coordinates})
+	_bench("encode_floats_moving", 5000, func() -> void: _encode_floats_moving())
+	for count: int in [8, 64, 256]:
+		var players: Array[Dictionary] = []
+		for index: int in count:
+			players.append({"id": index, "x": 1.5, "y": 2.25, "health": 100})
+		_snapshot_envelope = {"type": "GameData", "data": {"players": players}}
+		_bench(
+			"encode_snapshot_%d" % count,
+			int(2048.0 / count),
+			func() -> void: SFEnvelopeScript.encode(_snapshot_envelope)
+		)
 	_bench("msgpack_roundtrip", 20000, func() -> void: _msgpack_roundtrip())
 	quit(0)
 
@@ -86,7 +105,17 @@ func _bench(label: String, iterations: int, operation: Callable) -> void:
 		samples.append(_timed(iterations, operation))
 	samples.sort()
 	var best_us := samples[0]
-	print("%s %d %.3f" % [label, iterations, best_us / float(iterations)])
+	print(
+		(
+			"%s %d best=%.3f median=%.3f"
+			% [
+				label,
+				iterations,
+				best_us / float(iterations),
+				samples[_RUNS >> 1] / float(iterations)
+			]
+		)
+	)
 
 
 static func _tiny_objects() -> PackedStringArray:
@@ -245,6 +274,11 @@ func _encode_floats_cold() -> void:
 func _encode_keys_cold() -> void:
 	SFEnvelopeScript._key_memo.clear()
 	_encode_floats()
+
+
+func _encode_floats_moving() -> void:
+	SFEnvelopeScript.encode(_moving_envelopes[_moving_index])
+	_moving_index = (_moving_index + 1) % _moving_envelopes.size()
 
 
 func _encode_keys_churn() -> void:

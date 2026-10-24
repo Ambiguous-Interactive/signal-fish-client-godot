@@ -170,7 +170,11 @@ host, and read the room code from its `room_joined` row:
 godot --headless --path . --script tests/smoke/run_steam_live_drill.gd ++ --mode=live --seat=host --endpoint=wss://your-relay/socket --app=your-app --player=Host --out=host.json
 ```
 
-Join the peer to the same room:
+The host prints progress JSON as events arrive. Its `room_joined` event's
+`value` contains the room code. The final `--out` report is written when
+the seat stops. Both seats request an authority-enabled room.
+
+Join the peer to the same room. The peer requires `--room`:
 
 ```sh
 godot --headless --path . --script tests/smoke/run_steam_live_drill.gd ++ --mode=live --seat=peer --endpoint=wss://your-relay/socket --app=your-app --player=Peer --room=CODE --out=peer.json
@@ -178,9 +182,11 @@ godot --headless --path . --script tests/smoke/run_steam_live_drill.gd ++ --mode
 
 The host seat finishes on `steam_peer_connected`, the peer seat on
 `steam_host_connected`. Failed checks exit 1, usage errors exit 2, and
-everything else exits 0: passed, and also pending - a seat with no Steam,
-or one that runs out of `--deadline-sec`, reports `pending` with the
-reason. Read the JSON report's `status` field, never the exit code alone.
+everything else exits 0: passed, and also pending. A seat with no Steam,
+one that runs out of `--deadline-sec`, or a run with unexercised checklist
+items reports `pending`. Reaching the connection milestone still leaves
+leave-detection and authority-loss checks to drive. Read the JSON report's
+`status` and each assertion's `outcome`, never the exit code alone.
 The report carries one row per recorded check, with elapsed times.
 
 ### Evidence and verdict

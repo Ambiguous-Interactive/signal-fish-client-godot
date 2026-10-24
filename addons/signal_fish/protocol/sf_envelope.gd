@@ -112,21 +112,17 @@ static func _stringify_float(value: float) -> String:
 		return cached
 	# Godot's full_precision only covers top-level floats. Prove each nested
 	# value survives JSON parsing before it reaches the wire (issue #73).
+	# Engine JSON numbers use String::to_float (Godot core/io/json.cpp).
 	var text := _normalized_float(String.num(value, 17))
-	if not _round_trips(text, value):
+	if text.to_float() != value:
 		text = _normalized_float(JSON.stringify(value, "", false, true))
-		if not _round_trips(text, value):
+		if text.to_float() != value:
 			return ""
 	if not is_zero:
 		if _float_memo.size() >= _FLOAT_MEMO_LIMIT:
 			_float_memo.clear()
 		_float_memo[value] = text
 	return text
-
-
-static func _round_trips(text: String, value: float) -> bool:
-	var back: Variant = JSON.parse_string(text)
-	return typeof(back) == TYPE_FLOAT and back == value
 
 
 static func _normalized_float(text: String) -> String:
