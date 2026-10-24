@@ -23,7 +23,8 @@ max-public-methods: 32
 # 1550 -> 1600: the client gained the issue-#333 outbound frame-cap gates.
 # 1600 -> 1620: the client gained the issue-#341 dial-deadline window.
 # 1620 -> 1640: the client gained the issue-#338 authority-flag accessor.
-max-file-lines: 1640
+# 1640 -> 1720: current peer metadata and reconnect lifecycle fences (#374).
+max-file-lines: 1720
 
 # max-returns: the headless smoke runner sequences async waits with
 # early-return guards so a timed-out step skips every dependent step; the

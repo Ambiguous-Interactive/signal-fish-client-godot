@@ -286,18 +286,7 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> SFTypesScript.D
 				envelope
 			)
 		"PlayerReconnected":
-			if not _has_string(data, "player_id"):
-				return _protocol_error("PlayerReconnected requires player_id", envelope)
-			if not SFTypeUtils.is_canonical_uuid_text(data["player_id"]):
-				return _protocol_error(
-					"PlayerReconnected player_id must be a lowercase hyphenated UUID", envelope
-				)
-			return _event(
-				type_name,
-				&"player_reconnected",
-				[SFTypeUtils.string_or_empty(data["player_id"])],
-				envelope
-			)
+			return _decode_player_reconnected(type_name, data, envelope)
 		"SpectatorJoined":
 			return _decode_spectator_joined(type_name, data, envelope)
 		"SpectatorJoinFailed":
@@ -437,6 +426,38 @@ static func decode_envelope(envelope: Dictionary, depth := 0) -> SFTypesScript.D
 			return _protocol_error(
 				"unknown message type: %s" % SFDiagnosticsScript.render_key(type_name), envelope
 			)
+
+
+static func _decode_player_reconnected(
+	type_name: String, data: Dictionary, envelope: Dictionary
+) -> SFTypesScript.DecodedEvent:
+	if not SFTypeUtils.is_canonical_uuid_text(data.get("player_id")):
+		return _protocol_error(
+			"PlayerReconnected requires lowercase hyphenated UUID player_id", envelope
+		)
+	var epoch: Variant = data.get("epoch")
+	if (
+		epoch != null
+		and (not SFTypeUtils.is_integral_number(epoch) or epoch < 0 or epoch > 4294967295)
+	):
+		return _protocol_error("PlayerReconnected epoch must be u32", envelope)
+	if data.get("player") != null:
+		var error := SFTypesScript.validate_player_info(data["player"])
+		if not error.is_empty():
+			return _protocol_error(error, envelope)
+		var player: Dictionary = data["player"]
+		var incarnation_matches := player.get("epoch") == null and player.get("seq") == null
+		if epoch != null:
+			incarnation_matches = (
+				SFTypeUtils.is_integral_number(player.get("epoch"))
+				and player.get("epoch") == epoch
+				and SFTypeUtils.is_integral_number(player.get("seq"))
+				and player.get("seq") == 0
+			)
+		# Server b264ec7, protocol/messages.rs: one lifecycle, one current snapshot.
+		if player["id"] != data["player_id"] or not incarnation_matches:
+			return _protocol_error("PlayerReconnected metadata does not match lifecycle", envelope)
+	return _event(type_name, &"player_reconnected", [data["player_id"]], envelope)
 
 
 static func _decode_authenticated(
