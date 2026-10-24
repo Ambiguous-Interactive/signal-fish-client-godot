@@ -151,8 +151,8 @@ self/v2 exclusion, and fresh report state after reconnect. Gameplay on the
 same connection provides a processing barrier and confirms relay delivery.
 It covers serial WebSocket dispatch. The controlled lifecycle drill below
 covers concurrent embedded-host dispatch.
-The drill exposed the peer roster limitation in
-[#374](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/374).
+On the older pinned server, this drill exposed the missing peer metadata.
+The [roster recovery drill](#roster-recovery-contract) qualifies the repair.
 
 All three drills passed on Godot 4.3 Linux arm64 against the pinned server
 above. They accept the same optional base URL. Each phase has an eight-second
@@ -183,8 +183,8 @@ Two further reconnect cycles overlap a Direct host endpoint update with peer
 reconnect. Both clients converge on the new endpoint and shared generation.
 Each fresh plan follows the reconnect baseline, the current credential rotates,
 and relay gameplay resumes. These are overlapping socket requests; they do not
-force an internal publication race. The incumbent roster limitation in #374
-remains open.
+force an internal publication race. The [roster recovery drill](#roster-recovery-contract)
+checks incumbent metadata on the newer server.
 
 The recovery drill uses the same optional base URL, eight-second waits and
 two-minute watchdog. Success prints `LIVE_SERVER_ACCEPTANCE_PASS`; any failed
@@ -364,8 +364,9 @@ The mutation, routing, registration retry and publication paths remain intact.
 The drill releases held barriers and closes application sockets on failure.
 All waits and the overall watchdog retain the bounds described above.
 
-The pressure drill below covers server delivery pressure. The observer
-roster repair remains open in #374. This native TCP fixture provides no
+The pressure drill below covers server delivery pressure. The
+[roster recovery drill](#roster-recovery-contract) covers observer metadata.
+This native TCP fixture provides no
 browser Direct-socket contract; browsers require supported transports.
 
 ### Server delivery pressure

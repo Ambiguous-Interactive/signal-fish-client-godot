@@ -38,6 +38,9 @@ released version.
 
 ### Fixed
 
+- Reconnecting peers restore cached player names, readiness and authority
+  before callbacks on supported servers. Duplicate and older lifecycle
+  updates preserve current roster state (#374).
 - Player readiness in cached rosters now updates before lobby signals (#376).
 
 - Spectator joins clear the previous player identity and mesh. Player

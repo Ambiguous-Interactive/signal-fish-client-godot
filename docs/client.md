@@ -145,9 +145,10 @@ and mesh.
 Games must relay their viewing state to spectators. Direct and WebRTC
 traffic is not mirrored. A late join supplies room metadata; the game must
 send its own application snapshot. Spectators have no seated reconnect
-token: join again after a lost connection. Live fixed-server acceptance,
-including delivery-class and leave/rejoin races, remains tracked in
-[#368](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/368).
+token: join again after a lost connection. Live fixed-server acceptance covers
+delivery classes, leave/rejoin races and reconnect roster recovery. See the
+[testing guide](testing.md#live-server-acceptance-opt-in) for qualified builds
+and commands.
 
 ## State machines
 
