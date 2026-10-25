@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import subprocess
 import threading
 import unittest
 from pathlib import Path
@@ -211,6 +212,50 @@ class ReferenceEvidenceTests(unittest.TestCase):
                     True,
                 )
             )
+
+    def test_phase_timeout_keeps_its_reason_and_genuine_signaling_errors(self) -> None:
+        harness = r"""
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+const source = readFileSync(0, "utf8").split("\n").slice(1).join("\n");
+const failure = process.argv[1];
+let clock = 0;
+const context = {
+  window: {}, AbortController, DOMException,
+  performance: { now: () => clock },
+  console: { log() {}, error() {} },
+  setTimeout: (resolve) => setImmediate(() => { clock = 14000; resolve(); }),
+  Engine: class {
+    channel() { return null; }
+    diagnosticSnapshot() { return {}; }
+    removePeer() {}
+  },
+  fetch: (_url, { signal }) => new Promise((_resolve, reject) => {
+    if (failure === "relay") reject(new Error("relay GET 503"));
+    else if (failure === "external-abort") reject(new DOMException("external cancellation", "AbortError"));
+    else signal.addEventListener("abort", () => reject(new DOMException("cleanup cancellation", "AbortError")));
+  }),
+};
+runInNewContext(source, context);
+await context.window.runReference(1, false, false, "http");
+console.log(JSON.stringify(context.window.referenceError));
+"""
+        source = (SCRIPT.parents[1] / "tests/smoke/webrtc_reference.js").read_text()
+        for case, expected in (
+            ("timeout", "Error: phase 1 missing Godot teardown"),
+            ("relay", "Error: relay GET 503"),
+            ("external-abort", "AbortError: external cancellation"),
+        ):
+            with self.subTest(case=case):
+                result = subprocess.run(  # noqa: S603
+                    ["node", "--input-type=module", "-e", harness, case],  # noqa: S607
+                    input=source,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                    timeout=5,
+                )
+                self.assertEqual(json.loads(result.stdout), expected)
 
     def test_page_listeners_keep_errors_and_crashes(self) -> None:
         page = Mock()

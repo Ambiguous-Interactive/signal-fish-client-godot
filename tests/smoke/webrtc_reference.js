@@ -279,7 +279,8 @@ window.runReference = async function (
           if (signalingTask === null) {
             signalingTask = exchange()
               .catch((error) => {
-                signalingError = error;
+                if (!controller.signal.aborted || error?.name !== "AbortError")
+                  signalingError = error;
               })
               .finally(() => {
                 signalingTask = null;
