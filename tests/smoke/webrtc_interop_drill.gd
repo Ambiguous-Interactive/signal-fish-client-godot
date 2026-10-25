@@ -76,6 +76,9 @@ var _signal_sent := 0
 var _signal_received := 0
 var _last_marker_sent := ""
 var _last_marker_received := ""
+var _sending_marker := ""
+var _sending_to := 0
+var _marker_posts: Array[Dictionary] = []
 
 
 func _ready() -> void:
@@ -199,6 +202,8 @@ func _process(_delta: float) -> void:
 			var message: Dictionary = _pending.pop_front()
 			_sending = true
 			_send_started = now
+			_sending_marker = message.get("marker", "")
+			_sending_to = message.get("to", 1 - _seat)
 			if message.has("marker"):
 				_last_marker_sent = message["marker"]
 			if (
@@ -250,6 +255,20 @@ func _on_outbox(
 	_sending = false
 	if _finished:
 		return
+	if not _sending_marker.is_empty():
+		var now := Time.get_ticks_msec()
+		_marker_posts.append(
+			{
+				"marker": _sending_marker,
+				"to": _sending_to,
+				"elapsed_ms": now - _send_started,
+				"completed_tick_ms": now,
+				"result": result,
+				"http_code": code
+			}
+		)
+		if _marker_posts.size() > 16:
+			_marker_posts.pop_front()
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
 		_fail("signaling send failed")
 	else:
@@ -1188,6 +1207,9 @@ func _snapshot() -> Dictionary:
 		"signal_received": _signal_received,
 		"last_marker_sent": _last_marker_sent,
 		"last_marker_received": _last_marker_received,
+		"marker_posts": _marker_posts,
+		"sending_marker": _sending_marker if _sending else "",
+		"sending_to": _sending_to if _sending else -1,
 		"send_inflight_ms": now - _send_started if _sending else 0,
 		"receive_inflight_ms": now - _receive_started if _receiving else 0,
 		"sending": _sending,

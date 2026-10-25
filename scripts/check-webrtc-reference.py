@@ -141,6 +141,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     class Handler(interop.RelayHandler):  # type: ignore[name-defined,misc]
         queues: ClassVar[list[list[object]]] = [[], []]
         lock = threading.Lock()
+        observation = interop.RelayObservation()
 
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0), functools.partial(Handler, directory=str(assets))
@@ -243,6 +244,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 report["browser_observations"] = {
                     name: observer.snapshot() for name, observer in observations.items()
                 }
+                report["relay_observation"] = Handler.observation.snapshot()
                 browser.close()
     except Exception as exc:
         report.update(
@@ -255,6 +257,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
             native.wait(timeout=10)
         server.shutdown()
         server.server_close()
+        if "relay_observation" not in report:
+            report["relay_observation"] = Handler.observation.snapshot()
         if web:
             (directory / "godot.log").write_text("\n".join(messages))
         output = (directory / "godot.log").read_text()

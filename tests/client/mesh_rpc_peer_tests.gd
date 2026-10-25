@@ -22,6 +22,7 @@ func run_all() -> void:
 		_test_multi_peer_selection,
 		_test_membership_change_keeps_selected_packet,
 		_test_packet_count,
+		_test_engine_peer_replacement,
 		_test_peer_lifecycle_and_settings,
 		_test_reentrant_channel_closure,
 		_test_recursive_lifecycle_poll,
@@ -165,6 +166,42 @@ func _test_packet_count() -> void:
 		_assert_equal(remaining, peer.get_available_packet_count(), "exact remaining packet count")
 		peer.get_packet()
 	_assert_equal(0, peer.get_available_packet_count(), "drained packet count")
+	_dispose(setup)
+	_done()
+
+
+func _test_engine_peer_replacement() -> void:
+	var setup := _setup(2)
+	var mesh: MeshScript = setup[0]
+	var connections: Array = setup[4]
+	var original: Object = connections[0]
+	var replacement: Object = connections[1]
+	var peer: MultiplayerPeer = setup[3]
+	var engine := mesh.get_multiplayer_peer()
+	var sender := MeshScript.uuid_to_peer_id(PLAYER)
+	engine.call("remove_peer", MeshScript.uuid_to_peer_id("10000000-0000-0000-0000-000000000003"))
+	_queue(original, 2, PackedByteArray([17]))
+	_assert_equal(
+		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE, peer.get_packet_mode(), "selected old mode"
+	)
+	engine.call("remove_peer", sender)
+	_assert_equal(0, peer.get_available_packet_count(), "engine removal discards selected bytes")
+	engine.call("add_peer", original, sender)
+	_queue(original, 2, PackedByteArray([19]))
+	_assert_equal(
+		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE, peer.get_packet_mode(), "selected restored mode"
+	)
+	engine.call("remove_peer", sender)
+	engine.call("add_peer", replacement, sender)
+	_queue(replacement, 0, PackedByteArray([29]))
+	_assert_equal(sender, peer.get_packet_peer(), "replacement engine sender")
+	_assert_equal(
+		MultiplayerPeer.TRANSFER_MODE_RELIABLE, peer.get_packet_mode(), "replacement mode"
+	)
+	_assert_equal(
+		PackedByteArray([29]), peer.get_packet(), "replacement discards selected old bytes"
+	)
+	_assert_equal(0, peer.get_available_packet_count(), "old engine channels stay excluded")
 	_dispose(setup)
 	_done()
 

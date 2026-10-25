@@ -1,13 +1,17 @@
 """Keep live-drill driver timeouts distinct from engine failures."""
 
 import argparse
+import http.client
 import importlib.util
+import json
 import subprocess
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 from unittest.mock import MagicMock, Mock, patch
 
 from playwright.sync_api import Page, Request
@@ -18,6 +22,121 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Could not load {SCRIPT}")
 drill = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(drill)
+
+
+class RelayObservationTests(unittest.TestCase):
+    def test_marker_timing_distinguishes_queued_from_dequeued(self) -> None:
+        observation = drill.RelayObservation()
+        first = {"marker": "consumed-1-2-8"}
+        second = {"marker": "consumed-1-2-16"}
+        with patch.object(drill.time, "monotonic", return_value=10):
+            observation.enqueue(0, first)
+            observation.enqueue(0, second)
+        with patch.object(drill.time, "monotonic", return_value=11.25):
+            observation.dequeue(0, [first])
+        with patch.object(drill.time, "monotonic", return_value=12):
+            report = observation.snapshot()
+        self.assertEqual(report["enqueued_markers"], 2)
+        self.assertEqual(report["dequeued_markers"], 1)
+        self.assertEqual(report["queued_markers"], 1)
+        self.assertEqual(
+            report["pending_markers"],
+            [{"seat": 0, "marker": "consumed-1-2-16", "age_ms": 2000}],
+        )
+        self.assertEqual(
+            report["recent_dequeues"],
+            [{"seat": 0, "marker": "consumed-1-2-8", "queue_ms": 1250, "age_ms": 750}],
+        )
+
+    def test_duplicate_markers_keep_separate_queue_times(self) -> None:
+        observation = drill.RelayObservation()
+        messages = [{"marker": "ready"}, {"marker": "ready"}]
+        with patch.object(drill.time, "monotonic", side_effect=[1, 2, 3, 4]):
+            observation.enqueue(0, messages[0])
+            observation.enqueue(1, messages[1])
+            observation.dequeue(1, [messages[1]])
+            observation.dequeue(0, [messages[0]])
+        records = observation.snapshot()["recent_dequeues"]
+        self.assertEqual(
+            [(item["seat"], item["queue_ms"]) for item in records], [(1, 1000), (0, 3000)]
+        )
+
+    def test_bounded_history_reports_eviction_without_losing_total_counts(self) -> None:
+        observation = drill.RelayObservation()
+        messages = [{"marker": str(index)} for index in range(200)]
+        for message in messages:
+            observation.enqueue(1, message)
+        queued = observation.snapshot()
+        self.assertEqual(queued["queued_markers"], 200)
+        self.assertEqual(queued["evicted_pending_records"], 72)
+        self.assertEqual(len(queued["pending_markers"]), 128)
+        observation.dequeue(1, messages[:1])
+        self.assertIsNone(observation.snapshot()["recent_dequeues"][0]["queue_ms"])
+        observation.dequeue(1, messages[1:])
+        result = observation.snapshot()
+        self.assertEqual(result["enqueued_markers"], 200)
+        self.assertEqual(result["dequeued_markers"], 200)
+        self.assertEqual(result["queued_markers"], 0)
+        self.assertEqual(result["pending_markers"], [])
+        self.assertEqual(len(result["recent_dequeues"]), 128)
+        self.assertEqual(result["recent_dequeues"][0]["marker"], "72")
+
+    def test_concurrent_snapshots_keep_marker_counts_consistent(self) -> None:
+        observation = drill.RelayObservation()
+
+        def exchange(seat: int) -> None:
+            for count in range(200):
+                message = {"marker": f"{seat}-{count}"}
+                observation.enqueue(seat, message)
+                snapshot = observation.snapshot()
+                self.assertEqual(
+                    snapshot["enqueued_markers"] - snapshot["dequeued_markers"],
+                    snapshot["queued_markers"],
+                )
+                observation.dequeue(seat, [message])
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            list(executor.map(exchange, range(3)))
+        snapshot = observation.snapshot()
+        self.assertEqual(snapshot["enqueued_markers"], 600)
+        self.assertEqual(snapshot["dequeued_markers"], 600)
+        self.assertEqual(snapshot["queued_markers"], 0)
+        self.assertEqual(snapshot["pending_markers"], [])
+
+    def test_http_relay_keeps_payloads_unchanged_and_observes_only_markers(self) -> None:
+        class Handler(drill.RelayHandler):  # type: ignore[name-defined,misc]
+            queues: ClassVar[list[list[object]]] = [[], []]
+            lock = threading.Lock()
+            observation = drill.RelayObservation()
+
+        server = drill.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        messages = [{"marker": "consumed-1-0-8"}, {"payload": {"Offer": "example"}}]
+        try:
+            for message in messages:
+                connection.request("POST", "/signal/1", body=json.dumps(message))
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                response.read()
+            self.assertEqual(Handler.observation.snapshot()["queued_markers"], 1)
+            connection.request("GET", "/signal/0")
+            self.assertEqual(json.loads(connection.getresponse().read()), [])
+            self.assertEqual(Handler.observation.snapshot()["queued_markers"], 1)
+            connection.request("GET", "/signal/1")
+            self.assertEqual(json.loads(connection.getresponse().read()), messages)
+            report = Handler.observation.snapshot()
+            self.assertEqual(report["enqueued_markers"], 1)
+            self.assertEqual(report["dequeued_markers"], 1)
+            self.assertEqual(report["queued_markers"], 0)
+            self.assertEqual(report["recent_dequeues"][0]["marker"], "consumed-1-0-8")
+            self.assertNotIn("example", json.dumps(report))
+        finally:
+            connection.close()
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
 
 class ObservationTests(unittest.TestCase):

@@ -236,26 +236,36 @@ func receive_packet() -> ReceivedPacket:
 			continue
 		var peer: Dictionary = _mp_peer.call("get_peer", entry.peer_id)
 		var channels: Array = peer["channels"]
-		var channels_open := channels.size() == 3
+		if channels.size() != 3:
+			continue
+		var channel_index := entry.receive_channel_cursor
+		var selected_channel: Object = channels[channel_index]
+		if selected_channel.call("get_available_packet_count") == 0:
+			channel_index = -1
+			for channel_offset: int in range(1, 3):
+				var index_in_peer := (entry.receive_channel_cursor + channel_offset) % 3
+				var channel: Object = channels[index_in_peer]
+				if channel.call("get_available_packet_count") > 0:
+					channel_index = index_in_peer
+					selected_channel = channel
+					break
+			if channel_index < 0:
+				continue
+		var channels_open := true
 		for channel: Object in channels:
 			if channel.call("get_ready_state") != WebRTCDataChannel.STATE_OPEN:
 				channels_open = false
 		if not channels_open:
 			continue
-		for channel_offset: int in 3:
-			var channel_index := (entry.receive_channel_cursor + channel_offset) % 3
-			var channel: Object = channels[channel_index]
-			if channel.call("get_available_packet_count") == 0:
-				continue
-			var packet := ReceivedPacket.new()
-			packet.peer_id = entry.peer_id
-			packet.transfer_mode = _RECEIVE_MODES[channel_index]
-			# Issue #403: get_packet() rescans channels after caching metadata.
-			packet.data = channel.call("get_packet")
-			packet.error = channel.call("get_packet_error")
-			entry.receive_channel_cursor = (channel_index + 1) % 3
-			_receive_peer_cursor = (index + 1) % ids.size()
-			return packet
+		var packet := ReceivedPacket.new()
+		packet.peer_id = entry.peer_id
+		packet.transfer_mode = _RECEIVE_MODES[channel_index]
+		# Issue #403: get_packet() rescans channels after caching metadata.
+		packet.data = selected_channel.call("get_packet")
+		packet.error = selected_channel.call("get_packet_error")
+		entry.receive_channel_cursor = (channel_index + 1) % 3
+		_receive_peer_cursor = (index + 1) % ids.size()
+		return packet
 	return null
 
 

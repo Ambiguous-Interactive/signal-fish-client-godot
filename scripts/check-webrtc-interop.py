@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import ClassVar
@@ -28,9 +28,65 @@ renderer/rendering_method="gl_compatibility"
 """
 
 
+class RelayObservation:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.enqueued = 0
+        self.dequeued = 0
+        self.evicted = 0
+        self.pending: OrderedDict[int, tuple[int, str, float]] = OrderedDict()
+        self.recent: deque[tuple[int, str, float | None, float]] = deque(maxlen=128)
+
+    def enqueue(self, seat: int, message: object) -> None:
+        if not isinstance(message, dict) or not isinstance(message.get("marker"), str):
+            return
+        with self.lock:
+            self.enqueued += 1
+            self.pending[id(message)] = (seat, message["marker"], time.monotonic())
+            if len(self.pending) > 128:
+                self.pending.popitem(last=False)
+                self.evicted += 1
+
+    def dequeue(self, seat: int, messages: list[object]) -> None:
+        with self.lock:
+            now = time.monotonic()
+            for message in messages:
+                if not isinstance(message, dict) or not isinstance(message.get("marker"), str):
+                    continue
+                self.dequeued += 1
+                pending = self.pending.pop(id(message), None)
+                self.recent.append((seat, message["marker"], pending[2] if pending else None, now))
+
+    def snapshot(self) -> dict[str, object]:
+        with self.lock:
+            now = time.monotonic()
+            return {
+                "enqueued_markers": self.enqueued,
+                "dequeued_markers": self.dequeued,
+                "queued_markers": self.enqueued - self.dequeued,
+                "evicted_pending_records": self.evicted,
+                "pending_markers": [
+                    {"seat": seat, "marker": marker, "age_ms": round((now - started) * 1000)}
+                    for seat, marker, started in self.pending.values()
+                ],
+                "recent_dequeues": [
+                    {
+                        "seat": seat,
+                        "marker": marker,
+                        "queue_ms": round((finished - started) * 1000)
+                        if started is not None
+                        else None,
+                        "age_ms": round((now - finished) * 1000),
+                    }
+                    for seat, marker, started, finished in self.recent
+                ],
+            }
+
+
 class RelayHandler(SimpleHTTPRequestHandler):
     queues: ClassVar[list[list[object]]] = [[], []]
     lock = threading.Lock()
+    observation = RelayObservation()
 
     def log_message(self, _format: str, *_args: object) -> None:
         pass
@@ -41,6 +97,7 @@ class RelayHandler(SimpleHTTPRequestHandler):
             with self.lock:
                 messages = self.queues[seat]
                 self.queues[seat] = []
+                self.observation.dequeue(seat, messages)
             self.reply(json.dumps(messages).encode())
         else:
             super().do_GET()
@@ -51,7 +108,9 @@ class RelayHandler(SimpleHTTPRequestHandler):
             return
         message = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         with self.lock:
-            self.queues[int(self.path[-1])].append(message)
+            seat = int(self.path[-1])
+            self.queues[seat].append(message)
+            self.observation.enqueue(seat, message)
         self.reply(b"{}")
 
     def reply(self, body: bytes) -> None:
@@ -319,6 +378,7 @@ def run_seats(
     class TrialRelayHandler(RelayHandler):
         queues: ClassVar[list[list[object]]] = [[] for _ in range(3 if args.multi_peer else 2)]
         lock = threading.Lock()
+        observation = RelayObservation()
 
     handler = functools.partial(TrialRelayHandler, directory=str(web / "build/web"))
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -335,6 +395,7 @@ def run_seats(
     observation = BrowserObservation(url)
     browser_observation: dict[str, object] = {}
     browser_2_observation: dict[str, object] = {}
+    relay_observation: dict[str, object] = {}
     try:
         native_command = [
             args.godot,
@@ -434,6 +495,7 @@ def run_seats(
                 browser_observation = observation.snapshot()
                 if args.multi_peer:
                     browser_2_observation = extra_observation.snapshot()
+                relay_observation = TrialRelayHandler.observation.snapshot()
                 (directory / "browser.log").write_text("\n".join(messages))
                 browser.close()
     except Exception as exc:
@@ -473,6 +535,7 @@ def run_seats(
                 "browser_version": browser_version,
                 "browser_observation": browser_observation,
                 "browser_2_observation": browser_2_observation,
+                "relay_observation": relay_observation or TrialRelayHandler.observation.snapshot(),
                 "retirement_case": retirement_case,
                 "multi_peer": args.multi_peer,
                 "slow_receiver": args.slow_receiver,
