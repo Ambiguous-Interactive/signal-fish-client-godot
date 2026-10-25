@@ -25,6 +25,8 @@ class ObservationTests(unittest.TestCase):
             'WEBRTC_INTEROP_FAIL {"stage":"peer channels open"}',
             "PAGE_ERROR WebAssembly trap",
             "BROWSER_CRASH",
+            "SCRIPT ERROR: receiver aborted",
+            "ERROR: Buffer full! Dropping data.",
         ):
             with self.subTest(terminal=terminal):
                 page = Mock()
@@ -35,6 +37,45 @@ class ObservationTests(unittest.TestCase):
                 )
                 self.assertEqual(drill.observe_browser(cast(Page, page), process, messages), "")
                 process.poll.assert_not_called()
+
+    def test_second_browser_requires_its_own_terminal(self) -> None:
+        page = Mock()
+        process = Mock()
+        process.poll.return_value = 0
+        messages = ["WEBRTC_INTEROP_PASS seat=1"]
+        with patch.object(drill.time, "monotonic", side_effect=[0, 0, 60]):
+            self.assertIn(
+                "timed out", drill.observe_browser(cast(Page, page), process, messages, seat=2)
+            )
+        messages.append("WEBRTC_INTEROP_PASS seat=2")
+        self.assertEqual(drill.observe_browser(cast(Page, page), process, messages, seat=2), "")
+        result = drill.seat_evidence("\n".join(messages[:-1]), 2)
+        self.assertFalse(result["passed"])
+
+    def test_multi_peer_history_keeps_per_sender_counts_before_stall(self) -> None:
+        phase = {"phase": 1, "received_by_seat_and_mode": {"0": [32, 32, 64], "2": [32, 32, 64]}}
+        output = (
+            "WEBRTC_MULTIPEER_PHASE "
+            + drill.json.dumps(phase)
+            + '\nWEBRTC_MULTIPEER_PHASE {"phase":2'
+        )
+        result = drill.seat_evidence(output, 1)
+        self.assertEqual(result["multi_peer_phases"], [phase])
+        self.assertFalse(result["passed"])
+
+    def test_startup_requires_both_loaded_seats_and_reports_missing_engine(self) -> None:
+        page = Mock()
+        outputs = [(1, ["WEBRTC_MULTIPEER_LOADED seat=1"]), (2, [])]
+        with (
+            patch.object(drill.time, "monotonic", side_effect=[0, 0, 60]),
+            self.assertRaisesRegex(RuntimeError, r"missing seats: \[2\]"),
+        ):
+            drill.wait_web_startup(cast(Page, page), outputs)
+        outputs[1][1].append("WEBRTC_MULTIPEER_LOADED seat=2")
+        drill.wait_web_startup(cast(Page, page), outputs)
+        outputs[1][1].append("SCRIPT ERROR: startup aborted")
+        with self.assertRaisesRegex(RuntimeError, "seat 2 failed during engine startup"):
+            drill.wait_web_startup(cast(Page, page), outputs)
 
     def test_deadline_keeps_nonterminal_console_and_native_success(self) -> None:
         page = Mock()
