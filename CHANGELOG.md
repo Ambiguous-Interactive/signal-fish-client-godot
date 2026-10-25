@@ -10,6 +10,9 @@ released version.
 
 ### Added
 
+- `SFWebRTCMesh.receive_packet()` keeps raw WebRTC bytes and transfer modes
+  together when reliable and unreliable traffic overlap (#403).
+
 - Optional `SFWebSocketTransport.max_buffered_bytes` send cap for direct
   transport users: with the engine buffering more than the cap, sends drop
   with `ERR_BUSY` and the session stays live instead of an engine send

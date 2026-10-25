@@ -60,6 +60,21 @@ class ObservationTests(unittest.TestCase):
         self.assertIn("timed out", reason)
         process.poll.assert_called_once()
 
+    def test_failure_snapshot_preserves_counts_and_invalid_output(self) -> None:
+        for body, expected in (
+            (
+                '{"stream_waiting_ack":"stream-6-192","burst_received":92}',
+                {"stream_waiting_ack": "stream-6-192", "burst_received": 92},
+            ),
+            ("incomplete json", None),
+        ):
+            with self.subTest(body=body):
+                output = "WEBRTC_INTEROP_FAIL " + body
+                result = drill.seat_evidence(output, 0)
+                self.assertFalse(result["passed"])
+                self.assertEqual(result["failure"], output)
+                self.assertEqual(result["diagnostic"], expected)
+
     def test_evidence_keeps_last_completed_stage(self) -> None:
         output = "\n".join(
             [

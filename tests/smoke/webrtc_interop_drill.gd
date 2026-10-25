@@ -27,6 +27,7 @@ var _url := ""
 var _seat := 0
 var _mixed_traffic := false
 var _metadata_probe := false
+var _channel_receive := false
 var _metadata_packets: Array[Dictionary] = []
 var _pending: Array[Dictionary] = []
 var _markers: Dictionary = {}
@@ -51,6 +52,8 @@ var _snapshot_total := 0
 var _interrupted_sent := 0
 var _interrupted_received := 0
 var _interrupted_queued := 0
+var _stream_waiting_ack := ""
+var _max_stage_frame_gap_msec := 0
 
 
 func _ready() -> void:
@@ -64,20 +67,32 @@ func _ready() -> void:
 		_metadata_probe = JavaScriptBridge.eval(
 			"new URLSearchParams(window.location.search).get('metadata_probe') === '1'"
 		)
+		_channel_receive = JavaScriptBridge.eval(
+			"new URLSearchParams(window.location.search).get('channel_receive') === '1'"
+		)
 		if _mixed_traffic and _metadata_probe:
 			_fail("choose one drill scenario")
 			return
 	else:
 		var args := OS.get_cmdline_user_args()
-		if (
-			args.size() not in [1, 2]
-			or (args.size() == 2 and args[1] not in ["--mixed-traffic", "--metadata-probe"])
-		):
-			_fail("native seat needs the signaling URL and one optional scenario")
+		if args.is_empty():
+			_fail("native seat needs the signaling URL")
 			return
 		_url = args[0]
-		_mixed_traffic = args.size() == 2 and args[1] == "--mixed-traffic"
-		_metadata_probe = args.size() == 2 and args[1] == "--metadata-probe"
+		for option: String in args.slice(1):
+			match option:
+				"--mixed-traffic":
+					_mixed_traffic = true
+				"--metadata-probe":
+					_metadata_probe = true
+				"--channel-receive":
+					_channel_receive = true
+				_:
+					_fail("unknown native drill option")
+					return
+		if _mixed_traffic and _metadata_probe:
+			_fail("choose one drill scenario")
+			return
 	_inbox = HTTPRequest.new()
 	_outbox = HTTPRequest.new()
 	add_child(_inbox)
@@ -184,6 +199,7 @@ func _run_phase(phase: int) -> bool:
 	_interrupted_sent = 0
 	_interrupted_received = 0
 	_interrupted_queued = 0
+	_stream_waiting_ack = ""
 	var generation := "40000000-0000-0000-0000-%012d" % phase
 	var ready_marker := "ready-%d" % phase
 	var plan := SessionScript.SessionPlanInfo.new()
@@ -238,10 +254,13 @@ func _run_phase(phase: int) -> bool:
 	if not await _wait_until(
 		"receive gameplay modes",
 		func() -> bool:
-			while multiplayer_peer.get_available_packet_count() > 0:
-				var sender: int = multiplayer_peer.get_packet_peer()
-				var mode: MultiplayerPeer.TransferMode = multiplayer_peer.get_packet_mode()
-				var payload := multiplayer_peer.get_packet().get_string_from_utf8()
+			while _packet_count(multiplayer_peer) > 0:
+				var packet := _read_packet(multiplayer_peer)
+				if packet == null:
+					return false
+				var sender := packet.peer_id
+				var mode := packet.transfer_mode
+				var payload := packet.data.get_string_from_utf8()
 				if not modes.has(mode):
 					_fail("unexpected gameplay transfer mode")
 					return false
@@ -277,7 +296,7 @@ func _run_phase(phase: int) -> bool:
 			"closed channel releases link", func() -> bool: return _mesh.get_peer_count() == 0
 		):
 			return false
-		if multiplayer_peer.get_available_packet_count() != 0:
+		if _packet_count(multiplayer_peer) != 0:
 			_fail("closed channel retained gameplay packets")
 			return false
 	_snapshot_received.clear()
@@ -286,7 +305,7 @@ func _run_phase(phase: int) -> bool:
 	relay.transport = SessionScript.TransportKind.RELAY
 	_mesh._apply_plan(relay)
 	_mesh.poll()
-	if _mesh.get_peer_count() != 0 or multiplayer_peer.get_available_packet_count() != 0:
+	if _mesh.get_peer_count() != 0 or _packet_count(multiplayer_peer) != 0:
 		_fail("relay teardown retained peers or packets")
 		return false
 	var expected_statuses: Array[bool] = []
@@ -319,8 +338,11 @@ func _probe_packet_metadata(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 		"metadata probe unreliable queued",
 		func() -> bool:
 			return (
-				peer.get_available_packet_count() == 1
-				and peer.get_packet_mode() == MultiplayerPeer.TRANSFER_MODE_UNRELIABLE
+				_packet_count(peer) == 1
+				and (
+					_channel_receive
+					or peer.get_packet_mode() == MultiplayerPeer.TRANSFER_MODE_UNRELIABLE
+				)
 			)
 	):
 		return false
@@ -337,10 +359,7 @@ func _probe_packet_metadata(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	if not await _wait_until(
 		"metadata probe reliable queued",
 		func() -> bool:
-			return (
-				reliable_channel.get_available_packet_count() == 1
-				and peer.get_available_packet_count() == 2
-			)
+			return reliable_channel.get_available_packet_count() == 1 and _packet_count(peer) == 2
 	):
 		return false
 	_pending.append({"marker": "metadata-queued"})
@@ -352,10 +371,13 @@ func _probe_packet_metadata(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	var modes: Array[int] = []
 	var mismatch := ""
 	for index: int in 2:
-		var sender := peer.get_packet_peer()
-		var mode := peer.get_packet_mode()
-		var channel := peer.get_packet_channel()
-		var packet := peer.get_packet()
+		var received := _read_packet(peer)
+		if received == null:
+			return false
+		var sender := received.peer_id
+		var mode := received.transfer_mode
+		var channel := received.channel
+		var packet := received.data
 		var reliable_bytes := _burst_packet(phase, 1 - _seat, 1, 1200)
 		var unreliable_bytes := _burst_packet(phase, 1 - _seat, 0, 32)
 		_metadata_packets.append(
@@ -396,7 +418,7 @@ func _probe_packet_metadata(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 			if mismatch.is_empty():
 				mismatch = "queued packet transfer mode differs from payload"
 		modes.append(mode)
-	if peer.get_available_packet_count() != 0 and mismatch.is_empty():
+	if _packet_count(peer) != 0 and mismatch.is_empty():
 		mismatch = "metadata probe retained packets"
 	_pending.append({"marker": "metadata-read"})
 	if not await _wait_until(
@@ -431,12 +453,15 @@ func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	if not await _wait_until(
 		"stream reliable gameplay",
 		func() -> bool:
-			_peak_queued = maxi(_peak_queued, peer.get_available_packet_count())
-			while peer.get_available_packet_count() > 0:
-				var sender := peer.get_packet_peer()
-				var mode := peer.get_packet_mode()
-				var channel := peer.get_packet_channel()
-				var packet := peer.get_packet()
+			_peak_queued = maxi(_peak_queued, _packet_count(peer))
+			while _packet_count(peer) > 0:
+				var received := _read_packet(peer)
+				if received == null:
+					return false
+				var sender := received.peer_id
+				var mode := received.transfer_mode
+				var channel := received.channel
+				var packet := received.data
 				if mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE:
 					if not _receive_realtime(packet, sender, mode, channel, phase):
 						return false
@@ -471,8 +496,10 @@ func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 					break
 				if _burst_sent >= STREAM_WINDOW:
 					var previous_window := _burst_sent - (_burst_sent % STREAM_WINDOW)
-					if not _markers.has("stream-%d-%d" % [phase, previous_window]):
+					_stream_waiting_ack = "stream-%d-%d" % [phase, previous_window]
+					if not _markers.has(_stream_waiting_ack):
 						break
+				_stream_waiting_ack = ""
 				var packet := _stream_packet(phase, _seat, _burst_sent, sizes, outgoing)
 				if peer.put_packet(packet) != OK:
 					_fail("directed reliable gameplay send failed")
@@ -573,17 +600,20 @@ func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 			_interrupted_queued = reliable_channel.get_available_packet_count()
 			return (
 				_interrupted_queued == INTERRUPTED_CHUNKS
-				and peer.get_available_packet_count() >= INTERRUPTED_CHUNKS
+				and _packet_count(peer) >= INTERRUPTED_CHUNKS
 			)
 	):
 		return false
 	_start_stage("receive partial snapshot")
 	for index: int in CONSUMED_CHUNKS:
 		var offset := index * SNAPSHOT_CHUNK_BYTES
-		var sender := peer.get_packet_peer()
-		var mode := peer.get_packet_mode()
-		var channel := peer.get_packet_channel()
-		var packet := peer.get_packet()
+		var received := _read_packet(peer)
+		if received == null:
+			return false
+		var sender := received.peer_id
+		var mode := received.transfer_mode
+		var channel := received.channel
+		var packet := received.data
 		_interrupted_queued = reliable_channel.get_available_packet_count()
 		if (
 			packet != expected.slice(offset, offset + SNAPSHOT_CHUNK_BYTES)
@@ -622,15 +652,61 @@ func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 
 
 func _drain_realtime(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
-	while peer.get_available_packet_count() > 0:
+	if _channel_receive:
+		var remote_id := MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+		if not peer.has_peer(remote_id):
+			return true
+		var channels: Array = peer.get_peer(remote_id)["channels"]
+		for index: int in [1, 2]:
+			var channel: WebRTCDataChannel = channels[index]
+			var mode := (
+				MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED
+				if index == 1
+				else MultiplayerPeer.TRANSFER_MODE_UNRELIABLE
+			)
+			while channel.get_available_packet_count() > 0:
+				if not _receive_realtime(channel.get_packet(), remote_id, mode, 0, phase):
+					return false
+		return true
+	while _packet_count(peer) > 0:
 		var mode := peer.get_packet_mode()
 		if mode == MultiplayerPeer.TRANSFER_MODE_RELIABLE:
 			break
-		var sender := peer.get_packet_peer()
-		var channel := peer.get_packet_channel()
-		if not _receive_realtime(peer.get_packet(), sender, mode, channel, phase):
+		var received := _read_packet(peer)
+		if received == null:
+			return false
+		if not _receive_realtime(
+			received.data, received.peer_id, received.transfer_mode, received.channel, phase
+		):
 			return false
 	return true
+
+
+func _packet_count(peer: WebRTCMultiplayerPeer) -> int:
+	if not _channel_receive:
+		return peer.get_available_packet_count()
+	var count := 0
+	for info: Dictionary in peer.get_peers().values():
+		for channel: WebRTCDataChannel in info["channels"]:
+			count += channel.get_available_packet_count()
+	return count
+
+
+func _read_packet(peer: WebRTCMultiplayerPeer) -> MeshScript.ReceivedPacket:
+	var packet: MeshScript.ReceivedPacket
+	if _channel_receive:
+		packet = _mesh.receive_packet()
+	else:
+		packet = MeshScript.ReceivedPacket.new()
+		packet.peer_id = peer.get_packet_peer()
+		packet.transfer_mode = peer.get_packet_mode()
+		packet.channel = peer.get_packet_channel()
+		packet.data = peer.get_packet()
+		packet.error = peer.get_packet_error()
+	if packet == null or packet.error != OK:
+		_fail("raw gameplay read failed")
+		return null
+	return packet
 
 
 func _receive_realtime(
@@ -732,12 +808,14 @@ func _burst_packet(phase: int, seat: int, sequence: int, size: int) -> PackedByt
 func _start_stage(stage: String) -> void:
 	_stage = stage
 	_stage_started = Time.get_ticks_msec()
+	_max_stage_frame_gap_msec = 0
 	print("interop stage: seat=%d phase=%d stage=%s" % [_seat, _phase, stage])
 
 
 func _wait_until(stage: String, condition: Callable) -> bool:
 	_start_stage(stage)
 	var deadline := _stage_started + 15000
+	var last_frame := _stage_started
 	while not _failed and Time.get_ticks_msec() < deadline:
 		if condition.call():
 			print(
@@ -748,6 +826,9 @@ func _wait_until(stage: String, condition: Callable) -> bool:
 			)
 			return true
 		await get_tree().process_frame
+		var now := Time.get_ticks_msec()
+		_max_stage_frame_gap_msec = maxi(_max_stage_frame_gap_msec, now - last_frame)
+		last_frame = now
 	_fail("wait timed out")
 	return false
 
@@ -761,6 +842,8 @@ func _fail(reason: String) -> void:
 		"phase": _phase,
 		"stage": _stage,
 		"stage_elapsed_ms": Time.get_ticks_msec() - _stage_started,
+		"max_stage_frame_gap_ms": _max_stage_frame_gap_msec,
+		"stream_waiting_ack": _stream_waiting_ack,
 		"reason": reason,
 		"markers": _markers.keys(),
 		"received_modes": _received_modes.keys(),
@@ -769,6 +852,7 @@ func _fail(reason: String) -> void:
 		"peak_queued": _peak_queued,
 		"mixed_traffic": _mixed_traffic,
 		"metadata_probe": _metadata_probe,
+		"channel_receive": _channel_receive,
 		"metadata_packets": _metadata_packets,
 		"realtime_sent_per_mode": _realtime_sent,
 		"realtime_received": _realtime_received,
@@ -788,7 +872,7 @@ func _fail(reason: String) -> void:
 	if _mesh != null:
 		var multiplayer_peer: WebRTCMultiplayerPeer = _mesh.get_multiplayer_peer()
 		if multiplayer_peer != null:
-			snapshot["queued_packets"] = multiplayer_peer.get_available_packet_count()
+			snapshot["queued_packets"] = _packet_count(multiplayer_peer)
 		for uuid: String in _mesh._peers:
 			var entry: Object = _mesh._peers[uuid]
 			var connection: WebRTCPeerConnection = entry.get("connection")
@@ -808,7 +892,9 @@ func _fail(reason: String) -> void:
 							"id": channel.get_id(),
 							"state": channel.get_ready_state(),
 							"negotiated": channel.is_negotiated(),
-							"label": channel.get_label()
+							"label": channel.get_label(),
+							"queued_packets": channel.get_available_packet_count(),
+							"buffered_bytes": channel.get_buffered_amount()
 						}
 					)
 			var peer_states: Array = snapshot["peers"]
@@ -820,6 +906,11 @@ func _fail(reason: String) -> void:
 		_outbox.cancel_request()
 	if _mesh != null:
 		_mesh.detach()
+		_mesh.free()
+		_mesh = null
+	if _client != null:
+		_client.free()
+		_client = null
 	get_tree().quit(1)
 
 

@@ -2,6 +2,7 @@
 """Run the opt-in Godot native/browser mesh gameplay drill."""
 
 import argparse
+import contextlib
 import functools
 import json
 import shutil
@@ -94,12 +95,18 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
     passed = f"WEBRTC_INTEROP_PASS seat={seat}" in lines and not any(
         token in output for token in ("SCRIPT ERROR", "PAGE_ERROR", "WEBRTC_INTEROP_FAIL")
     )
+    failure = next((line for line in lines if line.startswith("WEBRTC_INTEROP_FAIL ")), "")
+    diagnostic = None
+    if failure:
+        with contextlib.suppress(json.JSONDecodeError):
+            diagnostic = json.loads(failure.removeprefix("WEBRTC_INTEROP_FAIL "))
     return {
         "seat": seat,
         "passed": passed,
         "last_stage": next((line for line in reversed(lines) if "interop stage:" in line), ""),
         "last_ready": next((line for line in reversed(lines) if "interop ready:" in line), ""),
-        "failure": next((line for line in lines if "WEBRTC_INTEROP_FAIL" in line), ""),
+        "failure": failure,
+        "diagnostic": diagnostic,
     }
 
 
@@ -152,6 +159,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
     process = None
     messages: list[str] = []
     driver_error = ""
+    browser_version = ""
     try:
         process = subprocess.Popen(  # noqa: S603
             [
@@ -163,6 +171,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 url,
                 *(["--mixed-traffic"] if args.mixed_traffic else []),
                 *(["--metadata-probe"] if args.metadata_probe else []),
+                *(["--channel-receive"] if args.channel_receive else []),
             ],
             stdout=native_log,
             stderr=subprocess.STDOUT,
@@ -173,6 +182,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 executable_path=args.chromium,
                 args=["--no-sandbox", "--enable-unsafe-swiftshader"],
             )
+            browser_version = browser.version
             try:
                 page = browser.new_page()
                 page.on("console", lambda message: messages.append(message.text))
@@ -180,6 +190,8 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 query = "?mixed_traffic=1" if args.mixed_traffic else ""
                 if args.metadata_probe:
                     query = "?metadata_probe=1"
+                if args.channel_receive:
+                    query += ("&" if query else "?") + "channel_receive=1"
                 page.goto(url + "/index.html" + query)
                 driver_error = observe_browser(page, process, messages)
             finally:
@@ -213,6 +225,11 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 seat_results[0]["passed"] = False
             evidence = {
                 "driver_error": driver_error,
+                "browser_version": browser_version,
+                "godot": args.godot,
+                "channel_receive": args.channel_receive,
+                "metadata_probe": args.metadata_probe,
+                "mixed_traffic": args.mixed_traffic,
                 "native_exit_code": process.returncode if process is not None else None,
                 "seats": seat_results,
             }
@@ -289,6 +306,11 @@ def main() -> None:
         "--metadata-probe",
         action="store_true",
         help="Reproduce queued-channel metadata mismatch (issue #403)",
+    )
+    parser.add_argument(
+        "--channel-receive",
+        action="store_true",
+        help="Read raw gameplay through SFWebRTCMesh.receive_packet() (no RPC)",
     )
     parser.add_argument(
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"

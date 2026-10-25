@@ -64,6 +64,11 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 # Signed FNV offset: GDScript clamps unsigned 64-bit literals.
 const _FNV1A_OFFSET_BASIS := -3750763034362895579
 const _FNV1A_PRIME := 1099511628211
+const _RECEIVE_MODES := [
+	MultiplayerPeer.TRANSFER_MODE_RELIABLE,
+	MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED,
+	MultiplayerPeer.TRANSFER_MODE_UNRELIABLE
+]
 
 ## Signals queued per peer while the link is backpressured (issue #335).
 const MAX_PENDING_RELAYS := 64
@@ -107,6 +112,7 @@ var _mp_peer: Object = null
 var _reported_connected := false
 var _status_retry_due_msec := 0
 var _mesh_revision := 0
+var _receive_peer_cursor := 0
 
 
 ## Starts consuming a client's session-plan events. The client must stay
@@ -191,6 +197,47 @@ func poll() -> void:
 ## teardown).
 func get_multiplayer_peer() -> Object:
 	return _mp_peer
+
+
+## Reads one raw gameplay packet with metadata from its physical channel.
+## Returns null when no packet is ready. Poll the mesh first. Use this as the
+## sole receive path; do not combine it with MultiplayerAPI/RPC or the engine
+## multiplayer peer's packet reads. Sending still uses the multiplayer peer.
+## Only the mesh's three default channels are supported.
+func receive_packet() -> ReceivedPacket:
+	if not _client_is_live() or _mp_peer == null or _peers.is_empty():
+		return null
+	var ids := _peers.keys()
+	for offset: int in ids.size():
+		var index := (_receive_peer_cursor + offset) % ids.size()
+		var entry: _MeshPeer = _peers[ids[index]]
+		if entry.connection.call("get_connection_state") != WebRTCPeerConnection.STATE_CONNECTED:
+			continue
+		if not _mp_peer.call("has_peer", entry.peer_id):
+			continue
+		var peer: Dictionary = _mp_peer.call("get_peer", entry.peer_id)
+		var channels: Array = peer["channels"]
+		var channels_open := channels.size() == 3
+		for channel: Object in channels:
+			if channel.call("get_ready_state") != WebRTCDataChannel.STATE_OPEN:
+				channels_open = false
+		if not channels_open:
+			continue
+		for channel_offset: int in 3:
+			var channel_index := (entry.receive_channel_cursor + channel_offset) % 3
+			var channel: Object = channels[channel_index]
+			if channel.call("get_available_packet_count") == 0:
+				continue
+			var packet := ReceivedPacket.new()
+			packet.peer_id = entry.peer_id
+			packet.transfer_mode = _RECEIVE_MODES[channel_index]
+			# Issue #403: get_packet() rescans channels after caching metadata.
+			packet.data = channel.call("get_packet")
+			packet.error = channel.call("get_packet_error")
+			entry.receive_channel_cursor = (channel_index + 1) % 3
+			_receive_peer_cursor = (index + 1) % ids.size()
+			return packet
+	return null
 
 
 func get_peer_count() -> int:
@@ -504,6 +551,7 @@ func _drop_peer(uuid: String) -> void:
 
 func _reset_mesh() -> void:
 	_mesh_revision += 1
+	_receive_peer_cursor = 0
 	_plan = null
 	_retired_generations.clear()
 	_known_peers.clear()
@@ -762,6 +810,16 @@ func _rtc_configuration() -> Dictionary:
 	return {"iceServers": ice_servers}
 
 
+## A raw packet and its physical-channel metadata. Check error before using data.
+class ReceivedPacket:
+	extends RefCounted
+	var peer_id: int = 0
+	var transfer_mode: MultiplayerPeer.TransferMode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
+	var channel: int = 0
+	var data: PackedByteArray = PackedByteArray()
+	var error: Error = OK
+
+
 class _MeshPeer:
 	extends RefCounted
 	var uuid: String = ""
@@ -770,6 +828,7 @@ class _MeshPeer:
 	var initiate: bool = false
 	var generation: String = ""
 	var epoch: int = -1
+	var receive_channel_cursor: int = 0
 	var session_cb: Callable = Callable()
 	var ice_cb: Callable = Callable()
 	var pending_signals: Array[Dictionary] = []
