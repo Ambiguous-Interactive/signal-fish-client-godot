@@ -228,6 +228,37 @@ The Web responder passed the safe-receiver checks on Godot 4.3, 4.4.1 and
 closure, selected-packet discard and exact snapshot recovery. The other
 three pairings in each engine assessment remained unsupported.
 
+### Reference channel retirement
+
+Add `--retirement-matrix` to close each available required channel from each
+seat. Godot closes `reliable`, `ordered` and `unreliable`. The reference Engine
+closes `reliable` and `unreliable`; it has no `ordered` channel. Each of these
+five cases runs two generations with the same byte and metadata checks.
+
+```bash
+python scripts/check-webrtc-reference.py --runtime web --offerer reference \
+  --safe-receive --mixed-traffic --credit-transport webrtc --retirement-matrix \
+  --native-extension /path/to/webrtc-native \
+  --reference-assets /path/to/reference-assets --reference-revision COMMIT \
+  --require-gameplay --output /tmp/reference-retirement
+```
+
+Use `--closing-seat godot --closing-channel unreliable` for one case.
+The default closes the reference reliable channel. Each case completes a
+snapshot and starts a second snapshot, then queues a Godot packet
+before closure. The safe reader selects that packet and checks its metadata. Closure must remove the peer and discard selected bytes.
+The next generation must restore exact gameplay through the same safe receiver.
+Use a separate run without `--safe-receive` to check the raw channel reader.
+
+Phase `retirement` records the closing seat and channel, selected queue count,
+packet discard, peer removal and observed reference channel closures. Godot
+closure also records the final physical channel state. The ordered-channel
+case observes reference required-channel closure when Godot releases the link.
+The driver waits up to 60 seconds for Godot's ready marker before starting
+the reference phase. Reports retain `startup_ms` and the startup barrier result.
+Each case has its own directory. `summary.json` retains failed cases while
+later cases run. Network deadlines remain unchanged.
+
 ### Concurrent positions and consumption credit
 
 Add `--mixed-traffic` to interleave 32 unreliable position samples with each

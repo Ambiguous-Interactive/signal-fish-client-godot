@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import ClassVar, Protocol, cast
@@ -124,6 +125,32 @@ def gameplay_phase_passed(
     )
 
 
+def retirement_passed(
+    godot: dict[str, object],
+    ref: dict[str, object],
+    channel: str,
+    seat: str,
+    safe_receive: bool = True,
+) -> bool:
+    proof = godot.get("retirement")
+    other = ref.get("retirement")
+    if not isinstance(proof, dict) or not isinstance(other, dict):
+        return False
+    return (
+        proof.get("channel") == other.get("channel") == channel
+        and proof.get("seat") == other.get("seat") == seat
+        and proof.get("selected") is safe_receive
+        and type(proof.get("queued")) is int
+        and proof["queued"] > 0
+        and proof.get("discarded") is True
+        and proof.get("peer_removed") is True
+        and isinstance(other.get("closed_labels"), list)
+        and any(label in ("reliable", "unreliable") for label in other["closed_labels"])
+        and (seat == "godot" or channel in other["closed_labels"])
+        and (seat != "godot" or proof.get("channel_closed") is True)
+    )
+
+
 def slow_receiver_passed(value: object, mixed_traffic: bool) -> bool:
     if not isinstance(value, dict):
         return False
@@ -227,6 +254,17 @@ def wait_for_godot(page: Page, messages: list[str]) -> str:
     return "Godot Web completion observation timed out after 15 seconds"
 
 
+def wait_for_godot_ready(page: Page, ready: Callable[[], bool], messages: list[str]) -> int:
+    started = time.monotonic()
+    while time.monotonic() - started < 60:
+        if page_failed(messages) or any(interop.engine_failed(line) for line in messages):
+            raise RuntimeError("Godot failed during reference assessment startup")
+        if ready():
+            return round((time.monotonic() - started) * 1000)
+        page.wait_for_timeout(100)
+    raise TimeoutError("Godot ready marker was not received during 60-second startup")
+
+
 def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
     project = directory / "project"
     interop.prepare(project, None if web else args.native_extension, ROOT)
@@ -251,6 +289,8 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
                 "mixed_traffic": args.mixed_traffic,
                 "credit_transport": args.credit_transport,
                 "slow_receiver": getattr(args, "slow_receiver", False),
+                "closing_channel": getattr(args, "closing_channel", "reliable"),
+                "closing_seat": getattr(args, "closing_seat", "reference"),
             }
         )
     )
@@ -312,6 +352,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "slow_receiver": getattr(args, "slow_receiver", False),
         "slow_reference_receiver": getattr(args, "slow_reference_receiver", False),
         "http_credit_delay_ms": getattr(args, "http_credit_delay_ms", 0),
+        "closing_channel": getattr(args, "closing_channel", "reliable"),
+        "closing_seat": getattr(args, "closing_seat", "reference"),
         "godot": args.godot,
         "reference_revision": args.reference_revision,
     }
@@ -329,16 +371,6 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 observations["reference"] = reference_observation
                 reference.goto(url)
                 reference.wait_for_function("typeof window.runReference === 'function'")
-                reference.evaluate(
-                    "([seat, offer, mixed, credit, slow]) => { void window.runReference(seat, offer, mixed, credit, slow); }",
-                    [
-                        1 if web else 0,
-                        args.godot_offer,
-                        args.mixed_traffic,
-                        args.credit_transport,
-                        getattr(args, "slow_reference_receiver", False),
-                    ],
-                )
                 if web:
                     page = browser.new_page()
                     watch_page(page, messages)
@@ -350,6 +382,30 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         stdout=log,
                         stderr=subprocess.STDOUT,
                     )
+
+                def godot_ready() -> bool:
+                    if native is not None and native.poll() is not None:
+                        raise RuntimeError("Native Godot exited before its ready marker")
+                    with Handler.lock:
+                        return any(
+                            isinstance(message, dict) and message.get("marker") == "ready-1"
+                            for message in Handler.queues[0 if web else 1]
+                        )
+
+                report["startup_ms"] = wait_for_godot_ready(reference, godot_ready, messages)
+                report["reference_started_after_godot_ready"] = True
+                reference.evaluate(
+                    "([seat, offer, mixed, credit, slow, channel, closer]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer); }",
+                    [
+                        1 if web else 0,
+                        args.godot_offer,
+                        args.mixed_traffic,
+                        args.credit_transport,
+                        getattr(args, "slow_reference_receiver", False),
+                        getattr(args, "closing_channel", "reliable"),
+                        getattr(args, "closing_seat", "reference"),
+                    ],
+                )
                 hold_proof: dict[str, object] = {}
                 report["signaling_hold_progress"] = hold_proof
                 hold_started = 0.0
@@ -427,6 +483,13 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             credit_transport=args.credit_transport,
                         )
                         and heartbeat_phase_passed(godot, ref, args.mixed_traffic)
+                        and retirement_passed(
+                            godot,
+                            ref,
+                            getattr(args, "closing_channel", "reliable"),
+                            getattr(args, "closing_seat", "reference"),
+                            args.safe_receive,
+                        )
                         and reference_receive_pause_passed(
                             ref, getattr(args, "slow_reference_receiver", False)
                         )
@@ -541,6 +604,15 @@ def main() -> None:
         default=0,
         help="Hold reference credit after 32 chunks for 0-8000 ms",
     )
+    parser.add_argument(
+        "--closing-channel", choices=("reliable", "ordered", "unreliable"), default="reliable"
+    )
+    parser.add_argument("--closing-seat", choices=("godot", "reference"), default="reference")
+    parser.add_argument(
+        "--retirement-matrix",
+        action="store_true",
+        help="Close each required channel from each seat",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--require-gameplay",
@@ -554,20 +626,67 @@ def main() -> None:
         parser.error("--http-credit-delay-ms must be between 0 and 8000")
     if args.http_credit_delay_ms and args.credit_transport != "http":
         parser.error("--http-credit-delay-ms needs --credit-transport http")
+    if (
+        not args.retirement_matrix
+        and args.closing_seat == "reference"
+        and args.closing_channel == "ordered"
+    ):
+        parser.error("the reference Engine has no ordered channel; use --closing-seat godot")
     directory = args.output or Path(tempfile.mkdtemp(prefix="sf-reference-assessment-"))
     results = []
     runtimes = (False, True) if args.runtime == "all" else (args.runtime == "web",)
     offers = (True, False) if args.offerer == "both" else (args.offerer == "godot",)
+    cases = (
+        [
+            (seat, channel)
+            for seat in ("godot", "reference")
+            for channel in (
+                ("reliable", "ordered", "unreliable")
+                if seat == "godot"
+                else ("reliable", "unreliable")
+            )
+        ]
+        if args.retirement_matrix
+        else [(args.closing_seat, args.closing_channel)]
+    )
     for web in runtimes:
         for godot_offer in offers:
             args.godot_offer = godot_offer
-            name = ("web" if web else "native") + (
-                "-godot-offer" if godot_offer else "-reference-offer"
-            )
-            result = assess(args, directory / name, web=web)
-            results.append(result)
-            (directory / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
-            print(f"{name}: assessed; gameplay={result['gameplay_passed']}")
+            for seat, channel in cases:
+                args.closing_seat, args.closing_channel = seat, channel
+                name = ("web" if web else "native") + (
+                    "-godot-offer" if godot_offer else "-reference-offer"
+                )
+                if args.retirement_matrix:
+                    name += f"-{seat}-{channel}"
+                folder = directory / name
+                if folder.exists():
+                    raise FileExistsError(f"Assessment output already exists: {folder}")
+                try:
+                    result = assess(args, folder, web=web)
+                except Exception as exc:
+                    report_path = folder / "assessment.json"
+                    if report_path.exists():
+                        result = json.loads(report_path.read_text())
+                    else:
+                        result = {
+                            "assessment_complete": False,
+                            "driver_error": f"{type(exc).__name__}: {exc}",
+                            "runtime": "web" if web else "native",
+                            "godot_offer": godot_offer,
+                            "closing_seat": seat,
+                            "closing_channel": channel,
+                        }
+                        folder.mkdir(parents=True, exist_ok=True)
+                        report_path.write_text(json.dumps(result, indent=2) + "\n")
+                results.append(result)
+                (directory / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
+                print(
+                    f"{name}: complete={result['assessment_complete']}; gameplay={result.get('gameplay_passed', False)}",
+                    flush=True,
+                )
+    if not all(result["assessment_complete"] for result in results):
+        raise RuntimeError(f"Incomplete reference assessment; see {directory}")
     if args.require_gameplay and not all(result["gameplay_passed"] for result in results):
         raise RuntimeError(
             f"Reference gameplay is unsupported for one or more pairings; see {directory}"

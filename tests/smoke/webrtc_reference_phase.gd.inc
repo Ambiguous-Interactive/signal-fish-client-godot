@@ -15,6 +15,7 @@ var _reference_partial_received := 0
 var _reference_received: Dictionary = {}
 var _reference_options: Dictionary = {}
 var _reference_receive_pause: Dictionary = {}
+var _reference_retirement: Dictionary = {}
 var _reference_receiver: MultiplayerPeer
 
 
@@ -37,6 +38,7 @@ func _run_phase(phase: int) -> bool:
 	_reference_partial_received = 0
 	_reference_received.clear()
 	_reference_receive_pause.clear()
+	_reference_retirement.clear()
 	_reference_options = JSON.parse_string(
 		FileAccess.get_file_as_string("res://reference-options.json")
 	)
@@ -109,6 +111,7 @@ func _run_phase(phase: int) -> bool:
 	var completed := _reference_gameplay_complete()
 	var safe: MultiplayerPeer = _mesh.get_safe_multiplayer_peer() if _safe_receive else null
 	evidence["remote_closed"] = false
+	var closing_channel: Object = null
 	if completed:
 		_pending.append({"marker": "close-ready-%d" % phase})
 		if not await _wait_until(
@@ -128,9 +131,43 @@ func _run_phase(phase: int) -> bool:
 			):
 				_fail("reference retirement metadata differs")
 				return false
+		_reference_retirement = {
+			"channel": _reference_options["closing_channel"],
+			"seat": _reference_options["closing_seat"],
+			"selected": safe != null,
+			"queued":
+			(
+				safe.get_available_packet_count()
+				if safe != null
+				else peer.call("get_available_packet_count")
+			),
+			"discarded": false,
+			"peer_removed": false,
+		}
 		_pending.append({"marker": "close-selected-%d" % phase})
+		if _reference_options["closing_seat"] == "godot":
+			if not await _wait_until(
+				"reference armed channel close",
+				func() -> bool: return _markers.has("close-armed-%d" % phase)
+			):
+				return false
+			var info: Dictionary = peer.call("get_peer", id)
+			var channels: Array = info["channels"]
+			var index: int = ["reliable", "ordered", "unreliable"].find(
+				_reference_options["closing_channel"]
+			)
+			closing_channel = channels[index]
+			closing_channel.call("close")
 		if not await _wait_until(
-			"reference remote channel close", func() -> bool: return _mesh.get_peer_count() == 0
+			"reference required channel close",
+			func() -> bool:
+				return (
+					_mesh.get_peer_count() == 0
+					and (
+						closing_channel == null
+						or closing_channel.call("get_ready_state") == WebRTCDataChannel.STATE_CLOSED
+					)
+				)
 		):
 			return false
 		if (
@@ -142,6 +179,13 @@ func _run_phase(phase: int) -> bool:
 		if safe == null and _mesh.receive_packet() != null:
 			_fail("reference remote close retained raw bytes")
 			return false
+		if closing_channel != null:
+			_reference_retirement["channel_closed"] = (
+				closing_channel.call("get_ready_state") == WebRTCDataChannel.STATE_CLOSED
+			)
+		_reference_retirement["discarded"] = true
+		_reference_retirement["peer_removed"] = true
+		evidence["retirement"] = _reference_retirement.duplicate()
 		evidence["remote_closed"] = true
 	print("WEBRTC_REFERENCE_PHASE " + JSON.stringify(evidence))
 	var relay := SessionScript.SessionPlanInfo.new()
@@ -430,4 +474,5 @@ func _reference_evidence() -> Dictionary:
 		),
 		"transfer_ms": _reference_transfer_ms,
 		"receive_pause": _reference_receive_pause.duplicate(),
+		"retirement": _reference_retirement.duplicate(),
 	}
