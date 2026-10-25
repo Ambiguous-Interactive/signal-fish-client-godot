@@ -17,7 +17,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Complete mesh channel interoperability with the reference engines (#355).
+- [ ] Complete mesh channel interoperability with the reference engines (#355),
+      including native reference Engine and full service-session pairings.
 - [ ] Capture the next native/browser timeout with paired `--repeat` / `--baseline`
       trials (#396; see `docs/mesh-guide.md`).
 

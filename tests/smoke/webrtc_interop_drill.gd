@@ -6,6 +6,9 @@ extends Node
 const MeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const ClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SessionScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
+const MsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
+const SNAPSHOT_CHUNK_BYTES := 1200
+const SNAPSHOT_PLAYERS := 1024
 const BURST_PACKETS := 256
 const STREAM_WINDOW := 32
 const PLAYERS: Array[String] = [
@@ -32,10 +35,13 @@ var _burst_received: Array[int] = [0]
 var _burst_sent := 0
 var _peak_queued := 0
 var _stage_started := 0
+var _snapshot_received := PackedByteArray()
+var _snapshot_total := 0
 
 
 func _ready() -> void:
 	_seat = 1 if OS.has_feature("web") else 0
+	_start_stage("setup")
 	if _seat == 1:
 		_url = JavaScriptBridge.eval("window.location.origin")
 	else:
@@ -141,6 +147,8 @@ func _run_phase(phase: int) -> bool:
 	_burst_received[0] = 0
 	_burst_sent = 0
 	_peak_queued = 0
+	_snapshot_received.clear()
+	_snapshot_total = 0
 	var generation := "40000000-0000-0000-0000-%012d" % phase
 	var ready_marker := "ready-%d" % phase
 	var plan := SessionScript.SessionPlanInfo.new()
@@ -265,6 +273,15 @@ func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	peer.set_target_peer(remote_id)
 	peer.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
 	var sizes: Array[int] = [1, 16, 255, 1200]
+	var snapshot: Dictionary = MsgpackScript.encode(_snapshot_value(phase, _seat))
+	var remote_snapshot: Dictionary = MsgpackScript.encode(_snapshot_value(phase, 1 - _seat))
+	if not snapshot["ok"] or not remote_snapshot["ok"]:
+		_fail("snapshot encode failed")
+		return false
+	var outgoing: PackedByteArray = snapshot["bytes"]
+	var expected_snapshot: PackedByteArray = remote_snapshot["bytes"]
+	_snapshot_total = expected_snapshot.size()
+	var total := BURST_PACKETS + ceili(float(outgoing.size()) / SNAPSHOT_CHUNK_BYTES)
 	if not await _wait_until(
 		"stream reliable gameplay",
 		func() -> bool:
@@ -275,11 +292,9 @@ func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 				var channel := peer.get_packet_channel()
 				var packet := peer.get_packet()
 				var sequence := _burst_received[0]
-				var expected := _burst_packet(
-					phase, 1 - _seat, sequence, sizes[sequence % sizes.size()]
-				)
+				var expected := _stream_packet(phase, 1 - _seat, sequence, sizes, expected_snapshot)
 				if (
-					sequence >= BURST_PACKETS
+					sequence >= total
 					or packet != expected
 					or sender != remote_id
 					or mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE
@@ -287,25 +302,34 @@ func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 				):
 					_fail("directed reliable gameplay bytes, order or metadata differ")
 					return false
+				if sequence >= BURST_PACKETS:
+					_snapshot_received.append_array(packet)
 				_burst_received[0] += 1
 				if _burst_received[0] % STREAM_WINDOW == 0:
 					_pending.append({"marker": "stream-%d-%d" % [phase, _burst_received[0]]})
 			for _batch: int in 4:
-				if _burst_sent == BURST_PACKETS:
+				if _burst_sent == total:
 					break
 				if _burst_sent >= STREAM_WINDOW:
 					var previous_window := _burst_sent - (_burst_sent % STREAM_WINDOW)
 					if not _markers.has("stream-%d-%d" % [phase, previous_window]):
 						break
-				var packet := _burst_packet(
-					phase, _seat, _burst_sent, sizes[_burst_sent % sizes.size()]
-				)
+				var packet := _stream_packet(phase, _seat, _burst_sent, sizes, outgoing)
 				if peer.put_packet(packet) != OK:
 					_fail("directed reliable gameplay send failed")
 					return false
 				_burst_sent += 1
-			return _burst_received[0] == BURST_PACKETS and _burst_sent == BURST_PACKETS
+			return _burst_received[0] == total and _burst_sent == total
 	):
+		return false
+	_start_stage("decode reassembled snapshot")
+	var decoded: Dictionary = MsgpackScript.decode(_snapshot_received)
+	if (
+		_snapshot_received != expected_snapshot
+		or not decoded["ok"]
+		or decoded["value"] != _snapshot_value(phase, 1 - _seat)
+	):
+		_fail("reassembled snapshot bytes or values differ")
 		return false
 	_pending.append({"marker": "burst-%d" % phase})
 	if not await _wait_until(
@@ -315,11 +339,38 @@ func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	peer.set_target_peer(0)
 	print(
 		(
-			"interop reliable stream: seat=%d phase=%d packets=%d max_size=%d peak_queued=%d"
-			% [_seat, phase, BURST_PACKETS, 1200, _peak_queued]
+			(
+				"interop reliable stream: seat=%d phase=%d packets=%d max_size=%d "
+				+ "peak_queued=%d snapshot_bytes=%d snapshot_players=%d"
+			)
+			% [_seat, phase, total, 1200, _peak_queued, outgoing.size(), SNAPSHOT_PLAYERS]
 		)
 	)
 	return true
+
+
+func _snapshot_value(phase: int, seat: int) -> Dictionary:
+	var players: Array[Dictionary] = []
+	for index: int in SNAPSHOT_PLAYERS:
+		players.append(
+			{
+				"id": 256 + index,
+				"x": phase * 1.25 + index,
+				"y": seat * 2.5 - index,
+				"health": 1000 - index,
+				"animation": "running"
+			}
+		)
+	return {"phase": phase, "seat": seat, "players": players}
+
+
+func _stream_packet(
+	phase: int, seat: int, sequence: int, sizes: Array[int], snapshot: PackedByteArray
+) -> PackedByteArray:
+	if sequence < BURST_PACKETS:
+		return _burst_packet(phase, seat, sequence, sizes[sequence % sizes.size()])
+	var offset := (sequence - BURST_PACKETS) * SNAPSHOT_CHUNK_BYTES
+	return snapshot.slice(offset, mini(offset + SNAPSHOT_CHUNK_BYTES, snapshot.size()))
 
 
 func _burst_packet(phase: int, seat: int, sequence: int, size: int) -> PackedByteArray:
@@ -368,6 +419,8 @@ func _fail(reason: String) -> void:
 		"burst_received": _burst_received[0],
 		"burst_sent": _burst_sent,
 		"peak_queued": _peak_queued,
+		"snapshot_received_bytes": _snapshot_received.size(),
+		"snapshot_expected_bytes": _snapshot_total,
 		"pending_signals": _pending.size(),
 		"sending": _sending,
 		"receiving": _receiving,
@@ -401,6 +454,12 @@ func _fail(reason: String) -> void:
 			var peer_states: Array = snapshot["peers"]
 			peer_states.append(peer_state)
 	print("WEBRTC_INTEROP_FAIL " + JSON.stringify(snapshot))
+	if _inbox != null:
+		_inbox.cancel_request()
+	if _outbox != null:
+		_outbox.cancel_request()
+	if _mesh != null:
+		_mesh.detach()
 	get_tree().quit(1)
 
 

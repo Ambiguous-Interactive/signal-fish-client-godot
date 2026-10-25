@@ -44,6 +44,7 @@ var _key_churn_envelopes: Array[Dictionary] = []
 var _key_churn_index := 0
 var _snapshot_envelope: Dictionary = {}
 var _snapshot_bytes := PackedByteArray()
+var _integer_batch: Array[int] = []
 var _moving_envelopes: Array[Dictionary] = []
 var _moving_index := 0
 
@@ -114,6 +115,9 @@ func _init() -> void:
 			int(2048.0 / count),
 			func() -> void: SFMsgpackScript.decode(_snapshot_bytes)
 		)
+	for index: int in 128:
+		_integer_batch.append(index - 64)
+	_bench("msgpack_integer_batch", 1000, func() -> void: SFMsgpackScript.encode(_integer_batch))
 	_bench("msgpack_roundtrip", 20000, func() -> void: _msgpack_roundtrip())
 	quit(0)
 
