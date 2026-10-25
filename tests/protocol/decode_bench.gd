@@ -5,6 +5,7 @@ extends SceneTree
 ##   godot --headless --path . --script tests/protocol/decode_bench.gd
 ## Prints best and median microseconds per operation for the campaign candidates.
 
+const SFBinaryCodecScript = preload("res://addons/signal_fish/protocol/sf_binary_codec.gd")
 const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
 const SFEnvelopeScript = preload("res://addons/signal_fish/protocol/sf_envelope.gd")
 const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
@@ -45,6 +46,7 @@ var _key_churn_index := 0
 var _snapshot_envelope: Dictionary = {}
 var _snapshot_bytes := PackedByteArray()
 var _integer_batch: Array[int] = []
+var _binary_values: Array[float] = []
 var _moving_envelopes: Array[Dictionary] = []
 var _moving_index := 0
 
@@ -119,6 +121,15 @@ func _init() -> void:
 		_integer_batch.append(index - 64)
 	_bench("msgpack_integer_batch", 1000, func() -> void: SFMsgpackScript.encode(_integer_batch))
 	_bench("msgpack_roundtrip", 20000, func() -> void: _msgpack_roundtrip())
+	for count: int in [256, 4096]:
+		_binary_values.clear()
+		for index: int in count:
+			_binary_values.append(float(index % 256))
+		_bench(
+			"binary_array_decode_%d" % count,
+			int(32768.0 / count),
+			func() -> void: SFBinaryCodecScript.decode_payload(_binary_values)
+		)
 	quit(0)
 
 

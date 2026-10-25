@@ -188,6 +188,13 @@ packets. The drill checks payloads, sender ids, transfer modes, negotiated
 channel labels and ids. Each seat also streams 256 directed reliable
 binary packets, from 1 to 1200 bytes, in batches of four per frame. The
 receiver checks exact bytes, sequence, sender, transfer mode, and channel.
+With `--mixed-traffic`, each seat sends 32 position updates on each unreliable
+mode. Receivers check exact bytes and metadata, reject duplicate sequences,
+and require increasing sequences for ordered updates. Gaps are allowed;
+each mode must deliver at least one sample in this local drill.
+This strict optional scenario can fail on Godot 4.3 due to the packet
+metadata limitation below. The default drill sends its transfer modes
+separately.
 Each generation also sends a MessagePack snapshot of 1,024 players in
 1,200-byte reliable chunks. The receiver checks each chunk, reassembles the
 snapshot, and compares its exact bytes and decoded values. Chunking belongs
@@ -212,10 +219,14 @@ wide-area networking and the server reference engines need separate drills.
 Success requires `WEBRTC_INTEROP_PASS` from both seats and a zero native
 exit code. The runner retains native and browser logs with the projects.
 A failed browser seat still allows the native seat to finish its diagnostic.
-Each trial writes `seats.json` with both verdicts, the last stage, any failure
+Each trial writes `seats.json` with both verdicts, the last stage, the last
+completed wait, any failure
 snapshot, the native exit code, and any driver error. Partial-transfer
 failures include sent, received and queued chunk counts plus the received
 and expected snapshot byte counts.
+The driver reports its 60-second browser observation timeout separately
+from the engine's per-stage timeout. Only a browser completion or failure
+marker ends browser observation; unrelated console text keeps it running.
 
 To investigate intermittent failures, use `--repeat 3` and retain `--output`.
 Add `--baseline /path/to/baseline-checkout` to compare that checkout's addon
@@ -231,3 +242,26 @@ retained. These queue peaks describe the drill workload.
 The earlier intermittent timeout still needs a captured recurrence and
 baseline comparison. Successful repeated trials establish the tested runs;
 they do not identify that timeout's cause.
+
+### Mixed-mode packet metadata
+
+Godot 4.3 can return packet bytes from a different channel than the mode
+reported by `WebRTCMultiplayerPeer.get_packet_mode()`. A queued unreliable
+packet can keep the cached mode selected when a reliable packet arrives;
+the next read then returns the reliable bytes. This was reproduced on
+native Linux arm64 with webrtc-native 1.2.2-stable and Chromium 154.
+See [issue #403](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/403).
+
+Use `--metadata-probe` for the controlled reproduction. Both seats queue an
+unreliable packet, wait for its selection, then queue a reliable packet
+before reading. A mode/payload mismatch fails the drill and retains both
+seat logs. Use `--mixed-traffic` for the concurrent snapshot workload.
+Choose one of these options per run. Both work with `--repeat` and
+`--baseline`.
+
+The [Godot 4.3 source](https://github.com/godotengine/godot/blob/4.3/modules/webrtc/webrtc_multiplayer_peer.cpp)
+caches the selected channel for metadata, then scans channels again during
+the packet read. The addon exposes this engine peer directly. Concurrent
+mixed-mode metadata remains unqualified until the engine or a verified
+adapter solution keeps bytes and metadata together. A successful local
+mixed run does not establish that queued arrival order is safe.

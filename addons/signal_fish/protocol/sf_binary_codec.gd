@@ -50,18 +50,20 @@ static func _decode_byte_array(values: Array) -> Dictionary:
 				)
 			}
 		var number: float = value
-		if not is_finite(number) or number != floor(number) or number < 0 or number > 255:
-			return {
-				"ok": false,
-				"bytes": PackedByteArray(),
-				"error":
-				(
-					"payload byte array[%d] contains a value outside 0..255: %s"
-					% [index, SFDiagnosticsScript.render_key(var_to_str(value))]
-				)
-			}
-		var int_value := int(number)
-		bytes.append(int_value)
+		if number >= 0 and number <= 255:
+			var int_value := int(number)
+			if number == int_value:
+				bytes.append(int_value)
+				continue
+		return {
+			"ok": false,
+			"bytes": PackedByteArray(),
+			"error":
+			(
+				"payload byte array[%d] contains a value outside 0..255: %s"
+				% [index, SFDiagnosticsScript.render_key(var_to_str(value))]
+			)
+		}
 	return {"ok": true, "bytes": bytes, "error": ""}
 
 
