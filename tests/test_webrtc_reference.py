@@ -19,6 +19,12 @@ SPEC.loader.exec_module(reference)
 class ReferenceEvidenceTests(unittest.TestCase):
     def test_snapshot_verdict_requires_complete_stream_and_partial_transfer(self) -> None:
         phase = {
+            "mixed_traffic": False,
+            "credit_transport": "http",
+            "snapshot_acknowledged": 128,
+            "positions_sent": 0,
+            "positions_received": 0,
+            "peak_outstanding": 32,
             "sent": True,
             "remote_closed": True,
             "received": ["unreliable", "reliable"],
@@ -37,6 +43,36 @@ class ReferenceEvidenceTests(unittest.TestCase):
             for value in (0, total - 1, total + 1):
                 with self.subTest(field=field, value=value):
                     self.assertFalse(reference.gameplay_phase_passed({**phase, field: value}))
+        for transport in ("http", "webrtc"):
+            mixed = {
+                **phase,
+                "mixed_traffic": True,
+                "credit_transport": transport,
+                "positions_sent": 32,
+                "positions_received": 32,
+            }
+            self.assertTrue(
+                reference.gameplay_phase_passed(
+                    mixed, mixed_traffic=True, credit_transport=transport
+                )
+            )
+            for field, mixed_value in (
+                ("positions_sent", 31),
+                ("positions_received", 31),
+                ("snapshot_acknowledged", 120),
+                ("peak_outstanding", 33),
+                ("peak_outstanding", 0),
+                ("credit_transport", "other"),
+                ("mixed_traffic", False),
+            ):
+                with self.subTest(transport=transport, field=field):
+                    self.assertFalse(
+                        reference.gameplay_phase_passed(
+                            {**mixed, field: mixed_value},
+                            mixed_traffic=True,
+                            credit_transport=transport,
+                        )
+                    )
         self.assertFalse(reference.gameplay_phase_passed({**phase, "remote_closed": False}))
         self.assertFalse(reference.gameplay_phase_passed({}))
         self.assertFalse(reference.gameplay_phase_passed({**phase, "received": ["reliable"]}))

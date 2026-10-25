@@ -227,6 +227,40 @@ The Web responder passed the safe-receiver checks on Godot 4.3, 4.4.1 and
 closure, selected-packet discard and exact snapshot recovery. The other
 three pairings in each engine assessment remained unsupported.
 
+### Concurrent positions and consumption credit
+
+Add `--mixed-traffic` to interleave 32 unreliable position samples with each
+128-chunk snapshot in both directions. Each sample contains its generation,
+sender and sequence. The local assessment requires every sample, exact bytes,
+and matching channel metadata. It does not simulate packet loss.
+
+The default `--credit-transport http` returns consumption credit through the
+signaling relay. Use `--credit-transport webrtc` to return the same credit over
+the reliable gameplay channel. Both keep the same 32-chunk window, snapshot
+bytes, position cadence and generation/closure checks. For example:
+
+```bash
+python scripts/check-webrtc-reference.py --safe-receive --mixed-traffic \
+  --credit-transport webrtc --native-extension /path/to/webrtc-native \
+  --reference-assets /path/to/reference-modules \
+  --reference-revision b264ec739400b299182eaa918dd6828fd611f3b9 \
+  --output /tmp/reference-mixed-webrtc
+```
+
+Phase and progress records retain `credit_transport`, `snapshot_acknowledged`,
+`positions_sent`, `positions_received`, `peak_outstanding`,
+`credit_wait_age_ms` and `transfer_ms`. Transfer time starts at the first
+probe send and ends when both full snapshots and outgoing snapshot credit
+are complete; it excludes partial snapshots, closure and recovery barriers.
+`assessment.json.godot_evidence` keeps the last progress and failure snapshot,
+including the same counts under `reference`.
+
+Compare repeated HTTP and WebRTC credit runs with the same engine and receiver.
+Fresh gameplay progress during an HTTP credit wait helps isolate relay or HTTP
+scheduling. A credit-transport timing difference alone cannot prove the cause
+of the intermittent stall in #396. Full service sessions and remote-network
+qualification remain open.
+
 ## Native reference engine assessment
 
 A local check paired the native
