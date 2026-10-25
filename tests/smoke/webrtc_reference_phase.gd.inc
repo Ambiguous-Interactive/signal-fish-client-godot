@@ -67,7 +67,10 @@ func _run_phase(phase: int) -> bool:
 		"reference observation",
 		func() -> bool:
 			_reference_packets()
-			return _markers.has("observed-%d" % phase)
+			return (
+				_markers.has("observed-%d" % phase)
+				and (_reference_snapshot_received == 0 or _reference_gameplay_complete())
+			)
 	):
 		return false
 	_reference_packets()
@@ -101,18 +104,7 @@ func _run_phase(phase: int) -> bool:
 					"state": channel.call("get_ready_state")
 				}
 			)
-	var completed := (
-		_reference_snapshot_received == 128
-		and _reference_snapshot_sent == 128
-		and _reference_partial_sent == 4
-		and _reference_partial_received == 4
-		and _reference_received.size() == 2
-		and _reference_acknowledged == 128
-		and (
-			_reference_positions_received.size()
-			== (32 if _reference_options["mixed_traffic"] else 0)
-		)
-	)
+	var completed := _reference_gameplay_complete()
 	var safe: MultiplayerPeer = _mesh.get_safe_multiplayer_peer() if _safe_receive else null
 	evidence["remote_closed"] = false
 	if completed:
@@ -159,6 +151,21 @@ func _run_phase(phase: int) -> bool:
 	_pending.append({"marker": "retired-%d" % phase})
 	return await _wait_until(
 		"reference teardown", func() -> bool: return _markers.has("retired-%d" % phase)
+	)
+
+
+func _reference_gameplay_complete() -> bool:
+	return (
+		_reference_snapshot_received == 128
+		and _reference_snapshot_sent == 128
+		and _reference_partial_sent == 4
+		and _reference_partial_received == 4
+		and _reference_received.size() == 2
+		and _reference_acknowledged == 128
+		and (
+			_reference_positions_received.size()
+			== (32 if _reference_options["mixed_traffic"] else 0)
+		)
 	)
 
 

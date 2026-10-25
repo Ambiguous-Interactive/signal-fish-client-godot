@@ -186,6 +186,27 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         queues: ClassVar[list[list[object]]] = [[], []]
         lock = threading.Lock()
         observation = interop.RelayObservation()
+        credit_delayed = threading.Event()
+
+        def do_GET(self) -> None:
+            delay_ms = getattr(args, "http_credit_delay_ms", 0)
+            hold = False
+            if (
+                delay_ms
+                and self.path == f"/signal/{0 if web else 1}"
+                and not self.credit_delayed.is_set()
+            ):
+                with self.lock:
+                    hold = any(
+                        isinstance(message, dict)
+                        and str(message.get("marker", "")).startswith("snapshot-ack-1-")
+                        for message in self.queues[0 if web else 1]
+                    )
+                    if hold:
+                        self.credit_delayed.set()
+                if hold:
+                    time.sleep(delay_ms / 1000)
+            super().do_GET()
 
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0), functools.partial(Handler, directory=str(assets))
@@ -205,6 +226,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "mixed_traffic": args.mixed_traffic,
         "credit_transport": args.credit_transport,
         "slow_receiver": getattr(args, "slow_receiver", False),
+        "http_credit_delay_ms": getattr(args, "http_credit_delay_ms", 0),
         "godot": args.godot,
         "reference_revision": args.reference_revision,
     }
@@ -268,20 +290,27 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     and not page_failed(messages)
                     and not driver_error
                 )
-                gameplay = complete and all(
-                    gameplay_phase_passed(
-                        godot,
-                        mixed_traffic=args.mixed_traffic,
-                        credit_transport=args.credit_transport,
-                        slow_receiver=getattr(args, "slow_receiver", False),
+                gameplay = (
+                    complete
+                    and (
+                        not getattr(args, "http_credit_delay_ms", 0)
+                        or Handler.credit_delayed.is_set()
                     )
-                    and gameplay_phase_passed(
-                        ref,
-                        mixed_traffic=args.mixed_traffic,
-                        credit_transport=args.credit_transport,
+                    and all(
+                        gameplay_phase_passed(
+                            godot,
+                            mixed_traffic=args.mixed_traffic,
+                            credit_transport=args.credit_transport,
+                            slow_receiver=getattr(args, "slow_receiver", False),
+                        )
+                        and gameplay_phase_passed(
+                            ref,
+                            mixed_traffic=args.mixed_traffic,
+                            credit_transport=args.credit_transport,
+                        )
+                        and (not args.safe_receive or godot.get("same_receiver") is True)
+                        for godot, ref in zip(phases, result["phases"], strict=True)
                     )
-                    and (not args.safe_receive or godot.get("same_receiver") is True)
-                    for godot, ref in zip(phases, result["phases"], strict=True)
                 )
                 report.update(
                     {
@@ -311,6 +340,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         if native is not None and native.poll() is None:
             native.kill()
             native.wait(timeout=10)
+        report["http_credit_delay_applied"] = Handler.credit_delayed.is_set()
         server.shutdown()
         server.server_close()
         if "relay_observation" not in report:
@@ -378,6 +408,12 @@ def main() -> None:
         action="store_true",
         help="Pause Godot reads for 1500 ms and require queued snapshot recovery",
     )
+    parser.add_argument(
+        "--http-credit-delay-ms",
+        type=int,
+        default=0,
+        help="Hold one first-generation reference credit GET for 0-8000 ms",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--require-gameplay",
@@ -385,6 +421,10 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if not 0 <= args.http_credit_delay_ms <= 8000:
+        parser.error("--http-credit-delay-ms must be between 0 and 8000")
+    if args.http_credit_delay_ms and args.credit_transport != "http":
+        parser.error("--http-credit-delay-ms needs --credit-transport http")
     directory = args.output or Path(tempfile.mkdtemp(prefix="sf-reference-assessment-"))
     results = []
     runtimes = (False, True) if args.runtime == "all" else (args.runtime == "web",)
