@@ -27,6 +27,30 @@ interop = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(interop)
 
 
+class CreditDelayRelay(interop.RelayHandler):  # type: ignore[name-defined,misc]
+    credit_delay_ms: ClassVar[int] = 0
+    credit_seat: ClassVar[int] = 0
+    credit_delayed = threading.Event()
+
+    def reply(self, body: bytes) -> None:
+        hold = False
+        if (
+            self.credit_delay_ms
+            and self.command == "GET"
+            and self.path == f"/signal/{self.credit_seat}"
+        ):
+            with self.lock:
+                hold = not self.credit_delayed.is_set() and any(
+                    isinstance(message, dict) and message.get("marker") == "snapshot-ack-1-32"
+                    for message in json.loads(body)
+                )
+                if hold:
+                    self.credit_delayed.set()
+            if hold:
+                time.sleep(self.credit_delay_ms / 1000)
+        super().reply(body)
+
+
 def page_failed(messages: list[str]) -> bool:
     return any(
         line.startswith(("PAGE_ERROR ", "CONSOLE_ERROR ", "BROWSER_CRASH")) for line in messages
@@ -182,30 +206,13 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     if web:
         shutil.copytree(project / "build/web", assets / "godot")
 
-    class Handler(interop.RelayHandler):  # type: ignore[name-defined,misc]
+    class Handler(CreditDelayRelay):  # type: ignore[name-defined,misc]
         queues: ClassVar[list[list[object]]] = [[], []]
         lock = threading.Lock()
         observation = interop.RelayObservation()
         credit_delayed = threading.Event()
-
-        def do_GET(self) -> None:
-            delay_ms = getattr(args, "http_credit_delay_ms", 0)
-            hold = False
-            if (
-                delay_ms
-                and self.path == f"/signal/{0 if web else 1}"
-                and not self.credit_delayed.is_set()
-            ):
-                with self.lock:
-                    hold = any(
-                        isinstance(message, dict) and message.get("marker") == "snapshot-ack-1-32"
-                        for message in self.queues[0 if web else 1]
-                    )
-                    if hold:
-                        self.credit_delayed.set()
-                if hold:
-                    time.sleep(delay_ms / 1000)
-            super().do_GET()
+        credit_delay_ms = getattr(args, "http_credit_delay_ms", 0)
+        credit_seat = 0 if web else 1
 
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0), functools.partial(Handler, directory=str(assets))

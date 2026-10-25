@@ -1,9 +1,11 @@
 """Reference assessments distinguish unsupported gameplay from incomplete evidence."""
 
 import importlib.util
+import json
+import threading
 import unittest
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 from unittest.mock import Mock, patch
 
 from playwright.sync_api import Page
@@ -103,6 +105,60 @@ class ReferenceEvidenceTests(unittest.TestCase):
         for missing in (None, {}, {"resumed": True}):
             self.assertFalse(reference.slow_receiver_passed(missing, True))
         self.assertTrue(reference.slow_receiver_passed({**proof, "queued_unreliable": 0}, False))
+
+    def test_credit_arriving_between_queue_locks_cannot_bypass_the_hold(self) -> None:
+        credit = {"marker": "snapshot-ack-1-32"}
+        mutex = threading.Lock()
+
+        class ArrivingCredit:
+            injected = False
+
+            def __enter__(self) -> None:
+                mutex.acquire()
+
+            def __exit__(self, *_args: object) -> None:
+                if not self.injected:
+                    self.injected = True
+                    Handler.queues[0].append(credit)
+                    Handler.observation.enqueue(0, credit)
+                mutex.release()
+
+        class Handler(reference.CreditDelayRelay):  # type: ignore[name-defined,misc]
+            credit_delay_ms = 4000
+            credit_seat = 0
+            credit_delayed = threading.Event()
+            lock = ArrivingCredit()
+            queues: ClassVar[list[list[object]]] = [[], []]
+            observation = reference.interop.RelayObservation()
+
+        handler = object.__new__(Handler)
+        handler.path = "/signal/0"
+        handler.command = "GET"
+        replies: list[object] = []
+        holds: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            self.assertTrue(mutex.acquire(blocking=False))
+            mutex.release()
+            holds.append(seconds)
+
+        def reply(_handler: object, body: bytes) -> None:
+            messages = json.loads(body)
+            if credit in messages:
+                self.assertEqual(holds, [4])
+                self.assertTrue(Handler.credit_delayed.is_set())
+            replies.extend(messages)
+
+        with (
+            patch.object(reference.time, "sleep", side_effect=sleep),
+            patch.object(reference.interop.RelayHandler, "reply", autospec=True, side_effect=reply),
+        ):
+            handler.do_GET()
+            handler.do_GET()
+            Handler.queues[0].append(credit)
+            handler.do_GET()
+        self.assertEqual(replies, [credit, credit])
+        self.assertEqual(holds, [4])
 
     def test_page_listeners_keep_errors_and_crashes(self) -> None:
         page = Mock()
