@@ -208,12 +208,12 @@ the retirement packet selected until remote closure, then discard its cached
 bytes. The default checks raw channel reads. Add `--require-gameplay` to fail when
 any selected pairing lacks those probes. Use `--runtime native|web` and
 `--offerer godot|reference` to select one pairing; both default to all pairings.
-Safe-receiver assessments keep one adapter through both generations and
+Local Engine assessments keep one adapter through both generations and
 record `same_receiver`. A relay plan retires each generation's links.
 Reference phase totals are refreshed at teardown. The `observation` field
 keeps the earlier six-second snapshot, including transfers still in progress.
 Keep mixed reference-client rooms on server relay until their pairing passes.
-These local Engine checks leave full service sessions for a separate drill.
+Use the service mode below to check real room plans and signaling.
 
 Each assessment retains `browser_observations` for the reference page and,
 when used, the Godot Web page. Each page records signaling request timings,
@@ -290,8 +290,8 @@ including the same counts under `reference`.
 Compare repeated HTTP and WebRTC credit runs with the same engine and receiver.
 Fresh gameplay progress during an HTTP credit wait helps isolate relay or HTTP
 scheduling. A credit-transport timing difference alone cannot prove the cause
-of the intermittent stall in #396. Full service sessions and remote-network
-qualification remain open.
+of the intermittent stall in #396. Full reference CLI sessions and
+remote-network qualification remain open.
 
 ### Paused Godot reader
 
@@ -374,7 +374,7 @@ This option pauses application consumption after Engine callbacks. Browser
 network delivery and the page event loop keep running. It isolates application
 backlog in #396; it does not reproduce a frozen page or establish the captured
 stall's cause. Use `--slow-receiver` in a separate run to pause Godot reads.
-The two pause options cannot be combined. Full reference service sessions and
+The two pause options cannot be combined. Full reference CLI sessions and
 native-reference recovery remain open in #355.
 
 ### Reference gameplay through a local service
