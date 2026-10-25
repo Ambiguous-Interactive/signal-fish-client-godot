@@ -89,6 +89,22 @@ class ObservationTests(unittest.TestCase):
         self.assertIsNone(result["diagnostic"])
         self.assertEqual(result["last_progress"], {"burst_received": 64, "send_inflight_ms": 250})
 
+    def test_rpc_recovery_history_survives_later_failure(self) -> None:
+        phase = {"phase": 1, "partial_received": 4, "retired_received": 0, "disconnected": 1}
+        output = "\n".join(
+            [
+                'WEBRTC_RPC_RECOVERY_PHASE {"phase":1,"partial_received":4,"retired_received":0,"disconnected":1}',
+                'WEBRTC_INTEROP_PROGRESS {"phase":2,"rpc_polling":false,"rpc_polls":142}',
+                'WEBRTC_RPC_RECOVERY_PHASE {"phase":',
+                'WEBRTC_INTEROP_FAIL {"stage":"recovery RPC disconnect notification"}',
+            ]
+        )
+        evidence = drill.seat_evidence(output, 0)
+        self.assertFalse(evidence["passed"])
+        self.assertEqual(evidence["rpc_recovery_phases"], [phase])
+        self.assertEqual(evidence["last_progress"]["rpc_polls"], 142)
+        self.assertEqual(evidence["diagnostic"]["stage"], "recovery RPC disconnect notification")
+
     def test_engine_banner_records_actual_export_version(self) -> None:
         result = drill.seat_evidence(
             "Loading page\nGodot Engine v4.4.1.stable.official.49a5bc7b6\nWEBRTC_INTEROP_PASS seat=1",

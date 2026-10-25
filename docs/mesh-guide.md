@@ -215,8 +215,8 @@ counts, and channel-close stages. Compare an old progress record with fresh
 transport samples and an aging HTTP request to locate a signaling wait.
 These diagnostics also remain in an incomplete assessment.
 
-The Web responder passed the safe-receiver checks on Godot 4.3 and 4.4.1
-with Chromium 154 and reference b264ec7. Both generations passed remote
+The Web responder passed the safe-receiver checks on Godot 4.3, 4.4.1 and
+4.7.2 with Chromium 154 and reference b264ec7. Both generations passed remote
 closure, selected-packet discard and exact snapshot recovery. The other
 three pairings in each engine assessment remained unsupported.
 
@@ -392,14 +392,33 @@ the RPC receiver before the raw packet checks resume. `--safe-receive` and
 `--channel-receive` select separate receive paths; choose one. Baselines used
 with the new scenarios must provide `get_safe_multiplayer_peer()`.
 
+Use `--safe-receive --rpc-recovery` to keep one `SceneMultiplayer` and RPC
+node across seven link generations. Each generation checks a full snapshot,
+unreliable positions and ordered positions, then starts a second snapshot
+with four exact chunks. Both seats pause RPC polling, send one more RPC and
+select its queued packet. Closing a required channel must discard that packet
+and emit one RPC peer-disconnected signal. The same API receives the next
+generation through its replacement safe peer. Each channel closes from each
+seat in the first six generations; the seventh repeats reliable closure.
+This scenario replaces `--rpc-traffic` and the raw stream workload.
+
+`WEBRTC_RPC_RECOVERY_PHASE` records completed generations in both logs and
+`seats.json` (`rpc_recovery_phases`). Progress and failure snapshots record
+RPC poll counts, polling state, connection/disconnection counts, selected-packet
+state and partial snapshot counts. These distinguish a paused receiver from
+a missing disconnect callback or stalled snapshot. The original intermittent
+stall in #396 still needs a captured root cause.
+
 `--web-godot /path/to/godot` selects a separate engine for Web import and
 export. `--godot` still selects the native engine. Install the Web engine's
 matching export templates. Each seat report retains its actual engine banner.
 Native and Web Godot 4.4.1 passed the safe metadata probe and seven generations
 of safe-peer RPCs, mixed traffic, exact snapshots and interrupted-link recovery
 with webrtc-native 1.2.2-stable and Chromium 154 on Linux arm64. The engine-only
-metadata control failed on both seats. Godot 4.7.2 and remote networks still
-need live qualification.
+metadata control failed on both seats. Godot 4.7.2 passed the safe metadata
+probe and the persistent RPC recovery scenario on both native and Web with the same extension and browser. The raw
+engine metadata probe failed on both seats. Remote networks still need live
+qualification.
 
 `browser_observation.webrtc_stats` retains the last 16 browser transport
 samples, with sample ages and per-connection ids. Samples include channel
