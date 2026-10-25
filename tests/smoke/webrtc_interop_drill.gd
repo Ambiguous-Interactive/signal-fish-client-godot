@@ -54,6 +54,14 @@ var _interrupted_received := 0
 var _interrupted_queued := 0
 var _stream_waiting_ack := ""
 var _max_stage_frame_gap_msec := 0
+var _next_progress := 0
+var _last_process := 0
+var _send_started := 0
+var _receive_started := 0
+var _signal_sent := 0
+var _signal_received := 0
+var _last_marker_sent := ""
+var _last_marker_received := ""
 
 
 func _ready() -> void:
@@ -130,16 +138,27 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if _failed or _finished or _inbox == null:
 		return
+	var now := Time.get_ticks_msec()
+	if _last_process > 0:
+		_max_stage_frame_gap_msec = maxi(_max_stage_frame_gap_msec, now - _last_process)
+	_last_process = now
+	if now >= _next_progress:
+		_next_progress = now + 1000
+		print("WEBRTC_INTEROP_PROGRESS " + JSON.stringify(_snapshot()))
 	if not _receiving:
 		if Time.get_ticks_msec() >= _next_poll:
 			_next_poll = Time.get_ticks_msec() + 30
 			_receiving = true
+			_receive_started = now
 			if _inbox.request(_url + "/signal/%d" % _seat) != OK:
 				_fail("signaling receive request failed")
 	if not _pending.is_empty():
 		if not _sending:
 			var message: Dictionary = _pending.pop_front()
 			_sending = true
+			_send_started = now
+			if message.has("marker"):
+				_last_marker_sent = message["marker"]
 			if (
 				_outbox.request(
 					_url + "/signal/%d" % (1 - _seat),
@@ -165,8 +184,10 @@ func _on_inbox(result: int, code: int, _headers: PackedStringArray, body: Packed
 		_fail("signaling receive failed")
 		return
 	var messages: Array = JSON.parse_string(body.get_string_from_utf8())
+	_signal_received += messages.size()
 	for message: Dictionary in messages:
 		if message.has("marker"):
+			_last_marker_received = message["marker"]
 			_markers[message["marker"]] = true
 		else:
 			_client.signal_received.emit(
@@ -182,6 +203,8 @@ func _on_outbox(
 		return
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
 		_fail("signaling send failed")
+	else:
+		_signal_sent += 1
 
 
 func _run_phase(phase: int) -> bool:
@@ -833,18 +856,16 @@ func _wait_until(stage: String, condition: Callable) -> bool:
 	return false
 
 
-func _fail(reason: String) -> void:
-	if _failed:
-		return
-	_failed = true
+func _snapshot() -> Dictionary:
+	var now := Time.get_ticks_msec()
 	var snapshot := {
 		"seat": _seat,
 		"phase": _phase,
 		"stage": _stage,
+		"tick_ms": now,
 		"stage_elapsed_ms": Time.get_ticks_msec() - _stage_started,
 		"max_stage_frame_gap_ms": _max_stage_frame_gap_msec,
 		"stream_waiting_ack": _stream_waiting_ack,
-		"reason": reason,
 		"markers": _markers.keys(),
 		"received_modes": _received_modes.keys(),
 		"burst_received": _burst_received[0],
@@ -863,6 +884,12 @@ func _fail(reason: String) -> void:
 		"interrupted_received": _interrupted_received,
 		"interrupted_queued": _interrupted_queued,
 		"pending_signals": _pending.size(),
+		"signal_sent": _signal_sent,
+		"signal_received": _signal_received,
+		"last_marker_sent": _last_marker_sent,
+		"last_marker_received": _last_marker_received,
+		"send_inflight_ms": now - _send_started if _sending else 0,
+		"receive_inflight_ms": now - _receive_started if _receiving else 0,
 		"sending": _sending,
 		"receiving": _receiving,
 		"transport_reports": _client.statuses if _client != null else [],
@@ -899,6 +926,15 @@ func _fail(reason: String) -> void:
 					)
 			var peer_states: Array = snapshot["peers"]
 			peer_states.append(peer_state)
+	return snapshot
+
+
+func _fail(reason: String) -> void:
+	if _failed:
+		return
+	_failed = true
+	var snapshot := _snapshot()
+	snapshot["reason"] = reason
 	print("WEBRTC_INTEROP_FAIL " + JSON.stringify(snapshot))
 	if _inbox != null:
 		_inbox.cancel_request()

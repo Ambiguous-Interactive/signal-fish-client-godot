@@ -112,6 +112,22 @@ Their responders adopt remote channel announcements. Godot's negotiated
 channels do not send these announcements. Use server relay for these
 pairings. Full reference-client gameplay sessions remain unverified.
 
+## ICE candidate formats
+
+The mesh accepts raw candidate lines and JSON-encoded `RTCIceCandidateInit`
+strings inside `IceCandidate`. Raw lines stay unchanged. Envelopes supply
+`candidate`, `sdpMid`, and `sdpMLineIndex` to Godot's `add_ice_candidate()`.
+Missing or null media/index fields use Godot's existing defaults: `""` and
+`0`. Godot's API has no `usernameFragment` argument.
+
+The server's
+[native Engine](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/b264ec739400b299182eaa918dd6828fd611f3b9/clients/native/src/engine.rs)
+(`LocalCandidate`, `handle_remote_candidate`) and
+[browser Engine](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/b264ec739400b299182eaa918dd6828fd611f3b9/clients/browser/src/page/engine.ts)
+(`onicecandidate`, `handleRemoteCandidate`) emit envelopes and accept raw-line
+fallbacks. The Godot mesh emits raw lines. Candidate parsing preserves these
+formats; it does not change data-channel negotiation.
+
 ## Browser reference engine assessment
 
 A local check relayed signaling between `SFWebRTCMesh` and the server's
@@ -125,8 +141,10 @@ Godot, and Chromium 154. Each engine kept its outgoing signaling format.
 | Reference Engine | Native         | Reference channels closed; Godot released the link. |
 | Reference Engine | Web            | Reliable and unreliable probes passed both ways.    |
 
-Godot's local transport report can be up when the reference Engine has no
-channels. Web runs also reported `addIceCandidate` errors. Keep mixed
+After the ICE envelope fix (#405), all four pairings were repeated with the
+same tools and reference commit. All had zero candidate errors; the channel
+and gameplay results in the table were unchanged. Godot's local transport
+report can be up when the reference Engine has no channels. Keep mixed
 reference-client rooms on the server relay. The Web responder probes cover
 two channels; ordered traffic and full reference-client sessions still need
 validation.
@@ -145,10 +163,11 @@ unchanged, and observed each link for 12 seconds before the Godot snapshot.
 | Native reference | Native         | Godot released the link after a stream-id collision warning.          |
 | Native reference | Web            | Godot reported up; reference open callbacks and gameplay were absent. |
 
-All four runs had zero gameplay receipts. Removing the reference peer cleared
-its pairing. Native reference ICE candidates also caused parse errors in
-both Godot runtimes; see
-[issue #405](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/405).
+After the ICE envelope fix (#405), all four pairings were repeated with the
+same tools and reference commit. Both Godot runtimes and the native reference
+reported zero candidate errors. All four still had zero gameplay receipts;
+the channel observations in the table were unchanged. Removing the reference
+peer cleared its pairing in every run.
 A connected peer connection or a local transport-up report cannot prove
 cross-client gameplay. Keep these pairings on the server relay. This check
 uses the native Engine API with local signaling; full service sessions and
@@ -278,6 +297,15 @@ Failure snapshots now include the pending stream acknowledgment marker,
 per-channel queued packets and buffered bytes, and the largest observed
 frame gap in the current wait. Use these to separate an acknowledgment wait
 from a receive backlog or stalled frame loop.
+
+Each running seat also logs `WEBRTC_INTEROP_PROGRESS` about once per second.
+`seats.json` retains its last valid snapshot as `last_progress`, including
+when the seat produces no terminal snapshot. Compare `tick_ms`, stage elapsed
+time, packet counts, pending acknowledgment and frame gaps across progress
+lines. Signaling counters, last sent/received markers and in-flight HTTP
+request ages help distinguish a quiet data channel from delayed signaling.
+Progress records contain the same channel state as terminal diagnostics.
+A missing terminal record leaves that seat failed.
 
 ### Mixed-mode packet metadata
 

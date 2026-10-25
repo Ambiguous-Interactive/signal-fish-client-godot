@@ -75,6 +75,19 @@ class ObservationTests(unittest.TestCase):
                 self.assertEqual(result["failure"], output)
                 self.assertEqual(result["diagnostic"], expected)
 
+    def test_last_progress_survives_missing_terminal_and_truncated_line(self) -> None:
+        output = "\n".join(
+            [
+                'WEBRTC_INTEROP_PROGRESS {"burst_received":32}',
+                'WEBRTC_INTEROP_PROGRESS {"burst_received":64,"send_inflight_ms":250}',
+                'WEBRTC_INTEROP_PROGRESS {"burst_received":',
+            ]
+        )
+        result = drill.seat_evidence(output, 1)
+        self.assertFalse(result["passed"])
+        self.assertIsNone(result["diagnostic"])
+        self.assertEqual(result["last_progress"], {"burst_received": 64, "send_inflight_ms": 250})
+
     def test_evidence_keeps_last_completed_stage(self) -> None:
         output = "\n".join(
             [

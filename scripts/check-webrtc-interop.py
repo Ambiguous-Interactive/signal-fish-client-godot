@@ -100,6 +100,14 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
     if failure:
         with contextlib.suppress(json.JSONDecodeError):
             diagnostic = json.loads(failure.removeprefix("WEBRTC_INTEROP_FAIL "))
+    progress = None
+    for line in reversed(lines):
+        if line.startswith("WEBRTC_INTEROP_PROGRESS "):
+            try:
+                progress = json.loads(line.removeprefix("WEBRTC_INTEROP_PROGRESS "))
+            except json.JSONDecodeError:
+                continue
+            break
     return {
         "seat": seat,
         "passed": passed,
@@ -107,6 +115,7 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
         "last_ready": next((line for line in reversed(lines) if "interop ready:" in line), ""),
         "failure": failure,
         "diagnostic": diagnostic,
+        "last_progress": progress,
     }
 
 
