@@ -264,7 +264,7 @@ qualification remain open.
 
 ### Paused Godot reader
 
-Add `--slow-receiver` to pause Godot packet reads for 1,500 ms after at least
+Add `--slow-receiver` to pause Godot packet reads for 1,500 ms after
 eight snapshot chunks arrive. Engine polling, signaling and sends continue.
 The browser reference sender keeps its 32-chunk credit window. Use
 `--mixed-traffic` to queue unreliable positions alongside reliable chunks.
@@ -286,9 +286,9 @@ least 24 queued reliable packets, and queued unreliable packets when mixed
 traffic is requested. All bytes, metadata, final credit, partial transfers,
 remote closure and next-generation recovery must still pass. Reference records
 retain `max_credit_wait_ms` to compare the known reader pause with HTTP waits.
-Add `--credit-transport http --http-credit-delay-ms 7000` to hold one
-first-generation reference credit GET for seven seconds. The report records
-whether the hold occurred. The six-second `observation` remains a snapshot;
+Add `--credit-transport http --http-credit-delay-ms 5000` to hold one
+first-generation reference credit GET after 32 chunks for five seconds. The report records
+whether the hold occurred. The hold consumes the phase deadline. The six-second `observation` remains a snapshot;
 Godot keeps an active transfer running until all chunks and credit complete
 within the existing deadline. This catches premature teardown during a
 progressing HTTP wait.

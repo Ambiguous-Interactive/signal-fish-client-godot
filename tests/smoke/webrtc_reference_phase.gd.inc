@@ -227,9 +227,9 @@ func _reference_packets() -> void:
 					_fail("reference partial snapshot send failed")
 					return
 				_reference_partial_sent += 1
-	if _reference_pause_reads(peer):
-		return
 	for _read: int in 32:
+		if _reference_pause_reads(peer):
+			return
 		if _safe_receive and _mesh.get_safe_multiplayer_peer().get_available_packet_count() == 0:
 			break
 		var packet := (

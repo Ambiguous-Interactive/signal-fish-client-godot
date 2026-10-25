@@ -198,8 +198,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
             ):
                 with self.lock:
                     hold = any(
-                        isinstance(message, dict)
-                        and str(message.get("marker", "")).startswith("snapshot-ack-1-")
+                        isinstance(message, dict) and message.get("marker") == "snapshot-ack-1-32"
                         for message in self.queues[0 if web else 1]
                     )
                     if hold:
@@ -412,7 +411,7 @@ def main() -> None:
         "--http-credit-delay-ms",
         type=int,
         default=0,
-        help="Hold one first-generation reference credit GET for 0-8000 ms",
+        help="Hold reference credit after 32 chunks for 0-8000 ms",
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
