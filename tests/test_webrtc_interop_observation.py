@@ -2,6 +2,7 @@
 
 import importlib.util
 import subprocess
+import tempfile
 import unittest
 from functools import partial
 from pathlib import Path
@@ -194,6 +195,52 @@ class ObservationTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertIn("peer channels open", result["last_stage"])
         self.assertIn("remote ready marker", result["last_ready"])
+
+
+class RetirementMatrixTests(unittest.TestCase):
+    def test_matrix_keeps_all_cases_after_failure_and_compares_both_addons(self) -> None:
+        args = Mock(repeat=1, retirement_matrix=True, baseline=Path("/baseline"))
+        visited: list[tuple[str, int]] = []
+
+        def run_case(
+            args: Mock, logs: Path, native: Path, web: Path, *, retirement_case: int
+        ) -> None:
+            visited.append((logs.parent.name, retirement_case))
+            if retirement_case == 7 and logs.parent.name == "current":
+                raise RuntimeError("queued survivor lost")
+
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(drill, "prepare_pair", return_value=(Path("native"), Path("web"))),
+            patch.object(drill, "run_seats", side_effect=run_case),
+        ):
+            directory = Path(temporary)
+            with self.assertRaisesRegex(RuntimeError, "Interoperability trial failed"):
+                drill.run(args, directory)
+            results = drill.json.loads((directory / "summary.json").read_text())
+        self.assertEqual(
+            visited, [(name, case) for name in ("current", "baseline") for case in range(18)]
+        )
+        self.assertEqual(len(results), 36)
+        self.assertEqual([item["retirement_case"] for item in results if not item["passed"]], [7])
+        self.assertIn("queued survivor lost", results[7]["error"])
+        self.assertEqual(len({item["logs"] for item in results}), 36)
+
+    def test_default_runs_one_case_and_reverses_comparison_order(self) -> None:
+        args = Mock(repeat=2, retirement_matrix=False, baseline=Path("/baseline"))
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(drill, "prepare_pair", return_value=(Path("native"), Path("web"))),
+            patch.object(drill, "run_seats") as run_seats,
+        ):
+            drill.run(args, Path(temporary))
+        self.assertEqual(
+            [call.args[1].name for call in run_seats.call_args_list],
+            ["current", "baseline", "baseline", "current"],
+        )
+        self.assertTrue(
+            all(call.kwargs["retirement_case"] == 0 for call in run_seats.call_args_list)
+        )
 
 
 class BrowserObservationTests(unittest.TestCase):

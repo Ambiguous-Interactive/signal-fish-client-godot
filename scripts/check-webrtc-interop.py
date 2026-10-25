@@ -288,7 +288,9 @@ def prepare_pair(args: argparse.Namespace, directory: Path, addon_root: Path) ->
     return native, web
 
 
-def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path) -> None:
+def run_seats(
+    args: argparse.Namespace, directory: Path, native: Path, web: Path, *, retirement_case: int = 0
+) -> None:
     directory.mkdir(parents=True)
 
     class TrialRelayHandler(RelayHandler):
@@ -318,6 +320,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
             str(native),
             "--",
             url,
+            f"--retirement-case={retirement_case}",
             *(["--mixed-traffic"] if args.mixed_traffic else []),
             *(["--rpc-traffic"] if args.rpc_traffic else []),
             *(["--rpc-recovery"] if args.rpc_recovery else []),
@@ -365,6 +368,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                     query += ("&" if query else "?") + "safe_receive=1"
                 if args.channel_receive:
                     query += ("&" if query else "?") + "channel_receive=1"
+                query += ("&" if query else "?") + f"retirement_case={retirement_case}"
                 page.goto(url + "/index.html" + query)
                 extra_page = None
                 if args.multi_peer:
@@ -388,7 +392,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                     )
                     extra_page.goto(
                         url
-                        + "/index.html?seat=2"
+                        + f"/index.html?seat=2&retirement_case={retirement_case}"
                         + ("&slow_receiver=1" if args.slow_receiver else "")
                     )
                     wait_web_startup(page, [(1, messages), (2, extra_messages)])
@@ -442,6 +446,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 "browser_version": browser_version,
                 "browser_observation": browser_observation,
                 "browser_2_observation": browser_2_observation,
+                "retirement_case": retirement_case,
                 "multi_peer": args.multi_peer,
                 "slow_receiver": args.slow_receiver,
                 "godot": args.godot,
@@ -488,26 +493,30 @@ def run(args: argparse.Namespace, directory: Path) -> None:
             order.reverse()
         for name in order:
             native, web = projects[name]
-            logs = directory / f"trial-{trial:03d}" / name
-            started = time.monotonic()
-            error = ""
-            try:
-                run_seats(args, logs, native, web)
-            except Exception as exc:  # Keep both sides of a failed comparison.
-                error = f"{type(exc).__name__}: {exc}"
-                print(f"{name} trial {trial} failed: {error}")
-            results.append(
-                {
-                    "source": name,
-                    "addon_root": str(sources[name]),
-                    "trial": trial,
-                    "passed": not error,
-                    "error": error,
-                    "elapsed_sec": round(time.monotonic() - started, 3),
-                    "logs": str(logs),
-                }
-            )
-            (directory / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
+            for retirement_case in range(18 if args.retirement_matrix else 1):
+                logs = directory / f"trial-{trial:03d}" / name
+                if args.retirement_matrix:
+                    logs /= f"case-{retirement_case:02d}"
+                started = time.monotonic()
+                error = ""
+                try:
+                    run_seats(args, logs, native, web, retirement_case=retirement_case)
+                except Exception as exc:  # Keep both sides of a failed comparison.
+                    error = f"{type(exc).__name__}: {exc}"
+                    print(f"{name} trial {trial} retirement case {retirement_case} failed: {error}")
+                results.append(
+                    {
+                        "source": name,
+                        "addon_root": str(sources[name]),
+                        "trial": trial,
+                        "retirement_case": retirement_case,
+                        "passed": not error,
+                        "error": error,
+                        "elapsed_sec": round(time.monotonic() - started, 3),
+                        "logs": str(logs),
+                    }
+                )
+                (directory / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
     if any(not result["passed"] for result in results):
         raise RuntimeError(f"Interoperability trial failed; see {directory / 'summary.json'}")
 
@@ -527,6 +536,11 @@ def main() -> None:
         "--slow-receiver",
         action="store_true",
         help="With --multi-peer, hold one reader until the other pair finishes",
+    )
+    parser.add_argument(
+        "--retirement-matrix",
+        action="store_true",
+        help="With --multi-peer, close each required channel on all six directed links",
     )
     scenarios = parser.add_mutually_exclusive_group()
     scenarios.add_argument(
@@ -569,6 +583,8 @@ def main() -> None:
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"
     )
     args = parser.parse_args()
+    if args.retirement_matrix and not args.multi_peer:
+        parser.error("--retirement-matrix requires --multi-peer")
     if args.slow_receiver and not args.multi_peer:
         parser.error("--slow-receiver requires --multi-peer")
     if args.multi_peer and (args.rpc_traffic or args.channel_receive):

@@ -442,6 +442,25 @@ connection identity and its metadata. Seat 2 must keep its selected packet.
 Traffic continues through seat 2. A fresh generation restores the triangle
 through the same safe receivers, then relay plans release all links.
 
+Add `--retirement-matrix` to `--multi-peer` to run 18 independent cases.
+Each seat closes each required channel toward each other seat. Each case
+checks queued mixed-mode snapshots, surviving connection identity and exact
+packets, hub traffic, and a fresh triangle through the same safe receivers.
+Cases include Web-to-Web links and closure by both offerers and responders.
+The three required channels keep their existing negotiation and labels.
+
+Reports live under `trial-NNN/current/case-NN/` (or `baseline`). `summary.json`
+records every case, including failures; later cases still run. Seat progress,
+failure and interruption records include `retirement_case`, `closing_seat`,
+`remote_seat`, `closing_channel` and `hub_seat`. Channel indices are `0`
+(reliable), `1` (ordered) and `2` (unreliable). Each case keeps the usual
+startup and network deadlines.
+
+With `--slow-receiver`, full triangles still prove delayed-reader independence.
+Hub traffic uses that pause only when the independent native/Web-2 pair
+remains connected. Other hub cases keep every reader active; their records
+set `delayed_reader_active` to false.
+
 On peer disconnection, discard that peer's partial snapshot assembly in your
 game. Keep other peers' assemblies and consumption windows separate. A fresh
 link needs a fresh snapshot and a new consumption window.
