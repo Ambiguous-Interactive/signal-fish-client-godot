@@ -18,6 +18,7 @@ const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 const MeshIncarnationTests = preload("res://tests/client/mesh_incarnation_tests.gd")
 const MeshChannelTests = preload("res://tests/client/mesh_channel_tests.gd")
+const MeshPacketTests = preload("res://tests/client/mesh_packet_tests.gd")
 const MeshSetupTests = preload("res://tests/client/mesh_setup_tests.gd")
 const SessionPlanAcceptanceTests = preload("res://tests/client/session_plan_acceptance_tests.gd")
 
@@ -78,6 +79,7 @@ func run_all() -> void:
 	CompletionGuard.check_registration(self, cases, _failures)
 	_failures.append_array(SessionPlanAcceptanceTests.run(self))
 	_failures.append_array(MeshChannelTests.run(self))
+	_failures.append_array(MeshPacketTests.run(self))
 	_failures.append_array(MeshSetupTests.run(self))
 	_failures.append_array(MeshIncarnationTests.run(self))
 
@@ -1579,6 +1581,17 @@ class FakePeerConnection:
 class FakeDataChannel:
 	extends RefCounted
 	var state: int = WebRTCDataChannel.STATE_OPEN
+	var packets: Array[PackedByteArray] = []
+	var packet_error: Error = OK
+
+	func get_available_packet_count() -> int:
+		return packets.size()
+
+	func get_packet() -> PackedByteArray:
+		return packets.pop_front()
+
+	func get_packet_error() -> Error:
+		return packet_error
 
 	func get_ready_state() -> int:
 		return state
