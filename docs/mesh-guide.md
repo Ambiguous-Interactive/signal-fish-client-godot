@@ -450,7 +450,8 @@ Cases include Web-to-Web links and closure by both offerers and responders.
 The three required channels keep their existing negotiation and labels.
 
 Reports live under `trial-NNN/current/case-NN/` (or `baseline`). `summary.json`
-records every case, including failures; later cases still run. Seat progress,
+records every case, including failures; later cases still run. A seat must
+report all gameplay phases and the requested case to pass. Seat progress,
 failure and interruption records include `retirement_case`, `closing_seat`,
 `remote_seat`, `closing_channel` and `hub_seat`. Channel indices are `0`
 (reliable), `1` (ordered) and `2` (unreliable). Each case keeps the usual

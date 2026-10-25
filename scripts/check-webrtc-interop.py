@@ -175,7 +175,9 @@ def checked(command: list[str], log: Path) -> None:
         raise RuntimeError(f"Command failed; see {log}")
 
 
-def seat_evidence(output: str, seat: int) -> dict[str, object]:
+def seat_evidence(
+    output: str, seat: int, *, retirement_case: int | None = None
+) -> dict[str, object]:
     print(output)
     lines = output.splitlines()
     passed = f"WEBRTC_INTEROP_PASS seat={seat}" in lines and not any(
@@ -211,7 +213,19 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
                 multi_peer_interruptions.append(
                     json.loads(line.removeprefix("WEBRTC_MULTIPEER_INTERRUPTION "))
                 )
+    scenario_complete = None
+    if retirement_case is not None:
+        scenario_complete = (
+            [phase.get("phase") for phase in multi_peer_phases] == [1, 2, 3]
+            and len(multi_peer_interruptions) == 1
+            and all(
+                record.get("retirement_case") == retirement_case
+                for record in [*multi_peer_phases, *multi_peer_interruptions]
+            )
+        )
+        passed = passed and scenario_complete
     return {
+        "scenario_complete": scenario_complete,
         "multi_peer_interruptions": multi_peer_interruptions,
         "multi_peer_phases": multi_peer_phases,
         "rpc_recovery_phases": rpc_phases,
@@ -432,13 +446,16 @@ def run_seats(
             native_log.close()
             (directory / "browser.log").write_text("\n".join(messages))
             native_output = (directory / "native.log").read_text()
+            expected_case = retirement_case if args.multi_peer else None
             seat_results = [
-                seat_evidence(native_output, 0),
-                seat_evidence("\n".join(messages), 1),
+                seat_evidence(native_output, 0, retirement_case=expected_case),
+                seat_evidence("\n".join(messages), 1, retirement_case=expected_case),
             ]
             if args.multi_peer:
                 (directory / "browser-2.log").write_text("\n".join(extra_messages))
-                seat_results.append(seat_evidence("\n".join(extra_messages), 2))
+                seat_results.append(
+                    seat_evidence("\n".join(extra_messages), 2, retirement_case=expected_case)
+                )
             if process is None or process.returncode != 0:
                 seat_results[0]["passed"] = False
             evidence = {

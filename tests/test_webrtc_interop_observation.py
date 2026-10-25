@@ -198,6 +198,25 @@ class ObservationTests(unittest.TestCase):
 
 
 class RetirementMatrixTests(unittest.TestCase):
+    def test_terminal_requires_all_phases_and_the_requested_case(self) -> None:
+        phases = [
+            "WEBRTC_MULTIPEER_PHASE " + drill.json.dumps({"phase": phase, "retirement_case": 7})
+            for phase in (1, 2, 3)
+        ]
+        interruption = 'WEBRTC_MULTIPEER_INTERRUPTION {"retirement_case":7}'
+        terminal = "WEBRTC_INTEROP_PASS seat=2"
+        for records, expected_case, complete in (
+            ([*phases, interruption, terminal], 7, True),
+            ([*phases, interruption, terminal], 0, False),
+            ([*phases, terminal], 7, False),
+            ([*phases[:2], interruption, terminal], 7, False),
+            ([terminal], 7, False),
+        ):
+            with self.subTest(records=records, expected_case=expected_case):
+                evidence = drill.seat_evidence("\n".join(records), 2, retirement_case=expected_case)
+                self.assertEqual(evidence["passed"], complete)
+                self.assertEqual(evidence["scenario_complete"], complete)
+
     def test_matrix_keeps_all_cases_after_failure_and_compares_both_addons(self) -> None:
         args = Mock(repeat=1, retirement_matrix=True, baseline=Path("/baseline"))
         visited: list[tuple[str, int]] = []
