@@ -211,7 +211,7 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 		_fail("traffic replaced the safe receiver")
 		return false
 	_reset_transfer_counts(targets)
-	_delay_reader = _slow_receiver and (phase != 2 or _hub_seat == 2)
+	_delay_reader = _slow_receiver and (phase != 2 or _hub_seat != 1)
 	_reader_paused = _delay_reader and _seat == 1
 	if not await _barrier("traffic-ready-%d" % phase):
 		return false
@@ -381,6 +381,7 @@ func _queue_interruption() -> bool:
 		_connections[id] = peer.get_peer(id)["connection"]
 	_phase = 2
 	_reset_transfer_counts(_others())
+	_delay_reader = false
 	_reader_paused = false
 	_interruption = {"queued_before_close": 0, "consumed_by_sender_and_mode": {}}
 	if _seat != _hub_seat:
