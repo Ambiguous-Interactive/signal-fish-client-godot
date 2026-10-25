@@ -188,6 +188,10 @@ packets. The drill checks payloads, sender ids, transfer modes, negotiated
 channel labels and ids. Each seat also streams 256 directed reliable
 binary packets, from 1 to 1200 bytes, in batches of four per frame. The
 receiver checks exact bytes, sequence, sender, transfer mode, and channel.
+Each generation also sends a MessagePack snapshot of 1,024 players in
+1,200-byte reliable chunks. The receiver checks each chunk, reassembles the
+snapshot, and compares its exact bytes and decoded values. Chunking belongs
+to this drill's application code; the mesh sends packets unchanged.
 Seven generations alternate the offerer. In the first six, each seat closes
 each required channel once. Both seats must release the link and report it
 down before the next generation restores gameplay. The final generation uses
@@ -205,6 +209,9 @@ passed this native-to-browser drill. This covers local connectivity; TURN,
 wide-area networking and the server reference engines need separate drills.
 Success requires `WEBRTC_INTEROP_PASS` from both seats and a zero native
 exit code. The runner retains native and browser logs with the projects.
+A failed browser seat still allows the native seat to finish its diagnostic.
+Each trial writes `seats.json` with both verdicts, the last stage, any failure
+snapshot, the native exit code, and any driver error.
 
 To investigate intermittent failures, use `--repeat 3` and retain `--output`.
 Add `--baseline /path/to/baseline-checkout` to compare that checkout's addon

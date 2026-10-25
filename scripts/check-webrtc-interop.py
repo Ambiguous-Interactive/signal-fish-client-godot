@@ -88,12 +88,18 @@ def checked(command: list[str], log: Path) -> None:
         raise RuntimeError(f"Command failed; see {log}")
 
 
-def check_output(output: str, directory: Path) -> None:
+def seat_evidence(output: str, seat: int) -> dict[str, object]:
     print(output)
-    if "WEBRTC_INTEROP_PASS" not in output or any(
+    lines = output.splitlines()
+    passed = f"WEBRTC_INTEROP_PASS seat={seat}" in lines and not any(
         token in output for token in ("SCRIPT ERROR", "PAGE_ERROR", "WEBRTC_INTEROP_FAIL")
-    ):
-        raise RuntimeError(f"Interoperability drill failed; see {directory}")
+    )
+    return {
+        "seat": seat,
+        "passed": passed,
+        "last_stage": next((line for line in reversed(lines) if "interop stage:" in line), ""),
+        "failure": next((line for line in lines if "WEBRTC_INTEROP_FAIL" in line), ""),
+    }
 
 
 def prepare_pair(args: argparse.Namespace, directory: Path, addon_root: Path) -> tuple[Path, Path]:
@@ -128,6 +134,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
     native_log = (directory / "native.log").open("w")
     process = None
     messages: list[str] = []
+    driver_error = ""
     try:
         process = subprocess.Popen(  # noqa: S603
             [args.godot, "--headless", "--path", str(native), "--", url],
@@ -149,18 +156,19 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                     page.wait_for_timeout(200)
                     if any("WEBRTC_INTEROP_" in message for message in messages):
                         break
+                    if process.poll() not in (None, 0):
+                        break
             finally:
                 (directory / "browser.log").write_text("\n".join(messages))
                 browser.close()
-        check_output("\n".join(messages), directory)
-        process.wait(timeout=20)
-        native_log.flush()
-        native_output = (directory / "native.log").read_text()
-        check_output(native_output, directory)
-        if process.returncode:
-            raise RuntimeError(f"Native seat exited {process.returncode}")
-        print("Native/browser interoperability passed; logs: " + str(directory))
+    except Exception as exc:
+        driver_error = f"{type(exc).__name__}: {exc}"
     finally:
+        if process is not None:
+            try:
+                process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                driver_error += " native seat did not exit within 20 seconds"
         try:
             if process is not None and process.poll() is None:
                 process.terminate()
@@ -171,8 +179,28 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                     process.wait(timeout=10)
         finally:
             native_log.close()
+            (directory / "browser.log").write_text("\n".join(messages))
+            native_output = (directory / "native.log").read_text()
+            seat_results = [
+                seat_evidence(native_output, 0),
+                seat_evidence("\n".join(messages), 1),
+            ]
+            if process is None or process.returncode != 0:
+                seat_results[0]["passed"] = False
+            evidence = {
+                "driver_error": driver_error,
+                "native_exit_code": process.returncode if process is not None else None,
+                "seats": seat_results,
+            }
+            (directory / "seats.json").write_text(json.dumps(evidence, indent=2) + "\n")
             server.shutdown()
             server.server_close()
+    if driver_error or any(not seat["passed"] for seat in seat_results):
+        raise RuntimeError(
+            f"Interoperability drill failed: {driver_error}; "
+            f"native exit={evidence['native_exit_code']}; see {directory / 'seats.json'}"
+        )
+    print("Native/browser interoperability passed; logs: " + str(directory))
 
 
 def positive_count(value: str) -> int:

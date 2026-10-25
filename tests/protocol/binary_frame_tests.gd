@@ -315,7 +315,14 @@ func _test_msgpack_encode_widths() -> void:
 		{"value": 128, "bytes": [0xCC, 0x80]},
 		{"value": 255, "bytes": [0xCC, 0xFF]},
 		{"value": 256, "bytes": [0xCD, 0x01, 0x00]},
+		{"value": 65535, "bytes": [0xCD, 0xFF, 0xFF]},
 		{"value": 65536, "bytes": [0xCE, 0x00, 0x01, 0x00, 0x00]},
+		{"value": 4294967295, "bytes": [0xCE, 0xFF, 0xFF, 0xFF, 0xFF]},
+		{"value": 4294967296, "bytes": [0xCF, 0, 0, 0, 1, 0, 0, 0, 0]},
+		{
+			"value": 9223372036854775807,
+			"bytes": [0xCF, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+		},
 		{"value": -1, "bytes": [0xFF]},
 		{"value": -32, "bytes": [0xE0]},
 		{"value": -33, "bytes": [0xD0, 0xDF]},
@@ -323,6 +330,9 @@ func _test_msgpack_encode_widths() -> void:
 		{"value": -129, "bytes": [0xD1, 0xFF, 0x7F]},
 		{"value": -32768, "bytes": [0xD1, 0x80, 0x00]},
 		{"value": -32769, "bytes": [0xD2, 0xFF, 0xFF, 0x7F, 0xFF]},
+		{"value": -2147483648, "bytes": [0xD2, 0x80, 0, 0, 0]},
+		{"value": -2147483649, "bytes": [0xD3, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0xFF, 0xFF, 0xFF]},
+		{"value": -9223372036854775807 - 1, "bytes": [0xD3, 0x80, 0, 0, 0, 0, 0, 0, 0]},
 		{"value": true, "bytes": [0xC3]},
 		{"value": null, "bytes": [0xC0]},
 	]

@@ -263,7 +263,35 @@ static func _encode_value(peer: StreamPeerBuffer, value: Variant, depth: int) ->
 			peer.put_u8(0xC3 if value else 0xC2)
 		TYPE_INT:
 			var integer: int = value
-			_encode_integer(peer, integer)
+			if integer >= 0:
+				if integer <= 0x7F:
+					peer.put_u8(integer)
+				elif integer <= 0xFF:
+					peer.put_u8(0xCC)
+					peer.put_u8(integer)
+				elif integer <= 0xFFFF:
+					peer.put_u8(0xCD)
+					peer.put_u16(integer)
+				elif integer <= 0xFFFFFFFF:
+					peer.put_u8(0xCE)
+					peer.put_u32(integer)
+				else:
+					peer.put_u8(0xCF)
+					peer.put_u64(integer)
+			elif integer >= -32:
+				peer.put_u8(integer & 0xFF)
+			elif integer >= -128:
+				peer.put_u8(0xD0)
+				peer.put_8(integer)
+			elif integer >= -32768:
+				peer.put_u8(0xD1)
+				peer.put_16(integer)
+			elif integer >= -2147483648:
+				peer.put_u8(0xD2)
+				peer.put_32(integer)
+			else:
+				peer.put_u8(0xD3)
+				peer.put_64(integer)
 		TYPE_FLOAT:
 			# Upstream game data is JSON-compatible: the server-side JSON
 			# decode collapses non-finite doubles, so refuse them instead of
@@ -301,38 +329,6 @@ static func _encode_value(peer: StreamPeerBuffer, value: Variant, depth: int) ->
 		_:
 			return "unsupported value type for MessagePack encode"
 	return ""
-
-
-static func _encode_integer(peer: StreamPeerBuffer, value: int) -> void:
-	if value >= 0:
-		if value <= 0x7F:
-			peer.put_u8(value)
-		elif value <= 0xFF:
-			peer.put_u8(0xCC)
-			peer.put_u8(value)
-		elif value <= 0xFFFF:
-			peer.put_u8(0xCD)
-			peer.put_u16(value)
-		elif value <= 0xFFFFFFFF:
-			peer.put_u8(0xCE)
-			peer.put_u32(value)
-		else:
-			peer.put_u8(0xCF)
-			peer.put_u64(value)
-	elif value >= -32:
-		peer.put_u8(value & 0xFF)
-	elif value >= -128:
-		peer.put_u8(0xD0)
-		peer.put_8(value)
-	elif value >= -32768:
-		peer.put_u8(0xD1)
-		peer.put_16(value)
-	elif value >= -2147483648:
-		peer.put_u8(0xD2)
-		peer.put_32(value)
-	else:
-		peer.put_u8(0xD3)
-		peer.put_64(value)
 
 
 static func _encode_string(peer: StreamPeerBuffer, value: String) -> void:
