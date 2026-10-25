@@ -20,6 +20,14 @@ window.runReference = async function (godotSeat, godotOffer) {
       const events = [];
       let paired = false;
       let sent = false;
+      let snapshotSent = 0;
+      let snapshotReceived = 0;
+      let snapshotAck = 0;
+      let partialSent = 0;
+      let partialReceived = 0;
+      const chunk = (sender, sequence, partial = false) =>
+        `${partial ? "partial" : "snapshot"}:${phase}:${sender}:${sequence}:` +
+        "0123456789abcdef".repeat(64);
       let observed = false;
       let retired = false;
       let started = performance.now();
@@ -34,6 +42,27 @@ window.runReference = async function (godotSeat, godotOffer) {
         onChannelClosed: (_peer, _generation, label, reason) =>
           events.push(["closed", label, reason]),
         onChannelMessage: (_peer, _generation, label, text) => {
+          if (label === "reliable" && /^(snapshot|partial):/.test(text)) {
+            const partial = text.startsWith("partial:");
+            const sequence = partial ? partialReceived : snapshotReceived;
+            if (
+              sequence >= (partial ? 4 : 128) ||
+              text !== chunk("godot", sequence, partial)
+            ) {
+              window.referenceError =
+                "reference snapshot bytes or sequence differ";
+              return false;
+            }
+            if (partial) partialReceived++;
+            else {
+              snapshotReceived++;
+              if (snapshotReceived % 8 === 0)
+                outgoing.push({
+                  marker: `snapshot-ack-${phase}-${snapshotReceived}`,
+                });
+            }
+            return true;
+          }
           if (
             !["reliable", "unreliable"].includes(label) ||
             text !== `godot:${phase}:${label}` ||
@@ -56,6 +85,11 @@ window.runReference = async function (godotSeat, godotOffer) {
             const offer = await engine.pairWith("godot", !godotOffer, []);
             outgoing.push({ marker: `ready-${phase}` });
             if (offer) outgoing.push({ payload: { Offer: offer } });
+          } else if (message.marker?.startsWith(`snapshot-ack-${phase}-`)) {
+            snapshotAck = Math.max(
+              snapshotAck,
+              Number(message.marker.split("-").at(-1)),
+            );
           } else if (message.marker === `retired-${phase}`) {
             retired = true;
           } else if (message.payload && message.generation === generation) {
@@ -81,11 +115,32 @@ window.runReference = async function (godotSeat, godotOffer) {
           for (const label of ["reliable", "unreliable"])
             engine.channel("godot", label).send(`reference:${phase}:${label}`);
         }
+        const reliable = engine.channel("godot", "reliable");
+        if (sent && reliable?.readyState === "open") {
+          for (
+            let batch = 0;
+            batch < 4 && snapshotSent < 128 && snapshotSent - snapshotAck < 32;
+            batch++
+          )
+            reliable.send(chunk("reference", snapshotSent++));
+          if (
+            snapshotReceived === 128 &&
+            snapshotAck === 128 &&
+            partialSent === 0
+          ) {
+            for (; partialSent < 4; partialSent++)
+              reliable.send(chunk("reference", partialSent, true));
+          }
+        }
         if (paired && !observed && performance.now() - started >= 6000) {
           observed = true;
           window.referenceResults.push({
             phase,
             sent,
+            snapshot_sent: snapshotSent,
+            snapshot_received: snapshotReceived,
+            partial_sent: partialSent,
+            partial_received: partialReceived,
             received: received.slice(),
             events: events.slice(),
             snapshot: engine.diagnosticSnapshot("godot"),

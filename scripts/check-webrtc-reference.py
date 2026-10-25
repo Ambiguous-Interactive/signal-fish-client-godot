@@ -55,6 +55,17 @@ def phase_evidence(output: str) -> list[object]:
     return phases
 
 
+def gameplay_phase_passed(phase: dict[str, object]) -> bool:
+    return (
+        phase.get("sent") is True
+        and phase.get("received") in (["reliable", "unreliable"], ["unreliable", "reliable"])
+        and phase.get("snapshot_sent") == 128
+        and phase.get("snapshot_received") == 128
+        and phase.get("partial_sent") == 4
+        and phase.get("partial_received") == 4
+    )
+
+
 def wait_for_godot(page: Page, messages: list[str]) -> str:
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
@@ -181,10 +192,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     and not driver_error
                 )
                 gameplay = complete and all(
-                    godot["sent"]
-                    and sorted(godot["received"]) == ["reliable", "unreliable"]
-                    and ref["sent"]
-                    and sorted(ref["received"]) == ["reliable", "unreliable"]
+                    gameplay_phase_passed(godot) and gameplay_phase_passed(ref)
                     for godot, ref in zip(phases, result["phases"], strict=True)
                 )
                 report = {
@@ -250,7 +258,7 @@ def main() -> None:
     parser.add_argument(
         "--require-gameplay",
         action="store_true",
-        help="Fail when any pairing lacks exact probes in both generations",
+        help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
     directory = args.output or Path(tempfile.mkdtemp(prefix="sf-reference-assessment-"))

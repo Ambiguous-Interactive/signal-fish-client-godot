@@ -17,6 +17,28 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_snapshot_verdict_requires_complete_stream_and_partial_transfer(self) -> None:
+        phase = {
+            "sent": True,
+            "received": ["unreliable", "reliable"],
+            "snapshot_sent": 128,
+            "snapshot_received": 128,
+            "partial_sent": 4,
+            "partial_received": 4,
+        }
+        self.assertTrue(reference.gameplay_phase_passed(phase))
+        for field, total in (
+            ("snapshot_sent", 128),
+            ("snapshot_received", 128),
+            ("partial_sent", 4),
+            ("partial_received", 4),
+        ):
+            for value in (0, total - 1, total + 1):
+                with self.subTest(field=field, value=value):
+                    self.assertFalse(reference.gameplay_phase_passed({**phase, field: value}))
+        self.assertFalse(reference.gameplay_phase_passed({}))
+        self.assertFalse(reference.gameplay_phase_passed({**phase, "received": ["reliable"]}))
+
     def test_page_listeners_keep_errors_and_crashes(self) -> None:
         page = Mock()
         messages: list[str] = []

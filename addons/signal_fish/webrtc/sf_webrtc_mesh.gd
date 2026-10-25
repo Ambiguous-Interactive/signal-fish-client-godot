@@ -117,6 +117,7 @@ var _reported_connected := false
 var _status_retry_due_msec := 0
 var _mesh_revision := 0
 var _receive_peer_cursor := 0
+var _receive_peer_ids: Array = []
 
 
 ## Starts consuming a client's session-plan events. The client must stay
@@ -223,7 +224,9 @@ func get_safe_multiplayer_peer() -> MultiplayerPeer:
 func receive_packet() -> ReceivedPacket:
 	if not _client_is_live() or _mp_peer == null or _peers.is_empty():
 		return null
-	var ids := _peers.keys()
+	if _receive_peer_ids.is_empty():
+		_receive_peer_ids = _peers.keys()
+	var ids := _receive_peer_ids
 	for offset: int in ids.size():
 		var index := (_receive_peer_cursor + offset) % ids.size()
 		var entry: _MeshPeer = _peers[ids[index]]
@@ -564,6 +567,7 @@ func _open_peer(uuid: String, initiate: bool) -> void:
 		_on_peer_ice_candidate(entry, media, index, candidate)
 	var ice_created: Signal = connection.get("ice_candidate_created")
 	ice_created.connect(entry.ice_cb)
+	_receive_peer_ids.clear()
 	_peers[uuid] = entry
 	_known_peers[uuid] = true
 	if initiate:
@@ -585,6 +589,7 @@ func _drop_peer(uuid: String) -> void:
 	var entry: _MeshPeer = _peers.get(uuid)
 	if entry == null:
 		return
+	_receive_peer_ids.clear()
 	_peers.erase(uuid)
 	if _mp_peer != null and _mp_peer.call("has_peer", entry.peer_id):
 		_mp_peer.call("remove_peer", entry.peer_id)

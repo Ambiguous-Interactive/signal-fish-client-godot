@@ -189,9 +189,16 @@ The report records the supplied source revision and module SHA256.
 
 The runner checks native and Web Godot with both offer roles. Each pairing
 rebuilds its link for a second generation and checks reliable and unreliable
-probe bytes in both directions. `assessment_complete` means both generations
-were observed and torn down. `gameplay_passed` requires every probe at both
-ends. Add `--require-gameplay` to fail when any pairing lacks those probes.
+probe bytes in both directions. Each seat then streams 128 reliable snapshot
+chunks of about 1 KiB. Each chunk carries its generation, sender and sequence;
+receivers compare its exact UTF-8 bytes. A 32-packet acknowledgment window
+bounds the stream. Both seats start a second snapshot with four chunks before
+teardown discards that partial transfer. The next generation must pass the
+same checks with fresh bytes.
+
+`assessment_complete` means both generations were observed and torn down.
+`gameplay_passed` requires every probe, all 128 snapshot chunks, and the four
+partial-transfer chunks at both ends in both generations. Add `--require-gameplay` to fail when any pairing lacks those probes.
 Keep mixed reference-client rooms on server relay until their pairing passes.
 These local Engine checks leave full service sessions for a separate drill.
 
@@ -452,3 +459,11 @@ engine-only control still failed the controlled probe. Native Godot 4.4.1
 also reproduced that engine failure and passed the raw receive probe and
 seven-generation mixed workload with a Web Godot 4.3 seat. Other engine/export
 versions need separate live checks.
+
+### Receive throughput benchmark
+
+Run `godot --headless --path . --script tests/client/mesh_receive_bench.gd`
+to measure the raw receiver with 1, 16, 64 and 256 simulated peers. Each peer
+queues 200 packets on each default channel. Compare repeated runs on the
+same engine and machine. This measures script receive work; real network
+throughput requires the live drills above.

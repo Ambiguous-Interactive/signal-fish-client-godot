@@ -20,6 +20,7 @@ func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_cached_channel_selection,
 		_test_multi_peer_selection,
+		_test_membership_change_keeps_selected_packet,
 		_test_packet_count,
 		_test_peer_lifecycle_and_settings,
 		_test_failed_and_empty_reads,
@@ -108,6 +109,32 @@ func _test_multi_peer_selection() -> void:
 		MultiplayerPeer.TRANSFER_MODE_RELIABLE, peer.get_packet_mode(), "second peer mode"
 	)
 	_assert_equal(PackedByteArray([2]), peer.get_packet(), "second peer payload")
+	_dispose(setup)
+	_done()
+
+
+func _test_membership_change_keeps_selected_packet() -> void:
+	var setup := _setup(2)
+	var mesh: MeshScript = setup[0]
+	var connections: Array = setup[4]
+	var first_connection: Object = connections[0]
+	var second_connection: Object = connections[1]
+	var peer: MultiplayerPeer = setup[3]
+	_queue(first_connection, 2, PackedByteArray([1]))
+	_queue(second_connection, 0, PackedByteArray([2]))
+	_assert_equal(MeshScript.uuid_to_peer_id(PLAYER), peer.get_packet_peer(), "selected sender")
+	mesh.call("_drop_peer", "10000000-0000-0000-0000-000000000003")
+	_queue(first_connection, 0, PackedByteArray([3]))
+	_assert_equal(2, peer.get_available_packet_count(), "retired queue excluded after selection")
+	_assert_equal(
+		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE, peer.get_packet_mode(), "membership keeps mode"
+	)
+	_assert_equal(PackedByteArray([1]), peer.get_packet(), "membership keeps selected bytes")
+	_assert_equal(
+		MultiplayerPeer.TRANSFER_MODE_RELIABLE, peer.get_packet_mode(), "later arrival mode"
+	)
+	_assert_equal(PackedByteArray([3]), peer.get_packet(), "later arrival bytes")
+	_assert_equal(0, peer.get_available_packet_count(), "retired bytes cannot return")
 	_dispose(setup)
 	_done()
 

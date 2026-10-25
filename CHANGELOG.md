@@ -111,6 +111,8 @@ released version.
 
 ### Changed
 
+- WebRTC packet reads reuse peer lists to reduce work in larger rooms (#161).
+
 - MessagePack encoding reuses short map-key bytes for gameplay snapshots (#161).
 
 - JSON byte-array gameplay payloads decode faster.
