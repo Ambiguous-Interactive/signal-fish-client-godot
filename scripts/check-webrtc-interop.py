@@ -13,7 +13,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import ClassVar
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Page, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENE = "tests/smoke/webrtc_interop_drill.tscn"
@@ -98,8 +98,25 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
         "seat": seat,
         "passed": passed,
         "last_stage": next((line for line in reversed(lines) if "interop stage:" in line), ""),
+        "last_ready": next((line for line in reversed(lines) if "interop ready:" in line), ""),
         "failure": next((line for line in lines if "WEBRTC_INTEROP_FAIL" in line), ""),
     }
+
+
+def observe_browser(page: Page, process: subprocess.Popen[bytes], messages: list[str]) -> str:
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        page.wait_for_timeout(200)
+        if any(
+            message == "WEBRTC_INTEROP_PASS seat=1"
+            or message.startswith("WEBRTC_INTEROP_FAIL ")
+            or message.startswith("PAGE_ERROR ")
+            for message in messages
+        ):
+            return ""
+        if process.poll() not in (None, 0):
+            return "native seat exited before browser completion"
+    return "browser observation timed out after 60 seconds"
 
 
 def prepare_pair(args: argparse.Namespace, directory: Path, addon_root: Path) -> tuple[Path, Path]:
@@ -137,7 +154,16 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
     driver_error = ""
     try:
         process = subprocess.Popen(  # noqa: S603
-            [args.godot, "--headless", "--path", str(native), "--", url],
+            [
+                args.godot,
+                "--headless",
+                "--path",
+                str(native),
+                "--",
+                url,
+                *(["--mixed-traffic"] if args.mixed_traffic else []),
+                *(["--metadata-probe"] if args.metadata_probe else []),
+            ],
             stdout=native_log,
             stderr=subprocess.STDOUT,
         )
@@ -151,13 +177,11 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 page = browser.new_page()
                 page.on("console", lambda message: messages.append(message.text))
                 page.on("pageerror", lambda error: messages.append("PAGE_ERROR " + str(error)))
-                page.goto(url + "/index.html")
-                for _ in range(300):
-                    page.wait_for_timeout(200)
-                    if any("WEBRTC_INTEROP_" in message for message in messages):
-                        break
-                    if process.poll() not in (None, 0):
-                        break
+                query = "?mixed_traffic=1" if args.mixed_traffic else ""
+                if args.metadata_probe:
+                    query = "?metadata_probe=1"
+                page.goto(url + "/index.html" + query)
+                driver_error = observe_browser(page, process, messages)
             finally:
                 (directory / "browser.log").write_text("\n".join(messages))
                 browser.close()
@@ -255,6 +279,17 @@ def main() -> None:
     parser.add_argument("--chromium", help="Optional Playwright Chromium executable")
     parser.add_argument("--output", type=Path, help="Keep projects and logs in this new directory")
     parser.add_argument("--repeat", type=positive_count, default=1, help="Trials per addon version")
+    scenarios = parser.add_mutually_exclusive_group()
+    scenarios.add_argument(
+        "--mixed-traffic",
+        action="store_true",
+        help="Probe concurrent modes; Godot 4.3 can return mismatched packet metadata",
+    )
+    scenarios.add_argument(
+        "--metadata-probe",
+        action="store_true",
+        help="Reproduce queued-channel metadata mismatch (issue #403)",
+    )
     parser.add_argument(
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"
     )

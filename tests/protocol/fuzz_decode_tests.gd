@@ -101,6 +101,7 @@ func run_all() -> void:
 		_test_binary_codec_decode_echo_bounded,
 		_test_binary_codec_truncation_prefixes,
 		_test_binary_codec_encode_round_trip,
+		_test_binary_codec_numeric_batches,
 		_test_envelope_truncation_and_mutations_fail_closed,
 		_test_envelope_length_header_attacks_fail_closed,
 		_test_text_envelope_truncation_and_noise_fail_closed,
@@ -515,6 +516,49 @@ func _test_binary_codec_encode_round_trip() -> void:
 				from_base64 == bytes, "base64 leg %s survives byte-exactly" % bytes.hex_encode()
 			)
 			_assert(from_base64 == from_array, "both legs agree for %s" % bytes.hex_encode())
+	_done()
+
+
+func _test_binary_codec_numeric_batches() -> void:
+	for count: int in [0, 1, 255, 256, 257, 4096]:
+		var expected := PackedByteArray()
+		var integer_values: Array = []
+		var float_values: Array = []
+		var mixed_values: Array = []
+		for index: int in count:
+			var byte := index % 256
+			expected.append(byte)
+			integer_values.append(byte)
+			float_values.append(float(byte))
+			if index % 2 == 0:
+				mixed_values.append(byte)
+			else:
+				mixed_values.append(float(byte))
+		for values: Array in [integer_values, float_values, mixed_values]:
+			var decoded: Dictionary = SFBinaryCodecScript.decode_payload(values)
+			var ok: bool = decoded["ok"]
+			var bytes: PackedByteArray = decoded["bytes"]
+			_assert(ok, "numeric batch of %d bytes decodes" % count)
+			_assert(bytes == expected, "numeric batch of %d bytes is exact" % count)
+	var prefix: Array = []
+	for byte: int in 256:
+		prefix.append(float(byte))
+	for case: Dictionary in _codec_byte_cases():
+		if case["accept"]:
+			continue
+		var values := prefix.duplicate()
+		values.append(case["value"])
+		var decoded: Dictionary = SFBinaryCodecScript.decode_payload(values)
+		var ok: bool = decoded["ok"]
+		var bytes: PackedByteArray = decoded["bytes"]
+		var error: String = decoded["error"]
+		var reason: String = case["reason"]
+		_assert(not ok, "invalid byte after numeric batch is refused")
+		_assert(bytes.is_empty(), "refused numeric batch returns no partial bytes")
+		_assert(
+			error.contains("array[256]") and error.contains(reason),
+			"numeric batch diagnostic preserves the byte index and reason"
+		)
 	_done()
 
 

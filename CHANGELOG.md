@@ -102,6 +102,7 @@ released version.
 
 ### Changed
 
+- JSON byte-array gameplay payloads decode faster.
 - MessagePack snapshots with short field names decode faster.
 - Gameplay floats that change each frame encode faster.
 - JSON gameplay sends reuse escaped short field names to reduce repeated encoding work.

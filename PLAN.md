@@ -17,6 +17,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
+- [ ] Resolve mixed-mode WebRTC packet metadata mismatch (#403); compare
+      supported engines with `--metadata-probe` before choosing a repair.
 - [ ] Complete mesh channel interoperability with the reference engines (#355),
       including native reference Engine and full service-session pairings.
 - [ ] Capture the next native/browser timeout with paired `--repeat` / `--baseline`
