@@ -151,7 +151,18 @@ async function main() {
   assert.equal(timers.size, 0);
   console.log("Browser WebRTC observation tests passed");
 }
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
+let completed = false;
+process.on("beforeExit", () => {
+  if (!completed) {
+    console.error("Browser observation tests did not complete");
+    process.exitCode = 1;
+  }
 });
+main()
+  .then(() => {
+    completed = true;
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

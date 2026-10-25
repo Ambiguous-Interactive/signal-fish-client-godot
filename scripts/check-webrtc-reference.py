@@ -237,7 +237,7 @@ def main() -> None:
     parser.add_argument("--godot", default="godot")
     parser.add_argument("--native-extension", type=Path, required=True)
     parser.add_argument(
-        "--reference-assets", type=Path, required=True, help="engine.js and shared/deadline.js"
+        "--reference-assets", type=Path, required=True, help="Directory containing engine.js and its imports"
     )
     parser.add_argument(
         "--reference-revision", required=True, help="Source commit used to build the Engine modules"
