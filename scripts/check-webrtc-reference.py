@@ -206,7 +206,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     if web:
         shutil.copytree(project / "build/web", assets / "godot")
 
-    class Handler(CreditDelayRelay):  # type: ignore[name-defined,misc]
+    class Handler(CreditDelayRelay):
         queues: ClassVar[list[list[object]]] = [[], []]
         lock = threading.Lock()
         observation = interop.RelayObservation()
