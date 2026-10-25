@@ -265,6 +265,114 @@ def wait_for_godot_ready(page: Page, ready: Callable[[], bool], messages: list[s
     raise TimeoutError("Godot ready marker was not received during 60-second startup")
 
 
+def service_evidence(output: str) -> list[dict[str, object]]:
+    return [
+        json.loads(line.removeprefix("WEBRTC_REFERENCE_SERVICE "))
+        for line in output.splitlines()
+        if line.startswith("WEBRTC_REFERENCE_SERVICE ")
+    ]
+
+
+def service_session_passed(godot: list[dict[str, object]], ref: list[dict[str, object]]) -> bool:
+    if [phase.get("phase") for phase in godot] != [1, 2] or [
+        phase.get("phase") for phase in ref
+    ] != [1, 2]:
+        return False
+    for local, remote in zip(godot, ref, strict=True):
+        for key in ("room_id", "generation"):
+            if (
+                not isinstance(local.get(key), str)
+                or not local[key]
+                or local[key] != remote.get(key)
+            ):
+                return False
+        if (
+            not local.get("player_id")
+            or local.get("player_id") == local.get("peer_id")
+            or local.get("player_id") != remote.get("peer_id")
+            or remote.get("player_id") != local.get("peer_id")
+        ):
+            return False
+        for phase in (local, remote):
+            if phase.get("left") is not True:
+                return False
+            for key in ("signals_sent", "signals_received"):
+                if type(phase.get(key)) is not int or cast(int, phase[key]) <= 0:
+                    return False
+        if (
+            local["signals_sent"] != remote["signals_received"]
+            or remote["signals_sent"] != local["signals_received"]
+        ):
+            return False
+    return godot[1].get("receiver_retired") is True and all(
+        godot[0][key] != godot[1][key] for key in ("room_id", "generation")
+    )
+
+
+def service_source(source: str) -> str:
+    fragment = (ROOT / "tests/smoke/webrtc_reference_service.gd.inc").read_text()
+    variables, methods = fragment.split("\n\nfunc _service_setup", 1)
+    source = source.replace("func _ready() -> void:", variables + "\n\nfunc _ready() -> void:", 1)
+    start = source.index("\t_client._player_id = PLAYERS[_seat]")
+    end = source.index("\t_mesh = MeshScript.new()", start)
+    source = source[:start] + "\tif not _service_setup():\n\t\treturn\n" + source[end:]
+    start = source.index(
+        "\tvar plan := SessionScript.SessionPlanInfo.new()", source.index("func _run_phase")
+    )
+    end = source.index('\t_pending.append({"marker": "ready-%d" % phase})', start)
+    source = (
+        source[:start] + "\tif not await _service_begin(phase):\n\t\treturn false\n" + source[end:]
+    )
+    source = source.replace("\tif remote.initiate:\n\t\t_mesh._apply_plan(plan)\n", "")
+    start = source.index(
+        "\tvar relay := SessionScript.SessionPlanInfo.new()", source.index("func _run_phase")
+    )
+    end = source.index('\t_pending.append({"marker": "retired-%d" % phase})', start)
+    source = source[:start] + source[end:]
+    source = source.replace(
+        'return await _wait_until(\n\t\t"reference teardown",',
+        'var retired := await _wait_until(\n\t\t"reference teardown",',
+        1,
+    )
+    source = source.replace(
+        "\n\nfunc _reference_gameplay_complete",
+        "\n\treturn retired and await _service_end(phase)\n\n\nfunc _reference_gameplay_complete",
+        1,
+    )
+    source = source.replace(
+        "\t\tif phase == 1:\n\t\t\t_reference_receiver = receiver\n\t\telif receiver != _reference_receiver:",
+        "\t\tif phase > 1 and receiver == _reference_receiver:",
+        1,
+    )
+    source = source.replace(
+        '\t\t\t_fail("reference recovery replaced the safe receiver")\n\t\t\treturn false',
+        '\t\t\t_fail("service room reused the retired safe receiver")\n\t\t\treturn false\n\t\t_reference_receiver = receiver',
+        1,
+    )
+    source = source.replace("PLAYERS[1 - _seat]", "_signal_players[1 - _seat]")
+    source = source.replace(
+        "\tvar now := Time.get_ticks_msec()\n",
+        "\t_client.poll()\n\tvar now := Time.get_ticks_msec()\n",
+        1,
+    )
+    source = source.replace(
+        "\tvar relay: Callable",
+        "\tvar service := false\n\tvar service_signals_sent := 0\n\tvar relay: Callable",
+        1,
+    )
+    source = source.replace(
+        "\t\trelay.call(generation, payload)",
+        "\t\tif service:\n\t\t\tvar result := super.send_signal(_to, generation, payload)\n\t\t\tif result == OK:\n\t\t\t\tservice_signals_sent += 1\n\t\t\treturn result\n\t\trelay.call(generation, payload)",
+        1,
+    )
+    source = source.replace(
+        "\t\tstatuses.append(up)\n\t\treturn OK",
+        "\t\tstatuses.append(up)\n\t\treturn super.send_transport_status(_kind, up) if service else OK",
+        1,
+    )
+    return source + "\n\nfunc _service_setup" + methods
+
+
 def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
     project = directory / "project"
     interop.prepare(project, None if web else args.native_extension, ROOT)
@@ -280,10 +388,14 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
     if source.count('"peers": []') != 1:
         raise ValueError("Reference diagnostic insertion point changed")
     source = source.replace('"peers": []', '"reference": _reference_evidence(), "peers": []')
+    if getattr(args, "service_url", ""):
+        source = service_source(source)
     script.write_text(source)
     (project / "reference-options.json").write_text(
         json.dumps(
             {
+                "service_url": getattr(args, "service_url", ""),
+                "service_app_id": getattr(args, "service_app_id", "godot-reference"),
                 "godot_offer": args.godot_offer,
                 "safe_receive": args.safe_receive,
                 "mixed_traffic": args.mixed_traffic,
@@ -317,8 +429,12 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     assets.mkdir()
     shutil.copytree(args.reference_assets, assets / "reference")
     shutil.copy2(ROOT / "tests/smoke/webrtc_reference.js", assets / "assess.js")
+    shutil.copy2(ROOT / "tests/smoke/webrtc_reference_service.js", assets / "service.js")
     (assets / "index.html").write_text(
-        '<link rel="icon" href="data:,"><script type="module" src="/assess.js"></script>'
+        '<link rel="icon" href="data:,">'
+        '<script type="module">import {configureReferenceService} from "/service.js";'
+        "window.configureReferenceService = configureReferenceService;</script>"
+        '<script type="module" src="/assess.js"></script>'
     )
     if web:
         shutil.copytree(project / "build/web", assets / "godot")
@@ -332,6 +448,30 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         credit_delay_ms = getattr(args, "http_credit_delay_ms", 0)
         credit_seat = 0 if web else 1
 
+        rejected_http_signals = 0
+
+        def do_POST(self) -> None:
+            if not getattr(args, "service_url", ""):
+                super().do_POST()
+                return
+            if self.path not in ("/signal/0", "/signal/1"):
+                self.send_error(404)
+                return
+            message = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if (
+                not isinstance(message, dict)
+                or not isinstance(message.get("marker"), str)
+                or "payload" in message
+            ):
+                type(self).rejected_http_signals += 1
+                self.send_error(400, "Service mode uses HTTP for markers only")
+                return
+            with self.lock:
+                seat = int(self.path[-1])
+                self.queues[seat].append(message)
+                self.observation.enqueue(seat, message)
+            self.reply(b"{}")
+
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0), functools.partial(Handler, directory=str(assets))
     )
@@ -342,6 +482,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     native = None
     observations: dict[str, Observation] = {}
     report: dict[str, object] = {
+        "service_url": getattr(args, "service_url", ""),
         "assessment_complete": False,
         "driver_error": "",
         "runtime": "web" if web else "native",
@@ -388,12 +529,19 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         raise RuntimeError("Native Godot exited before its ready marker")
                     with Handler.lock:
                         return any(
-                            isinstance(message, dict) and message.get("marker") == "ready-1"
+                            isinstance(message, dict)
+                            and message.get("marker")
+                            == ("service-room-1" if getattr(args, "service_url", "") else "ready-1")
                             for message in Handler.queues[0 if web else 1]
                         )
 
                 report["startup_ms"] = wait_for_godot_ready(reference, godot_ready, messages)
                 report["reference_started_after_godot_ready"] = True
+                if getattr(args, "service_url", ""):
+                    reference.evaluate(
+                        "([url, app]) => window.configureReferenceService(url, app)",
+                        [args.service_url, args.service_app_id],
+                    )
                 reference.evaluate(
                     "([seat, offer, mixed, credit, slow, channel, closer]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer); }",
                     [
@@ -447,8 +595,15 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     for line in output.splitlines()
                     if line.startswith("WEBRTC_REFERENCE_PHASE ")
                 ]
+                service_godot = service_evidence(output)
+                service_ref = reference.evaluate("window.referenceServiceEvidence ?? []")
+                service_passed = not getattr(args, "service_url", "") or (
+                    Handler.rejected_http_signals == 0
+                    and service_session_passed(service_godot, service_ref)
+                )
                 complete = (
-                    result["done"]
+                    service_passed
+                    and result["done"]
                     and not result["error"]
                     and [phase["phase"] for phase in phases] == [1, 2]
                     and [phase["phase"] for phase in result["phases"]] == [1, 2]
@@ -499,6 +654,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 )
                 report.update(
                     {
+                        "service_passed": service_passed,
+                        "service_godot": service_godot,
+                        "service_reference": service_ref,
                         "assessment_complete": complete,
                         "driver_error": driver_error,
                         "gameplay_passed": gameplay,
@@ -525,6 +683,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         if native is not None and native.poll() is None:
             native.kill()
             native.wait(timeout=10)
+        report["rejected_http_signals"] = Handler.rejected_http_signals
         report["http_credit_delay_applied"] = Handler.credit_delayed.is_set()
         server.shutdown()
         server.server_close()
@@ -551,6 +710,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", default="godot")
+    parser.add_argument("--service-url", default="", help="Use real v3 service rooms and signaling")
+    parser.add_argument("--service-app-id", default="godot-reference")
     parser.add_argument("--native-extension", type=Path, required=True)
     parser.add_argument(
         "--reference-assets",
@@ -620,6 +781,8 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if args.service_url and (args.runtime != "web" or args.offerer != "reference"):
+        parser.error("--service-url requires --runtime web --offerer reference")
     if args.slow_reference_receiver and (not args.mixed_traffic or args.slow_receiver):
         parser.error("--slow-reference-receiver needs --mixed-traffic and an active Godot reader")
     if not 0 <= args.http_credit_delay_ms <= 8000:

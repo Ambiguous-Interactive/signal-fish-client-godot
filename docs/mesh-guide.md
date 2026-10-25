@@ -208,12 +208,12 @@ the retirement packet selected until remote closure, then discard its cached
 bytes. The default checks raw channel reads. Add `--require-gameplay` to fail when
 any selected pairing lacks those probes. Use `--runtime native|web` and
 `--offerer godot|reference` to select one pairing; both default to all pairings.
-Safe-receiver assessments keep one adapter through both generations and
+Local Engine assessments keep one adapter through both generations and
 record `same_receiver`. A relay plan retires each generation's links.
 Reference phase totals are refreshed at teardown. The `observation` field
 keeps the earlier six-second snapshot, including transfers still in progress.
 Keep mixed reference-client rooms on server relay until their pairing passes.
-These local Engine checks leave full service sessions for a separate drill.
+Use the service mode below to check real room plans and signaling.
 
 Each assessment retains `browser_observations` for the reference page and,
 when used, the Godot Web page. Each page records signaling request timings,
@@ -290,8 +290,8 @@ including the same counts under `reference`.
 Compare repeated HTTP and WebRTC credit runs with the same engine and receiver.
 Fresh gameplay progress during an HTTP credit wait helps isolate relay or HTTP
 scheduling. A credit-transport timing difference alone cannot prove the cause
-of the intermittent stall in #396. Full service sessions and remote-network
-qualification remain open.
+of the intermittent stall in #396. Full reference CLI sessions and
+remote-network qualification remain open.
 
 ### Paused Godot reader
 
@@ -374,8 +374,38 @@ This option pauses application consumption after Engine callbacks. Browser
 network delivery and the page event loop keep running. It isolates application
 backlog in #396; it does not reproduce a frozen page or establish the captured
 stall's cause. Use `--slow-receiver` in a separate run to pause Godot reads.
-The two pause options cannot be combined. Full reference service sessions and
+The two pause options cannot be combined. Full reference CLI sessions and
 native-reference recovery remain open in #355.
+
+### Reference gameplay through a local service
+
+Add `--service-url ws://127.0.0.1:3537/v3/ws --service-app-id godot-reference`
+to the Web/reference-offer command above. Run a local Signal Fish server with
+`session.enable_webrtc` enabled, `session.enable_direct` disabled, and
+`session.default_topology` set to `host`. The service must accept the app ID.
+The browser Engine modules and service used for this assessment are pinned to
+`b264ec739400b299182eaa918dd6828fd611f3b9`.
+
+The production Godot client creates a two-player room. The reference seat
+joins that room through its own WebSocket. Both seats become ready, and the
+creator starts the game. The server assigns the reference seat the offer role.
+Both seats use the real session generation and relay SDP and ICE through the
+service. HTTP carries workload markers only; the driver rejects HTTP signaling
+in this mode.
+
+Two fresh rooms run the unchanged mixed snapshot workload and channel closure
+checks. Leaving each room must invalidate its safe receiver. A fresh receiver must
+work after the next server plan. A service pass requires matching room, generation and player IDs, matching nonzero
+signaling counts, confirmed room departure, and distinct rooms and generations.
+`service_godot` and `service_reference` retain this evidence in `assessment.json`.
+Use the existing HTTP/WebRTC credit and reader-pause controls to compare
+service signaling with gameplay progress. Per-stage service waits retain their
+failure stage in the Godot log.
+
+HTTP localhost exports can connect to a local `ws://` service. HTTPS exports
+require `wss://`. This assessment covers the browser reference Engine with a
+small service driver; full reference CLI sessions, the native reference Engine,
+and remote networks still need qualification.
 
 ## Native reference engine assessment
 

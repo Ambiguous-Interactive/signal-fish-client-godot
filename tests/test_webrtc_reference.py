@@ -22,6 +22,157 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_service_sessions_require_matching_ids_signaling_and_fresh_rooms(self) -> None:
+        godot = [
+            {
+                "phase": phase,
+                "room_id": f"room-{phase}",
+                "generation": f"generation-{phase}",
+                "player_id": "godot",
+                "peer_id": "reference",
+                "signals_sent": 3,
+                "signals_received": 4,
+                "left": True,
+                "receiver_retired": True,
+            }
+            for phase in (1, 2)
+        ]
+        remote = [
+            {
+                **phase,
+                "player_id": "reference",
+                "peer_id": "godot",
+                "signals_sent": 4,
+                "signals_received": 3,
+            }
+            for phase in godot
+        ]
+        self.assertTrue(reference.service_session_passed(godot, remote))
+        for records in (godot, remote):
+            for key, value in (
+                ("phase", 1),
+                ("room_id", "wrong-room"),
+                ("generation", "wrong-generation"),
+                ("player_id", "wrong-player"),
+                ("peer_id", "wrong-peer"),
+                ("signals_sent", 0),
+                ("signals_received", 0),
+                ("left", False),
+                ("signals_sent", True),
+                ("signals_received", 3.0),
+            ):
+                changed = [records[0], {**records[1], key: value}]
+                with self.subTest(side=records is godot, key=key, value=value):
+                    self.assertFalse(
+                        reference.service_session_passed(
+                            changed if records is godot else godot,
+                            changed if records is remote else remote,
+                        )
+                    )
+        self.assertFalse(reference.service_session_passed(godot[:1], remote))
+        self.assertFalse(reference.service_session_passed(godot, remote[:1]))
+        self.assertFalse(
+            reference.service_session_passed(
+                [godot[0], {**godot[1], "receiver_retired": False}], remote
+            )
+        )
+        for key in ("room_id", "generation"):
+            reused_godot = [godot[0], {**godot[1], key: godot[0][key]}]
+            reused_remote = [remote[0], {**remote[1], key: remote[0][key]}]
+            self.assertFalse(reference.service_session_passed(reused_godot, reused_remote))
+
+    def test_service_wire_uses_real_signal_envelopes_and_fences_other_sessions(self) -> None:
+        harness = r"""
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+const source = readFileSync(0, "utf8").replace("export function", "function");
+const fault = process.argv[1];
+let socket, clock = 0, phase = 0;
+const sent = [];
+const frame = (type, data) => socket.onmessage({data: JSON.stringify({type, data})});
+class Socket {
+  static OPEN = 1;
+  readyState = 1;
+  constructor() {
+    socket = this;
+    setImmediate(() => this.onopen());
+  }
+  send(text) {
+    const message = JSON.parse(text); sent.push(message);
+    if (message.type === "Authenticate") {
+      frame("Authenticated", {}); frame("ProtocolInfo", {protocol_version: 3});
+    }
+    if (message.type === "JoinRoom") {
+      phase++;
+      if (!message.data.join_only || message.data.room_code !== "CODE")
+        throw new Error("room admission differs");
+      frame("RoomJoined", {room_id: `room-${phase}`, player_id: "reference"});
+    }
+    if (message.type === "PlayerReady") {
+      frame("GameStarting", {});
+      frame("SessionPlan", {transport: "webrtc", generation: `generation-${phase}`,
+        peers: [{player_id: "godot", initiate: true}], ice_servers: []});
+    }
+    if (message.type === "LeaveRoom") frame("RoomLeft");
+  }
+  close() { this.readyState = 3; }
+}
+const context = {
+  window: {}, WebSocket: Socket,
+  performance: {now: () => clock},
+  setTimeout: (resolve) => setImmediate(() => { clock += 20; resolve(); }),
+  console: {log() {}},
+  fetch: async () => ({ok: true, json: async () => [
+    {marker: `service-room-${phase + 1}`, game_name: "game", room_code: "CODE", player_id: "godot"}
+  ]}),
+};
+runInNewContext(source, context);
+context.configureReferenceService("ws://service/v3/ws", "app");
+let error = "";
+try {
+  for (let round = 1; round <= 2; round++) {
+    const service = await context.window.referenceService.begin(round, 0);
+    service.send({Offer: "offer-text"});
+    const outbound = sent.at(-1);
+    if (JSON.stringify(outbound) !== JSON.stringify({type: "Signal", data: {
+      to: "godot", generation: `generation-${round}`, signal: {Offer: "offer-text"}
+    }})) throw new Error("Signal wire shape differs");
+    frame("Signal", {from: fault === "peer" ? "other" : "godot",
+      generation: fault === "generation" ? "old" : `generation-${round}`,
+      signal: {Answer: "answer-text"}});
+    const messages = service.drain();
+    if (messages.length !== 1 || messages[0].payload.Answer !== "answer-text")
+      throw new Error("Signal payload changed");
+    await service.leave();
+  }
+} catch (caught) { error = String(caught); }
+context.window.referenceService.close();
+console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvidence, closed: socket.readyState === 3}));
+"""
+        source = (SCRIPT.parents[1] / "tests/smoke/webrtc_reference_service.js").read_text()
+        for fault in ("none", "peer", "generation"):
+            with self.subTest(fault=fault):
+                result = subprocess.run(  # noqa: S603
+                    ["node", "--input-type=module", "-e", harness, fault],  # noqa: S607
+                    input=source,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                    timeout=5,
+                )
+                proof = json.loads(result.stdout)
+                self.assertTrue(proof["closed"])
+                if fault == "none":
+                    self.assertEqual(proof["error"], "")
+                    self.assertEqual([phase["phase"] for phase in proof["evidence"]], [1, 2])
+                    for phase in proof["evidence"]:
+                        self.assertTrue(phase["left"])
+                        self.assertEqual(phase["signals_sent"], 1)
+                        self.assertEqual(phase["signals_received"], 1)
+                else:
+                    self.assertIn("signal identity differs", proof["error"])
+                    self.assertFalse(proof["evidence"][0]["left"])
+
     def test_snapshot_verdict_requires_complete_stream_and_partial_transfer(self) -> None:
         phase = {
             "mixed_traffic": False,

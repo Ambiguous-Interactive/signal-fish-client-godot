@@ -44,6 +44,8 @@ released version.
 
 ### Fixed
 
+- Web builds hosted on HTTP localhost can connect to local WebSocket services (#428).
+
 - Safe WebRTC RPC peers skip closed links and avoid duplicate lifecycle
   events when game callbacks change links or poll again (#413).
 
