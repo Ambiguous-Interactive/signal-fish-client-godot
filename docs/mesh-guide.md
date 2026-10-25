@@ -26,11 +26,25 @@ var mesh := SFWebRTCMesh.new()
 add_child(mesh)
 mesh.attach(client)
 # Once a webrtc plan lands, run RPCs over the mesh:
-multiplayer.multiplayer_peer = mesh.get_multiplayer_peer()
+multiplayer.multiplayer_peer = mesh.get_safe_multiplayer_peer()
 ```
 
 `attach(client)` subscribes the mesh to the client's signals and returns
 `Error`. `detach()` unsubscribes.
+
+`get_safe_multiplayer_peer()` returns an opt-in `MultiplayerPeerExtension`
+for RPCs. It keeps received bytes, sender, channel and transfer mode together
+when channels overlap (#403). It uses the existing three negotiated channels
+and delegates sends to Godot. Use it as the sole receiver. The original
+`get_multiplayer_peer()` still returns the engine peer.
+
+Assign the safe peer after a WebRTC plan creates the mesh. It discovers
+already-connected peers on its first poll. When a plan replaces the engine
+peer, assign the new safe peer to `multiplayer.multiplayer_peer`. Old adapters
+stay disconnected after teardown. Closing the adapter tears down its mesh.
+Only the three default channels are supported. Godot's GDScript packet hook
+reports empty datagrams and read errors as `ERR_UNAVAILABLE`; use
+`receive_packet()` when your raw protocol needs those distinctions.
 
 ## How the mesh behaves
 
@@ -307,6 +321,20 @@ request ages help distinguish a quiet data channel from delayed signaling.
 Progress records contain the same channel state as terminal diagnostics.
 A missing terminal record leaves that seat failed.
 
+`browser_observation` records request timings outside the engine loop: completed
+and failed signaling requests, current request ages, the last 16 completions,
+and ages of the last console message and progress record. Compare these with
+`last_progress` to separate delayed HTTP delivery from missing engine progress.
+Renderer crashes and engine error output fail the trial.
+
+Use `--safe-receive --metadata-probe` to check metadata through the RPC adapter's
+packet API. Use `--safe-receive --mixed-traffic --rpc-traffic` to add actual
+`SceneMultiplayer` RPCs: unreliable positions, ordered positions, and a reliable
+byte-exact snapshot of 1,024 players in each generation. Both seats release
+the RPC receiver before the raw packet checks resume. `--safe-receive` and
+`--channel-receive` select separate receive paths; choose one. Baselines used
+with the new scenarios must provide `get_safe_multiplayer_peer()`.
+
 ### Mixed-mode packet metadata
 
 Godot 4.3 can return packet bytes from a different channel than the mode
@@ -356,7 +384,7 @@ and do not read packets through its `WebRTCMultiplayerPeer`. Sending still
 uses that peer's `put_packet`, target, and transfer mode. Poll the mesh each
 frame. The reader waits until the connection and all three channels are open;
 teardown discards pending packets. It keeps the channel layout unchanged.
-The engine metadata bug still affects the high-level RPC receive path.
+High-level RPCs can use `get_safe_multiplayer_peer()` to avoid that selection.
 
 Add `--channel-receive` to `--metadata-probe` or `--mixed-traffic` to test this
 path with the same byte, sender, mode, snapshot, and recovery checks.

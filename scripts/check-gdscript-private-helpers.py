@@ -138,6 +138,33 @@ GODOT_PRIVATE_ROOTS = {
     "_validate_property",
 }
 
+# Godot 4.3 doc/classes/MultiplayerPeerExtension.xml: GDScript packet hooks.
+GODOT_PRIVATE_ROOTS.update(
+    {
+        "_close",
+        "_disconnect_peer",
+        "_get_available_packet_count",
+        "_get_connection_status",
+        "_get_max_packet_size",
+        "_get_packet_channel",
+        "_get_packet_mode",
+        "_get_packet_peer",
+        "_get_packet_script",
+        "_get_transfer_channel",
+        "_get_transfer_mode",
+        "_get_unique_id",
+        "_is_refusing_new_connections",
+        "_is_server",
+        "_is_server_relay_supported",
+        "_poll",
+        "_put_packet_script",
+        "_set_refuse_new_connections",
+        "_set_target_peer",
+        "_set_transfer_channel",
+        "_set_transfer_mode",
+    }
+)
+
 DYNAMIC_SELF_METHOD_STRING_ARGUMENTS = {
     "call": {0},
     "call_deferred": {0},
@@ -739,6 +766,17 @@ def run_self_tests() -> None:
                 "\n"
                 "func _helper():\n"
                 "\tpass\n"
+            ),
+            set(),
+        ),
+        (
+            "multiplayer extension callbacks reach helpers",
+            (
+                "extends MultiplayerPeerExtension\n"
+                "func _get_packet_script():\n\treturn _read()\n\n"
+                "func _read():\n\treturn PackedByteArray()\n\n"
+                "func _put_packet_script(data):\n\treturn _write(data)\n\n"
+                "func _write(data):\n\treturn 0\n"
             ),
             set(),
         ),

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import Mock, patch
 
-from playwright.sync_api import Page
+from playwright.sync_api import Page, Request
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check-webrtc-interop.py"
 SPEC = importlib.util.spec_from_file_location("webrtc_interop", SCRIPT)
@@ -24,6 +24,7 @@ class ObservationTests(unittest.TestCase):
             "WEBRTC_INTEROP_PASS seat=1",
             'WEBRTC_INTEROP_FAIL {"stage":"peer channels open"}',
             "PAGE_ERROR WebAssembly trap",
+            "BROWSER_CRASH",
         ):
             with self.subTest(terminal=terminal):
                 page = Mock()
@@ -99,6 +100,61 @@ class ObservationTests(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertIn("peer channels open", result["last_stage"])
         self.assertIn("remote ready marker", result["last_ready"])
+
+
+class BrowserObservationTests(unittest.TestCase):
+    def test_browser_request_timings_survive_missing_engine_terminal(self) -> None:
+        observation = drill.BrowserObservation("http://drill.test")
+        request = Mock(spec=Request, url="http://drill.test/signal/1", method="GET")
+        post = Mock(spec=Request, url="http://drill.test/signal/0", method="POST")
+        with patch.object(drill.time, "monotonic", return_value=1):
+            observation.started(request)
+            observation.started(post)
+            observation.console('WEBRTC_INTEROP_PROGRESS {"burst_sent":64}')
+        with patch.object(drill.time, "monotonic", return_value=1.25):
+            observation.finished(request)
+        with patch.object(drill.time, "monotonic", return_value=3):
+            result = observation.snapshot()
+        self.assertEqual(result["completed_requests"], 1)
+        self.assertEqual(result["failed_requests"], 0)
+        self.assertEqual(result["last_progress_age_ms"], 2000)
+        self.assertEqual(
+            result["inflight_requests"], [{"method": "POST", "seat": "0", "age_ms": 2000}]
+        )
+        self.assertEqual(result["recent_requests"][0]["elapsed_ms"], 250)
+
+    def test_request_history_is_bounded_and_scoped_to_signaling(self) -> None:
+        observation = drill.BrowserObservation("http://drill.test")
+        unrelated = Mock(spec=Request, url="http://drill.test/index.wasm", method="GET")
+        observation.started(unrelated)
+        observation.finished(unrelated)
+        for _ in range(40):
+            request = Mock(spec=Request, url="http://drill.test/signal/1", method="GET")
+            observation.started(request)
+            observation.finished(request, failed=True)
+        result = observation.snapshot()
+        self.assertEqual(result["failed_requests"], 40)
+        self.assertEqual(result["completed_requests"], 0)
+        self.assertEqual(len(result["recent_requests"]), 16)
+        self.assertEqual(result["inflight_requests"], [])
+        self.assertIsNone(result["last_progress_age_ms"])
+
+    def test_engine_error_detection_keeps_normal_console_text(self) -> None:
+        for output, failed in (
+            ("ERROR: invalid packet", True),
+            ("USER ERROR: invalid spawn", True),
+            ("SCRIPT ERROR: bad call", True),
+            ('interop stage: {"error":"ERROR: sample"}', False),
+            ("Godot Engine ready", False),
+        ):
+            with self.subTest(output=output):
+                self.assertEqual(drill.engine_failed(output), failed)
+
+    def test_engine_error_or_crash_cannot_pass_despite_success_marker(self) -> None:
+        for failure in ("BROWSER_CRASH", "ERROR: Invalid packet", "USER ERROR: Invalid spawn"):
+            with self.subTest(failure=failure):
+                result = drill.seat_evidence("WEBRTC_INTEROP_PASS seat=1\n" + failure, 1)
+                self.assertFalse(result["passed"])
 
 
 if __name__ == "__main__":

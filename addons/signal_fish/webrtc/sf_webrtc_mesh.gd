@@ -54,6 +54,9 @@ extends Node
 ## channels: reliable, ordered, and unreliable. A peer counts as connected
 ## only while every required channel is open.
 
+const SFWebRTCMultiplayerPeerScript = preload(
+	"res://addons/signal_fish/webrtc/sf_webrtc_multiplayer_peer.gd"
+)
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
@@ -109,6 +112,7 @@ var _peers: Dictionary = {}
 var _retired_generations: Dictionary = {}
 var _known_peers: Dictionary = {}
 var _mp_peer: Object = null
+var _safe_mp_peer: SFWebRTCMultiplayerPeerScript = null
 var _reported_connected := false
 var _status_retry_due_msec := 0
 var _mesh_revision := 0
@@ -197,6 +201,18 @@ func poll() -> void:
 ## teardown).
 func get_multiplayer_peer() -> Object:
 	return _mp_peer
+
+
+## Returns an opt-in RPC peer with stable received packet metadata (#403).
+## Use as the sole receiver; do not mix with raw or engine packet reads.
+## Only the three default channels are supported. Empty datagrams and channel
+## read errors surface as ERR_UNAVAILABLE through Godot's script packet hook.
+func get_safe_multiplayer_peer() -> MultiplayerPeer:
+	if _mp_peer == null:
+		return null
+	if _safe_mp_peer == null:
+		_safe_mp_peer = SFWebRTCMultiplayerPeerScript.new(self, _mp_peer)
+	return _safe_mp_peer
 
 
 ## Reads one raw gameplay packet with metadata from its physical channel.
@@ -584,6 +600,8 @@ func _drop_peer(uuid: String) -> void:
 
 
 func _reset_mesh() -> void:
+	if _safe_mp_peer != null:
+		_safe_mp_peer._invalidate()
 	_mesh_revision += 1
 	_receive_peer_cursor = 0
 	_plan = null
@@ -595,6 +613,7 @@ func _reset_mesh() -> void:
 	if _mp_peer != null:
 		_mp_peer.call("close")
 	_mp_peer = null
+	_safe_mp_peer = null
 	# Teardown resolves the reported state silently: boundary reports are for
 	# observed connected-count changes on a living session, never for a room
 	# or connection that is already gone.

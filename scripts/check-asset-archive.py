@@ -49,6 +49,7 @@ REQUIRED_ARCHIVE_FILES = frozenset(
         "addons/signal_fish/steam/sf_steam_identity.gd",
         "addons/signal_fish/steam/sf_steam_identity_bootstrap.gd",
         "addons/signal_fish/webrtc/sf_webrtc_mesh.gd",
+        "addons/signal_fish/webrtc/sf_webrtc_multiplayer_peer.gd",
     }
 )
 

@@ -49,6 +49,8 @@ var _integer_batch: Array[int] = []
 var _binary_values: Array[float] = []
 var _moving_envelopes: Array[Dictionary] = []
 var _moving_index := 0
+var _msgpack_key_churn: Array[Dictionary] = []
+var _msgpack_key_index := 0
 
 
 func _init() -> void:
@@ -120,6 +122,11 @@ func _init() -> void:
 	for index: int in 128:
 		_integer_batch.append(index - 64)
 	_bench("msgpack_integer_batch", 1000, func() -> void: SFMsgpackScript.encode(_integer_batch))
+	_bench("msgpack_keys_warm", 20000, func() -> void: SFMsgpackScript.encode(_msgpack_payload))
+	_bench("msgpack_keys_cold", 10000, func() -> void: _msgpack_keys_cold())
+	for index: int in 512:
+		_msgpack_key_churn.append({"field_%d" % index: index})
+	_bench("msgpack_keys_churn", 20000, func() -> void: _msgpack_keys_churn())
 	_bench("msgpack_roundtrip", 20000, func() -> void: _msgpack_roundtrip())
 	for count: int in [256, 4096]:
 		_binary_values.clear()
@@ -131,6 +138,16 @@ func _init() -> void:
 			func() -> void: SFBinaryCodecScript.decode_payload(_binary_values)
 		)
 	quit(0)
+
+
+func _msgpack_keys_cold() -> void:
+	SFMsgpackScript._key_memo.clear()
+	SFMsgpackScript.encode(_msgpack_payload)
+
+
+func _msgpack_keys_churn() -> void:
+	SFMsgpackScript.encode(_msgpack_key_churn[_msgpack_key_index])
+	_msgpack_key_index = (_msgpack_key_index + 1) % _msgpack_key_churn.size()
 
 
 func _bench(label: String, iterations: int, operation: Callable) -> void:

@@ -10,11 +10,12 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections import deque
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import ClassVar
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page, Request, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENE = "tests/smoke/webrtc_interop_drill.tscn"
@@ -61,13 +62,70 @@ class RelayHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class BrowserObservation:
+    def __init__(self, signal_url: str) -> None:
+        self.signal_url = signal_url + "/signal/"
+        self.inflight: dict[Request, float] = {}
+        self.completed = 0
+        self.failed = 0
+        self.last_console: float | None = None
+        self.last_progress: float | None = None
+        self.recent: deque[dict[str, object]] = deque(maxlen=16)
+
+    def console(self, message: str) -> None:
+        self.last_console = time.monotonic()
+        if message.startswith("WEBRTC_INTEROP_PROGRESS "):
+            self.last_progress = self.last_console
+
+    def started(self, request: Request) -> None:
+        if request.url.startswith(self.signal_url):
+            self.inflight[request] = time.monotonic()
+
+    def finished(self, request: Request, *, failed: bool = False) -> None:
+        started = self.inflight.pop(request, None)
+        if started is None:
+            return
+        self.completed += not failed
+        self.failed += failed
+        self.recent.append(
+            {
+                "method": request.method,
+                "seat": request.url.removeprefix(self.signal_url),
+                "elapsed_ms": round((time.monotonic() - started) * 1000),
+                "failed": failed,
+            }
+        )
+
+    def snapshot(self) -> dict[str, object]:
+        now = time.monotonic()
+        return {
+            "last_console_age_ms": (
+                round((now - self.last_console) * 1000) if self.last_console is not None else None
+            ),
+            "last_progress_age_ms": (
+                round((now - self.last_progress) * 1000) if self.last_progress is not None else None
+            ),
+            "completed_requests": self.completed,
+            "failed_requests": self.failed,
+            "inflight_requests": [
+                {
+                    "method": request.method,
+                    "seat": request.url.removeprefix(self.signal_url),
+                    "age_ms": round((now - started) * 1000),
+                }
+                for request, started in self.inflight.items()
+            ],
+            "recent_requests": list(self.recent),
+        }
+
+
 def prepare(project: Path, extension: Path | None, addon_root: Path) -> None:
     shutil.copytree(addon_root / "addons/signal_fish", project / "addons/signal_fish")
     if extension:
         shutil.copytree(extension, project / "addons/webrtc_native")
     tests = project / "tests/smoke"
     tests.mkdir(parents=True)
-    for name in ("webrtc_interop_drill.gd", "webrtc_interop_drill.tscn"):
+    for name in ("webrtc_interop_drill.gd", "webrtc_interop_drill.tscn", "webrtc_rpc_probe.gd"):
         shutil.copy2(ROOT / "tests/smoke" / name, tests / name)
     debug = (ROOT / "project.godot").read_text().split("[debug]\n", 1)[1].split("\n[", 1)[0]
     (project / "project.godot").write_text(PROJECT + "\n[debug]\n" + debug)
@@ -75,6 +133,12 @@ def prepare(project: Path, extension: Path | None, addon_root: Path) -> None:
     preset = preset.replace('exclude_filter="tests/*,', 'exclude_filter="')
     (project / "export_presets.cfg").write_text(preset)
     (project / "build/web").mkdir(parents=True)
+
+
+def engine_failed(output: str) -> bool:
+    return "SCRIPT ERROR" in output or any(
+        line.startswith(("ERROR:", "USER ERROR:")) for line in output.splitlines()
+    )
 
 
 def checked(command: list[str], log: Path) -> None:
@@ -85,7 +149,7 @@ def checked(command: list[str], log: Path) -> None:
         timeout=120,
     )
     log.write_bytes(result.stdout)
-    if result.returncode or b"SCRIPT ERROR" in result.stdout:
+    if result.returncode or engine_failed(result.stdout.decode(errors="replace")):
         raise RuntimeError(f"Command failed; see {log}")
 
 
@@ -93,8 +157,10 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
     print(output)
     lines = output.splitlines()
     passed = f"WEBRTC_INTEROP_PASS seat={seat}" in lines and not any(
-        token in output for token in ("SCRIPT ERROR", "PAGE_ERROR", "WEBRTC_INTEROP_FAIL")
+        token in output
+        for token in ("SCRIPT ERROR", "PAGE_ERROR", "WEBRTC_INTEROP_FAIL", "BROWSER_CRASH")
     )
+    passed = passed and not engine_failed(output)
     failure = next((line for line in lines if line.startswith("WEBRTC_INTEROP_FAIL ")), "")
     diagnostic = None
     if failure:
@@ -127,6 +193,7 @@ def observe_browser(page: Page, process: subprocess.Popen[bytes], messages: list
             message == "WEBRTC_INTEROP_PASS seat=1"
             or message.startswith("WEBRTC_INTEROP_FAIL ")
             or message.startswith("PAGE_ERROR ")
+            or message == "BROWSER_CRASH"
             for message in messages
         ):
             return ""
@@ -169,6 +236,8 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
     messages: list[str] = []
     driver_error = ""
     browser_version = ""
+    observation = BrowserObservation(url)
+    browser_observation: dict[str, object] = {}
     try:
         process = subprocess.Popen(  # noqa: S603
             [
@@ -179,8 +248,10 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 "--",
                 url,
                 *(["--mixed-traffic"] if args.mixed_traffic else []),
+                *(["--rpc-traffic"] if args.rpc_traffic else []),
                 *(["--metadata-probe"] if args.metadata_probe else []),
                 *(["--channel-receive"] if args.channel_receive else []),
+                *(["--safe-receive"] if args.safe_receive else []),
             ],
             stdout=native_log,
             stderr=subprocess.STDOUT,
@@ -194,16 +265,30 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
             browser_version = browser.version
             try:
                 page = browser.new_page()
-                page.on("console", lambda message: messages.append(message.text))
+
+                def console_message(message: str) -> None:
+                    messages.append(message)
+                    observation.console(message)
+
+                page.on("console", lambda message: console_message(message.text))
+                page.on("crash", lambda _: console_message("BROWSER_CRASH"))
+                page.on("request", observation.started)
+                page.on("requestfinished", observation.finished)
+                page.on("requestfailed", lambda request: observation.finished(request, failed=True))
                 page.on("pageerror", lambda error: messages.append("PAGE_ERROR " + str(error)))
                 query = "?mixed_traffic=1" if args.mixed_traffic else ""
                 if args.metadata_probe:
                     query = "?metadata_probe=1"
+                if args.rpc_traffic:
+                    query += ("&" if query else "?") + "rpc_traffic=1"
+                if args.safe_receive:
+                    query += ("&" if query else "?") + "safe_receive=1"
                 if args.channel_receive:
                     query += ("&" if query else "?") + "channel_receive=1"
                 page.goto(url + "/index.html" + query)
                 driver_error = observe_browser(page, process, messages)
             finally:
+                browser_observation = observation.snapshot()
                 (directory / "browser.log").write_text("\n".join(messages))
                 browser.close()
     except Exception as exc:
@@ -235,10 +320,13 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
             evidence = {
                 "driver_error": driver_error,
                 "browser_version": browser_version,
+                "browser_observation": browser_observation,
                 "godot": args.godot,
                 "channel_receive": args.channel_receive,
+                "safe_receive": args.safe_receive,
                 "metadata_probe": args.metadata_probe,
                 "mixed_traffic": args.mixed_traffic,
+                "rpc_traffic": args.rpc_traffic,
                 "native_exit_code": process.returncode if process is not None else None,
                 "seats": seat_results,
             }
@@ -305,6 +393,9 @@ def main() -> None:
     parser.add_argument("--chromium", help="Optional Playwright Chromium executable")
     parser.add_argument("--output", type=Path, help="Keep projects and logs in this new directory")
     parser.add_argument("--repeat", type=positive_count, default=1, help="Trials per addon version")
+    parser.add_argument(
+        "--rpc-traffic", action="store_true", help="Check safe-peer RPC snapshots and positions"
+    )
     scenarios = parser.add_mutually_exclusive_group()
     scenarios.add_argument(
         "--mixed-traffic",
@@ -316,10 +407,16 @@ def main() -> None:
         action="store_true",
         help="Reproduce queued-channel metadata mismatch (issue #403)",
     )
-    parser.add_argument(
+    receivers = parser.add_mutually_exclusive_group()
+    receivers.add_argument(
         "--channel-receive",
         action="store_true",
         help="Read raw gameplay through SFWebRTCMesh.receive_packet() (no RPC)",
+    )
+    receivers.add_argument(
+        "--safe-receive",
+        action="store_true",
+        help="Read packets through the metadata-safe RPC peer",
     )
     parser.add_argument(
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"

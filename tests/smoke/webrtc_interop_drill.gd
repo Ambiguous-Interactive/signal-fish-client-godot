@@ -3,6 +3,7 @@ extends Node
 
 ## Opt-in native/browser gameplay drill driven by check-webrtc-interop.py.
 
+const RpcProbeScript = preload("res://tests/smoke/webrtc_rpc_probe.gd")
 const MeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const ClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SessionScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
@@ -26,8 +27,11 @@ var _outbox: HTTPRequest
 var _url := ""
 var _seat := 0
 var _mixed_traffic := false
+var _rpc_traffic := false
+var _rpc_probe: RpcProbeScript
 var _metadata_probe := false
 var _channel_receive := false
+var _safe_receive := false
 var _metadata_packets: Array[Dictionary] = []
 var _pending: Array[Dictionary] = []
 var _markers: Dictionary = {}
@@ -69,11 +73,17 @@ func _ready() -> void:
 	_start_stage("setup")
 	if _seat == 1:
 		_url = JavaScriptBridge.eval("window.location.origin")
+		_rpc_traffic = JavaScriptBridge.eval(
+			"new URLSearchParams(window.location.search).get('rpc_traffic') === '1'"
+		)
 		_mixed_traffic = JavaScriptBridge.eval(
 			"new URLSearchParams(window.location.search).get('mixed_traffic') === '1'"
 		)
 		_metadata_probe = JavaScriptBridge.eval(
 			"new URLSearchParams(window.location.search).get('metadata_probe') === '1'"
+		)
+		_safe_receive = JavaScriptBridge.eval(
+			"new URLSearchParams(window.location.search).get('safe_receive') === '1'"
 		)
 		_channel_receive = JavaScriptBridge.eval(
 			"new URLSearchParams(window.location.search).get('channel_receive') === '1'"
@@ -89,10 +99,14 @@ func _ready() -> void:
 		_url = args[0]
 		for option: String in args.slice(1):
 			match option:
+				"--rpc-traffic":
+					_rpc_traffic = true
 				"--mixed-traffic":
 					_mixed_traffic = true
 				"--metadata-probe":
 					_metadata_probe = true
+				"--safe-receive":
+					_safe_receive = true
 				"--channel-receive":
 					_channel_receive = true
 				_:
@@ -116,6 +130,9 @@ func _ready() -> void:
 		_pending.append({"generation": generation, "payload": payload})
 	_mesh = MeshScript.new()
 	_mesh.attach(_client)
+	if (_safe_receive or _rpc_traffic) and not _mesh.has_method("get_safe_multiplayer_peer"):
+		_fail("scenario needs the metadata-safe peer addon")
+		return
 	for phase: int in range(1, 2 if _metadata_probe else 8):
 		if not await _run_phase(phase):
 			_fail("gameplay phase %d failed" % phase)
@@ -300,6 +317,9 @@ func _run_phase(phase: int) -> bool:
 		"remote modes received marker", func() -> bool: return _markers.has("received-%d" % phase)
 	):
 		return false
+	if _rpc_traffic:
+		if not await _rpc_gameplay(phase):
+			return false
 	if _metadata_probe:
 		return await _probe_packet_metadata(multiplayer_peer, phase)
 	if not await _reliable_burst(multiplayer_peer, phase):
@@ -350,6 +370,61 @@ func _run_phase(phase: int) -> bool:
 	return true
 
 
+func _rpc_gameplay(phase: int) -> bool:
+	if not _mesh.has_method("get_safe_multiplayer_peer"):
+		_fail("RPC scenario needs the metadata-safe peer addon")
+		return false
+	_rpc_probe = RpcProbeScript.new()
+	_rpc_probe.name = "RpcProbe"
+	_rpc_probe.phase = phase
+	_rpc_probe.seat = _seat
+	_rpc_probe.expected_peer = MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+	_rpc_probe.outgoing = MsgpackScript.encode(_snapshot_value(phase, _seat))["bytes"]
+	_rpc_probe.expected = MsgpackScript.encode(_snapshot_value(phase, 1 - _seat))["bytes"]
+	add_child(_rpc_probe)
+	var api := SceneMultiplayer.new()
+	get_tree().set_multiplayer(api, _rpc_probe.get_path())
+	api.multiplayer_peer = _mesh.call("get_safe_multiplayer_peer")
+	var rpc_complete := await _wait_until(
+		"RPC peer discovery", func() -> bool: return api.get_peers().size() == 1
+	)
+	if rpc_complete:
+		_pending.append({"marker": "rpc-ready-%d" % phase})
+		rpc_complete = await _wait_until(
+			"remote RPC ready", func() -> bool: return _markers.has("rpc-ready-%d" % phase)
+		)
+	if rpc_complete:
+		rpc_complete = await _wait_until(
+			"RPC snapshot and positions",
+			func() -> bool:
+				_rpc_probe.send_batch()
+				if not _rpc_probe.failure.is_empty():
+					_fail(_rpc_probe.failure)
+					return false
+				return _rpc_probe.complete()
+		)
+	if rpc_complete:
+		_pending.append({"marker": "rpc-done-%d" % phase})
+		rpc_complete = await _wait_until(
+			"remote RPC done", func() -> bool: return _markers.has("rpc-done-%d" % phase)
+		)
+	if not _rpc_probe.failure.is_empty():
+		_fail(_rpc_probe.failure)
+		rpc_complete = false
+	print("interop RPC: seat=%d phase=%d evidence=%s" % [_seat, phase, _rpc_probe.evidence()])
+	get_tree().set_multiplayer(null, _rpc_probe.get_path())
+	api.multiplayer_peer = OfflineMultiplayerPeer.new()
+	_rpc_probe.free()
+	_rpc_probe = null
+	if not rpc_complete:
+		return false
+	_pending.append({"marker": "rpc-released-%d" % phase})
+	return await _wait_until(
+		"remote RPC receiver released",
+		func() -> bool: return _markers.has("rpc-released-%d" % phase)
+	)
+
+
 func _probe_packet_metadata(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	var remote_id := MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
 	peer.set_target_peer(remote_id)
@@ -364,6 +439,7 @@ func _probe_packet_metadata(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 				_packet_count(peer) == 1
 				and (
 					_channel_receive
+					or _safe_receive
 					or peer.get_packet_mode() == MultiplayerPeer.TRANSFER_MODE_UNRELIABLE
 				)
 			)
@@ -620,7 +696,7 @@ func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 		func() -> bool:
 			if not _drain_realtime(peer, phase):
 				return false
-			_interrupted_queued = reliable_channel.get_available_packet_count()
+			_interrupted_queued = _reliable_packet_count(reliable_channel)
 			return (
 				_interrupted_queued == INTERRUPTED_CHUNKS
 				and _packet_count(peer) >= INTERRUPTED_CHUNKS
@@ -628,16 +704,22 @@ func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	):
 		return false
 	_start_stage("receive partial snapshot")
-	for index: int in CONSUMED_CHUNKS:
-		var offset := index * SNAPSHOT_CHUNK_BYTES
+	while _interrupted_received < CONSUMED_CHUNKS:
+		var offset := _interrupted_received * SNAPSHOT_CHUNK_BYTES
 		var received := _read_packet(peer)
 		if received == null:
 			return false
+		if received.transfer_mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE:
+			if not _receive_realtime(
+				received.data, received.peer_id, received.transfer_mode, received.channel, phase
+			):
+				return false
+			continue
 		var sender := received.peer_id
 		var mode := received.transfer_mode
 		var channel := received.channel
 		var packet := received.data
-		_interrupted_queued = reliable_channel.get_available_packet_count()
+		_interrupted_queued = _reliable_packet_count(reliable_channel)
 		if (
 			packet != expected.slice(offset, offset + SNAPSHOT_CHUNK_BYTES)
 			or sender != remote_id
@@ -650,13 +732,20 @@ func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 						"interrupted snapshot bytes or metadata differ: chunk=%d "
 						+ "sender=%d mode=%d channel=%d bytes=%d prefix=%s"
 					)
-					% [index, sender, mode, channel, packet.size(), packet.slice(0, 8).hex_encode()]
+					% [
+						_interrupted_received,
+						sender,
+						mode,
+						channel,
+						packet.size(),
+						packet.slice(0, 8).hex_encode()
+					]
 				)
 			)
 			return false
 		_snapshot_received.append_array(packet)
 		_interrupted_received += 1
-	_interrupted_queued = reliable_channel.get_available_packet_count()
+	_interrupted_queued = _reliable_packet_count(reliable_channel)
 	if _interrupted_queued != INTERRUPTED_CHUNKS - CONSUMED_CHUNKS:
 		_fail("interrupted snapshot queued count differs")
 		return false
@@ -672,6 +761,17 @@ func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 		)
 	)
 	return true
+
+
+func _reliable_packet_count(channel: WebRTCDataChannel) -> int:
+	var cached_reliable := false
+	if _safe_receive:
+		var reader: MultiplayerPeer = _mesh.call("get_safe_multiplayer_peer")
+		cached_reliable = (
+			reader.get_available_packet_count() > 0
+			and reader.get_packet_mode() == MultiplayerPeer.TRANSFER_MODE_RELIABLE
+		)
+	return channel.get_available_packet_count() + (1 if cached_reliable else 0)
 
 
 func _drain_realtime(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
@@ -692,7 +792,10 @@ func _drain_realtime(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 					return false
 		return true
 	while _packet_count(peer) > 0:
-		var mode := peer.get_packet_mode()
+		var reader: MultiplayerPeer = (
+			_mesh.call("get_safe_multiplayer_peer") if _safe_receive else peer
+		)
+		var mode := reader.get_packet_mode()
 		if mode == MultiplayerPeer.TRANSFER_MODE_RELIABLE:
 			break
 		var received := _read_packet(peer)
@@ -706,6 +809,9 @@ func _drain_realtime(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 
 
 func _packet_count(peer: WebRTCMultiplayerPeer) -> int:
+	if _safe_receive:
+		var safe_peer: MultiplayerPeer = _mesh.call("get_safe_multiplayer_peer")
+		return safe_peer.get_available_packet_count() if safe_peer != null else 0
 	if not _channel_receive:
 		return peer.get_available_packet_count()
 	var count := 0
@@ -720,12 +826,15 @@ func _read_packet(peer: WebRTCMultiplayerPeer) -> MeshScript.ReceivedPacket:
 	if _channel_receive:
 		packet = _mesh.receive_packet()
 	else:
+		var reader: MultiplayerPeer = (
+			_mesh.call("get_safe_multiplayer_peer") if _safe_receive else peer
+		)
 		packet = MeshScript.ReceivedPacket.new()
-		packet.peer_id = peer.get_packet_peer()
-		packet.transfer_mode = peer.get_packet_mode()
-		packet.channel = peer.get_packet_channel()
-		packet.data = peer.get_packet()
-		packet.error = peer.get_packet_error()
+		packet.peer_id = reader.get_packet_peer()
+		packet.transfer_mode = reader.get_packet_mode()
+		packet.channel = reader.get_packet_channel()
+		packet.data = reader.get_packet()
+		packet.error = reader.get_packet_error()
 	if packet == null or packet.error != OK:
 		_fail("raw gameplay read failed")
 		return null
@@ -872,8 +981,11 @@ func _snapshot() -> Dictionary:
 		"burst_sent": _burst_sent,
 		"peak_queued": _peak_queued,
 		"mixed_traffic": _mixed_traffic,
+		"rpc_traffic": _rpc_traffic,
+		"rpc": _rpc_probe.evidence() if _rpc_probe != null else {},
 		"metadata_probe": _metadata_probe,
 		"channel_receive": _channel_receive,
+		"safe_receive": _safe_receive,
 		"metadata_packets": _metadata_packets,
 		"realtime_sent_per_mode": _realtime_sent,
 		"realtime_received": _realtime_received,
