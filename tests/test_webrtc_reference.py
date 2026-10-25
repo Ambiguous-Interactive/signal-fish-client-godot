@@ -34,6 +34,7 @@ class ReferenceEvidenceTests(unittest.TestCase):
             "partial_received": 4,
         }
         self.assertTrue(reference.gameplay_phase_passed(phase))
+        self.assertFalse(reference.gameplay_phase_passed(phase, slow_receiver=True))
         for field, total in (
             ("snapshot_sent", 128),
             ("snapshot_received", 128),
@@ -76,6 +77,32 @@ class ReferenceEvidenceTests(unittest.TestCase):
         self.assertFalse(reference.gameplay_phase_passed({**phase, "remote_closed": False}))
         self.assertFalse(reference.gameplay_phase_passed({}))
         self.assertFalse(reference.gameplay_phase_passed({**phase, "received": ["reliable"]}))
+
+    def test_slow_reader_requires_a_real_pause_and_queued_mixed_packets(self) -> None:
+        proof = {
+            "resumed": True,
+            "elapsed_ms": 1500,
+            "received": 8,
+            "received_at_resume": 8,
+            "queued_reliable": 32,
+            "queued_unreliable": 8,
+        }
+        self.assertTrue(reference.slow_receiver_passed(proof, True))
+        for field, value in (
+            ("resumed", False),
+            ("elapsed_ms", 1499),
+            ("elapsed_ms", None),
+            ("received", 0),
+            ("received", 128),
+            ("received_at_resume", 9),
+            ("queued_reliable", 23),
+            ("queued_unreliable", 0),
+        ):
+            with self.subTest(field=field, value=value):
+                self.assertFalse(reference.slow_receiver_passed({**proof, field: value}, True))
+        for missing in (None, {}, {"resumed": True}):
+            self.assertFalse(reference.slow_receiver_passed(missing, True))
+        self.assertTrue(reference.slow_receiver_passed({**proof, "queued_unreliable": 0}, False))
 
     def test_page_listeners_keep_errors_and_crashes(self) -> None:
         page = Mock()

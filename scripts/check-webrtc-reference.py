@@ -70,7 +70,11 @@ def phase_evidence(output: str) -> list[object]:
 
 
 def gameplay_phase_passed(
-    phase: dict[str, object], *, mixed_traffic: bool = False, credit_transport: str = "http"
+    phase: dict[str, object],
+    *,
+    mixed_traffic: bool = False,
+    credit_transport: str = "http",
+    slow_receiver: bool = False,
 ) -> bool:
     return (
         phase.get("sent") is True
@@ -82,11 +86,31 @@ def gameplay_phase_passed(
         and phase.get("remote_closed") is True
         and phase.get("mixed_traffic") is mixed_traffic
         and phase.get("credit_transport") == credit_transport
+        and (not slow_receiver or slow_receiver_passed(phase.get("receive_pause"), mixed_traffic))
         and phase.get("snapshot_acknowledged") == 128
         and phase.get("positions_sent") == (32 if mixed_traffic else 0)
         and phase.get("positions_received") == (32 if mixed_traffic else 0)
         and type(phase.get("peak_outstanding")) is int
         and 0 < cast(int, phase["peak_outstanding"]) <= 32
+    )
+
+
+def slow_receiver_passed(value: object, mixed_traffic: bool) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return (
+        value.get("resumed") is True
+        and type(value.get("elapsed_ms")) is int
+        and value["elapsed_ms"] >= 1500
+        and type(value.get("received")) is int
+        and 8 <= value["received"] < 128
+        and value.get("received_at_resume") == value["received"]
+        and type(value.get("queued_reliable")) is int
+        and value["queued_reliable"] >= 24
+        and (
+            not mixed_traffic
+            or (type(value.get("queued_unreliable")) is int and value["queued_unreliable"] > 0)
+        )
     )
 
 
@@ -125,6 +149,7 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
                 "safe_receive": args.safe_receive,
                 "mixed_traffic": args.mixed_traffic,
                 "credit_transport": args.credit_transport,
+                "slow_receiver": getattr(args, "slow_receiver", False),
             }
         )
     )
@@ -179,6 +204,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "godot_offer": args.godot_offer,
         "mixed_traffic": args.mixed_traffic,
         "credit_transport": args.credit_transport,
+        "slow_receiver": getattr(args, "slow_receiver", False),
         "godot": args.godot,
         "reference_revision": args.reference_revision,
     }
@@ -247,6 +273,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         godot,
                         mixed_traffic=args.mixed_traffic,
                         credit_transport=args.credit_transport,
+                        slow_receiver=getattr(args, "slow_receiver", False),
                     )
                     and gameplay_phase_passed(
                         ref,
@@ -319,6 +346,18 @@ def main() -> None:
     parser.add_argument(
         "--reference-revision", required=True, help="Source commit used to build the Engine modules"
     )
+    parser.add_argument(
+        "--runtime",
+        choices=("all", "native", "web"),
+        default="all",
+        help="Select Godot runtimes to assess",
+    )
+    parser.add_argument(
+        "--offerer",
+        choices=("both", "godot", "reference"),
+        default="both",
+        help="Select the offer role to assess",
+    )
     parser.add_argument("--chromium")
     parser.add_argument(
         "--safe-receive", action="store_true", help="Read through the RPC-safe peer"
@@ -334,6 +373,11 @@ def main() -> None:
         default="http",
         help="Return consumption credit over HTTP markers or reliable data-channel packets",
     )
+    parser.add_argument(
+        "--slow-receiver",
+        action="store_true",
+        help="Pause Godot reads for 1500 ms and require queued snapshot recovery",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--require-gameplay",
@@ -343,8 +387,10 @@ def main() -> None:
     args = parser.parse_args()
     directory = args.output or Path(tempfile.mkdtemp(prefix="sf-reference-assessment-"))
     results = []
-    for web in (False, True):
-        for godot_offer in (True, False):
+    runtimes = (False, True) if args.runtime == "all" else (args.runtime == "web",)
+    offers = (True, False) if args.offerer == "both" else (args.offerer == "godot",)
+    for web in runtimes:
+        for godot_offer in offers:
             args.godot_offer = godot_offer
             name = ("web" if web else "native") + (
                 "-godot-offer" if godot_offer else "-reference-offer"
