@@ -89,6 +89,13 @@ class ObservationTests(unittest.TestCase):
         self.assertIsNone(result["diagnostic"])
         self.assertEqual(result["last_progress"], {"burst_received": 64, "send_inflight_ms": 250})
 
+    def test_engine_banner_records_actual_export_version(self) -> None:
+        result = drill.seat_evidence(
+            "Loading page\nGodot Engine v4.4.1.stable.official.49a5bc7b6\nWEBRTC_INTEROP_PASS seat=1",
+            1,
+        )
+        self.assertEqual(result["engine_banner"], "Godot Engine v4.4.1.stable.official.49a5bc7b6")
+
     def test_evidence_keeps_last_completed_stage(self) -> None:
         output = "\n".join(
             [
@@ -138,6 +145,23 @@ class BrowserObservationTests(unittest.TestCase):
         self.assertEqual(len(result["recent_requests"]), 16)
         self.assertEqual(result["inflight_requests"], [])
         self.assertIsNone(result["last_progress_age_ms"])
+
+    def test_stats_history_survives_missing_engine_progress(self) -> None:
+        observation = drill.BrowserObservation("http://drill.test")
+        with patch.object(drill.time, "monotonic", return_value=1):
+            observation.console('WEBRTC_INTEROP_PROGRESS {"burst_received":32}')
+        for count in range(20):
+            with patch.object(drill.time, "monotonic", return_value=2 + count):
+                observation.console(f'WEBRTC_BROWSER_STATS {{"created":{count}}}')
+        for invalid in ("incomplete", "null", "[]", "42"):
+            observation.console("WEBRTC_BROWSER_STATS " + invalid)
+        with patch.object(drill.time, "monotonic", return_value=22):
+            result = observation.snapshot()
+        self.assertEqual(result["last_progress_age_ms"], 21000)
+        self.assertEqual(result["last_stats_age_ms"], 1000)
+        self.assertEqual(len(result["webrtc_stats"]), 16)
+        self.assertEqual(result["webrtc_stats"][0], {"age_ms": 16000, "sample": {"created": 4}})
+        self.assertEqual(result["webrtc_stats"][-1], {"age_ms": 1000, "sample": {"created": 19}})
 
     def test_engine_error_detection_keeps_normal_console_text(self) -> None:
         for output, failed in (

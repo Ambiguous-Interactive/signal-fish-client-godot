@@ -163,6 +163,38 @@ reference-client rooms on the server relay. The Web responder probes cover
 two channels; ordered traffic and full reference-client sessions still need
 validation.
 
+### Repeat the browser Engine assessment
+
+Run the opt-in assessment against a compiled browser Engine module:
+
+```bash
+python scripts/check-webrtc-reference.py \
+  --native-extension /path/to/webrtc-native \
+  --reference-assets /path/to/reference-modules \
+  --reference-revision b264ec739400b299182eaa918dd6828fd611f3b9 \
+  --output /tmp/reference-assessment
+```
+
+The module directory must contain `engine.js` and its imported modules.
+From a server checkout at the supplied revision, build the module:
+
+```bash
+npx --yes --package esbuild@0.25.12 esbuild \
+  /path/to/server/clients/browser/src/page/engine.ts \
+  --bundle --format=esm --platform=browser \
+  --outfile=/tmp/reference-modules/engine.js
+```
+
+The report records the supplied source revision and module SHA256.
+
+The runner checks native and Web Godot with both offer roles. Each pairing
+rebuilds its link for a second generation and checks reliable and unreliable
+probe bytes in both directions. `assessment_complete` means both generations
+were observed and torn down. `gameplay_passed` requires every probe at both
+ends. Add `--require-gameplay` to fail when any pairing lacks those probes.
+Keep mixed reference-client rooms on server relay until their pairing passes.
+These local Engine checks leave full service sessions for a separate drill.
+
 ## Native reference engine assessment
 
 A local check paired the native
@@ -334,6 +366,31 @@ byte-exact snapshot of 1,024 players in each generation. Both seats release
 the RPC receiver before the raw packet checks resume. `--safe-receive` and
 `--channel-receive` select separate receive paths; choose one. Baselines used
 with the new scenarios must provide `get_safe_multiplayer_peer()`.
+
+`--web-godot /path/to/godot` selects a separate engine for Web import and
+export. `--godot` still selects the native engine. Install the Web engine's
+matching export templates. Each seat report retains its actual engine banner.
+Native and Web Godot 4.4.1 passed the safe metadata probe and seven generations
+of safe-peer RPCs, mixed traffic, exact snapshots and interrupted-link recovery
+with webrtc-native 1.2.2-stable and Chromium 154 on Linux arm64. The engine-only
+metadata control failed on both seats. Godot 4.7.2 and remote networks still
+need live qualification.
+
+`browser_observation.webrtc_stats` retains the last 16 browser transport
+samples, with sample ages and per-connection ids. Samples include channel
+message/byte counts, ICE/SCTP/DTLS state, nominated candidate-pair byte counts
+and round-trip time from the
+[WebRTC statistics API](https://www.w3.org/TR/webrtc-stats/#dom-rtcdatachannelstats).
+Closed connections leave the observer. A stats request that takes over 750 ms
+records an error; other peers and state samples continue. The observer waits
+for that request to finish before requesting its stats again.
+
+These samples run outside Godot's frame loop. In a controlled stopped-frame
+run, the engine heartbeat aged over 14 seconds while browser stats stayed
+fresh. A held HTTP request instead aged over 2.5 seconds while engine progress
+and stats continued. A paused browser main thread can stop both timers;
+compare both sample ages with HTTP request ages. These controls validate the
+diagnostics. The cause of the original intermittent stall remains open.
 
 ### Mixed-mode packet metadata
 
