@@ -318,6 +318,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
             *(["--metadata-probe"] if args.metadata_probe else []),
             *(["--channel-receive"] if args.channel_receive else []),
             *(["--safe-receive"] if args.safe_receive else []),
+            *(["--slow-receiver"] if args.slow_receiver else []),
         ]
         if not args.multi_peer:
             process = subprocess.Popen(native_command, stdout=native_log, stderr=subprocess.STDOUT)  # noqa: S603
@@ -343,6 +344,8 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 page.on("requestfailed", lambda request: observation.finished(request, failed=True))
                 page.on("pageerror", lambda error: messages.append("PAGE_ERROR " + str(error)))
                 query = "?mixed_traffic=1" if args.mixed_traffic else ""
+                if args.slow_receiver:
+                    query = "?slow_receiver=1"
                 if args.metadata_probe:
                     query = "?metadata_probe=1"
                 if args.rpc_recovery:
@@ -376,7 +379,11 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                         "requestfailed",
                         lambda request: extra_observation.finished(request, failed=True),
                     )
-                    extra_page.goto(url + "/index.html?seat=2")
+                    extra_page.goto(
+                        url
+                        + "/index.html?seat=2"
+                        + ("&slow_receiver=1" if args.slow_receiver else "")
+                    )
                     wait_web_startup(page, [(1, messages), (2, extra_messages)])
                     process = subprocess.Popen(  # noqa: S603
                         native_command, stdout=native_log, stderr=subprocess.STDOUT
@@ -429,6 +436,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 "browser_observation": browser_observation,
                 "browser_2_observation": browser_2_observation,
                 "multi_peer": args.multi_peer,
+                "slow_receiver": args.slow_receiver,
                 "godot": args.godot,
                 "web_godot": args.web_godot or args.godot,
                 "channel_receive": args.channel_receive,
@@ -508,6 +516,11 @@ def main() -> None:
     parser.add_argument(
         "--rpc-traffic", action="store_true", help="Check safe-peer RPC snapshots and positions"
     )
+    parser.add_argument(
+        "--slow-receiver",
+        action="store_true",
+        help="With --multi-peer, hold one reader until the other pair finishes",
+    )
     scenarios = parser.add_mutually_exclusive_group()
     scenarios.add_argument(
         "--multi-peer",
@@ -549,6 +562,8 @@ def main() -> None:
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"
     )
     args = parser.parse_args()
+    if args.slow_receiver and not args.multi_peer:
+        parser.error("--slow-receiver requires --multi-peer")
     if args.multi_peer and (args.rpc_traffic or args.channel_receive):
         parser.error("--multi-peer uses the safe receiver and its own gameplay workload")
     if (args.rpc_recovery or args.rpc_plan_recovery) and (

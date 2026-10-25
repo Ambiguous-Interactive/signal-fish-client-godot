@@ -53,7 +53,14 @@ class ObservationTests(unittest.TestCase):
         self.assertFalse(result["passed"])
 
     def test_multi_peer_history_keeps_per_sender_counts_before_stall(self) -> None:
-        phase = {"phase": 1, "received_by_seat_and_mode": {"0": [32, 32, 64], "2": [32, 32, 64]}}
+        phase = {
+            "phase": 1,
+            "received_by_seat_and_mode": {"0": [32, 32, 64], "2": [32, 32, 64]},
+            "reader_paused": True,
+            "sent_by_target": {"0": 8, "2": 8},
+            "acknowledged_by_target": {"0": 0, "2": 0},
+            "credit_wait_age_ms_by_target": {"0": 1200, "2": 1200},
+        }
         output = (
             "WEBRTC_MULTIPEER_PHASE "
             + drill.json.dumps(phase)
