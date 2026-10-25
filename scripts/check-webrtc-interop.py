@@ -245,7 +245,12 @@ def checked(command: list[str], log: Path) -> None:
 
 
 def seat_evidence(
-    output: str, seat: int, *, retirement_case: int | None = None, require_multi_rpc: bool = False
+    output: str,
+    seat: int,
+    *,
+    retirement_case: int | None = None,
+    require_multi_rpc: bool = False,
+    credit_transport: str | None = None,
 ) -> dict[str, object]:
     print(output)
     lines = output.splitlines()
@@ -292,6 +297,16 @@ def seat_evidence(
                 for record in [*multi_peer_phases, *multi_peer_interruptions]
             )
         )
+        if credit_transport is not None:
+            scenario_complete = scenario_complete and all(
+                phase.get("credit_transport") == credit_transport
+                and phase.get("credits_sent_by_target")
+                == {str(target): 8 for target in phase.get("directed_targets", [])}
+                and phase.get("credits_received_by_target")
+                == {str(target): 8 for target in phase.get("directed_targets", [])}
+                and bool(phase.get("directed_targets"))
+                for phase in multi_peer_phases
+            )
         if require_multi_rpc:
             scenario_complete = scenario_complete and all(
                 phase.get("rpc_traffic") is True
@@ -418,7 +433,14 @@ def run_seats(
             str(native),
             "--",
             url,
-            *([f"--retirement-case={retirement_case}"] if args.multi_peer else []),
+            *(
+                [
+                    f"--retirement-case={retirement_case}",
+                    f"--credit-transport={args.credit_transport}",
+                ]
+                if args.multi_peer
+                else []
+            ),
             *(["--mixed-traffic"] if args.mixed_traffic else []),
             *(["--rpc-traffic"] if args.rpc_traffic else []),
             *(["--rpc-recovery"] if args.rpc_recovery else []),
@@ -467,7 +489,10 @@ def run_seats(
                 if args.channel_receive:
                     query += ("&" if query else "?") + "channel_receive=1"
                 if args.multi_peer:
-                    query += ("&" if query else "?") + f"retirement_case={retirement_case}"
+                    query += (
+                        ("&" if query else "?")
+                        + f"retirement_case={retirement_case}&credit_transport={args.credit_transport}"
+                    )
                 page.goto(url + "/index.html" + query)
                 extra_page = None
                 if args.multi_peer:
@@ -492,6 +517,7 @@ def run_seats(
                     extra_page.goto(
                         url
                         + f"/index.html?seat=2&retirement_case={retirement_case}"
+                        + f"&credit_transport={args.credit_transport}"
                         + ("&slow_receiver=1" if args.slow_receiver else "")
                         + ("&rpc_traffic=1" if args.rpc_traffic else "")
                     )
@@ -545,12 +571,14 @@ def run_seats(
                     0,
                     retirement_case=expected_case,
                     require_multi_rpc=args.multi_peer and args.rpc_traffic,
+                    credit_transport=args.credit_transport if args.multi_peer else None,
                 ),
                 seat_evidence(
                     "\n".join(messages),
                     1,
                     retirement_case=expected_case,
                     require_multi_rpc=args.multi_peer and args.rpc_traffic,
+                    credit_transport=args.credit_transport if args.multi_peer else None,
                 ),
             ]
             if args.multi_peer:
@@ -561,6 +589,7 @@ def run_seats(
                         2,
                         retirement_case=expected_case,
                         require_multi_rpc=args.multi_peer and args.rpc_traffic,
+                        credit_transport=args.credit_transport if args.multi_peer else None,
                     )
                 )
             if process is None or process.returncode != 0:
@@ -574,6 +603,7 @@ def run_seats(
                 "retirement_case": retirement_case,
                 "multi_peer": args.multi_peer,
                 "slow_receiver": args.slow_receiver,
+                "credit_transport": args.credit_transport,
                 "godot": args.godot,
                 "web_godot": args.web_godot or args.godot,
                 "channel_receive": args.channel_receive,
@@ -667,6 +697,12 @@ def main() -> None:
         action="store_true",
         help="With --multi-peer, close each required channel on all six directed links",
     )
+    parser.add_argument(
+        "--credit-transport",
+        choices=("http", "webrtc"),
+        default="http",
+        help="With --multi-peer, carry raw snapshot consumption credit over HTTP or WebRTC",
+    )
     scenarios = parser.add_mutually_exclusive_group()
     scenarios.add_argument(
         "--multi-peer",
@@ -708,6 +744,8 @@ def main() -> None:
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"
     )
     args = parser.parse_args()
+    if args.credit_transport != "http" and not args.multi_peer:
+        parser.error("--credit-transport webrtc requires --multi-peer")
     if args.retirement_matrix and not args.multi_peer:
         parser.error("--retirement-matrix requires --multi-peer")
     if args.slow_receiver and not args.multi_peer:

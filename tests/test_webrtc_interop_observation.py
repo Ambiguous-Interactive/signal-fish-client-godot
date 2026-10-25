@@ -343,6 +343,7 @@ class RetirementMatrixTests(unittest.TestCase):
                     channel_receive=False,
                     safe_receive=False,
                     slow_receiver=False,
+                    credit_transport="webrtc" if multi_peer else "http",
                 )
                 browser = MagicMock(version="154-test")
                 playwright = MagicMock()
@@ -369,10 +370,14 @@ class RetirementMatrixTests(unittest.TestCase):
                 command = popen.call_args.args[0]
                 self.assertIn("--rpc-traffic", command)
                 self.assertEqual("--retirement-case=7" in command, multi_peer)
+                self.assertEqual("--credit-transport=webrtc" in command, multi_peer)
                 urls = [call.args[0] for call in browser.new_page.return_value.goto.call_args_list]
                 self.assertTrue(urls)
                 self.assertTrue(all("rpc_traffic=1" in url for url in urls))
                 self.assertTrue(all(("retirement_case=7" in url) == multi_peer for url in urls))
+                self.assertTrue(
+                    all(("credit_transport=webrtc" in url) == multi_peer for url in urls)
+                )
 
     def test_terminal_requires_all_phases_and_the_requested_case(self) -> None:
         phases = [
@@ -392,6 +397,41 @@ class RetirementMatrixTests(unittest.TestCase):
                 evidence = drill.seat_evidence("\n".join(records), 2, retirement_case=expected_case)
                 self.assertEqual(evidence["passed"], complete)
                 self.assertEqual(evidence["scenario_complete"], complete)
+
+    def test_credit_trial_requires_selected_transport_and_full_per_peer_credit(self) -> None:
+        for transport in ("http", "webrtc"):
+            for field, value in (
+                (None, None),
+                ("credit_transport", "other"),
+                ("credits_sent_by_target", {"0": 8, "2": 7}),
+                ("credits_received_by_target", {"0": 7, "2": 8}),
+                ("credits_received_by_target", {"0": 8}),
+                ("credits_sent_by_target", None),
+                ("directed_targets", []),
+            ):
+                phases: list[dict[str, object]] = [
+                    {
+                        "phase": phase,
+                        "retirement_case": 0,
+                        "credit_transport": transport,
+                        "directed_targets": [0, 2],
+                        "credits_sent_by_target": {"0": 8, "2": 8},
+                        "credits_received_by_target": {"0": 8, "2": 8},
+                    }
+                    for phase in (1, 2, 3)
+                ]
+                if field:
+                    phases[1][field] = value
+                lines = ["WEBRTC_MULTIPEER_PHASE " + json.dumps(phase) for phase in phases]
+                lines += [
+                    'WEBRTC_MULTIPEER_INTERRUPTION {"retirement_case":0}',
+                    "WEBRTC_INTEROP_PASS seat=1",
+                ]
+                with self.subTest(transport=transport, field=field, value=value):
+                    evidence = drill.seat_evidence(
+                        "\n".join(lines), 1, retirement_case=0, credit_transport=transport
+                    )
+                    self.assertEqual(evidence["passed"], field is None)
 
     def test_rpc_trial_rejects_raw_only_or_incomplete_rpc_evidence(self) -> None:
         for missing in (None, "rpc_traffic", "same_safe_receiver", "rpc_service_poll_count", "rpc"):

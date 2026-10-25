@@ -567,7 +567,8 @@ Every seat must complete; a missing terminal or engine error fails the trial.
 
 Keep snapshot sends bounded while receivers poll. The three-seat drill limits
 each sender to eight unacknowledged reliable chunks per recipient. Each
-recipient acknowledges consumed chunks through the drill's signaling relay. An
+recipient acknowledges consumed chunks through the drill's signaling relay by
+default. An
 unbounded 64-chunk burst on native/Web Godot 4.3 filled the Web receive buffer:
 its WebRTC stats recorded all 64 messages, while Godot emitted `Buffer full!
 Dropping data.` and the byte checks failed after 55 chunks. Reliable transport
@@ -590,6 +591,33 @@ retain `sent_by_target`, `acknowledged_by_target`,
 credit-wait age with fresh engine progress and browser transport samples
 identifies an application waiting for consumption credit. These counts describe
 the drill's application pacing; the mesh sends packets unchanged.
+
+Add `--credit-transport webrtc` to carry the raw snapshot credits through
+reliable data channels. This keeps the same snapshot sizes, per-peer window,
+paused-reader check, exact transfer modes and recovery steps:
+
+```bash
+python scripts/check-webrtc-interop.py --multi-peer --slow-receiver \
+  --credit-transport webrtc --retirement-matrix \
+  --native-extension /path/to/webrtc-native \
+  --output /tmp/multi-peer-data-credit
+```
+
+Repeat with `--credit-transport http` for the signaling-credit control. Phase
+reports record `credit_transport`, `credits_sent_by_target` and
+`credits_received_by_target`. Each active directed pair must exchange eight
+credits per phase. The driver rejects a report from the wrong credit path or
+with missing per-peer credits. HTTP still carries setup and phase barriers.
+The selected credit path applies to raw traffic; RPC traffic keeps its own
+reliable RPC credits.
+
+WebRTC credits carry the phase, sender, destination and cumulative consumed
+count. Reads check exact bytes, reliable mode, channel zero, the next eight-chunk
+boundary and the sender's outstanding count. Credits share the reliable channel
+with snapshot chunks. These bytes belong to the drill workload; applications
+choose their own gameplay message format. Compare the two credit paths before
+attributing a snapshot wait to data-channel delivery (#396). This comparison
+keeps the engine deadlines and channel negotiation unchanged.
 
 Add `--rpc-traffic` to `--multi-peer` to run actual `SceneMultiplayer` RPCs
 after each raw-packet phase:
@@ -626,7 +654,8 @@ wait, including dispatch and acknowledgment work. They exclude setup, barriers
 and the raw-packet stage. Use repeated runs on an idle machine to compare
 costs; these live measurements are outside the deterministic gate.
 
-The raw stage retains HTTP consumption markers. The RPC stage uses HTTP for
+The raw stage uses the selected credit transport (HTTP by default). The RPC
+stage uses HTTP for
 readiness and completion barriers. Comparing the two stages helps separate
 HTTP credit delays from WebRTC gameplay progress (#396). Keep their workloads
 and timing scopes in view; a faster RPC stage alone cannot identify an earlier
