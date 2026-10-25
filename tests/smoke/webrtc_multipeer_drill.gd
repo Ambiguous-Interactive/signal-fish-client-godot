@@ -23,6 +23,7 @@ var _fast_pair_announced := false
 var _paused_proof: Dictionary = {}
 var _credit_updated: Dictionary = {}
 var _saved: Dictionary = {}
+var _interruption: Dictionary = {}
 var _connections: Dictionary = {}
 var _last_packet: Dictionary = {}
 
@@ -76,7 +77,7 @@ func _ready() -> void:
 		return
 	if not await _traffic(1, _others()):
 		return
-	if not await _select_survivor():
+	if not await _queue_interruption():
 		return
 	if not await _retire_one_link():
 		return
@@ -189,22 +190,8 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 	if _mesh.get_safe_multiplayer_peer() != _safe:
 		_fail("traffic replaced the safe receiver")
 		return false
-	_targets = targets
-	_counts.clear()
-	_sent.clear()
-	_acked.clear()
-	_peak_outstanding.clear()
-	_credit_updated.clear()
-	_paused_proof.clear()
+	_reset_transfer_counts(targets)
 	_reader_paused = _slow_receiver and _seat == 1
-	_reader_resumed = false
-	_fast_pair_announced = false
-	for seat: int in targets:
-		_counts[seat] = [0, 0, 0]
-		_sent[seat] = 0
-		_acked[seat] = 0
-		_peak_outstanding[seat] = 0
-		_credit_updated[seat] = Time.get_ticks_msec()
 	if not await _barrier("traffic-ready-%d" % phase):
 		return false
 	var transfer := func() -> bool:
@@ -326,6 +313,25 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 	return true
 
 
+func _reset_transfer_counts(targets: Array[int]) -> void:
+	_targets = targets
+	_counts.clear()
+	_sent.clear()
+	_acked.clear()
+	_peak_outstanding.clear()
+	_credit_updated.clear()
+	_paused_proof.clear()
+	_last_packet.clear()
+	_reader_resumed = false
+	_fast_pair_announced = false
+	for seat: int in targets:
+		_counts[seat] = [0, 0, 0]
+		_sent[seat] = 0
+		_acked[seat] = 0
+		_peak_outstanding[seat] = 0
+		_credit_updated[seat] = Time.get_ticks_msec()
+
+
 func _ack_marker(phase: int, seat: int, count: int) -> String:
 	return "consumed-%d-%d-%d" % [phase, seat, count]
 
@@ -347,29 +353,68 @@ func _seat_for_id(id: int) -> int:
 	return -1
 
 
-func _select_survivor() -> bool:
+func _queue_interruption() -> bool:
 	_connections.clear()
 	var peer: WebRTCMultiplayerPeer = _mesh.get_multiplayer_peer()
 	for id: int in peer.get_peers():
 		_connections[id] = peer.get_peer(id)["connection"]
-	var recipients := _surviving_seats()
-	for seat: int in recipients:
-		_safe.set_target_peer(MeshScript.uuid_to_peer_id(ROSTER[seat]))
-		_safe.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
-		if _safe.put_packet(_sample_bytes(2, _seat, seat, 2, 0)) != OK:
-			_fail("survivor marker send failed")
+	_phase = 2
+	_reset_transfer_counts(_others())
+	_reader_paused = false
+	_interruption = {"queued_before_close": 0, "consumed_by_sender_and_mode": {}}
+	if _seat < 2:
+		if not _send_partial_snapshot(1 - _seat):
+			return false
+		if not await _wait_until(
+			"select retiring snapshot",
+			func() -> bool: return _safe.get_available_packet_count() == WINDOW * 3
+		):
+			return false
+		_saved = _selected_metadata()
+		var selected_peer: int = _saved["peer"]
+		if _seat_for_id(selected_peer) != 1 - _seat:
+			_fail("retiring snapshot was not selected")
+			return false
+	if not await _barrier("retiring-snapshot-selected"):
+		return false
+	for seat: int in _surviving_seats():
+		if not _send_partial_snapshot(seat):
 			return false
 	if not await _wait_until(
-		"select surviving packet",
-		func() -> bool: return _safe.get_available_packet_count() >= (1 if _seat < 2 else 2)
+		"queued partial snapshots on all links",
+		func() -> bool: return _safe.get_available_packet_count() == WINDOW * 3 * 2
 	):
 		return false
-	_saved = {
+	if _seat == 2:
+		_saved = _selected_metadata()
+	elif _saved != _selected_metadata():
+		_fail("queued arrivals changed the selected retiring snapshot")
+		return false
+	_interruption["selected_before_close"] = _saved.duplicate()
+	_interruption["queued_before_close"] = _safe.get_available_packet_count()
+	return await _barrier("partial-snapshots-queued")
+
+
+func _selected_metadata() -> Dictionary:
+	return {
 		"peer": _safe.get_packet_peer(),
 		"mode": _safe.get_packet_mode(),
 		"channel": _safe.get_packet_channel()
 	}
-	return await _barrier("survivor-selected")
+
+
+func _send_partial_snapshot(seat: int) -> bool:
+	_safe.set_target_peer(MeshScript.uuid_to_peer_id(ROSTER[seat]))
+	for sequence: int in WINDOW:
+		for mode: int in 3:
+			_safe.transfer_mode = mode as MultiplayerPeer.TransferMode
+			if _safe.put_packet(_sample_bytes(2, _seat, seat, mode, sequence)) != OK:
+				_fail("partial snapshot send failed")
+				return false
+	_sent[seat] = WINDOW
+	_peak_outstanding[seat] = WINDOW
+	_credit_updated[seat] = Time.get_ticks_msec()
+	return true
 
 
 func _retire_one_link() -> bool:
@@ -396,31 +441,47 @@ func _retire_one_link() -> bool:
 		if not peer.has_peer(id) or peer.get_peer(id)["connection"] != _connections[id]:
 			_fail("selective retirement replaced an unrelated connection")
 			return false
-	if (
-		_saved
-		!= {
-			"peer": _safe.get_packet_peer(),
-			"mode": _safe.get_packet_mode(),
-			"channel": _safe.get_packet_channel()
-		}
-	):
+	if _seat == 2 and _saved != _selected_metadata():
 		_fail("selective retirement changed the surviving selected metadata")
 		return false
-	var seen: Dictionary = {}
-	var remaining := 1 if _seat < 2 else 2
-	for _index: int in remaining:
+	_interruption["selected_after_close"] = _selected_metadata()
+	_interruption["queued_after_close"] = _safe.get_available_packet_count()
+	var expected := WINDOW * 3 * _surviving_seats().size()
+	if _safe.get_available_packet_count() != expected:
+		_fail("retirement discarded surviving packets or retained retired packets")
+		return false
+	var consumed: Dictionary = {}
+	for seat: int in _surviving_seats():
+		consumed[seat] = [0, 0, 0]
+	_interruption["consumed_by_sender_and_mode"] = consumed
+	for _index: int in expected:
 		var seat := _seat_for_id(_safe.get_packet_peer())
-		if not _surviving_seats().has(seat) or seen.has(seat):
-			_fail("survivor sender is missing or repeated")
+		var mode := _safe.get_packet_mode()
+		if not consumed.has(seat) or mode < 0 or mode > 2 or _safe.get_packet_channel() != 0:
+			_fail("partial snapshot sender or metadata differs after retirement")
 			return false
-		seen[seat] = true
-		if _safe.get_packet_mode() != 2 or _safe.get_packet_channel() != 0:
-			_fail("survivor metadata differs")
-			return false
+		var counts: Array = consumed[seat]
+		var sequence: int = counts[mode]
 		var data := _safe.get_packet()
-		if _safe.get_packet_error() != OK or data != _sample_bytes(2, seat, _seat, 2, 0):
-			_fail("survivor bytes differ after unrelated retirement")
+		if (
+			_safe.get_packet_error() != OK
+			or sequence >= WINDOW
+			or data != _sample_bytes(2, seat, _seat, mode, sequence)
+		):
+			_fail("partial snapshot bytes or sequence differ after retirement")
 			return false
+		counts[mode] += 1
+	for counts: Array in consumed.values():
+		if counts != [WINDOW, WINDOW, WINDOW]:
+			_fail("partial snapshot lost a transfer mode after retirement")
+			return false
+	if _safe.get_available_packet_count() != 0:
+		_fail("partial snapshot retained extra or retired bytes")
+		return false
+	_interruption["same_safe_receiver"] = _mesh.get_safe_multiplayer_peer() == _safe
+	if not await _barrier("partial-snapshots-consumed"):
+		return false
+	print("WEBRTC_MULTIPEER_INTERRUPTION " + JSON.stringify(_snapshot()))
 	return true
 
 
@@ -446,7 +507,7 @@ func _snapshot() -> Dictionary:
 	snapshot["reader_paused"] = _reader_paused
 	snapshot["reader_resumed"] = _reader_resumed
 	snapshot["fast_pair_completed_while_reader_paused"] = _fast_pair_announced
-	snapshot["selected_survivor"] = _saved
+	snapshot["interrupted_snapshot"] = _interruption
 	snapshot["last_directed_packet"] = _last_packet
 	return snapshot
 

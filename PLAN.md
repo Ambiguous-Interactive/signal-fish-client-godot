@@ -18,7 +18,7 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 ## Next work
 
 - [ ] Complete upstream engine metadata repair and remote-network/multi-peer
-      qualification beyond the local three-seat delayed-reader drill for the
+      qualification beyond the local three-seat snapshot-interruption drill for the
       opt-in safe RPC peer (#403).
 - [ ] Complete mesh channel interoperability with the reference engines (#355),
       including full service sessions and native reference-engine recovery.
