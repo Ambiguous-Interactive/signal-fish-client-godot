@@ -12,6 +12,9 @@ const CHUNKS := 64
 const SAMPLES := 32
 const WINDOW := 8
 
+var _credit_transport := "http"
+var _credits_sent: Dictionary = {}
+var _credits_received: Dictionary = {}
 var _rpc_multi_proof: Dictionary = {}
 var _rpc_multi_reader_paused := false
 var _rpc_multi_reader_resumed := false
@@ -51,6 +54,9 @@ func _ready() -> void:
 			"new URLSearchParams(window.location.search).get('seat') || '1'"
 		)
 		_seat = seat_text.to_int()
+		_credit_transport = JavaScriptBridge.eval(
+			"new URLSearchParams(window.location.search).get('credit_transport') || 'http'"
+		)
 		_slow_receiver = JavaScriptBridge.eval(
 			"new URLSearchParams(window.location.search).has('slow_receiver')"
 		)
@@ -67,8 +73,13 @@ func _ready() -> void:
 		_slow_receiver = OS.get_cmdline_user_args().has("--slow-receiver")
 		_rpc_traffic = OS.get_cmdline_user_args().has("--rpc-traffic")
 		for arg: String in OS.get_cmdline_user_args():
+			if arg.begins_with("--credit-transport="):
+				_credit_transport = arg.trim_prefix("--credit-transport=")
 			if arg.begins_with("--retirement-case="):
 				_retirement_case = arg.trim_prefix("--retirement-case=").to_int()
+	if _credit_transport not in ["http", "webrtc"]:
+		_fail("unknown consumption credit transport")
+		return
 	_closing_seat = int(float(_retirement_case) / 6)
 	_remote_seat = (_closing_seat + 1 + int(float(_retirement_case % 6) / 3)) % 3
 	_closing_channel = _retirement_case % 3
@@ -263,6 +274,21 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 				"bytes": data.size(),
 				"sequence": data.decode_u32(0) if data.size() >= 4 else -1
 			}
+			if data.size() == 20 or (data.size() >= 4 and data.decode_u32(0) == 0xFFFFFFFF):
+				var count := int(data.decode_u32(16)) if data.size() == 20 else -1
+				if (
+					_credit_transport != "webrtc"
+					or mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+					or count != _acked[seat] + WINDOW
+					or count > _sent[seat]
+					or data != _credit_bytes(phase, seat, _seat, count)
+				):
+					_fail("multi-peer consumption credit bytes, sequence or metadata differ")
+					return false
+				_acked[seat] = count
+				_credits_received[seat] += 1
+				_credit_updated[seat] = Time.get_ticks_msec()
+				continue
 			var counts: Array = _counts[seat]
 			var sequence := int(data.decode_u32(0)) if data.size() >= 4 else -1
 			var limit := CHUNKS if mode == MultiplayerPeer.TRANSFER_MODE_RELIABLE else SAMPLES
@@ -276,16 +302,26 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 			counts[mode] += 1
 			var consumed: int = counts[mode]
 			if mode == 2 and consumed % WINDOW == 0:
-				_pending.append(
-					{"to": seat, "from": _seat, "marker": _ack_marker(phase, _seat, consumed)}
-				)
+				if _credit_transport == "http":
+					_pending.append(
+						{"to": seat, "from": _seat, "marker": _ack_marker(phase, _seat, consumed)}
+					)
+				else:
+					_safe.set_target_peer(sender)
+					_safe.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
+					if _safe.put_packet(_credit_bytes(phase, _seat, seat, consumed)) != OK:
+						_fail("multi-peer consumption credit send failed")
+						return false
+				_credits_sent[seat] += 1
 		for seat: int in targets:
 			var acknowledged: int = _acked[seat]
 			while (
-				acknowledged < CHUNKS
+				_credit_transport == "http"
+				and acknowledged < CHUNKS
 				and _markers.has(_ack_marker(phase, seat, acknowledged + WINDOW))
 			):
 				acknowledged += WINDOW
+				_credits_received[seat] += 1
 			if acknowledged != _acked[seat]:
 				_credit_updated[seat] = Time.get_ticks_msec()
 			_acked[seat] = acknowledged
@@ -438,6 +474,8 @@ func _reset_transfer_counts(targets: Array[int]) -> void:
 	_acked.clear()
 	_peak_outstanding.clear()
 	_credit_updated.clear()
+	_credits_sent.clear()
+	_credits_received.clear()
 	_paused_proof.clear()
 	_last_packet.clear()
 	_reader_resumed = false
@@ -446,8 +484,21 @@ func _reset_transfer_counts(targets: Array[int]) -> void:
 		_counts[seat] = [0, 0, 0]
 		_sent[seat] = 0
 		_acked[seat] = 0
+		_credits_sent[seat] = 0
+		_credits_received[seat] = 0
 		_peak_outstanding[seat] = 0
 		_credit_updated[seat] = Time.get_ticks_msec()
+
+
+func _credit_bytes(phase: int, sender: int, target: int, count: int) -> PackedByteArray:
+	var data := PackedByteArray()
+	data.resize(20)
+	data.encode_u32(0, 0xFFFFFFFF)
+	data.encode_u32(4, phase)
+	data.encode_u32(8, sender)
+	data.encode_u32(12, target)
+	data.encode_u32(16, count)
+	return data
 
 
 func _ack_marker(phase: int, seat: int, count: int) -> String:
@@ -609,6 +660,9 @@ func _retire_one_link() -> bool:
 func _snapshot() -> Dictionary:
 	var snapshot := super._snapshot()
 	snapshot["multi_peer"] = true
+	snapshot["credit_transport"] = _credit_transport
+	snapshot["credits_sent_by_target"] = _credits_sent
+	snapshot["credits_received_by_target"] = _credits_received
 	snapshot["rpc_independent_pair_proof"] = _rpc_multi_proof
 	snapshot["rpc_reader_paused"] = _rpc_multi_reader_paused
 	snapshot["rpc_reader_resumed"] = _rpc_multi_reader_resumed
