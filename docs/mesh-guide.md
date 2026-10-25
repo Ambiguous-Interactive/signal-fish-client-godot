@@ -508,6 +508,47 @@ credit-wait age with fresh engine progress and browser transport samples
 identifies an application waiting for consumption credit. These counts describe
 the drill's application pacing; the mesh sends packets unchanged.
 
+Add `--rpc-traffic` to `--multi-peer` to run actual `SceneMultiplayer` RPCs
+after each raw-packet phase:
+
+```bash
+python scripts/check-webrtc-interop.py --multi-peer --rpc-traffic --slow-receiver \
+  --native-extension /path/to/webrtc-native \
+  --output /tmp/multi-peer-rpc
+```
+
+One assigned RPC API and safe peer stay in place through selective link loss
+and the fresh triangle. Each directed pair exchanges 64 snapshot chunks and
+32 positions per unreliable mode. RPC handlers check sender, destination,
+generation, sequence and exact bytes. This local check requires every sample;
+it does not simulate packet loss. Combine it with `--retirement-matrix` to
+repeat the RPC stages for every required-channel closure. The driver allows
+120 seconds per Web seat for this added workload. Each engine wait still
+uses its existing 15-second deadline.
+
+The RPC workload returns credit through reliable gameplay RPCs. Each target
+has an eight-chunk window. With `--slow-receiver`, seat 1 pauses RPC polling
+while seats 0 and 2 finish their own exchanges. Their
+`rpc_independent_pair_proof` must show zero credit and eight outstanding chunks
+for seat 1. The paused reader then catches up. A failed or disconnected peer's
+assembly and credit are cleared before the next phase; surviving links keep
+the same connections.
+
+Phase reports include `rpc.received_by_peer_and_mode`, sent and acknowledged
+counts, peak outstanding chunks, and `credit_round_trip_us_by_peer`. These
+round trips include receiver scheduling and consumption. They are application
+measurements. `rpc_service_poll_count`, `rpc_service_poll_total_us` and
+`rpc_service_poll_max_us` measure the explicit RPC polls inside the transfer
+wait, including dispatch and acknowledgment work. They exclude setup, barriers
+and the raw-packet stage. Use repeated runs on an idle machine to compare
+costs; these live measurements are outside the deterministic gate.
+
+The raw stage retains HTTP consumption markers. The RPC stage uses HTTP for
+readiness and completion barriers. Comparing the two stages helps separate
+HTTP credit delays from WebRTC gameplay progress (#396). Keep their workloads
+and timing scopes in view; a faster RPC stage alone cannot identify an earlier
+timeout's cause.
+
 `--web-godot /path/to/godot` selects a separate engine for Web import and
 export. `--godot` still selects the native engine. Install the Web engine's
 matching export templates. Each seat report retains its actual engine banner.

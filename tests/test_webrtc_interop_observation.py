@@ -239,6 +239,15 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(page.wait_for_timeout.call_count, 2)
         self.assertEqual(messages[-1], "WEBRTC_INTEROP_PASS seat=0")
 
+    def test_longer_workload_keeps_a_bounded_driver_deadline(self) -> None:
+        process = Mock()
+        process.poll.return_value = 0
+        page = Mock()
+        with patch.object(drill.time, "monotonic", side_effect=[0, 0, 70, 120]):
+            reason = drill.observe_browser(cast(Page, page), process, [], timeout_seconds=120)
+        self.assertEqual(reason, "browser observation timed out after 120 seconds")
+        self.assertEqual(page.wait_for_timeout.call_count, 2)
+
     def test_native_failure_reports_driver_stop(self) -> None:
         process = Mock()
         process.poll.return_value = 1
@@ -327,7 +336,7 @@ class RetirementMatrixTests(unittest.TestCase):
                     chromium=None,
                     multi_peer=multi_peer,
                     mixed_traffic=False,
-                    rpc_traffic=False,
+                    rpc_traffic=True,
                     rpc_recovery=False,
                     rpc_plan_recovery=False,
                     metadata_probe=False,
@@ -358,9 +367,11 @@ class RetirementMatrixTests(unittest.TestCase):
                         retirement_case=7,
                     )
                 command = popen.call_args.args[0]
+                self.assertIn("--rpc-traffic", command)
                 self.assertEqual("--retirement-case=7" in command, multi_peer)
                 urls = [call.args[0] for call in browser.new_page.return_value.goto.call_args_list]
                 self.assertTrue(urls)
+                self.assertTrue(all("rpc_traffic=1" in url for url in urls))
                 self.assertTrue(all(("retirement_case=7" in url) == multi_peer for url in urls))
 
     def test_terminal_requires_all_phases_and_the_requested_case(self) -> None:
@@ -381,6 +392,31 @@ class RetirementMatrixTests(unittest.TestCase):
                 evidence = drill.seat_evidence("\n".join(records), 2, retirement_case=expected_case)
                 self.assertEqual(evidence["passed"], complete)
                 self.assertEqual(evidence["scenario_complete"], complete)
+
+    def test_rpc_trial_rejects_raw_only_or_incomplete_rpc_evidence(self) -> None:
+        for missing in (None, "rpc_traffic", "same_safe_receiver", "rpc_service_poll_count", "rpc"):
+            phases = [
+                {
+                    "phase": phase,
+                    "retirement_case": 0,
+                    "rpc_traffic": True,
+                    "same_safe_receiver": True,
+                    "rpc_service_poll_count": 10,
+                    "rpc": {"failure": ""},
+                }
+                for phase in (1, 2, 3)
+            ]
+            if missing:
+                del phases[1][missing]
+            lines = ["WEBRTC_MULTIPEER_PHASE " + json.dumps(phase) for phase in phases]
+            lines += [
+                'WEBRTC_MULTIPEER_INTERRUPTION {"retirement_case":0}',
+                "WEBRTC_INTEROP_PASS seat=1",
+            ]
+            evidence = drill.seat_evidence(
+                "\n".join(lines), 1, retirement_case=0, require_multi_rpc=True
+            )
+            self.assertEqual(evidence["passed"], missing is None)
 
     def test_matrix_keeps_all_cases_after_failure_and_compares_both_addons(self) -> None:
         args = Mock(repeat=1, retirement_matrix=True, baseline=Path("/baseline"))

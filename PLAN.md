@@ -17,14 +17,13 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Complete upstream engine metadata repair and remote-network/multi-peer
-      qualification beyond the local three-seat required-channel retirement matrix for the
-      opt-in safe RPC peer (#403).
+- [ ] Complete upstream engine metadata repair and remote-network qualification
+      for the opt-in safe RPC peer (#403).
 - [ ] Complete mesh channel interoperability with the reference engines (#355),
       including full service sessions and native reference-engine recovery.
-- [ ] Isolate the captured native/browser stream stall using browser request
-      timings, relay marker queue dwell, engine completion durations and
-      transport progress (#396; see
+- [ ] Isolate the captured native/browser stream stall using HTTP-credit and
+      RPC-credit controls with request, relay, engine and transport timings
+      (#396; see
       `docs/mesh-guide.md`).
 
 Next session: choose one item below as the sole milestone and finish its PR

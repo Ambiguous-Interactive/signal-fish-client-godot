@@ -1,6 +1,8 @@
 extends "res://tests/smoke/webrtc_interop_drill.gd"
 # gdlint: disable=max-returns
 
+const MultiRpcProbeScript = preload("res://tests/smoke/webrtc_multipeer_rpc_probe.gd")
+
 const ROSTER: Array[String] = [
 	"10000000-0000-0000-0000-000000000001",
 	"10000000-0000-0000-0000-000000000002",
@@ -10,6 +12,13 @@ const CHUNKS := 64
 const SAMPLES := 32
 const WINDOW := 8
 
+var _rpc_multi_proof: Dictionary = {}
+var _rpc_multi_reader_paused := false
+var _rpc_multi_reader_resumed := false
+var _rpc_multi_fast_pair := false
+var _rpc_multi_poll_us := 0
+var _rpc_multi_max_poll_us := 0
+var _rpc_multi_poll_count := 0
 var _retirement_case := 0
 var _closing_seat := 0
 var _remote_seat := 1
@@ -49,10 +58,14 @@ func _ready() -> void:
 			"new URLSearchParams(window.location.search).get('retirement_case') || '0'"
 		)
 		_retirement_case = case_text.to_int()
+		_rpc_traffic = JavaScriptBridge.eval(
+			"new URLSearchParams(window.location.search).has('rpc_traffic')"
+		)
 		_url = JavaScriptBridge.eval("window.location.origin")
 	else:
 		_url = OS.get_cmdline_user_args()[0]
 		_slow_receiver = OS.get_cmdline_user_args().has("--slow-receiver")
+		_rpc_traffic = OS.get_cmdline_user_args().has("--rpc-traffic")
 		for arg: String in OS.get_cmdline_user_args():
 			if arg.begins_with("--retirement-case="):
 				_retirement_case = arg.trim_prefix("--retirement-case=").to_int()
@@ -83,6 +96,8 @@ func _ready() -> void:
 	if not await _connect_generation(1):
 		return
 	_safe = _mesh.get_safe_multiplayer_peer()
+	if _rpc_traffic:
+		_setup_multi_rpc()
 	_safe.peer_connected.connect(func(id: int) -> void: _rpc_connected.append(id))
 	_safe.peer_disconnected.connect(func(id: int) -> void: _rpc_disconnected.append(id))
 	if not await _wait_until(
@@ -124,6 +139,7 @@ func _ready() -> void:
 		return
 	if not await _barrier("teardown"):
 		return
+	_release_rpc_recovery()
 	_finished = true
 	_inbox.cancel_request()
 	_outbox.cancel_request()
@@ -330,8 +346,89 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 		return false
 	if not await _barrier("traffic-done-%d" % phase):
 		return false
+	if _rpc_traffic and not await _multi_rpc_traffic(phase, targets):
+		return false
 	print("WEBRTC_MULTIPEER_PHASE " + JSON.stringify(_snapshot()))
 	return true
+
+
+func _setup_multi_rpc() -> void:
+	get_tree().multiplayer_poll = false
+	_rpc_probe = MultiRpcProbeScript.new()
+	_rpc_probe.name = "MultiRpcProbe"
+	add_child(_rpc_probe)
+	_rpc_api = SceneMultiplayer.new()
+	get_tree().set_multiplayer(_rpc_api, _rpc_probe.get_path())
+	_rpc_api.multiplayer_peer = _safe
+
+
+func _multi_rpc_traffic(phase: int, target_seats: Array[int]) -> bool:
+	if _rpc_api.multiplayer_peer != _safe:
+		_fail("three-seat RPC adapter changed")
+		return false
+	var probe: MultiRpcProbeScript = _rpc_probe
+	var ids: Array[int] = []
+	for target: int in target_seats:
+		ids.append(MeshScript.uuid_to_peer_id(ROSTER[target]))
+	probe.reset_multi(phase, _seat, ids)
+	if not await _wait_until(
+		"three-seat RPC discovery",
+		func() -> bool:
+			_rpc_api.poll()
+			return _rpc_api.get_peers().size() == target_seats.size()
+	):
+		return false
+	if not await _barrier("rpc-ready-%d" % phase):
+		return false
+	_rpc_multi_reader_paused = _delay_reader and _seat == 1
+	_rpc_multi_reader_resumed = false
+	_rpc_multi_fast_pair = false
+	_rpc_multi_proof.clear()
+	_rpc_multi_poll_us = 0
+	_rpc_multi_max_poll_us = 0
+	_rpc_multi_poll_count = 0
+	var transfer := func() -> bool:
+		if (
+			_rpc_multi_reader_paused
+			and _markers.has("rpc-fast-%d-0" % phase)
+			and _markers.has("rpc-fast-%d-2" % phase)
+		):
+			_rpc_multi_reader_paused = false
+			_rpc_multi_reader_resumed = true
+		if not _rpc_multi_reader_paused:
+			var started := Time.get_ticks_usec()
+			var error := _rpc_api.poll()
+			var elapsed := Time.get_ticks_usec() - started
+			_rpc_multi_poll_us += elapsed
+			_rpc_multi_max_poll_us = maxi(_rpc_multi_max_poll_us, elapsed)
+			_rpc_multi_poll_count += 1
+			if error != OK:
+				_fail("three-seat RPC poll failed")
+				return false
+		probe.send_batch()
+		if not probe.failure.is_empty():
+			_fail(probe.failure)
+			return false
+		if _delay_reader and _seat != 1 and not _rpc_multi_fast_pair:
+			var fast_seat := 2 if _seat == 0 else 0
+			if probe.pair_complete(MeshScript.uuid_to_peer_id(ROSTER[fast_seat])):
+				var slow_id := MeshScript.uuid_to_peer_id(ROSTER[1])
+				if (
+					probe.acknowledged.get(slow_id, 0) != 0
+					or probe.sent_by_peer.get(slow_id, WINDOW) != WINDOW
+				):
+					_fail("paused RPC reader advanced before independent pair completed")
+					return false
+				_rpc_multi_fast_pair = true
+				_rpc_multi_proof = probe.evidence()
+				_pending.append(
+					{"to": 1, "from": _seat, "marker": "rpc-fast-%d-%d" % [phase, _seat]}
+				)
+		return probe.complete() and not _rpc_multi_reader_paused
+	if not await _wait_until("three-seat RPC snapshots with data-channel credit", transfer):
+		return false
+	# Every sample is consumed before any seat may resume raw packet reads.
+	return await _barrier("rpc-done-%d" % phase) and probe.failure.is_empty()
 
 
 func _reset_transfer_counts(targets: Array[int]) -> void:
@@ -512,6 +609,13 @@ func _retire_one_link() -> bool:
 func _snapshot() -> Dictionary:
 	var snapshot := super._snapshot()
 	snapshot["multi_peer"] = true
+	snapshot["rpc_independent_pair_proof"] = _rpc_multi_proof
+	snapshot["rpc_reader_paused"] = _rpc_multi_reader_paused
+	snapshot["rpc_reader_resumed"] = _rpc_multi_reader_resumed
+	snapshot["rpc_fast_pair_completed"] = _rpc_multi_fast_pair
+	snapshot["rpc_service_poll_count"] = _rpc_multi_poll_count
+	snapshot["rpc_service_poll_total_us"] = _rpc_multi_poll_us
+	snapshot["rpc_service_poll_max_us"] = _rpc_multi_max_poll_us
 	snapshot["retirement_case"] = _retirement_case
 	snapshot["closing_seat"] = _closing_seat
 	snapshot["remote_seat"] = _remote_seat

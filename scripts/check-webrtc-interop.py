@@ -215,6 +215,7 @@ def prepare(project: Path, extension: Path | None, addon_root: Path) -> None:
         "webrtc_interop_drill.tscn",
         "webrtc_rpc_probe.gd",
         "webrtc_multipeer_drill.gd",
+        "webrtc_multipeer_rpc_probe.gd",
     ):
         shutil.copy2(ROOT / "tests/smoke" / name, tests / name)
     debug = (ROOT / "project.godot").read_text().split("[debug]\n", 1)[1].split("\n[", 1)[0]
@@ -244,7 +245,7 @@ def checked(command: list[str], log: Path) -> None:
 
 
 def seat_evidence(
-    output: str, seat: int, *, retirement_case: int | None = None
+    output: str, seat: int, *, retirement_case: int | None = None, require_multi_rpc: bool = False
 ) -> dict[str, object]:
     print(output)
     lines = output.splitlines()
@@ -291,6 +292,14 @@ def seat_evidence(
                 for record in [*multi_peer_phases, *multi_peer_interruptions]
             )
         )
+        if require_multi_rpc:
+            scenario_complete = scenario_complete and all(
+                phase.get("rpc_traffic") is True
+                and phase.get("same_safe_receiver") is True
+                and phase.get("rpc_service_poll_count", 0) > 0
+                and phase.get("rpc", {}).get("failure") == ""
+                for phase in multi_peer_phases
+            )
         passed = passed and scenario_complete
     return {
         "scenario_complete": scenario_complete,
@@ -309,9 +318,14 @@ def seat_evidence(
 
 
 def observe_browser(
-    page: Page, process: subprocess.Popen[bytes], messages: list[str], seat: int = 1
+    page: Page,
+    process: subprocess.Popen[bytes],
+    messages: list[str],
+    seat: int = 1,
+    *,
+    timeout_seconds: int = 60,
 ) -> str:
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         page.wait_for_timeout(200)
         if any(
@@ -325,7 +339,7 @@ def observe_browser(
             return ""
         if process.poll() not in (None, 0):
             return "native seat exited before browser completion"
-    return "browser observation timed out after 60 seconds"
+    return f"browser observation timed out after {timeout_seconds} seconds"
 
 
 def wait_web_startup(page: Page, outputs: list[tuple[int, list[str]]]) -> None:
@@ -479,6 +493,7 @@ def run_seats(
                         url
                         + f"/index.html?seat=2&retirement_case={retirement_case}"
                         + ("&slow_receiver=1" if args.slow_receiver else "")
+                        + ("&rpc_traffic=1" if args.rpc_traffic else "")
                     )
                     wait_web_startup(page, [(1, messages), (2, extra_messages)])
                     process = subprocess.Popen(  # noqa: S603
@@ -488,9 +503,14 @@ def run_seats(
                     extra_page.evaluate("window.sfMeshStart = true")
                 if process is None:
                     raise RuntimeError("Native seat was not started")
-                driver_error = observe_browser(page, process, messages)
+                timeout_seconds = 120 if args.multi_peer and args.rpc_traffic else 60
+                driver_error = observe_browser(
+                    page, process, messages, timeout_seconds=timeout_seconds
+                )
                 if extra_page is not None and not driver_error:
-                    driver_error = observe_browser(extra_page, process, extra_messages, seat=2)
+                    driver_error = observe_browser(
+                        extra_page, process, extra_messages, seat=2, timeout_seconds=timeout_seconds
+                    )
             finally:
                 browser_observation = observation.snapshot()
                 if args.multi_peer:
@@ -520,13 +540,28 @@ def run_seats(
             native_output = (directory / "native.log").read_text()
             expected_case = retirement_case if args.multi_peer else None
             seat_results = [
-                seat_evidence(native_output, 0, retirement_case=expected_case),
-                seat_evidence("\n".join(messages), 1, retirement_case=expected_case),
+                seat_evidence(
+                    native_output,
+                    0,
+                    retirement_case=expected_case,
+                    require_multi_rpc=args.multi_peer and args.rpc_traffic,
+                ),
+                seat_evidence(
+                    "\n".join(messages),
+                    1,
+                    retirement_case=expected_case,
+                    require_multi_rpc=args.multi_peer and args.rpc_traffic,
+                ),
             ]
             if args.multi_peer:
                 (directory / "browser-2.log").write_text("\n".join(extra_messages))
                 seat_results.append(
-                    seat_evidence("\n".join(extra_messages), 2, retirement_case=expected_case)
+                    seat_evidence(
+                        "\n".join(extra_messages),
+                        2,
+                        retirement_case=expected_case,
+                        require_multi_rpc=args.multi_peer and args.rpc_traffic,
+                    )
                 )
             if process is None or process.returncode != 0:
                 seat_results[0]["passed"] = False
@@ -677,8 +712,8 @@ def main() -> None:
         parser.error("--retirement-matrix requires --multi-peer")
     if args.slow_receiver and not args.multi_peer:
         parser.error("--slow-receiver requires --multi-peer")
-    if args.multi_peer and (args.rpc_traffic or args.channel_receive):
-        parser.error("--multi-peer uses the safe receiver and its own gameplay workload")
+    if args.multi_peer and args.channel_receive:
+        parser.error("--multi-peer uses the safe receiver")
     if (args.rpc_recovery or args.rpc_plan_recovery) and (
         not args.safe_receive or args.rpc_traffic
     ):
