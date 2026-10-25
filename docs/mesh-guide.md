@@ -193,8 +193,10 @@ Each generation also sends a MessagePack snapshot of 1,024 players in
 snapshot, and compares its exact bytes and decoded values. Chunking belongs
 to this drill's application code; the mesh sends packets unchanged.
 Seven generations alternate the offerer. In the first six, each seat closes
-each required channel once. Both seats must release the link and report it
-down before the next generation restores gameplay. The final generation uses
+each required channel once during a second, incomplete snapshot. Each seat
+sends 12 chunks, consumes eight and leaves four queued. Both seats must
+release those queued packets with the link and report it down before the
+next generation restores gameplay. The final generation uses
 a Relay plan to remove the link. Each generation must produce one up report
 and one down report per seat. Final detach removes the multiplayer peer.
 
@@ -211,7 +213,9 @@ Success requires `WEBRTC_INTEROP_PASS` from both seats and a zero native
 exit code. The runner retains native and browser logs with the projects.
 A failed browser seat still allows the native seat to finish its diagnostic.
 Each trial writes `seats.json` with both verdicts, the last stage, any failure
-snapshot, the native exit code, and any driver error.
+snapshot, the native exit code, and any driver error. Partial-transfer
+failures include sent, received and queued chunk counts plus the received
+and expected snapshot byte counts.
 
 To investigate intermittent failures, use `--repeat 3` and retain `--output`.
 Add `--baseline /path/to/baseline-checkout` to compare that checkout's addon

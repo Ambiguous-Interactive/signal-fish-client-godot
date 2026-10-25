@@ -11,6 +11,8 @@ const SNAPSHOT_CHUNK_BYTES := 1200
 const SNAPSHOT_PLAYERS := 1024
 const BURST_PACKETS := 256
 const STREAM_WINDOW := 32
+const INTERRUPTED_CHUNKS := 12
+const CONSUMED_CHUNKS := 8
 const PLAYERS: Array[String] = [
 	"10000000-0000-0000-0000-000000000001", "10000000-0000-0000-0000-000000000002"
 ]
@@ -37,6 +39,9 @@ var _peak_queued := 0
 var _stage_started := 0
 var _snapshot_received := PackedByteArray()
 var _snapshot_total := 0
+var _interrupted_sent := 0
+var _interrupted_received := 0
+var _interrupted_queued := 0
 
 
 func _ready() -> void:
@@ -149,6 +154,9 @@ func _run_phase(phase: int) -> bool:
 	_peak_queued = 0
 	_snapshot_received.clear()
 	_snapshot_total = 0
+	_interrupted_sent = 0
+	_interrupted_received = 0
+	_interrupted_queued = 0
 	var generation := "40000000-0000-0000-0000-%012d" % phase
 	var ready_marker := "ready-%d" % phase
 	var plan := SessionScript.SessionPlanInfo.new()
@@ -230,6 +238,8 @@ func _run_phase(phase: int) -> bool:
 	):
 		return false
 	if phase <= 6:
+		if not await _interrupt_snapshot(multiplayer_peer, phase):
+			return false
 		_start_stage("close required channel")
 		if _seat == (phase - 1) % 2:
 			var closed_channel: WebRTCDataChannel = channels[(phase - 1) >> 1]
@@ -241,6 +251,7 @@ func _run_phase(phase: int) -> bool:
 		if multiplayer_peer.get_available_packet_count() != 0:
 			_fail("closed channel retained gameplay packets")
 			return false
+	_snapshot_received.clear()
 	_start_stage("relay teardown")
 	var relay := SessionScript.SessionPlanInfo.new()
 	relay.transport = SessionScript.TransportKind.RELAY
@@ -349,6 +360,69 @@ func _reliable_burst(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	return true
 
 
+func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
+	_start_stage("send interrupted snapshot")
+	var remote_id := MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+	var outgoing: Dictionary = MsgpackScript.encode(_snapshot_value(phase + 100, _seat))
+	var incoming: Dictionary = MsgpackScript.encode(_snapshot_value(phase + 100, 1 - _seat))
+	if not outgoing["ok"] or not incoming["ok"]:
+		_fail("interrupted snapshot encode failed")
+		return false
+	var bytes: PackedByteArray = outgoing["bytes"]
+	var expected: PackedByteArray = incoming["bytes"]
+	_snapshot_received.clear()
+	_snapshot_total = expected.size()
+	peer.set_target_peer(remote_id)
+	peer.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
+	for index: int in INTERRUPTED_CHUNKS:
+		var offset := index * SNAPSHOT_CHUNK_BYTES
+		if peer.put_packet(bytes.slice(offset, offset + SNAPSHOT_CHUNK_BYTES)) != OK:
+			_fail("interrupted snapshot send failed")
+			return false
+		_interrupted_sent += 1
+	if not await _wait_until(
+		"interrupted snapshot queued",
+		func() -> bool:
+			_interrupted_queued = peer.get_available_packet_count()
+			return _interrupted_queued == INTERRUPTED_CHUNKS
+	):
+		return false
+	_start_stage("receive partial snapshot")
+	for index: int in CONSUMED_CHUNKS:
+		var offset := index * SNAPSHOT_CHUNK_BYTES
+		var sender := peer.get_packet_peer()
+		var mode := peer.get_packet_mode()
+		var channel := peer.get_packet_channel()
+		var packet := peer.get_packet()
+		_interrupted_queued = peer.get_available_packet_count()
+		if (
+			packet != expected.slice(offset, offset + SNAPSHOT_CHUNK_BYTES)
+			or sender != remote_id
+			or mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+			or channel != 0
+		):
+			_fail("interrupted snapshot bytes or metadata differ")
+			return false
+		_snapshot_received.append_array(packet)
+		_interrupted_received += 1
+	_interrupted_queued = peer.get_available_packet_count()
+	if _interrupted_queued != INTERRUPTED_CHUNKS - CONSUMED_CHUNKS:
+		_fail("interrupted snapshot queued count differs")
+		return false
+	_pending.append({"marker": "partial-%d" % phase})
+	if not await _wait_until(
+		"remote partial snapshot marker", func() -> bool: return _markers.has("partial-%d" % phase)
+	):
+		return false
+	print(
+		(
+			"interop interrupted snapshot: seat=%d phase=%d received_bytes=%d queued=%d total_bytes=%d"
+			% [_seat, phase, _snapshot_received.size(), _interrupted_queued, _snapshot_total]
+		)
+	)
+	return true
+
+
 func _snapshot_value(phase: int, seat: int) -> Dictionary:
 	var players: Array[Dictionary] = []
 	for index: int in SNAPSHOT_PLAYERS:
@@ -421,14 +495,20 @@ func _fail(reason: String) -> void:
 		"peak_queued": _peak_queued,
 		"snapshot_received_bytes": _snapshot_received.size(),
 		"snapshot_expected_bytes": _snapshot_total,
+		"interrupted_sent": _interrupted_sent,
+		"interrupted_received": _interrupted_received,
+		"interrupted_queued": _interrupted_queued,
 		"pending_signals": _pending.size(),
 		"sending": _sending,
 		"receiving": _receiving,
 		"transport_reports": _client.statuses if _client != null else [],
+		"queued_packets": 0,
 		"peers": []
 	}
 	if _mesh != null:
 		var multiplayer_peer: WebRTCMultiplayerPeer = _mesh.get_multiplayer_peer()
+		if multiplayer_peer != null:
+			snapshot["queued_packets"] = multiplayer_peer.get_available_packet_count()
 		for uuid: String in _mesh._peers:
 			var entry: Object = _mesh._peers[uuid]
 			var connection: WebRTCPeerConnection = entry.get("connection")

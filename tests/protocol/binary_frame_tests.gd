@@ -36,6 +36,7 @@ func run_all() -> void:
 		_test_msgpack_utf8_decode,
 		_test_msgpack_encode_widths,
 		_test_msgpack_length_widths,
+		_test_msgpack_map_key_depth,
 		_test_msgpack_non_finite_refusal,
 		_test_msgpack_round_trip_matrix,
 		_test_v2_envelope_canonical_bytes,
@@ -383,6 +384,9 @@ func _test_msgpack_length_widths() -> void:
 		expected_map.append(7)
 		var map_result := SFMsgpackScript.encode({text: 7})
 		_assert_equal(expected_map, map_result["bytes"], "map key uses the same string width")
+		var decoded := SFMsgpackScript.decode(expected_map)
+		_assert_equal(true, decoded["ok"], "map key width decodes")
+		_assert_equal({text: 7}, decoded["value"], "map key text survives decode")
 	for vector: Array in [
 		[0, [0xC4, 0]],
 		[255, [0xC4, 255]],
@@ -399,6 +403,39 @@ func _test_msgpack_length_widths() -> void:
 		expected.append_array(bytes)
 		var result := SFMsgpackScript.encode(bytes)
 		_assert_equal(expected, result["bytes"], "binary length uses the shortest width")
+	_done()
+
+
+func _test_msgpack_map_key_depth() -> void:
+	for wrappers: int in [SFMsgpackScript.MAX_DEPTH - 1, SFMsgpackScript.MAX_DEPTH]:
+		for key: String in ["", "x", "x".repeat(31), "x".repeat(32)]:
+			var encoded := SFMsgpackScript.encode({key: 7})
+			var bytes := PackedByteArray()
+			for _index: int in wrappers:
+				bytes.append(0x91)
+			var encoded_bytes: PackedByteArray = encoded["bytes"]
+			bytes.append_array(encoded_bytes)
+			var decoded := SFMsgpackScript.decode(bytes)
+			_assert_equal(
+				wrappers < SFMsgpackScript.MAX_DEPTH, decoded["ok"], "map key depth is preserved"
+			)
+			if wrappers == SFMsgpackScript.MAX_DEPTH:
+				var partial := SFMsgpackScript.decode(bytes.slice(0, wrappers + 2))
+				_assert_equal(
+					"MessagePack nesting exceeds depth %d" % SFMsgpackScript.MAX_DEPTH,
+					partial["error"],
+					"depth error takes precedence over incomplete key"
+				)
+	for vector: Array in [
+		[[0x81], "truncated MessagePack value"],
+		[[0x81, 0xBF, 0x61], "truncated MessagePack string"],
+		[[0x81, 0xA1, 0x61], "truncated MessagePack value"],
+		[[0x81, 0x01, 0x02], "MessagePack map key is not a string"],
+	]:
+		var raw: Array = vector[0]
+		var decoded := SFMsgpackScript.decode(PackedByteArray(raw))
+		_assert_equal(false, decoded["ok"], "incomplete or non-string map key refused")
+		_assert_equal(vector[1], decoded["error"], "map key decode error preserved")
 	_done()
 
 
