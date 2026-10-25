@@ -28,6 +28,8 @@ var _url := ""
 var _seat := 0
 var _mixed_traffic := false
 var _rpc_recovery := false
+var _rpc_plan_recovery := false
+var _rpc_retirement := ""
 var _rpc_api: SceneMultiplayer
 var _rpc_polling := false
 var _rpc_connected: Array[int] = []
@@ -80,6 +82,9 @@ func _ready() -> void:
 	_start_stage("setup")
 	if _seat == 1:
 		_url = JavaScriptBridge.eval("window.location.origin")
+		_rpc_plan_recovery = JavaScriptBridge.eval(
+			"new URLSearchParams(window.location.search).get('rpc_plan_recovery') === '1'"
+		)
 		_rpc_recovery = JavaScriptBridge.eval(
 			"new URLSearchParams(window.location.search).get('rpc_recovery') === '1'"
 		)
@@ -109,6 +114,8 @@ func _ready() -> void:
 		_url = args[0]
 		for option: String in args.slice(1):
 			match option:
+				"--rpc-plan-recovery":
+					_rpc_plan_recovery = true
 				"--rpc-recovery":
 					_rpc_recovery = true
 				"--rpc-traffic":
@@ -127,6 +134,7 @@ func _ready() -> void:
 		if _mixed_traffic and _metadata_probe:
 			_fail("choose one drill scenario")
 			return
+	_rpc_recovery = _rpc_recovery or _rpc_plan_recovery
 	_inbox = HTTPRequest.new()
 	_outbox = HTTPRequest.new()
 	add_child(_inbox)
@@ -260,6 +268,8 @@ func _release_rpc_recovery() -> void:
 
 func _run_phase(phase: int) -> bool:
 	_phase = phase
+	_rpc_retirement = ""
+	_rpc_selected = false
 	_received_modes.clear()
 	_burst_received[0] = 0
 	_burst_sent = 0
@@ -424,9 +434,12 @@ func _rpc_recovery_gameplay(peer: WebRTCMultiplayerPeer, channels: Array, phase:
 	_rpc_probe.outgoing = MsgpackScript.encode(_snapshot_value(phase, _seat))["bytes"]
 	_rpc_probe.expected = MsgpackScript.encode(_snapshot_value(phase, 1 - _seat))["bytes"]
 	var receiver: MultiplayerPeer = _mesh.call("get_safe_multiplayer_peer")
-	_rpc_api.multiplayer_peer = receiver
+	if not _rpc_plan_recovery or phase == 1:
+		_rpc_api.multiplayer_peer = receiver
+	elif _rpc_api.multiplayer_peer != receiver:
+		_fail("plan recovery replaced the assigned RPC peer")
+		return false
 	_rpc_polling = true
-	_rpc_selected = false
 	if not await _wait_until(
 		"recovery RPC peer discovery", func() -> bool: return _rpc_api.get_peers().size() == 1
 	):
@@ -486,11 +499,28 @@ func _rpc_recovery_gameplay(peer: WebRTCMultiplayerPeer, channels: Array, phase:
 		func() -> bool: return _markers.has("rpc-selected-%d" % phase)
 	):
 		return false
-	if _seat == (phase - 1) % 2:
+	_rpc_retirement = "channel-close"
+	if _rpc_plan_recovery:
+		match (phase - 1) % 3:
+			0:
+				_rpc_retirement = "relay-plan"
+				var relay := SessionScript.SessionPlanInfo.new()
+				relay.transport = SessionScript.TransportKind.RELAY
+				_mesh._apply_plan(relay)
+			1:
+				_rpc_retirement = "empty-generation"
+				var replacement := SessionScript.SessionPlanInfo.new()
+				replacement.generation = "40000000-0000-0000-0001-%012d" % phase
+				replacement.transport = SessionScript.TransportKind.WEBRTC
+				_mesh._apply_plan(replacement)
+			2:
+				_rpc_retirement = "player-left"
+				_client.player_left.emit(PLAYERS[1 - _seat])
+	elif _seat == (phase - 1) % 2:
 		var channel: WebRTCDataChannel = channels[((phase - 1) >> 1) % 3]
 		channel.close()
 	if not await _wait_until(
-		"recovery channel releases RPC link", func() -> bool: return _mesh.get_peer_count() == 0
+		"recovery retirement releases RPC link", func() -> bool: return _mesh.get_peer_count() == 0
 	):
 		return false
 	if receiver.get_available_packet_count() != 0:
@@ -507,11 +537,14 @@ func _rpc_recovery_gameplay(peer: WebRTCMultiplayerPeer, channels: Array, phase:
 		return false
 	var evidence := _rpc_probe.evidence()
 	evidence["phase"] = phase
+	evidence["retirement"] = _rpc_retirement
+	evidence["same_rpc_peer"] = _rpc_api.multiplayer_peer == receiver
 	evidence["connected"] = _rpc_connected.size()
 	evidence["disconnected"] = _rpc_disconnected.size()
 	print("WEBRTC_RPC_RECOVERY_PHASE " + JSON.stringify(evidence))
 	_rpc_polling = false
-	_rpc_api.multiplayer_peer = OfflineMultiplayerPeer.new()
+	if not _rpc_plan_recovery:
+		_rpc_api.multiplayer_peer = OfflineMultiplayerPeer.new()
 	return await _finish_phase(peer, phase)
 
 
@@ -1128,6 +1161,8 @@ func _snapshot() -> Dictionary:
 		"mixed_traffic": _mixed_traffic,
 		"rpc_traffic": _rpc_traffic,
 		"rpc_recovery": _rpc_recovery,
+		"rpc_plan_recovery": _rpc_plan_recovery,
+		"rpc_retirement": _rpc_retirement,
 		"rpc_polling": _rpc_polling,
 		"rpc_polls": _rpc_polls,
 		"rpc_connected": _rpc_connected,
