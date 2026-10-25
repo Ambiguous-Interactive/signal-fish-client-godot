@@ -31,7 +31,13 @@ const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagno
 ## decode/encode.
 const MAX_DEPTH := SFTypeUtils.MAX_MESSAGE_DEPTH
 
+# Repeated gameplay field names share their MessagePack bytes (issue #161).
+const _KEY_MEMO_LIMIT := 256
+const _KEY_MEMO_MAX_LENGTH := 64
+
 const _U64_CARRY := 18446744073709551616.0
+
+static var _key_memo: Dictionary = {}
 
 
 ## Decodes exactly one MessagePack value; trailing bytes are malformed.
@@ -336,7 +342,27 @@ static func _encode_value(peer: StreamPeerBuffer, value: Variant, depth: int) ->
 				if typeof(key) != TYPE_STRING:
 					return "MessagePack map keys must be strings"
 				var text_key: String = key
-				_encode_string(peer, text_key)
+				if text_key in _key_memo:
+					var cached_key: PackedByteArray = _key_memo[text_key]
+					peer.put_data(cached_key)
+				elif text_key.length() > _KEY_MEMO_MAX_LENGTH:
+					_encode_string(peer, text_key)
+				else:
+					var key_bytes := text_key.to_utf8_buffer()
+					var length := key_bytes.size()
+					if length <= 0x1F:
+						key_bytes.insert(0, 0xA0 | length)
+					elif length <= 0xFF:
+						key_bytes.insert(0, length)
+						key_bytes.insert(0, 0xD9)
+					else:
+						key_bytes.insert(0, length & 0xFF)
+						key_bytes.insert(0, length >> 8)
+						key_bytes.insert(0, 0xDA)
+					if _key_memo.size() >= _KEY_MEMO_LIMIT:
+						_key_memo.clear()
+					_key_memo[text_key] = key_bytes
+					peer.put_data(key_bytes)
 				var problem := _encode_value(peer, dictionary[key], depth + 1)
 				if not problem.is_empty():
 					return problem

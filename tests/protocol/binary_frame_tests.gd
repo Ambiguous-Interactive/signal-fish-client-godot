@@ -35,6 +35,7 @@ func run_all() -> void:
 		_test_msgpack_hostile_vectors,
 		_test_msgpack_utf8_decode,
 		_test_msgpack_encode_widths,
+		_test_msgpack_map_key_reuse,
 		_test_msgpack_length_widths,
 		_test_msgpack_map_key_depth,
 		_test_msgpack_non_finite_refusal,
@@ -355,6 +356,54 @@ func _test_msgpack_encode_widths() -> void:
 	var object_result: Dictionary = SFMsgpackScript.encode(RefCounted.new())
 	var object_result_ok: bool = object_result["ok"]
 	_assert(object_result_ok, false, "objects are rejected")
+	_done()
+
+
+func _test_msgpack_map_key_reuse() -> void:
+	var vectors := [
+		["", [0xA0]],
+		["x".repeat(31), [0xBF]],
+		["x".repeat(32), [0xD9, 32]],
+		["x".repeat(64), [0xD9, 64]],
+		[String.chr(233), [0xA2]],
+		[String.chr(0x1F41F).repeat(64), [0xDA, 1, 0]],
+		["x".repeat(65), [0xD9, 65]],
+		[String.chr(0x1F41F).repeat(63) + "abc", [0xD9, 255]],
+	]
+	SFMsgpackScript._key_memo.clear()
+	for vector: Array in vectors:
+		var key: String = vector[0]
+		var header: Array = vector[1]
+		var expected := PackedByteArray([0x81])
+		expected.append_array(PackedByteArray(header))
+		expected.append_array(key.to_utf8_buffer())
+		expected.append(1)
+		for _repeat: int in 2:
+			var encoded := SFMsgpackScript.encode({key: 1})
+			_assert_equal(expected, encoded["bytes"], "cold and warm map key bytes agree")
+		var changed := SFMsgpackScript.encode({key: 2})
+		expected[expected.size() - 1] = 2
+		_assert_equal(expected, changed["bytes"], "key reuse keeps changed values")
+		var returned: PackedByteArray = changed["bytes"]
+		returned.fill(0)
+		_assert_equal(
+			expected, SFMsgpackScript.encode({key: 2})["bytes"], "returned bytes are independent"
+		)
+	var snapshot := [{"id": 256, "x": 1.25}, {"id": 257, "x": -2.5}]
+	var original := SFMsgpackScript.encode(snapshot)
+	for index: int in SFMsgpackScript._KEY_MEMO_LIMIT + 1:
+		SFMsgpackScript.encode({"field_%d" % index: index})
+	_assert_equal(
+		original, SFMsgpackScript.encode(snapshot), "key eviction preserves snapshot bytes"
+	)
+	_assert_equal(
+		true,
+		SFMsgpackScript._key_memo.size() <= SFMsgpackScript._KEY_MEMO_LIMIT,
+		"key reuse stays within entry budget"
+	)
+	var long_key := "x".repeat(SFMsgpackScript._KEY_MEMO_MAX_LENGTH + 1)
+	SFMsgpackScript.encode({long_key: 3})
+	_assert_equal(false, SFMsgpackScript._key_memo.has(long_key), "long keys bypass reuse")
 	_done()
 
 

@@ -18,6 +18,7 @@ const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 const MeshIncarnationTests = preload("res://tests/client/mesh_incarnation_tests.gd")
 const MeshChannelTests = preload("res://tests/client/mesh_channel_tests.gd")
+const MeshRPCPeerTests = preload("res://tests/client/mesh_rpc_peer_tests.gd")
 const MeshPacketTests = preload("res://tests/client/mesh_packet_tests.gd")
 const MeshSetupTests = preload("res://tests/client/mesh_setup_tests.gd")
 const SessionPlanAcceptanceTests = preload("res://tests/client/session_plan_acceptance_tests.gd")
@@ -80,6 +81,7 @@ func run_all() -> void:
 	_failures.append_array(SessionPlanAcceptanceTests.run(self))
 	_failures.append_array(MeshChannelTests.run(self))
 	_failures.append_array(MeshPacketTests.run(self))
+	_failures.append_array(MeshRPCPeerTests.run(self))
 	_failures.append_array(MeshSetupTests.run(self))
 	_failures.append_array(MeshIncarnationTests.run(self))
 
@@ -1602,12 +1604,44 @@ class FakeMultiplayerPeer:
 	## Duck-typed WebRTCMultiplayerPeer double.
 
 	var mesh_id := 0
+	var transfer_mode: int = MultiplayerPeer.TRANSFER_MODE_RELIABLE
+	var transfer_channel := 0
+	var refuse_new_connections := false
+	var target := 0
+	var sent: Array[PackedByteArray] = []
+
 	var create_mesh_result: Error = OK
 	var add_peer_result: Error = OK
 	var added: Array[Array] = []
 	var removed: Array[int] = []
 	var peers: Dictionary = {}
 	var closed := false
+
+	func poll() -> void:
+		pass
+
+	func get_peers() -> Dictionary:
+		var result: Dictionary = {}
+		for id: int in peers:
+			result[id] = get_peer(id)
+		return result
+
+	func get_connection_status() -> int:
+		return (
+			MultiplayerPeer.CONNECTION_DISCONNECTED
+			if closed
+			else MultiplayerPeer.CONNECTION_CONNECTED
+		)
+
+	func get_unique_id() -> int:
+		return mesh_id
+
+	func set_target_peer(id: int) -> void:
+		target = id
+
+	func put_packet(data: PackedByteArray) -> Error:
+		sent.append(data)
+		return OK
 
 	func create_mesh(unique_id: int) -> Error:
 		if create_mesh_result == OK:
@@ -1629,7 +1663,11 @@ class FakeMultiplayerPeer:
 
 	func get_peer(unique_id: int) -> Dictionary:
 		var connection: FakePeerConnection = peers[unique_id]
-		return {"connection": connection, "channels": connection.channels}
+		return {
+			"connection": connection,
+			"channels": connection.channels,
+			"connected": connection.state == WebRTCPeerConnection.STATE_CONNECTED
+		}
 
 	func close() -> void:
 		closed = true

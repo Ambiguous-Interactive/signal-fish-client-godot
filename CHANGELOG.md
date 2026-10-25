@@ -10,6 +10,9 @@ released version.
 
 ### Added
 
+- `SFWebRTCMesh.get_safe_multiplayer_peer()` keeps RPC packet bytes and
+  transfer modes together during mixed WebRTC traffic (#403).
+
 - `SFWebRTCMesh.receive_packet()` keeps raw WebRTC bytes and transfer modes
   together when reliable and unreliable traffic overlap (#403).
 
@@ -107,6 +110,8 @@ released version.
   dial so it is always redacted while in use.
 
 ### Changed
+
+- MessagePack encoding reuses short map-key bytes for gameplay snapshots (#161).
 
 - JSON byte-array gameplay payloads decode faster.
 - MessagePack snapshots with short field names decode faster.

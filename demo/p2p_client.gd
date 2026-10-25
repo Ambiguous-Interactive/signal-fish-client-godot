@@ -60,7 +60,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	var mp_peer: Variant = _mesh.get_multiplayer_peer()
+	var mp_peer: Variant = _mesh.get_safe_multiplayer_peer()
 	if mp_peer == multiplayer.multiplayer_peer:
 		return
 	if mp_peer != null:
@@ -99,7 +99,7 @@ func _on_join_pressed() -> void:
 
 
 func _on_send_chat_pressed() -> void:
-	var mp_peer: Variant = _mesh.get_multiplayer_peer()
+	var mp_peer: Variant = _mesh.get_safe_multiplayer_peer()
 	if mp_peer == null or multiplayer.multiplayer_peer != mp_peer:
 		_log_line("no mesh yet: chat needs a webrtc session plan with peers")
 		return
