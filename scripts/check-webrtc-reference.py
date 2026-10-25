@@ -13,7 +13,7 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Protocol, cast
 
 from playwright.sync_api import Page, sync_playwright
 
@@ -44,6 +44,20 @@ def watch_page(page: Page, messages: list[str]) -> None:
     page.on("crash", lambda _: messages.append("BROWSER_CRASH"))
 
 
+class Observation(Protocol):
+    def snapshot(self) -> dict[str, object]: ...
+
+
+def observe_page(page: Page, url: str) -> Observation:
+    observer = interop.BrowserObservation(url)
+    page.on("console", lambda message: observer.console(message.text))
+    page.on("request", observer.started)
+    page.on("requestfinished", observer.finished)
+    page.on("requestfailed", lambda request: observer.finished(request, failed=True))
+    page.add_init_script(path=ROOT / "scripts/webrtc-browser-observation.js")
+    return cast(Observation, observer)
+
+
 def phase_evidence(output: str) -> list[object]:
     phases: list[object] = []
     for line in output.splitlines():
@@ -63,6 +77,7 @@ def gameplay_phase_passed(phase: dict[str, object]) -> bool:
         and phase.get("snapshot_received") == 128
         and phase.get("partial_sent") == 4
         and phase.get("partial_received") == 4
+        and phase.get("remote_closed") is True
     )
 
 
@@ -91,7 +106,9 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
     source = source[:start] + "func _run_phase" + methods + source[end:]
     source = source[:ready] + variables + "\n\n" + source[ready:]
     script.write_text(source)
-    (project / "reference-options.json").write_text(json.dumps({"godot_offer": args.godot_offer}))
+    (project / "reference-options.json").write_text(
+        json.dumps({"godot_offer": args.godot_offer, "safe_receive": args.safe_receive})
+    )
     preset = project / "export_presets.cfg"
     preset.write_text(
         preset.read_text().replace('include_filter=""', 'include_filter="reference-options.json"')
@@ -133,7 +150,16 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     messages: list[str] = []
     reference_messages: list[str] = []
     native = None
-    report: dict[str, object] = {"assessment_complete": False, "driver_error": ""}
+    observations: dict[str, Observation] = {}
+    report: dict[str, object] = {
+        "assessment_complete": False,
+        "driver_error": "",
+        "runtime": "web" if web else "native",
+        "safe_receive": args.safe_receive,
+        "godot_offer": args.godot_offer,
+        "godot": args.godot,
+        "reference_revision": args.reference_revision,
+    }
     try:
         with (directory / "godot.log").open("w") as log, sync_playwright() as playwright:
             browser = playwright.chromium.launch(
@@ -144,6 +170,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
             try:
                 reference = browser.new_page()
                 watch_page(reference, reference_messages)
+                reference_observation = observe_page(reference, url)
+                observations["reference"] = reference_observation
                 reference.goto(url)
                 reference.wait_for_function("typeof window.runReference === 'function'")
                 reference.evaluate(
@@ -153,6 +181,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 if web:
                     page = browser.new_page()
                     watch_page(page, messages)
+                    observations["godot"] = observe_page(page, url)
                     page.goto(url + "/godot/index.html")
                 else:
                     native = subprocess.Popen(  # noqa: S603
@@ -195,22 +224,23 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     gameplay_phase_passed(godot) and gameplay_phase_passed(ref)
                     for godot, ref in zip(phases, result["phases"], strict=True)
                 )
-                report = {
-                    "assessment_complete": complete,
-                    "driver_error": driver_error,
-                    "gameplay_passed": gameplay,
-                    "runtime": "web" if web else "native",
-                    "godot_offer": args.godot_offer,
-                    "godot": args.godot,
-                    "browser": browser.version,
-                    "reference_revision": args.reference_revision,
-                    "reference_engine_sha256": hashlib.sha256(
-                        (args.reference_assets / "engine.js").read_bytes()
-                    ).hexdigest(),
-                    "godot_phases": phases,
-                    "reference": result,
-                }
+                report.update(
+                    {
+                        "assessment_complete": complete,
+                        "driver_error": driver_error,
+                        "gameplay_passed": gameplay,
+                        "browser": browser.version,
+                        "reference_engine_sha256": hashlib.sha256(
+                            (args.reference_assets / "engine.js").read_bytes()
+                        ).hexdigest(),
+                        "godot_phases": phases,
+                        "reference": result,
+                    }
+                )
             finally:
+                report["browser_observations"] = {
+                    name: observer.snapshot() for name, observer in observations.items()
+                }
                 browser.close()
     except Exception as exc:
         report.update(
@@ -254,6 +284,9 @@ def main() -> None:
         "--reference-revision", required=True, help="Source commit used to build the Engine modules"
     )
     parser.add_argument("--chromium")
+    parser.add_argument(
+        "--safe-receive", action="store_true", help="Read through the RPC-safe peer"
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--require-gameplay",

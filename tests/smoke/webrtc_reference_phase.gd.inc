@@ -20,6 +20,8 @@ func _run_phase(phase: int) -> bool:
 	_reference_options = JSON.parse_string(
 		FileAccess.get_file_as_string("res://reference-options.json")
 	)
+	_safe_receive = _reference_options["safe_receive"]
+	_channel_receive = not _safe_receive
 	var plan := SessionScript.SessionPlanInfo.new()
 	plan.generation = "40000000-0000-0000-0000-%012d" % phase
 	plan.transport = SessionScript.TransportKind.WEBRTC
@@ -72,6 +74,49 @@ func _run_phase(phase: int) -> bool:
 					"state": channel.call("get_ready_state")
 				}
 			)
+	var completed := (
+		_reference_snapshot_received == 128
+		and _reference_snapshot_sent == 128
+		and _reference_partial_sent == 4
+		and _reference_partial_received == 4
+		and _reference_received.size() == 2
+	)
+	var safe: MultiplayerPeer = _mesh.get_safe_multiplayer_peer() if _safe_receive else null
+	evidence["remote_closed"] = false
+	if completed:
+		_pending.append({"marker": "close-ready-%d" % phase})
+		if not await _wait_until(
+			"reference queued retirement packet",
+			func() -> bool:
+				return (
+					safe.get_available_packet_count() > 0
+					if safe != null
+					else peer.call("get_available_packet_count") > 0
+				)
+		):
+			return false
+		if safe != null:
+			if (
+				safe.get_packet_peer() != id
+				or safe.get_packet_mode() != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+			):
+				_fail("reference retirement metadata differs")
+				return false
+		_pending.append({"marker": "close-selected-%d" % phase})
+		if not await _wait_until(
+			"reference remote channel close", func() -> bool: return _mesh.get_peer_count() == 0
+		):
+			return false
+		if (
+			safe != null
+			and (safe.get_available_packet_count() != 0 or not safe.get_packet().is_empty())
+		):
+			_fail("reference remote close retained selected bytes")
+			return false
+		if safe == null and _mesh.receive_packet() != null:
+			_fail("reference remote close retained raw bytes")
+			return false
+		evidence["remote_closed"] = true
 	print("WEBRTC_REFERENCE_PHASE " + JSON.stringify(evidence))
 	_mesh._reset_mesh()
 	if _mesh.get_peer_count() != 0 or _mesh.get_multiplayer_peer() != null:
@@ -127,7 +172,11 @@ func _reference_packets() -> void:
 					return
 				_reference_partial_sent += 1
 	for _read: int in 32:
-		var packet := _mesh.receive_packet()
+		if _safe_receive and _mesh.get_safe_multiplayer_peer().get_available_packet_count() == 0:
+			break
+		var packet := (
+			_read_packet(peer as WebRTCMultiplayerPeer) if _safe_receive else _mesh.receive_packet()
+		)
 		if packet == null:
 			break
 		var text := packet.data.get_string_from_utf8()

@@ -193,14 +193,32 @@ probe bytes in both directions. Each seat then streams 128 reliable snapshot
 chunks of about 1 KiB. Each chunk carries its generation, sender and sequence;
 receivers compare its exact UTF-8 bytes. A 32-packet acknowledgment window
 bounds the stream. Both seats start a second snapshot with four chunks before
-teardown discards that partial transfer. The next generation must pass the
-same checks with fresh bytes.
+the reference seat closes its reliable channel after sending one more packet.
+Godot must remove the link before its local reset. The next generation must
+pass the same checks with fresh bytes.
 
 `assessment_complete` means both generations were observed and torn down.
-`gameplay_passed` requires every probe, all 128 snapshot chunks, and the four
-partial-transfer chunks at both ends in both generations. Add `--require-gameplay` to fail when any pairing lacks those probes.
+`gameplay_passed` requires every probe, all 128 snapshot chunks, the four
+partial-transfer chunks, and remote channel closure in both generations.
+Add `--safe-receive` to select the RPC-safe peer's packet API. It must keep
+the retirement packet selected until remote closure, then discard its cached
+bytes. The default checks raw channel reads. Add `--require-gameplay` to fail when
+any pairing lacks those probes.
 Keep mixed reference-client rooms on server relay until their pairing passes.
 These local Engine checks leave full service sessions for a separate drill.
+
+Each assessment retains `browser_observations` for the reference page and,
+when used, the Godot Web page. Each page records signaling request timings,
+progress ages, and the last 16 WebRTC transport samples. Reference progress
+includes snapshot send, receive and acknowledgment counts, partial-transfer
+counts, and channel-close stages. Compare an old progress record with fresh
+transport samples and an aging HTTP request to locate a signaling wait.
+These diagnostics also remain in an incomplete assessment.
+
+The Web responder passed the safe-receiver checks on Godot 4.3 and 4.4.1
+with Chromium 154 and reference b264ec7. Both generations passed remote
+closure, selected-packet discard and exact snapshot recovery. The other
+three pairings in each engine assessment remained unsupported.
 
 ## Native reference engine assessment
 

@@ -20,6 +20,7 @@ class ReferenceEvidenceTests(unittest.TestCase):
     def test_snapshot_verdict_requires_complete_stream_and_partial_transfer(self) -> None:
         phase = {
             "sent": True,
+            "remote_closed": True,
             "received": ["unreliable", "reliable"],
             "snapshot_sent": 128,
             "snapshot_received": 128,
@@ -36,6 +37,7 @@ class ReferenceEvidenceTests(unittest.TestCase):
             for value in (0, total - 1, total + 1):
                 with self.subTest(field=field, value=value):
                     self.assertFalse(reference.gameplay_phase_passed({**phase, field: value}))
+        self.assertFalse(reference.gameplay_phase_passed({**phase, "remote_closed": False}))
         self.assertFalse(reference.gameplay_phase_passed({}))
         self.assertFalse(reference.gameplay_phase_passed({**phase, "received": ["reliable"]}))
 
@@ -51,6 +53,24 @@ class ReferenceEvidenceTests(unittest.TestCase):
         self.assertEqual(
             messages,
             ["ready", "CONSOLE_ERROR ICE failed", "PAGE_ERROR WebAssembly trap", "BROWSER_CRASH"],
+        )
+
+    def test_observer_installed_before_navigation_keeps_requests_and_stats(self) -> None:
+        page = Mock()
+        observer = reference.observe_page(cast(Page, page), "http://drill.test")
+        listeners = {call.args[0]: call.args[1] for call in page.on.call_args_list}
+        request = Mock(url="http://drill.test/signal/1", method="GET")
+        listeners["request"](request)
+        listeners["requestfailed"](request)
+        listeners["console"](Mock(text='WEBRTC_BROWSER_STATS {"peers":[]}'))
+        listeners["console"](Mock(text='WEBRTC_INTEROP_PROGRESS {"phase":1}'))
+        snapshot = observer.snapshot()
+        self.assertEqual(snapshot["failed_requests"], 1)
+        self.assertEqual(snapshot["inflight_requests"], [])
+        self.assertIsNotNone(snapshot["last_stats_age_ms"])
+        self.assertIsNotNone(snapshot["last_progress_age_ms"])
+        page.add_init_script.assert_called_once_with(
+            path=reference.ROOT / "scripts/webrtc-browser-observation.js"
         )
 
     def test_delayed_web_completion_waits_for_actual_terminal(self) -> None:

@@ -29,8 +29,11 @@ window.runReference = async function (godotSeat, godotOffer) {
         `${partial ? "partial" : "snapshot"}:${phase}:${sender}:${sequence}:` +
         "0123456789abcdef".repeat(64);
       let observed = false;
+      let closeQueued = false;
+      let remoteClosed = false;
       let retired = false;
       let started = performance.now();
+      let nextProgress = 0;
       engine = new Engine(false, {
         onLocalCandidate: (_peer, _generation, candidate) =>
           outgoing.push({ payload: { IceCandidate: candidate } }),
@@ -76,6 +79,26 @@ window.runReference = async function (godotSeat, godotOffer) {
         },
       });
       while (!retired && performance.now() - started < 14000) {
+        if (performance.now() >= nextProgress) {
+          nextProgress = performance.now() + 1000;
+          console.log(
+            "WEBRTC_INTEROP_PROGRESS " +
+              JSON.stringify({
+                runtime: "reference",
+                phase,
+                elapsed_ms: Math.round(performance.now() - started),
+                paired,
+                sent,
+                snapshot_sent: snapshotSent,
+                snapshot_received: snapshotReceived,
+                snapshot_ack: snapshotAck,
+                partial_sent: partialSent,
+                partial_received: partialReceived,
+                close_queued: closeQueued,
+                remote_closed: remoteClosed,
+              }),
+          );
+        }
         const response = await fetch(`/signal/${seat}`);
         if (!response.ok) throw new Error(`relay GET ${response.status}`);
         for (const message of await response.json()) {
@@ -90,6 +113,19 @@ window.runReference = async function (godotSeat, godotOffer) {
               snapshotAck,
               Number(message.marker.split("-").at(-1)),
             );
+          } else if (
+            message.marker === `close-ready-${phase}` &&
+            !closeQueued
+          ) {
+            closeQueued = true;
+            engine.channel("godot", "reliable").send(`retired:${phase}`);
+          } else if (
+            message.marker === `close-selected-${phase}` &&
+            !remoteClosed
+          ) {
+            remoteClosed = true;
+            engine.channel("godot", "reliable").close();
+            window.referenceResults.at(-1).remote_closed = true;
           } else if (message.marker === `retired-${phase}`) {
             retired = true;
           } else if (message.payload && message.generation === generation) {
@@ -142,13 +178,10 @@ window.runReference = async function (godotSeat, godotOffer) {
             partial_sent: partialSent,
             partial_received: partialReceived,
             received: received.slice(),
+            remote_closed: false,
             events: events.slice(),
             snapshot: engine.diagnosticSnapshot("godot"),
           });
-          console.log(
-            "WEBRTC_REFERENCE_PHASE " +
-              JSON.stringify(window.referenceResults.at(-1)),
-          );
           outgoing.push({ marker: `observed-${phase}` });
         }
         while (outgoing.length) await post({ generation, ...outgoing.shift() });
@@ -156,6 +189,10 @@ window.runReference = async function (godotSeat, godotOffer) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
       if (!retired) throw new Error(`phase ${phase} missing Godot teardown`);
+      console.log(
+        "WEBRTC_REFERENCE_PHASE " +
+          JSON.stringify(window.referenceResults.at(-1)),
+      );
       engine.removePeer("godot");
       if (engine.isPaired("godot"))
         throw new Error("reference teardown retained peer");
