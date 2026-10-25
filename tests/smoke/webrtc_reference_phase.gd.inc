@@ -13,6 +13,7 @@ var _reference_partial_sent := 0
 var _reference_partial_received := 0
 var _reference_received: Dictionary = {}
 var _reference_options: Dictionary = {}
+var _reference_receive_pause: Dictionary = {}
 var _reference_receiver: MultiplayerPeer
 
 
@@ -33,6 +34,7 @@ func _run_phase(phase: int) -> bool:
 	_reference_partial_sent = 0
 	_reference_partial_received = 0
 	_reference_received.clear()
+	_reference_receive_pause.clear()
 	_reference_options = JSON.parse_string(
 		FileAccess.get_file_as_string("res://reference-options.json")
 	)
@@ -65,7 +67,10 @@ func _run_phase(phase: int) -> bool:
 		"reference observation",
 		func() -> bool:
 			_reference_packets()
-			return _markers.has("observed-%d" % phase)
+			return (
+				_markers.has("observed-%d" % phase)
+				and (_reference_snapshot_received == 0 or _reference_gameplay_complete())
+			)
 	):
 		return false
 	_reference_packets()
@@ -99,18 +104,7 @@ func _run_phase(phase: int) -> bool:
 					"state": channel.call("get_ready_state")
 				}
 			)
-	var completed := (
-		_reference_snapshot_received == 128
-		and _reference_snapshot_sent == 128
-		and _reference_partial_sent == 4
-		and _reference_partial_received == 4
-		and _reference_received.size() == 2
-		and _reference_acknowledged == 128
-		and (
-			_reference_positions_received.size()
-			== (32 if _reference_options["mixed_traffic"] else 0)
-		)
-	)
+	var completed := _reference_gameplay_complete()
 	var safe: MultiplayerPeer = _mesh.get_safe_multiplayer_peer() if _safe_receive else null
 	evidence["remote_closed"] = false
 	if completed:
@@ -157,6 +151,21 @@ func _run_phase(phase: int) -> bool:
 	_pending.append({"marker": "retired-%d" % phase})
 	return await _wait_until(
 		"reference teardown", func() -> bool: return _markers.has("retired-%d" % phase)
+	)
+
+
+func _reference_gameplay_complete() -> bool:
+	return (
+		_reference_snapshot_received == 128
+		and _reference_snapshot_sent == 128
+		and _reference_partial_sent == 4
+		and _reference_partial_received == 4
+		and _reference_received.size() == 2
+		and _reference_acknowledged == 128
+		and (
+			_reference_positions_received.size()
+			== (32 if _reference_options["mixed_traffic"] else 0)
+		)
 	)
 
 
@@ -219,6 +228,8 @@ func _reference_packets() -> void:
 					return
 				_reference_partial_sent += 1
 	for _read: int in 32:
+		if _reference_pause_reads(peer):
+			return
 		if _safe_receive and _mesh.get_safe_multiplayer_peer().get_available_packet_count() == 0:
 			break
 		var packet := (
@@ -319,6 +330,37 @@ func _reference_packets() -> void:
 		_reference_received[label] = true
 
 
+func _reference_pause_reads(peer: Object) -> bool:
+	if not _reference_options.get("slow_receiver", false) or _reference_snapshot_received < 8:
+		return false
+	if _reference_receive_pause.is_empty():
+		_reference_receive_pause = {
+			"started_ms": Time.get_ticks_msec(),
+			"received": _reference_snapshot_received,
+			"resumed": false,
+		}
+	if _reference_receive_pause["resumed"]:
+		return false
+	var id := MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+	if not peer.call("has_peer", id):
+		return true
+	var info: Dictionary = peer.call("get_peer", id)
+	var channels: Array = info["channels"]
+	_reference_receive_pause["elapsed_ms"] = (
+		Time.get_ticks_msec() - _reference_receive_pause["started_ms"]
+	)
+	var reliable: Object = channels[0]
+	var unreliable: Object = channels[2]
+	_reference_receive_pause["queued_reliable"] = reliable.call("get_available_packet_count")
+	_reference_receive_pause["queued_unreliable"] = unreliable.call("get_available_packet_count")
+	if _reference_receive_pause["elapsed_ms"] < 1500:
+		return true
+	_reference_receive_pause["received_at_resume"] = _reference_snapshot_received
+	_reference_receive_pause["resumed"] = true
+	print("WEBRTC_REFERENCE_RECEIVE_RESUME " + JSON.stringify(_reference_receive_pause))
+	return false
+
+
 func _reference_chunk(sender: String, sequence: int, partial: bool) -> PackedByteArray:
 	return (
 		(
@@ -359,4 +401,5 @@ func _reference_evidence() -> Dictionary:
 			else 0
 		),
 		"transfer_ms": _reference_transfer_ms,
+		"receive_pause": _reference_receive_pause.duplicate(),
 	}

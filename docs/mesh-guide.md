@@ -206,7 +206,8 @@ partial-transfer chunks, and remote channel closure in both generations.
 Add `--safe-receive` to select the RPC-safe peer's packet API. It must keep
 the retirement packet selected until remote closure, then discard its cached
 bytes. The default checks raw channel reads. Add `--require-gameplay` to fail when
-any pairing lacks those probes.
+any selected pairing lacks those probes. Use `--runtime native|web` and
+`--offerer godot|reference` to select one pairing; both default to all pairings.
 Safe-receiver assessments keep one adapter through both generations and
 record `same_receiver`. A relay plan retires each generation's links.
 Reference phase totals are refreshed at teardown. The `observation` field
@@ -260,6 +261,40 @@ Fresh gameplay progress during an HTTP credit wait helps isolate relay or HTTP
 scheduling. A credit-transport timing difference alone cannot prove the cause
 of the intermittent stall in #396. Full service sessions and remote-network
 qualification remain open.
+
+### Paused Godot reader
+
+Add `--slow-receiver` to pause Godot packet reads for 1,500 ms after
+eight snapshot chunks arrive. Engine polling, signaling and sends continue.
+The browser reference sender keeps its 32-chunk credit window. Use
+`--mixed-traffic` to queue unreliable positions alongside reliable chunks.
+Run both HTTP and WebRTC credit controls with the same receiver and engine.
+
+```bash
+python scripts/check-webrtc-reference.py --runtime web --offerer reference \
+  --safe-receive --mixed-traffic --slow-receiver --require-gameplay \
+  --credit-transport webrtc --native-extension /path/to/webrtc-native \
+  --reference-assets /path/to/reference-modules \
+  --reference-revision b264ec739400b299182eaa918dd6828fd611f3b9 \
+  --output /tmp/reference-slow-reader
+```
+
+Godot phase and progress records retain `receive_pause`: elapsed pause time,
+consumed chunks, queued reliable and unreliable packet counts, and resume
+state. A gameplay pass requires unchanged consumption during the pause, at
+least 24 queued reliable packets, and queued unreliable packets when mixed
+traffic is requested. All bytes, metadata, final credit, partial transfers,
+remote closure and next-generation recovery must still pass. Reference records
+retain `max_credit_wait_ms` to compare the known reader pause with HTTP waits.
+Add `--credit-transport http --http-credit-delay-ms 4000` to hold one
+first-generation reference credit GET after 32 chunks for four seconds. The report records
+whether the hold occurred. The hold consumes the phase deadline. The six-second `observation` remains a snapshot;
+Godot keeps an active transfer running until all chunks and credit complete
+within the existing deadline. This catches premature teardown during a
+progressing HTTP wait.
+
+These opt-in local controls keep the existing deadlines. They do not simulate
+WebRTC network delay or establish the cause of #396.
 
 ## Native reference engine assessment
 

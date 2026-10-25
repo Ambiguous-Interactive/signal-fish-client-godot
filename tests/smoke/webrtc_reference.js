@@ -32,6 +32,7 @@ window.runReference = async function (
       const positionsReceived = new Set();
       let peakOutstanding = 0;
       let creditUpdated = performance.now();
+      let maxCreditWaitMs = 0;
       let transferStarted = 0;
       let transferMs = -1;
       const position = (sender, sequence) =>
@@ -39,6 +40,10 @@ window.runReference = async function (
         "0123456789abcdef".repeat(4);
       const acceptCredit = (count) => {
         if (count > snapshotAck) {
+          maxCreditWaitMs = Math.max(
+            maxCreditWaitMs,
+            Math.round(performance.now() - creditUpdated),
+          );
           snapshotAck = count;
           creditUpdated = performance.now();
         }
@@ -145,6 +150,7 @@ window.runReference = async function (
         phase,
         mixed_traffic: mixedTraffic,
         credit_transport: creditTransport,
+        max_credit_wait_ms: maxCreditWaitMs,
         snapshot_acknowledged: snapshotAck,
         positions_sent: positionsSent,
         positions_received: positionsReceived.size,
@@ -165,6 +171,11 @@ window.runReference = async function (
         snapshot: engine.diagnosticSnapshot("godot"),
       });
       while (!retired && performance.now() - started < 14000) {
+        if (snapshotSent > snapshotAck)
+          maxCreditWaitMs = Math.max(
+            maxCreditWaitMs,
+            Math.round(performance.now() - creditUpdated),
+          );
         if (performance.now() >= nextProgress) {
           nextProgress = performance.now() + 1000;
           console.log(

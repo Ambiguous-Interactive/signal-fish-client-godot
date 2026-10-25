@@ -27,6 +27,30 @@ interop = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(interop)
 
 
+class CreditDelayRelay(interop.RelayHandler):  # type: ignore[name-defined,misc]
+    credit_delay_ms: ClassVar[int] = 0
+    credit_seat: ClassVar[int] = 0
+    credit_delayed = threading.Event()
+
+    def reply(self, body: bytes) -> None:
+        hold = False
+        if (
+            self.credit_delay_ms
+            and self.command == "GET"
+            and self.path == f"/signal/{self.credit_seat}"
+        ):
+            with self.lock:
+                hold = not self.credit_delayed.is_set() and any(
+                    isinstance(message, dict) and message.get("marker") == "snapshot-ack-1-32"
+                    for message in json.loads(body)
+                )
+                if hold:
+                    self.credit_delayed.set()
+            if hold:
+                time.sleep(self.credit_delay_ms / 1000)
+        super().reply(body)
+
+
 def page_failed(messages: list[str]) -> bool:
     return any(
         line.startswith(("PAGE_ERROR ", "CONSOLE_ERROR ", "BROWSER_CRASH")) for line in messages
@@ -70,7 +94,11 @@ def phase_evidence(output: str) -> list[object]:
 
 
 def gameplay_phase_passed(
-    phase: dict[str, object], *, mixed_traffic: bool = False, credit_transport: str = "http"
+    phase: dict[str, object],
+    *,
+    mixed_traffic: bool = False,
+    credit_transport: str = "http",
+    slow_receiver: bool = False,
 ) -> bool:
     return (
         phase.get("sent") is True
@@ -82,11 +110,31 @@ def gameplay_phase_passed(
         and phase.get("remote_closed") is True
         and phase.get("mixed_traffic") is mixed_traffic
         and phase.get("credit_transport") == credit_transport
+        and (not slow_receiver or slow_receiver_passed(phase.get("receive_pause"), mixed_traffic))
         and phase.get("snapshot_acknowledged") == 128
         and phase.get("positions_sent") == (32 if mixed_traffic else 0)
         and phase.get("positions_received") == (32 if mixed_traffic else 0)
         and type(phase.get("peak_outstanding")) is int
         and 0 < cast(int, phase["peak_outstanding"]) <= 32
+    )
+
+
+def slow_receiver_passed(value: object, mixed_traffic: bool) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return (
+        value.get("resumed") is True
+        and type(value.get("elapsed_ms")) is int
+        and value["elapsed_ms"] >= 1500
+        and type(value.get("received")) is int
+        and 8 <= value["received"] < 128
+        and value.get("received_at_resume") == value["received"]
+        and type(value.get("queued_reliable")) is int
+        and value["queued_reliable"] >= 24
+        and (
+            not mixed_traffic
+            or (type(value.get("queued_unreliable")) is int and value["queued_unreliable"] > 0)
+        )
     )
 
 
@@ -125,6 +173,7 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
                 "safe_receive": args.safe_receive,
                 "mixed_traffic": args.mixed_traffic,
                 "credit_transport": args.credit_transport,
+                "slow_receiver": getattr(args, "slow_receiver", False),
             }
         )
     )
@@ -157,10 +206,13 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     if web:
         shutil.copytree(project / "build/web", assets / "godot")
 
-    class Handler(interop.RelayHandler):  # type: ignore[name-defined,misc]
+    class Handler(CreditDelayRelay):
         queues: ClassVar[list[list[object]]] = [[], []]
         lock = threading.Lock()
         observation = interop.RelayObservation()
+        credit_delayed = threading.Event()
+        credit_delay_ms = getattr(args, "http_credit_delay_ms", 0)
+        credit_seat = 0 if web else 1
 
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0), functools.partial(Handler, directory=str(assets))
@@ -179,6 +231,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "godot_offer": args.godot_offer,
         "mixed_traffic": args.mixed_traffic,
         "credit_transport": args.credit_transport,
+        "slow_receiver": getattr(args, "slow_receiver", False),
+        "http_credit_delay_ms": getattr(args, "http_credit_delay_ms", 0),
         "godot": args.godot,
         "reference_revision": args.reference_revision,
     }
@@ -242,19 +296,27 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     and not page_failed(messages)
                     and not driver_error
                 )
-                gameplay = complete and all(
-                    gameplay_phase_passed(
-                        godot,
-                        mixed_traffic=args.mixed_traffic,
-                        credit_transport=args.credit_transport,
+                gameplay = (
+                    complete
+                    and (
+                        not getattr(args, "http_credit_delay_ms", 0)
+                        or Handler.credit_delayed.is_set()
                     )
-                    and gameplay_phase_passed(
-                        ref,
-                        mixed_traffic=args.mixed_traffic,
-                        credit_transport=args.credit_transport,
+                    and all(
+                        gameplay_phase_passed(
+                            godot,
+                            mixed_traffic=args.mixed_traffic,
+                            credit_transport=args.credit_transport,
+                            slow_receiver=getattr(args, "slow_receiver", False),
+                        )
+                        and gameplay_phase_passed(
+                            ref,
+                            mixed_traffic=args.mixed_traffic,
+                            credit_transport=args.credit_transport,
+                        )
+                        and (not args.safe_receive or godot.get("same_receiver") is True)
+                        for godot, ref in zip(phases, result["phases"], strict=True)
                     )
-                    and (not args.safe_receive or godot.get("same_receiver") is True)
-                    for godot, ref in zip(phases, result["phases"], strict=True)
                 )
                 report.update(
                     {
@@ -284,6 +346,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         if native is not None and native.poll() is None:
             native.kill()
             native.wait(timeout=10)
+        report["http_credit_delay_applied"] = Handler.credit_delayed.is_set()
         server.shutdown()
         server.server_close()
         if "relay_observation" not in report:
@@ -319,6 +382,18 @@ def main() -> None:
     parser.add_argument(
         "--reference-revision", required=True, help="Source commit used to build the Engine modules"
     )
+    parser.add_argument(
+        "--runtime",
+        choices=("all", "native", "web"),
+        default="all",
+        help="Select Godot runtimes to assess",
+    )
+    parser.add_argument(
+        "--offerer",
+        choices=("both", "godot", "reference"),
+        default="both",
+        help="Select the offer role to assess",
+    )
     parser.add_argument("--chromium")
     parser.add_argument(
         "--safe-receive", action="store_true", help="Read through the RPC-safe peer"
@@ -334,6 +409,17 @@ def main() -> None:
         default="http",
         help="Return consumption credit over HTTP markers or reliable data-channel packets",
     )
+    parser.add_argument(
+        "--slow-receiver",
+        action="store_true",
+        help="Pause Godot reads for 1500 ms and require queued snapshot recovery",
+    )
+    parser.add_argument(
+        "--http-credit-delay-ms",
+        type=int,
+        default=0,
+        help="Hold reference credit after 32 chunks for 0-8000 ms",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--require-gameplay",
@@ -341,10 +427,16 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if not 0 <= args.http_credit_delay_ms <= 8000:
+        parser.error("--http-credit-delay-ms must be between 0 and 8000")
+    if args.http_credit_delay_ms and args.credit_transport != "http":
+        parser.error("--http-credit-delay-ms needs --credit-transport http")
     directory = args.output or Path(tempfile.mkdtemp(prefix="sf-reference-assessment-"))
     results = []
-    for web in (False, True):
-        for godot_offer in (True, False):
+    runtimes = (False, True) if args.runtime == "all" else (args.runtime == "web",)
+    offers = (True, False) if args.offerer == "both" else (args.offerer == "godot",)
+    for web in runtimes:
+        for godot_offer in offers:
             args.godot_offer = godot_offer
             name = ("web" if web else "native") + (
                 "-godot-offer" if godot_offer else "-reference-offer"
