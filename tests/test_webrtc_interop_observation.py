@@ -1,12 +1,14 @@
 """Keep live-drill driver timeouts distinct from engine failures."""
 
+import argparse
 import importlib.util
 import subprocess
+import tempfile
 import unittest
 from functools import partial
 from pathlib import Path
 from typing import cast
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from playwright.sync_api import Page, Request
 
@@ -196,6 +198,116 @@ class ObservationTests(unittest.TestCase):
         self.assertIn("remote ready marker", result["last_ready"])
 
 
+class RetirementMatrixTests(unittest.TestCase):
+    def test_retirement_arguments_only_reach_multi_peer_scene(self) -> None:
+        for multi_peer in (False, True):
+            with self.subTest(multi_peer=multi_peer), tempfile.TemporaryDirectory() as temporary:
+                args = argparse.Namespace(
+                    godot="godot",
+                    web_godot=None,
+                    chromium=None,
+                    multi_peer=multi_peer,
+                    mixed_traffic=False,
+                    rpc_traffic=False,
+                    rpc_recovery=False,
+                    rpc_plan_recovery=False,
+                    metadata_probe=False,
+                    channel_receive=False,
+                    safe_receive=False,
+                    slow_receiver=False,
+                )
+                browser = MagicMock(version="154-test")
+                playwright = MagicMock()
+                playwright.__enter__.return_value.chromium.launch.return_value = browser
+                process = Mock(returncode=0)
+                process.poll.return_value = 0
+                server = Mock(server_port=12345)
+                with (
+                    patch.object(drill, "ThreadingHTTPServer", return_value=server),
+                    patch.object(drill.threading, "Thread"),
+                    patch.object(drill, "sync_playwright", return_value=playwright),
+                    patch.object(drill, "wait_web_startup"),
+                    patch.object(drill, "observe_browser", return_value=""),
+                    patch.object(drill.subprocess, "Popen", return_value=process) as popen,
+                    self.assertRaisesRegex(RuntimeError, "Interoperability drill failed"),
+                ):
+                    drill.run_seats(
+                        args,
+                        Path(temporary) / "trial",
+                        Path("native"),
+                        Path("web"),
+                        retirement_case=7,
+                    )
+                command = popen.call_args.args[0]
+                self.assertEqual("--retirement-case=7" in command, multi_peer)
+                urls = [call.args[0] for call in browser.new_page.return_value.goto.call_args_list]
+                self.assertTrue(urls)
+                self.assertTrue(all(("retirement_case=7" in url) == multi_peer for url in urls))
+
+    def test_terminal_requires_all_phases_and_the_requested_case(self) -> None:
+        phases = [
+            "WEBRTC_MULTIPEER_PHASE " + drill.json.dumps({"phase": phase, "retirement_case": 7})
+            for phase in (1, 2, 3)
+        ]
+        interruption = 'WEBRTC_MULTIPEER_INTERRUPTION {"retirement_case":7}'
+        terminal = "WEBRTC_INTEROP_PASS seat=2"
+        for records, expected_case, complete in (
+            ([*phases, interruption, terminal], 7, True),
+            ([*phases, interruption, terminal], 0, False),
+            ([*phases, terminal], 7, False),
+            ([*phases[:2], interruption, terminal], 7, False),
+            ([terminal], 7, False),
+        ):
+            with self.subTest(records=records, expected_case=expected_case):
+                evidence = drill.seat_evidence("\n".join(records), 2, retirement_case=expected_case)
+                self.assertEqual(evidence["passed"], complete)
+                self.assertEqual(evidence["scenario_complete"], complete)
+
+    def test_matrix_keeps_all_cases_after_failure_and_compares_both_addons(self) -> None:
+        args = Mock(repeat=1, retirement_matrix=True, baseline=Path("/baseline"))
+        visited: list[tuple[str, int]] = []
+
+        def run_case(
+            args: Mock, logs: Path, native: Path, web: Path, *, retirement_case: int
+        ) -> None:
+            visited.append((logs.parent.name, retirement_case))
+            if retirement_case == 7 and logs.parent.name == "current":
+                raise RuntimeError("queued survivor lost")
+
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(drill, "prepare_pair", return_value=(Path("native"), Path("web"))),
+            patch.object(drill, "run_seats", side_effect=run_case),
+        ):
+            directory = Path(temporary)
+            with self.assertRaisesRegex(RuntimeError, "Interoperability trial failed"):
+                drill.run(args, directory)
+            results = drill.json.loads((directory / "summary.json").read_text())
+        self.assertEqual(
+            visited, [(name, case) for name in ("current", "baseline") for case in range(18)]
+        )
+        self.assertEqual(len(results), 36)
+        self.assertEqual([item["retirement_case"] for item in results if not item["passed"]], [7])
+        self.assertIn("queued survivor lost", results[7]["error"])
+        self.assertEqual(len({item["logs"] for item in results}), 36)
+
+    def test_default_runs_one_case_and_reverses_comparison_order(self) -> None:
+        args = Mock(repeat=2, retirement_matrix=False, baseline=Path("/baseline"))
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(drill, "prepare_pair", return_value=(Path("native"), Path("web"))),
+            patch.object(drill, "run_seats") as run_seats,
+        ):
+            drill.run(args, Path(temporary))
+        self.assertEqual(
+            [call.args[1].name for call in run_seats.call_args_list],
+            ["current", "baseline", "baseline", "current"],
+        )
+        self.assertTrue(
+            all(call.kwargs["retirement_case"] == 0 for call in run_seats.call_args_list)
+        )
+
+
 class BrowserObservationTests(unittest.TestCase):
     def test_browser_request_timings_survive_missing_engine_terminal(self) -> None:
         observation = drill.BrowserObservation("http://drill.test")
@@ -213,9 +325,33 @@ class BrowserObservationTests(unittest.TestCase):
         self.assertEqual(result["failed_requests"], 0)
         self.assertEqual(result["last_progress_age_ms"], 2000)
         self.assertEqual(
-            result["inflight_requests"], [{"method": "POST", "seat": "0", "age_ms": 2000}]
+            result["inflight_requests"],
+            [{"method": "POST", "seat": "0", "marker": None, "age_ms": 2000}],
         )
         self.assertEqual(result["recent_requests"][0]["elapsed_ms"], 250)
+
+    def test_credit_marker_stays_with_inflight_and_completed_request(self) -> None:
+        observation = drill.BrowserObservation("http://drill.test")
+        request = Mock(
+            spec=Request,
+            url="http://drill.test/signal/0",
+            method="POST",
+            post_data='{"to":0,"from":2,"marker":"consumed-1-2-64"}',
+        )
+        observation.started(request)
+        self.assertEqual(
+            observation.snapshot()["inflight_requests"][0]["marker"], "consumed-1-2-64"
+        )
+        observation.finished(request, failed=True)
+        self.assertEqual(observation.snapshot()["recent_requests"][0]["marker"], "consumed-1-2-64")
+        self.assertEqual(observation.markers, {})
+        for body in ('{"payload":{"candidate":"sample"}}', "[]", "incomplete", '{"marker":3}'):
+            request = Mock(
+                spec=Request, url="http://drill.test/signal/1", method="POST", post_data=body
+            )
+            observation.started(request)
+            observation.finished(request)
+            self.assertIsNone(observation.snapshot()["recent_requests"][-1]["marker"])
 
     def test_request_history_is_bounded_and_scoped_to_signaling(self) -> None:
         observation = drill.BrowserObservation("http://drill.test")

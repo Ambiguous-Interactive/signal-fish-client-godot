@@ -10,6 +10,12 @@ const CHUNKS := 64
 const SAMPLES := 32
 const WINDOW := 8
 
+var _retirement_case := 0
+var _closing_seat := 0
+var _remote_seat := 1
+var _closing_channel := 0
+var _hub_seat := 2
+var _delay_reader := false
 var _safe: MultiplayerPeer
 var _targets: Array[int] = []
 var _counts: Dictionary = {}
@@ -39,10 +45,21 @@ func _ready() -> void:
 		_slow_receiver = JavaScriptBridge.eval(
 			"new URLSearchParams(window.location.search).has('slow_receiver')"
 		)
+		var case_text: String = JavaScriptBridge.eval(
+			"new URLSearchParams(window.location.search).get('retirement_case') || '0'"
+		)
+		_retirement_case = case_text.to_int()
 		_url = JavaScriptBridge.eval("window.location.origin")
 	else:
 		_url = OS.get_cmdline_user_args()[0]
 		_slow_receiver = OS.get_cmdline_user_args().has("--slow-receiver")
+		for arg: String in OS.get_cmdline_user_args():
+			if arg.begins_with("--retirement-case="):
+				_retirement_case = arg.trim_prefix("--retirement-case=").to_int()
+	_closing_seat = int(float(_retirement_case) / 6)
+	_remote_seat = (_closing_seat + 1 + int(float(_retirement_case % 6) / 3)) % 3
+	_closing_channel = _retirement_case % 3
+	_hub_seat = 3 - _closing_seat - _remote_seat
 	_inbox = HTTPRequest.new()
 	_outbox = HTTPRequest.new()
 	add_child(_inbox)
@@ -140,10 +157,13 @@ func _others() -> Array[int]:
 
 
 func _surviving_seats() -> Array[int]:
-	var seats: Array[int] = [0, 1]
-	if _seat < 2:
-		seats = [2]
-	return seats
+	if _seat == _hub_seat:
+		return _others()
+	return [_hub_seat]
+
+
+func _retiring_remote() -> int:
+	return _remote_seat if _seat == _closing_seat else _closing_seat
 
 
 func _barrier(marker: String) -> bool:
@@ -191,7 +211,8 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 		_fail("traffic replaced the safe receiver")
 		return false
 	_reset_transfer_counts(targets)
-	_reader_paused = _slow_receiver and _seat == 1
+	_delay_reader = _slow_receiver and (phase != 2 or _hub_seat != 1)
+	_reader_paused = _delay_reader and _seat == 1
 	if not await _barrier("traffic-ready-%d" % phase):
 		return false
 	var transfer := func() -> bool:
@@ -269,7 +290,7 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 					_credit_updated[seat] = Time.get_ticks_msec()
 				var peak: int = _peak_outstanding[seat]
 				_peak_outstanding[seat] = maxi(peak, sequence + 1 - acknowledged)
-		if _slow_receiver and _seat != 1 and not _fast_pair_announced:
+		if _delay_reader and _seat != 1 and not _fast_pair_announced:
 			var fast_seat := 2 if _seat == 0 else 0
 			if _acked[fast_seat] == CHUNKS and _counts[fast_seat] == [SAMPLES, SAMPLES, CHUNKS]:
 				if _acked.get(1, 0) != 0 or _sent.get(1, WINDOW) != WINDOW:
@@ -291,7 +312,7 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 			if counts != [SAMPLES, SAMPLES, CHUNKS]:
 				return false
 		return true
-	if _slow_receiver:
+	if _delay_reader:
 		if not await _wait_until(
 			"independent pair while reader paused",
 			func() -> bool:
@@ -302,7 +323,7 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 	if not await _wait_until("directed concurrent snapshots and positions", transfer):
 		return false
 	if (
-		_slow_receiver
+		_delay_reader
 		and ((_seat == 1 and not _reader_resumed) or (_seat != 1 and not _fast_pair_announced))
 	):
 		_fail("delayed-reader independence was not exercised")
@@ -360,10 +381,11 @@ func _queue_interruption() -> bool:
 		_connections[id] = peer.get_peer(id)["connection"]
 	_phase = 2
 	_reset_transfer_counts(_others())
+	_delay_reader = false
 	_reader_paused = false
 	_interruption = {"queued_before_close": 0, "consumed_by_sender_and_mode": {}}
-	if _seat < 2:
-		if not _send_partial_snapshot(1 - _seat):
+	if _seat != _hub_seat:
+		if not _send_partial_snapshot(_retiring_remote()):
 			return false
 		if not await _wait_until(
 			"select retiring snapshot",
@@ -372,7 +394,7 @@ func _queue_interruption() -> bool:
 			return false
 		_saved = _selected_metadata()
 		var selected_peer: int = _saved["peer"]
-		if _seat_for_id(selected_peer) != 1 - _seat:
+		if _seat_for_id(selected_peer) != _retiring_remote():
 			_fail("retiring snapshot was not selected")
 			return false
 	if not await _barrier("retiring-snapshot-selected"):
@@ -385,7 +407,7 @@ func _queue_interruption() -> bool:
 		func() -> bool: return _safe.get_available_packet_count() == WINDOW * 3 * 2
 	):
 		return false
-	if _seat == 2:
+	if _seat == _hub_seat:
 		_saved = _selected_metadata()
 	elif _saved != _selected_metadata():
 		_fail("queued arrivals changed the selected retiring snapshot")
@@ -418,30 +440,32 @@ func _send_partial_snapshot(seat: int) -> bool:
 
 
 func _retire_one_link() -> bool:
-	if _seat == 0:
+	if _seat == _closing_seat:
 		var peer: WebRTCMultiplayerPeer = _mesh.get_multiplayer_peer()
-		var channels: Array = peer.get_peer(MeshScript.uuid_to_peer_id(ROSTER[1]))["channels"]
-		var channel: WebRTCDataChannel = channels[0]
+		var channels: Array = (
+			peer.get_peer(MeshScript.uuid_to_peer_id(ROSTER[_remote_seat]))["channels"]
+		)
+		var channel: WebRTCDataChannel = channels[_closing_channel]
 		channel.close()
 	if not await _wait_until(
 		"selective retirement notifications",
 		func() -> bool:
 			_safe.poll()
 			return (
-				_mesh.get_peer_count() == (1 if _seat < 2 else 2)
-				and _rpc_disconnected.size() == (1 if _seat < 2 else 0)
+				_mesh.get_peer_count() == (2 if _seat == _hub_seat else 1)
+				and _rpc_disconnected.size() == (0 if _seat == _hub_seat else 1)
 			)
 	):
 		return false
 	if not await _barrier("selective-retirement"):
 		return false
-	for seat: int in [2] if _seat < 2 else [0, 1]:
+	for seat: int in _surviving_seats():
 		var id := MeshScript.uuid_to_peer_id(ROSTER[seat])
 		var peer: WebRTCMultiplayerPeer = _mesh.get_multiplayer_peer()
 		if not peer.has_peer(id) or peer.get_peer(id)["connection"] != _connections[id]:
 			_fail("selective retirement replaced an unrelated connection")
 			return false
-	if _seat == 2 and _saved != _selected_metadata():
+	if _seat == _hub_seat and _saved != _selected_metadata():
 		_fail("selective retirement changed the surviving selected metadata")
 		return false
 	_interruption["selected_after_close"] = _selected_metadata()
@@ -488,6 +512,12 @@ func _retire_one_link() -> bool:
 func _snapshot() -> Dictionary:
 	var snapshot := super._snapshot()
 	snapshot["multi_peer"] = true
+	snapshot["retirement_case"] = _retirement_case
+	snapshot["closing_seat"] = _closing_seat
+	snapshot["remote_seat"] = _remote_seat
+	snapshot["closing_channel"] = _closing_channel
+	snapshot["hub_seat"] = _hub_seat
+	snapshot["delayed_reader_active"] = _delay_reader
 	snapshot["same_safe_receiver"] = (
 		_mesh != null and _safe != null and _mesh.get_safe_multiplayer_peer() == _safe
 	)
