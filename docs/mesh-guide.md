@@ -209,6 +209,8 @@ bytes. The default checks raw channel reads. Add `--require-gameplay` to fail wh
 any pairing lacks those probes.
 Safe-receiver assessments keep one adapter through both generations and
 record `same_receiver`. A relay plan retires each generation's links.
+Reference phase totals are refreshed at teardown. The `observation` field
+keeps the earlier six-second snapshot, including transfers still in progress.
 Keep mixed reference-client rooms on server relay until their pairing passes.
 These local Engine checks leave full service sessions for a separate drill.
 

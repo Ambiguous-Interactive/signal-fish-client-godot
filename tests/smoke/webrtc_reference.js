@@ -78,6 +78,18 @@ window.runReference = async function (godotSeat, godotOffer) {
           return true;
         },
       });
+      const evidence = () => ({
+        phase,
+        sent,
+        snapshot_sent: snapshotSent,
+        snapshot_received: snapshotReceived,
+        partial_sent: partialSent,
+        partial_received: partialReceived,
+        received: received.slice(),
+        remote_closed: remoteClosed,
+        events: events.slice(),
+        snapshot: engine.diagnosticSnapshot("godot"),
+      });
       while (!retired && performance.now() - started < 14000) {
         if (performance.now() >= nextProgress) {
           nextProgress = performance.now() + 1000;
@@ -170,18 +182,8 @@ window.runReference = async function (godotSeat, godotOffer) {
         }
         if (paired && !observed && performance.now() - started >= 6000) {
           observed = true;
-          window.referenceResults.push({
-            phase,
-            sent,
-            snapshot_sent: snapshotSent,
-            snapshot_received: snapshotReceived,
-            partial_sent: partialSent,
-            partial_received: partialReceived,
-            received: received.slice(),
-            remote_closed: false,
-            events: events.slice(),
-            snapshot: engine.diagnosticSnapshot("godot"),
-          });
+          const observation = evidence();
+          window.referenceResults.push({ ...observation, observation });
           outgoing.push({ marker: `observed-${phase}` });
         }
         while (outgoing.length) await post({ generation, ...outgoing.shift() });
@@ -189,6 +191,7 @@ window.runReference = async function (godotSeat, godotOffer) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
       if (!retired) throw new Error(`phase ${phase} missing Godot teardown`);
+      Object.assign(window.referenceResults.at(-1), evidence());
       console.log(
         "WEBRTC_REFERENCE_PHASE " +
           JSON.stringify(window.referenceResults.at(-1)),
