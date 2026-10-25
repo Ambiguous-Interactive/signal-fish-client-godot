@@ -448,12 +448,30 @@ Channel diagnostics include the Godot peer id. `browser_2_observation` and
 Every seat must complete; a missing terminal or engine error fails the trial.
 
 Keep snapshot sends bounded while receivers poll. The three-seat drill limits
-each sender to eight reliable chunks ahead of its slowest incoming stream. An
+each sender to eight unacknowledged reliable chunks per recipient. Each
+recipient acknowledges consumed chunks through the drill's signaling relay. An
 unbounded 64-chunk burst on native/Web Godot 4.3 filled the Web receive buffer:
 its WebRTC stats recorded all 64 messages, while Godot emitted `Buffer full!
 Dropping data.` and the byte checks failed after 55 chunks. Reliable transport
 delivery alone does not prove that the game consumed each chunk. Applications
 should acknowledge consumed chunks and limit outstanding bytes per recipient.
+
+Add `--slow-receiver` to `--multi-peer` to delay reads on Web seat 1.
+Seats 0 and 2 must finish their directed snapshots and position updates before
+seat 1 resumes reading. Its queued packets must then pass the same byte,
+sender, channel and mode checks. This repeats after selective link retirement
+and after the triangle is rebuilt. Each destination has its own credit window;
+a delayed recipient leaves the other pair free to finish. The independent
+pair and delayed-reader catch-up have separate bounded waits. Each keeps
+the existing per-stage limit.
+
+`independent_pair_proof` retains sent, consumed and acknowledged counts when
+the fast pair finishes. Seat 1 records `reader_resumed`. Phase reports also
+retain `sent_by_target`, `acknowledged_by_target`,
+`peak_outstanding_by_target` and `credit_wait_age_ms_by_target`. A rising
+credit-wait age with fresh engine progress and browser transport samples
+identifies an application waiting for consumption credit. These counts describe
+the drill's application pacing; the mesh sends packets unchanged.
 
 `--web-godot /path/to/godot` selects a separate engine for Web import and
 export. `--godot` still selects the native engine. Install the Web engine's

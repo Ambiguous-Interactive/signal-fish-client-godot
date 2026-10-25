@@ -13,7 +13,15 @@ const WINDOW := 8
 var _safe: MultiplayerPeer
 var _targets: Array[int] = []
 var _counts: Dictionary = {}
-var _sent := 0
+var _sent: Dictionary = {}
+var _acked: Dictionary = {}
+var _peak_outstanding: Dictionary = {}
+var _slow_receiver := false
+var _reader_paused := false
+var _reader_resumed := false
+var _fast_pair_announced := false
+var _paused_proof: Dictionary = {}
+var _credit_updated: Dictionary = {}
 var _saved: Dictionary = {}
 var _connections: Dictionary = {}
 var _last_packet: Dictionary = {}
@@ -27,9 +35,13 @@ func _ready() -> void:
 			"new URLSearchParams(window.location.search).get('seat') || '1'"
 		)
 		_seat = seat_text.to_int()
+		_slow_receiver = JavaScriptBridge.eval(
+			"new URLSearchParams(window.location.search).has('slow_receiver')"
+		)
 		_url = JavaScriptBridge.eval("window.location.origin")
 	else:
 		_url = OS.get_cmdline_user_args()[0]
+		_slow_receiver = OS.get_cmdline_user_args().has("--slow-receiver")
 	_inbox = HTTPRequest.new()
 	_outbox = HTTPRequest.new()
 	add_child(_inbox)
@@ -179,76 +191,143 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 		return false
 	_targets = targets
 	_counts.clear()
-	_sent = 0
+	_sent.clear()
+	_acked.clear()
+	_peak_outstanding.clear()
+	_credit_updated.clear()
+	_paused_proof.clear()
+	_reader_paused = _slow_receiver and _seat == 1
+	_reader_resumed = false
+	_fast_pair_announced = false
 	for seat: int in targets:
 		_counts[seat] = [0, 0, 0]
+		_sent[seat] = 0
+		_acked[seat] = 0
+		_peak_outstanding[seat] = 0
+		_credit_updated[seat] = Time.get_ticks_msec()
 	if not await _barrier("traffic-ready-%d" % phase):
 		return false
-	if not await _wait_until(
-		"directed concurrent snapshots and positions",
-		func() -> bool:
-			_safe.poll()
-			while _safe.get_available_packet_count() > 0:
-				var sender := _safe.get_packet_peer()
-				var mode := _safe.get_packet_mode()
-				var channel := _safe.get_packet_channel()
-				var data := _safe.get_packet()
-				var seat := _seat_for_id(sender)
-				if (
-					_safe.get_packet_error() != OK
-					or not targets.has(seat)
-					or channel != 0
-					or mode < 0
-					or mode > 2
-				):
-					_fail("multi-peer packet sender, mode, channel or read error differs")
-					return false
-				_last_packet = {
-					"sender": sender,
-					"seat": seat,
-					"mode": mode,
-					"channel": channel,
-					"bytes": data.size(),
-					"sequence": data.decode_u32(0) if data.size() >= 4 else -1
-				}
-				var counts: Array = _counts[seat]
-				var sequence := int(data.decode_u32(0)) if data.size() >= 4 else -1
-				var limit := CHUNKS if mode == MultiplayerPeer.TRANSFER_MODE_RELIABLE else SAMPLES
-				if (
-					sequence != counts[mode]
-					or sequence >= limit
-					or data != _sample_bytes(phase, seat, _seat, mode, sequence)
-				):
-					_fail("multi-peer packet bytes or sequence differ")
-					return false
-				counts[mode] += 1
-			var received_floor := CHUNKS
-			for counts: Array in _counts.values():
-				var received: int = counts[2]
-				received_floor = mini(received_floor, received)
-			if _sent < CHUNKS and _sent < received_floor + WINDOW:
-				for seat: int in targets:
-					_safe.set_target_peer(MeshScript.uuid_to_peer_id(ROSTER[seat]))
-					for mode: int in 3:
-						if mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE and _sent >= SAMPLES:
-							continue
-						_safe.transfer_mode = mode as MultiplayerPeer.TransferMode
-						if _safe.put_packet(_sample_bytes(phase, _seat, seat, mode, _sent)) != OK:
-							_fail("multi-peer directed send failed")
-							return false
-				_sent += 1
-			if _sent != CHUNKS:
+	var transfer := func() -> bool:
+		_safe.poll()
+		if (
+			_reader_paused
+			and _markers.has("fast-pair-%d-0" % phase)
+			and _markers.has("fast-pair-%d-2" % phase)
+		):
+			_reader_paused = false
+			_reader_resumed = true
+		while not _reader_paused and _safe.get_available_packet_count() > 0:
+			var sender := _safe.get_packet_peer()
+			var mode := _safe.get_packet_mode()
+			var channel := _safe.get_packet_channel()
+			var data := _safe.get_packet()
+			var seat := _seat_for_id(sender)
+			if (
+				_safe.get_packet_error() != OK
+				or not targets.has(seat)
+				or channel != 0
+				or mode < 0
+				or mode > 2
+			):
+				_fail("multi-peer packet sender, mode, channel or read error differs")
 				return false
-			for counts: Array in _counts.values():
-				if counts != [SAMPLES, SAMPLES, CHUNKS]:
+			_last_packet = {
+				"sender": sender,
+				"seat": seat,
+				"mode": mode,
+				"channel": channel,
+				"bytes": data.size(),
+				"sequence": data.decode_u32(0) if data.size() >= 4 else -1
+			}
+			var counts: Array = _counts[seat]
+			var sequence := int(data.decode_u32(0)) if data.size() >= 4 else -1
+			var limit := CHUNKS if mode == MultiplayerPeer.TRANSFER_MODE_RELIABLE else SAMPLES
+			if (
+				sequence != counts[mode]
+				or sequence >= limit
+				or data != _sample_bytes(phase, seat, _seat, mode, sequence)
+			):
+				_fail("multi-peer packet bytes or sequence differ")
+				return false
+			counts[mode] += 1
+			var consumed: int = counts[mode]
+			if mode == 2 and consumed % WINDOW == 0:
+				_pending.append(
+					{"to": seat, "from": _seat, "marker": _ack_marker(phase, _seat, consumed)}
+				)
+		for seat: int in targets:
+			var acknowledged: int = _acked[seat]
+			while (
+				acknowledged < CHUNKS
+				and _markers.has(_ack_marker(phase, seat, acknowledged + WINDOW))
+			):
+				acknowledged += WINDOW
+			if acknowledged != _acked[seat]:
+				_credit_updated[seat] = Time.get_ticks_msec()
+			_acked[seat] = acknowledged
+			for _batch: int in 4:
+				var sequence: int = _sent[seat]
+				if sequence >= CHUNKS or sequence - acknowledged >= WINDOW:
+					break
+				_safe.set_target_peer(MeshScript.uuid_to_peer_id(ROSTER[seat]))
+				for mode: int in 3:
+					if mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE and sequence >= SAMPLES:
+						continue
+					_safe.transfer_mode = mode as MultiplayerPeer.TransferMode
+					if _safe.put_packet(_sample_bytes(phase, _seat, seat, mode, sequence)) != OK:
+						_fail("multi-peer directed send failed")
+						return false
+				_sent[seat] = sequence + 1
+				if sequence + 1 - acknowledged == WINDOW:
+					_credit_updated[seat] = Time.get_ticks_msec()
+				var peak: int = _peak_outstanding[seat]
+				_peak_outstanding[seat] = maxi(peak, sequence + 1 - acknowledged)
+		if _slow_receiver and _seat != 1 and not _fast_pair_announced:
+			var fast_seat := 2 if _seat == 0 else 0
+			if _acked[fast_seat] == CHUNKS and _counts[fast_seat] == [SAMPLES, SAMPLES, CHUNKS]:
+				if _acked.get(1, 0) != 0 or _sent.get(1, WINDOW) != WINDOW:
+					_fail("delayed reader advanced before the independent pair completed")
 					return false
-			return true
+				_fast_pair_announced = true
+				_paused_proof = {
+					"sent": _sent.duplicate(),
+					"acknowledged": _acked.duplicate(),
+					"received": _counts.duplicate(true)
+				}
+				_pending.append(
+					{"to": 1, "from": _seat, "marker": "fast-pair-%d-%d" % [phase, _seat]}
+				)
+		for seat: int in targets:
+			if _acked[seat] != CHUNKS:
+				return false
+		for counts: Array in _counts.values():
+			if counts != [SAMPLES, SAMPLES, CHUNKS]:
+				return false
+		return true
+	if _slow_receiver:
+		if not await _wait_until(
+			"independent pair while reader paused",
+			func() -> bool:
+				transfer.call()
+				return _reader_resumed if _seat == 1 else _fast_pair_announced
+		):
+			return false
+	if not await _wait_until("directed concurrent snapshots and positions", transfer):
+		return false
+	if (
+		_slow_receiver
+		and ((_seat == 1 and not _reader_resumed) or (_seat != 1 and not _fast_pair_announced))
 	):
+		_fail("delayed-reader independence was not exercised")
 		return false
 	if not await _barrier("traffic-done-%d" % phase):
 		return false
 	print("WEBRTC_MULTIPEER_PHASE " + JSON.stringify(_snapshot()))
 	return true
+
+
+func _ack_marker(phase: int, seat: int, count: int) -> String:
+	return "consumed-%d-%d-%d" % [phase, seat, count]
 
 
 func _sample_bytes(
@@ -353,7 +432,20 @@ func _snapshot() -> Dictionary:
 	)
 	snapshot["directed_targets"] = _targets
 	snapshot["received_by_seat_and_mode"] = _counts
-	snapshot["sent_per_target"] = _sent
+	snapshot["sent_by_target"] = _sent
+	snapshot["acknowledged_by_target"] = _acked
+	snapshot["peak_outstanding_by_target"] = _peak_outstanding
+	snapshot["independent_pair_proof"] = _paused_proof
+	var waits: Dictionary = {}
+	for seat: int in _sent:
+		if _sent[seat] - _acked[seat] == WINDOW:
+			var updated: int = _credit_updated[seat]
+			waits[seat] = Time.get_ticks_msec() - updated
+	snapshot["credit_wait_age_ms_by_target"] = waits
+	snapshot["slow_receiver"] = _slow_receiver
+	snapshot["reader_paused"] = _reader_paused
+	snapshot["reader_resumed"] = _reader_resumed
+	snapshot["fast_pair_completed_while_reader_paused"] = _fast_pair_announced
 	snapshot["selected_survivor"] = _saved
 	snapshot["last_directed_packet"] = _last_packet
 	return snapshot
