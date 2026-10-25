@@ -159,7 +159,15 @@ func _run_phase(phase: int) -> bool:
 			closing_channel = channels[index]
 			closing_channel.call("close")
 		if not await _wait_until(
-			"reference required channel close", func() -> bool: return _mesh.get_peer_count() == 0
+			"reference required channel close",
+			func() -> bool:
+				return (
+					_mesh.get_peer_count() == 0
+					and (
+						closing_channel == null
+						or closing_channel.call("get_ready_state") == WebRTCDataChannel.STATE_CLOSED
+					)
+				)
 		):
 			return false
 		if (
