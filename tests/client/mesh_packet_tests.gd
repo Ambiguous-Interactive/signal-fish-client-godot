@@ -26,6 +26,7 @@ func run_all() -> void:
 		_test_channel_bytes_and_modes,
 		_test_round_robin_peers_and_channels,
 		_test_receive_membership_changes,
+		_test_engine_peer_replacement,
 		_test_read_errors_and_link_lifecycle
 	]
 	CompletionGuard.drive(self, cases, _failures)
@@ -146,6 +147,29 @@ func _test_receive_membership_changes() -> void:
 	_done()
 
 
+func _test_engine_peer_replacement() -> void:
+	var setup := _setup(2)
+	var mesh: MeshScript = setup[0]
+	var connections: Array = setup[2]
+	var original: Object = connections[0]
+	var replacement: Object = connections[1]
+	var engine := mesh.get_multiplayer_peer()
+	var sender := MeshScript.uuid_to_peer_id(PLAYERS[0])
+	engine.call("remove_peer", MeshScript.uuid_to_peer_id("10000000-0000-0000-0000-000000000003"))
+	_queue(original, 2, PackedByteArray([17]))
+	engine.call("remove_peer", sender)
+	_assert_equal(null, mesh.receive_packet(), "engine removal excludes old queued bytes")
+	engine.call("add_peer", replacement, sender)
+	_queue(replacement, 0, PackedByteArray([29]))
+	var packet := mesh.receive_packet()
+	_assert_equal(sender, packet.peer_id, "replacement engine sender")
+	_assert_equal(MultiplayerPeer.TRANSFER_MODE_RELIABLE, packet.transfer_mode, "replacement mode")
+	_assert_equal(PackedByteArray([29]), packet.data, "replacement channels supply fresh bytes")
+	_assert_equal(null, mesh.receive_packet(), "old engine channels stay excluded")
+	_dispose(setup)
+	_done()
+
+
 func _test_read_errors_and_link_lifecycle() -> void:
 	var setup := _setup(1)
 	var mesh: MeshScript = setup[0]
@@ -169,6 +193,10 @@ func _test_read_errors_and_link_lifecycle() -> void:
 		_assert_equal(null, mesh.receive_packet(), "incomplete link cannot deliver")
 	var unreliable: Object = channels[2]
 	unreliable.set("state", WebRTCDataChannel.STATE_OPEN)
+	_assert_equal(
+		PackedByteArray([42]), mesh.receive_packet().data, "closed channel kept its queue"
+	)
+	_queue(connection, 0, PackedByteArray([43]))
 	connection.set("state", WebRTCPeerConnection.STATE_CONNECTING)
 	_assert_equal(null, mesh.receive_packet(), "pending connection cannot deliver")
 	connection.set("state", WebRTCPeerConnection.STATE_CONNECTED)

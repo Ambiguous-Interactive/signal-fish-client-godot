@@ -533,6 +533,23 @@ pending `consumed-PHASE-SEAT-COUNT` marker to the sender's credit wait to
 trace delayed consumption acknowledgements. Other signaling records leave
 `marker` null.
 
+`relay_observation` records server queue timing for markers in both the mesh
+drill and reference assessment. `pending_markers` shows markers waiting for a
+destination GET. `recent_dequeues` records their `queue_ms` until that GET
+removed them. This measures server queue dwell; the receiving engine may
+process the response later. Match each marker and destination with the Web
+request timings and the receiving seat's last marker.
+
+Each Godot progress/failure snapshot also retains the last 16 `marker_posts`,
+with destination, request result, HTTP code and duration through the engine's
+completion callback. A long callback duration with short browser request and
+relay queue times points to engine scheduling or HTTP polling. Long queue dwell
+points to delayed destination polling. Compare fresh frame/transport samples
+before attributing a delay. These timings alone do not prove marker consumption.
+Relay histories retain at most 128 pending markers and 128 dequeues. Totals
+cover the full trial; `evicted_pending_records` reports missing detail, and
+`queue_ms` is null when its enqueue record was evicted.
+
 These samples run outside Godot's frame loop. In a controlled stopped-frame
 run, the engine heartbeat aged over 14 seconds while browser stats stayed
 fresh. A held HTTP request instead aged over 2.5 seconds while engine progress
@@ -604,7 +621,16 @@ versions need separate live checks.
 ### Receive throughput benchmark
 
 Run `godot --headless --path . --script tests/client/mesh_receive_bench.gd`
-to measure the raw receiver with 1, 16, 64 and 256 simulated peers. Each peer
-queues 200 packets on each default channel. Compare repeated runs on the
-same engine and machine. This measures script receive work; real network
-throughput requires the live drills above.
+to measure the raw receiver with 1, 16, 64 and 256 simulated peers. Add
+`-- --safe` to measure the safe peer's count, metadata and packet reads.
+The benchmark covers dense traffic, one active sender and empty queues.
+Dense raw traffic queues 200 packets per channel per peer; dense safe
+traffic uses four to bound the exact-count scan workload. Sparse traffic
+queues 200 per channel on the last peer. Empty-queue cases measure polling.
+
+Compare repeated runs on the same engine and machine, with the same benchmark
+file on each revision. Keep other workloads stopped during measurement.
+Readiness checks run when queued bytes are found, so empty peers avoid repeated
+channel-state calls. Every actual read still checks all required channels;
+safe selected-packet metadata keeps its live lifecycle checks. This measures
+script receive work; real network throughput requires the live drills above.
