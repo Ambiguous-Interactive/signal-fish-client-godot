@@ -194,7 +194,21 @@ static func _read_counted_map(
 ) -> Variant:
 	var entries: Dictionary = {}
 	for _index: int in count:
-		var key: Variant = _decode_value(peer, depth + 1, failure)
+		var key: Variant
+		if depth < MAX_DEPTH and peer.get_available_bytes() > 0:
+			var marker := peer.get_u8()
+			if marker >= 0xA0 and marker <= 0xBF:
+				var length := marker & 0x1F
+				if peer.get_available_bytes() < length:
+					return _fail(failure, "truncated MessagePack string")
+				key = peer.get_utf8_string(length)
+			elif marker >= 0xD9 and marker <= 0xDB:
+				key = _read_sized_string(peer, 1 << (marker - 0xD9), failure)
+			else:
+				peer.seek(peer.get_position() - 1)
+				key = _decode_value(peer, depth + 1, failure)
+		else:
+			key = _decode_value(peer, depth + 1, failure)
 		if not failure[0].is_empty():
 			return null
 		if typeof(key) != TYPE_STRING:
