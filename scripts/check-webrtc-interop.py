@@ -274,6 +274,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 *(["--mixed-traffic"] if args.mixed_traffic else []),
                 *(["--rpc-traffic"] if args.rpc_traffic else []),
                 *(["--rpc-recovery"] if args.rpc_recovery else []),
+                *(["--rpc-plan-recovery"] if args.rpc_plan_recovery else []),
                 *(["--metadata-probe"] if args.metadata_probe else []),
                 *(["--channel-receive"] if args.channel_receive else []),
                 *(["--safe-receive"] if args.safe_receive else []),
@@ -307,6 +308,8 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                     query = "?metadata_probe=1"
                 if args.rpc_recovery:
                     query += ("&" if query else "?") + "rpc_recovery=1"
+                if args.rpc_plan_recovery:
+                    query += ("&" if query else "?") + "rpc_plan_recovery=1"
                 if args.rpc_traffic:
                     query += ("&" if query else "?") + "rpc_traffic=1"
                 if args.safe_receive:
@@ -357,6 +360,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 "mixed_traffic": args.mixed_traffic,
                 "rpc_traffic": args.rpc_traffic,
                 "rpc_recovery": args.rpc_recovery,
+                "rpc_plan_recovery": args.rpc_plan_recovery,
                 "native_exit_code": process.returncode if process is not None else None,
                 "seats": seat_results,
             }
@@ -439,6 +443,11 @@ def main() -> None:
         help="Reproduce queued-channel metadata mismatch (issue #403)",
     )
     scenarios.add_argument(
+        "--rpc-plan-recovery",
+        action="store_true",
+        help="Keep the assigned RPC peer through plan and membership link replacement",
+    )
+    scenarios.add_argument(
         "--rpc-recovery",
         action="store_true",
         help="Keep SceneMultiplayer through queued RPC interruption and replacement",
@@ -458,8 +467,10 @@ def main() -> None:
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"
     )
     args = parser.parse_args()
-    if args.rpc_recovery and (not args.safe_receive or args.rpc_traffic):
-        parser.error("--rpc-recovery needs --safe-receive and replaces --rpc-traffic")
+    if (args.rpc_recovery or args.rpc_plan_recovery) and (
+        not args.safe_receive or args.rpc_traffic
+    ):
+        parser.error("RPC recovery needs --safe-receive and replaces --rpc-traffic")
     directory = args.output or Path(tempfile.mkdtemp(prefix="sf-webrtc-interop-"))
     directory.mkdir(parents=True, exist_ok=True)
     run(args, directory)

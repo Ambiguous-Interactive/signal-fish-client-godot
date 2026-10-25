@@ -5,6 +5,7 @@ var _reference_partial_sent := 0
 var _reference_partial_received := 0
 var _reference_received: Dictionary = {}
 var _reference_options: Dictionary = {}
+var _reference_receiver: MultiplayerPeer
 
 
 func _run_phase(phase: int) -> bool:
@@ -38,6 +39,13 @@ func _run_phase(phase: int) -> bool:
 		return false
 	if remote.initiate:
 		_mesh._apply_plan(plan)
+	if _safe_receive:
+		var receiver: MultiplayerPeer = _mesh.get_safe_multiplayer_peer()
+		if phase == 1:
+			_reference_receiver = receiver
+		elif receiver != _reference_receiver:
+			_fail("reference recovery replaced the safe receiver")
+			return false
 	if not await _wait_until(
 		"reference observation",
 		func() -> bool:
@@ -49,6 +57,7 @@ func _run_phase(phase: int) -> bool:
 	var channel_evidence: Array[Dictionary] = []
 	var evidence := {
 		"phase": phase,
+		"same_receiver": _safe_receive and _mesh.get_safe_multiplayer_peer() == _reference_receiver,
 		"connected": _mesh._count_connected_peers(),
 		"retained": _mesh.get_peer_count(),
 		"transport_reports": _client.statuses.duplicate(),
@@ -118,8 +127,10 @@ func _run_phase(phase: int) -> bool:
 			return false
 		evidence["remote_closed"] = true
 	print("WEBRTC_REFERENCE_PHASE " + JSON.stringify(evidence))
-	_mesh._reset_mesh()
-	if _mesh.get_peer_count() != 0 or _mesh.get_multiplayer_peer() != null:
+	var relay := SessionScript.SessionPlanInfo.new()
+	relay.transport = SessionScript.TransportKind.RELAY
+	_mesh._apply_plan(relay)
+	if _mesh.get_peer_count() != 0:
 		_fail("reference phase teardown retained peers")
 		return false
 	_pending.append({"marker": "retired-%d" % phase})

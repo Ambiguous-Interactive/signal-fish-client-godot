@@ -42,6 +42,9 @@ Assign the safe peer after a WebRTC plan creates the mesh. It discovers
 already-connected peers on its first poll. When a plan replaces the engine
 peer, assign the new safe peer to `multiplayer.multiplayer_peer`. Old adapters
 stay disconnected after teardown. Closing the adapter tears down its mesh.
+Room plans and player-left events can replace links while the same safe
+peer stays assigned. Lifecycle callbacks may change other links or poll
+again; closed links are excluded and each incarnation is announced once.
 Only the three default channels are supported. Godot's GDScript packet hook
 reports empty datagrams and read errors as `ERR_UNAVAILABLE`; use
 `receive_packet()` when your raw protocol needs those distinctions.
@@ -204,6 +207,8 @@ Add `--safe-receive` to select the RPC-safe peer's packet API. It must keep
 the retirement packet selected until remote closure, then discard its cached
 bytes. The default checks raw channel reads. Add `--require-gameplay` to fail when
 any pairing lacks those probes.
+Safe-receiver assessments keep one adapter through both generations and
+record `same_receiver`. A relay plan retires each generation's links.
 Keep mixed reference-client rooms on server relay until their pairing passes.
 These local Engine checks leave full service sessions for a separate drill.
 
@@ -408,6 +413,14 @@ RPC poll counts, polling state, connection/disconnection counts, selected-packet
 state and partial snapshot counts. These distinguish a paused receiver from
 a missing disconnect callback or stalled snapshot. The original intermittent
 stall in #396 still needs a captured root cause.
+
+Use `--safe-receive --rpc-plan-recovery` to keep the same assigned RPC peer
+and API through seven generations. Relay plans, empty replacement generations
+and player-left events retire links with an RPC selected. Each retirement must
+discard selected bytes and emit one disconnect before the next generation
+restores exact snapshots and positions. Phase records include `retirement`
+and `same_rpc_peer`; failure snapshots include `rpc_retirement`. This scenario
+injects service events locally. Full reference service sessions remain open.
 
 `--web-godot /path/to/godot` selects a separate engine for Web import and
 export. `--godot` still selects the native engine. Install the Web engine's

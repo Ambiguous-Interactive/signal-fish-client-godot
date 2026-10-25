@@ -61,6 +61,7 @@ func complete() -> bool:
 
 func evidence() -> Dictionary:
 	return {
+		"phase": phase,
 		"counts": counts,
 		"sent_chunks": sent,
 		"received_bytes": received.size(),

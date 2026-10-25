@@ -221,7 +221,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     and not driver_error
                 )
                 gameplay = complete and all(
-                    gameplay_phase_passed(godot) and gameplay_phase_passed(ref)
+                    gameplay_phase_passed(godot)
+                    and gameplay_phase_passed(ref)
+                    and (not args.safe_receive or godot.get("same_receiver") is True)
                     for godot, ref in zip(phases, result["phases"], strict=True)
                 )
                 report.update(

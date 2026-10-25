@@ -10,6 +10,7 @@ var _packet: RefCounted
 var _packet_connection: Object
 var _packet_revision := 0
 var _connected: Dictionary = {}
+var _poll_revision := 0
 
 
 func _init(mesh: Object, peer: Object) -> void:
@@ -82,16 +83,9 @@ func _get_available_packet_count() -> int:
 	var count := 1
 	var peers: Dictionary = _peer.call("get_peers")
 	for info: Dictionary in peers.values():
-		var connection: Object = info["connection"]
-		if connection.call("get_connection_state") != WebRTCPeerConnection.STATE_CONNECTED:
+		if not _peer_is_ready(info):
 			continue
 		var channels: Array = info["channels"]
-		var ready := channels.size() == 3
-		for channel: Object in channels:
-			if channel.call("get_ready_state") != WebRTCDataChannel.STATE_OPEN:
-				ready = false
-		if not ready:
-			continue
 		for channel: Object in channels:
 			var queued: int = channel.call("get_available_packet_count")
 			count += queued
@@ -127,21 +121,36 @@ func _put_packet_script(buffer: PackedByteArray) -> int:
 	return _peer.call("put_packet", buffer)
 
 
+func _peer_is_ready(info: Dictionary) -> bool:
+	var connection: Object = info["connection"]
+	if connection.call("get_connection_state") != WebRTCPeerConnection.STATE_CONNECTED:
+		return false
+	var channels: Array = info["channels"]
+	if channels.size() != 3:
+		return false
+	for channel: Object in channels:
+		if channel.call("get_ready_state") != WebRTCDataChannel.STATE_OPEN:
+			return false
+	return true
+
+
 func _poll() -> void:
+	_poll_revision += 1
+	var revision := _poll_revision
 	var mesh := _live_mesh()
 	if mesh == null:
 		return
 	mesh.call("poll")
-	if _live_mesh() == null:
+	if _live_mesh() == null or revision != _poll_revision:
 		return
 	_peer.call("poll")
-	if _live_mesh() == null:
+	if _live_mesh() == null or revision != _poll_revision:
 		return
 	var peers: Dictionary = _peer.call("get_peers")
 	var connected: Dictionary = {}
 	for id: int in peers:
 		var info: Dictionary = peers[id]
-		if info["connected"]:
+		if info["connected"] and _peer_is_ready(info):
 			connected[id] = info["connection"]
 	for id: int in _connected.keys():
 		if not _connected.has(id):
@@ -149,18 +158,18 @@ func _poll() -> void:
 		if connected.get(id) != _connected[id]:
 			_connected.erase(id)
 			peer_disconnected.emit(id)
-			if _live_mesh() == null:
+			if _live_mesh() == null or revision != _poll_revision:
 				return
 	for id: int in connected:
 		if not _peer.call("has_peer", id):
 			continue
 		var info: Dictionary = _peer.call("get_peer", id)
-		if info["connection"] != connected[id] or not info["connected"]:
+		if info["connection"] != connected[id] or not info["connected"] or not _peer_is_ready(info):
 			continue
 		if not _connected.has(id):
 			_connected[id] = connected[id]
 			peer_connected.emit(id)
-			if _live_mesh() == null:
+			if _live_mesh() == null or revision != _poll_revision:
 				return
 
 

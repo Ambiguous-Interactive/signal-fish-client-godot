@@ -23,6 +23,8 @@ func run_all() -> void:
 		_test_membership_change_keeps_selected_packet,
 		_test_packet_count,
 		_test_peer_lifecycle_and_settings,
+		_test_reentrant_channel_closure,
+		_test_recursive_lifecycle_poll,
 		_test_failed_and_empty_reads,
 		_test_cached_packet_lifecycle
 	]
@@ -271,3 +273,73 @@ func _dispose(setup: Array) -> void:
 	var client: Object = setup[1]
 	mesh.free()
 	client.free()
+
+
+func _test_reentrant_channel_closure() -> void:
+	for callback: String in ["connected", "disconnected"]:
+		for index: int in 3:
+			var setup := _setup(2)
+			var mesh: MeshScript = setup[0]
+			var connections: Array = setup[4]
+			var second: Object = connections[1]
+			var channels: Array = second.get("channels")
+			var channel: Object = channels[index]
+			var peer: MultiplayerPeer = setup[3]
+			var announced: Array[int] = []
+			peer.peer_connected.connect(func(id: int) -> void: announced.append(id))
+			if callback == "connected":
+				peer.peer_connected.connect(
+					func(_id: int) -> void: channel.set("state", WebRTCDataChannel.STATE_CLOSED)
+				)
+			else:
+				second.set("state", WebRTCPeerConnection.STATE_CONNECTING)
+				peer.poll()
+				second.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+				peer.peer_disconnected.connect(
+					func(_id: int) -> void: channel.set("state", WebRTCDataChannel.STATE_CLOSED)
+				)
+				mesh.call("_drop_peer", PLAYER)
+			peer.poll()
+			_assert_equal(
+				[MeshScript.uuid_to_peer_id(PLAYER)],
+				announced,
+				"callback closure excludes peer: %s/%d" % [callback, index]
+			)
+			_dispose(setup)
+	_done()
+
+
+func _test_recursive_lifecycle_poll() -> void:
+	var setup := _setup(2)
+	var mesh: MeshScript = setup[0]
+	var peer: MultiplayerPeer = setup[3]
+	var connected: Array[int] = []
+	var disconnected: Array[int] = []
+	peer.peer_connected.connect(func(id: int) -> void: connected.append(id))
+	peer.peer_disconnected.connect(func(id: int) -> void: disconnected.append(id))
+	peer.poll()
+	var second_uuid := "10000000-0000-0000-0000-000000000003"
+	var first_id := MeshScript.uuid_to_peer_id(PLAYER)
+	var second_id := MeshScript.uuid_to_peer_id(second_uuid)
+	var rebuild := func(id: int) -> void:
+		if id != first_id:
+			return
+		mesh.call("_drop_peer", second_uuid)
+		mesh.call("_open_peer", second_uuid, false)
+		var current: Array = _owner.call("_mesh_peers", mesh)
+		var replacement: Object = current[-1]
+		replacement.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+		peer.poll()
+	peer.peer_disconnected.connect(rebuild)
+	mesh.call("_drop_peer", PLAYER)
+	peer.poll()
+	peer.poll()
+	_assert_equal(
+		[first_id, second_id], disconnected, "recursive poll disconnects each incarnation once"
+	)
+	_assert_equal(
+		[first_id, second_id, second_id], connected, "recursive poll announces replacement once"
+	)
+	peer.peer_disconnected.disconnect(rebuild)
+	_dispose(setup)
+	_done()

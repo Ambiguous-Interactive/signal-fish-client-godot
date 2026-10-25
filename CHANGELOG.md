@@ -44,6 +44,9 @@ released version.
 
 ### Fixed
 
+- Safe WebRTC RPC peers skip closed links and avoid duplicate lifecycle
+  events when game callbacks change links or poll again (#413).
+
 - WebRTC mesh accepts reference-client ICE candidate envelopes and preserves
   their media and line index (#405).
 
