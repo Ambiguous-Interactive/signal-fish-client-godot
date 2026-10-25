@@ -286,8 +286,8 @@ least 24 queued reliable packets, and queued unreliable packets when mixed
 traffic is requested. All bytes, metadata, final credit, partial transfers,
 remote closure and next-generation recovery must still pass. Reference records
 retain `max_credit_wait_ms` to compare the known reader pause with HTTP waits.
-Add `--credit-transport http --http-credit-delay-ms 5000` to hold one
-first-generation reference credit GET after 32 chunks for five seconds. The report records
+Add `--credit-transport http --http-credit-delay-ms 4000` to hold one
+first-generation reference credit GET after 32 chunks for four seconds. The report records
 whether the hold occurred. The hold consumes the phase deadline. The six-second `observation` remains a snapshot;
 Godot keeps an active transfer running until all chunks and credit complete
 within the existing deadline. This catches premature teardown during a
