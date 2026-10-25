@@ -7,6 +7,7 @@ window.runReference = async function (
   godotOffer,
   mixedTraffic,
   creditTransport,
+  slowReferenceReceiver = false,
 ) {
   const seat = 1 - godotSeat;
   const post = async (message) => {
@@ -58,6 +59,9 @@ window.runReference = async function (
       let closeQueued = false;
       let remoteClosed = false;
       let retired = false;
+      const queued = [];
+      const receivePause = {};
+      let pauseStarted = 0;
       let heartbeatSent = 0;
       let heartbeatReceived = 0;
       let nextHeartbeat = 0;
@@ -69,6 +73,104 @@ window.runReference = async function (
       let signalingError = null;
       let started = performance.now();
       let nextProgress = 0;
+      const consume = (label, text) => {
+        if (text.startsWith("heartbeat:")) {
+          if (
+            !mixedTraffic ||
+            label !== "reliable" ||
+            heartbeatReceived >= heartbeatSent ||
+            text !== heartbeat(heartbeatReceived)
+          ) {
+            window.referenceError =
+              "reference heartbeat bytes or metadata differ";
+            return false;
+          }
+          heartbeatReceived++;
+          return true;
+        }
+        if (text.startsWith("credit:")) {
+          const count = Number(text.split(":").at(-1));
+          if (
+            creditTransport !== "webrtc" ||
+            label !== "reliable" ||
+            text !== `credit:${phase}:godot:reference:${count}` ||
+            !Number.isInteger(count) ||
+            count <= snapshotAck ||
+            count > snapshotSent ||
+            count % 8 !== 0
+          ) {
+            window.referenceError = "reference consumption credit differs";
+            return false;
+          }
+          acceptCredit(count);
+          return true;
+        }
+        if (text.startsWith("position:")) {
+          const sequence = Number(text.split(":")[3]);
+          if (
+            !mixedTraffic ||
+            label !== "unreliable" ||
+            !Number.isInteger(sequence) ||
+            sequence < 0 ||
+            sequence >= 32 ||
+            positionsReceived.has(sequence) ||
+            text !== position("godot", sequence)
+          ) {
+            window.referenceError =
+              "reference position bytes or metadata differ";
+            return false;
+          }
+          positionsReceived.add(sequence);
+          return true;
+        }
+        if (label === "reliable" && /^(snapshot|partial):/.test(text)) {
+          const partial = text.startsWith("partial:");
+          const sequence = partial ? partialReceived : snapshotReceived;
+          if (
+            sequence >= (partial ? 4 : 128) ||
+            text !== chunk("godot", sequence, partial)
+          ) {
+            window.referenceError =
+              "reference snapshot bytes or sequence differ";
+            return false;
+          }
+          if (partial) partialReceived++;
+          else {
+            snapshotReceived++;
+            if (slowReferenceReceiver && snapshotReceived === 8) {
+              pauseStarted = performance.now();
+              Object.assign(receivePause, {
+                received: snapshotReceived,
+                heartbeat_sent: heartbeatSent,
+                heartbeat_received: heartbeatReceived,
+                peak_queued: 0,
+                resumed: false,
+              });
+            }
+            if (snapshotReceived % 8 === 0) {
+              if (creditTransport === "http")
+                outgoing.push({
+                  marker: `snapshot-ack-${phase}-${snapshotReceived}`,
+                });
+              else
+                engine
+                  .channel("godot", "reliable")
+                  .send(`credit:${phase}:reference:godot:${snapshotReceived}`);
+            }
+          }
+          return true;
+        }
+        if (
+          !["reliable", "unreliable"].includes(label) ||
+          text !== `godot:${phase}:${label}` ||
+          received.includes(label)
+        ) {
+          window.referenceError = "reference probe bytes or metadata differ";
+          return false;
+        }
+        received.push(label);
+        return true;
+      };
       engine = new Engine(false, {
         onLocalCandidate: (_peer, _generation, candidate) =>
           outgoing.push({ payload: { IceCandidate: candidate } }),
@@ -80,98 +182,35 @@ window.runReference = async function (
         onChannelClosed: (_peer, _generation, label, reason) =>
           events.push(["closed", label, reason]),
         onChannelMessage: (_peer, _generation, label, text) => {
-          if (text.startsWith("heartbeat:")) {
-            if (
-              !mixedTraffic ||
-              label !== "reliable" ||
-              heartbeatReceived >= heartbeatSent ||
-              text !== heartbeat(heartbeatReceived)
-            ) {
-              window.referenceError =
-                "reference heartbeat bytes or metadata differ";
-              return false;
-            }
-            heartbeatReceived++;
-            return true;
-          }
-          if (text.startsWith("credit:")) {
-            const count = Number(text.split(":").at(-1));
-            if (
-              creditTransport !== "webrtc" ||
-              label !== "reliable" ||
-              text !== `credit:${phase}:godot:reference:${count}` ||
-              !Number.isInteger(count) ||
-              count <= snapshotAck ||
-              count > snapshotSent ||
-              count % 8 !== 0
-            ) {
-              window.referenceError = "reference consumption credit differs";
-              return false;
-            }
-            acceptCredit(count);
-            return true;
-          }
-          if (text.startsWith("position:")) {
-            const sequence = Number(text.split(":")[3]);
-            if (
-              !mixedTraffic ||
-              label !== "unreliable" ||
-              !Number.isInteger(sequence) ||
-              sequence < 0 ||
-              sequence >= 32 ||
-              positionsReceived.has(sequence) ||
-              text !== position("godot", sequence)
-            ) {
-              window.referenceError =
-                "reference position bytes or metadata differ";
-              return false;
-            }
-            positionsReceived.add(sequence);
-            return true;
-          }
-          if (label === "reliable" && /^(snapshot|partial):/.test(text)) {
-            const partial = text.startsWith("partial:");
-            const sequence = partial ? partialReceived : snapshotReceived;
-            if (
-              sequence >= (partial ? 4 : 128) ||
-              text !== chunk("godot", sequence, partial)
-            ) {
-              window.referenceError =
-                "reference snapshot bytes or sequence differ";
-              return false;
-            }
-            if (partial) partialReceived++;
-            else {
-              snapshotReceived++;
-              if (snapshotReceived % 8 === 0) {
-                if (creditTransport === "http")
-                  outgoing.push({
-                    marker: `snapshot-ack-${phase}-${snapshotReceived}`,
-                  });
-                else
-                  engine
-                    .channel("godot", "reliable")
-                    .send(
-                      `credit:${phase}:reference:godot:${snapshotReceived}`,
-                    );
-              }
-            }
-            return true;
-          }
           if (
-            !["reliable", "unreliable"].includes(label) ||
-            text !== `godot:${phase}:${label}` ||
-            received.includes(label)
+            pauseStarted &&
+            !receivePause.resumed &&
+            /^(snapshot|position):/.test(text)
           ) {
-            window.referenceError = "reference probe bytes or metadata differ";
-            return false;
+            const snapshots = queued.filter((entry) =>
+              entry.text.startsWith("snapshot:"),
+            ).length;
+            const positions = queued.length - snapshots;
+            if ((text.startsWith("snapshot:") ? snapshots : positions) >= 32) {
+              window.referenceError =
+                "reference paused receive queue exceeded its window";
+              return false;
+            }
+            queued.push({ label, text });
+            receivePause.peak_queued = Math.max(
+              receivePause.peak_queued,
+              queued.length,
+            );
+            return true;
           }
-          received.push(label);
-          return true;
+          return consume(label, text);
         },
       });
       const evidence = () => ({
         phase,
+        slow_reference_receiver: slowReferenceReceiver,
+        receive_pause: { ...receivePause },
+        queued_application_packets: queued.length,
         heartbeat_sent: heartbeatSent,
         heartbeat_received: heartbeatReceived,
         signaling_pending: signalingTask !== null,
@@ -256,6 +295,28 @@ window.runReference = async function (
       window.referenceProgress = evidence;
       try {
         while (!retired && performance.now() - started < 14000) {
+          if (
+            pauseStarted &&
+            !receivePause.resumed &&
+            performance.now() - pauseStarted >= 1500
+          ) {
+            Object.assign(receivePause, {
+              resumed: true,
+              elapsed_ms: Math.round(performance.now() - pauseStarted),
+              received_at_resume: snapshotReceived,
+              heartbeat_sent_at_resume: heartbeatSent,
+              heartbeat_received_at_resume: heartbeatReceived,
+              queued_snapshots: queued.filter((entry) =>
+                entry.text.startsWith("snapshot:"),
+              ).length,
+              queued_positions: queued.filter((entry) =>
+                entry.text.startsWith("position:"),
+              ).length,
+            });
+            for (const { label, text } of queued.splice(0)) {
+              if (!consume(label, text)) throw new Error(window.referenceError);
+            }
+          }
           if (snapshotSent > snapshotAck)
             maxCreditWaitMs = Math.max(
               maxCreditWaitMs,

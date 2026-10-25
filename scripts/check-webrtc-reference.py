@@ -143,6 +143,44 @@ def slow_receiver_passed(value: object, mixed_traffic: bool) -> bool:
     )
 
 
+def reference_receive_pause_passed(phase: dict[str, object], requested: bool) -> bool:
+    if phase.get("slow_reference_receiver") is not requested:
+        return False
+    if not requested:
+        return True
+    proof = phase.get("receive_pause")
+    if not isinstance(proof, dict):
+        return False
+    fields = (
+        "elapsed_ms",
+        "received",
+        "received_at_resume",
+        "queued_snapshots",
+        "queued_positions",
+        "peak_queued",
+        "heartbeat_sent",
+        "heartbeat_received",
+        "heartbeat_sent_at_resume",
+        "heartbeat_received_at_resume",
+    )
+    if any(type(proof.get(field)) is not int for field in fields):
+        return False
+    return (
+        proof.get("resumed") is True
+        and proof["elapsed_ms"] >= 1500
+        and proof["received"] == proof["received_at_resume"] == 8
+        and 24 <= proof["queued_snapshots"] <= 32
+        and 0 < proof["queued_positions"] <= 32
+        and proof["peak_queued"] == proof["queued_snapshots"] + proof["queued_positions"]
+        and 0 <= proof["heartbeat_received"] <= proof["heartbeat_sent"]
+        and proof["heartbeat_sent"]
+        < proof["heartbeat_received_at_resume"]
+        <= proof["heartbeat_sent_at_resume"]
+        <= 128
+        and phase.get("queued_application_packets") == 0
+    )
+
+
 def heartbeat_phase_passed(godot: dict[str, object], ref: dict[str, object], mixed: bool) -> bool:
     count = ref.get("heartbeat_sent")
     return (
@@ -272,6 +310,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "mixed_traffic": args.mixed_traffic,
         "credit_transport": args.credit_transport,
         "slow_receiver": getattr(args, "slow_receiver", False),
+        "slow_reference_receiver": getattr(args, "slow_reference_receiver", False),
         "http_credit_delay_ms": getattr(args, "http_credit_delay_ms", 0),
         "godot": args.godot,
         "reference_revision": args.reference_revision,
@@ -291,8 +330,14 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 reference.goto(url)
                 reference.wait_for_function("typeof window.runReference === 'function'")
                 reference.evaluate(
-                    "([seat, offer, mixed, credit]) => { void window.runReference(seat, offer, mixed, credit); }",
-                    [1 if web else 0, args.godot_offer, args.mixed_traffic, args.credit_transport],
+                    "([seat, offer, mixed, credit, slow]) => { void window.runReference(seat, offer, mixed, credit, slow); }",
+                    [
+                        1 if web else 0,
+                        args.godot_offer,
+                        args.mixed_traffic,
+                        args.credit_transport,
+                        getattr(args, "slow_reference_receiver", False),
+                    ],
                 )
                 if web:
                     page = browser.new_page()
@@ -382,6 +427,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             credit_transport=args.credit_transport,
                         )
                         and heartbeat_phase_passed(godot, ref, args.mixed_traffic)
+                        and reference_receive_pause_passed(
+                            ref, getattr(args, "slow_reference_receiver", False)
+                        )
                         and (not args.safe_receive or godot.get("same_receiver") is True)
                         for godot, ref in zip(phases, result["phases"], strict=True)
                     )
@@ -483,6 +531,11 @@ def main() -> None:
         help="Pause Godot reads for 1500 ms and require queued snapshot recovery",
     )
     parser.add_argument(
+        "--slow-reference-receiver",
+        action="store_true",
+        help="Pause reference snapshot consumption for 1500 ms while heartbeats continue",
+    )
+    parser.add_argument(
         "--http-credit-delay-ms",
         type=int,
         default=0,
@@ -495,6 +548,8 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if args.slow_reference_receiver and (not args.mixed_traffic or args.slow_receiver):
+        parser.error("--slow-reference-receiver needs --mixed-traffic and an active Godot reader")
     if not 0 <= args.http_credit_delay_ms <= 8000:
         parser.error("--http-credit-delay-ms must be between 0 and 8000")
     if args.http_credit_delay_ms and args.credit_transport != "http":

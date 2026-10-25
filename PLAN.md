@@ -22,8 +22,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Complete mesh channel interoperability with the reference engines (#355),
       including full service sessions and native reference-engine recovery.
 - [ ] Isolate the captured native/browser stream stall using matched HTTP/WebRTC
-      credit runs and independent gameplay, with request, relay, engine and
-      transport timings (#396; see `docs/mesh-guide.md`).
+      credit runs, independent gameplay and reference-consumer pause controls,
+      with request, relay, engine and transport timings (#396; see `docs/mesh-guide.md`).
 
 Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:
