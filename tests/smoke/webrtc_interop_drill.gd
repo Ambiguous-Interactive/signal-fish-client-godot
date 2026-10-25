@@ -20,6 +20,7 @@ const PLAYERS: Array[String] = [
 	"10000000-0000-0000-0000-000000000001", "10000000-0000-0000-0000-000000000002"
 ]
 
+var _signal_players: Array[String] = PLAYERS
 var _client: DrillClient
 var _mesh: MeshScript
 var _inbox: HTTPRequest
@@ -202,7 +203,7 @@ func _process(_delta: float) -> void:
 				_last_marker_sent = message["marker"]
 			if (
 				_outbox.request(
-					_url + "/signal/%d" % (1 - _seat),
+					_url + "/signal/%d" % message.get("to", 1 - _seat),
 					PackedStringArray(["Content-Type: application/json"]),
 					HTTPClient.METHOD_POST,
 					JSON.stringify(message)
@@ -237,8 +238,9 @@ func _on_inbox(result: int, code: int, _headers: PackedStringArray, body: Packed
 			_last_marker_received = message["marker"]
 			_markers[message["marker"]] = true
 		else:
+			var sender_seat: int = message.get("from", 1 - _seat)
 			_client.signal_received.emit(
-				PLAYERS[1 - _seat], str(message["generation"]), message["payload"]
+				_signal_players[sender_seat], str(message["generation"]), message["payload"]
 			)
 
 
@@ -1204,6 +1206,7 @@ func _snapshot() -> Dictionary:
 			var peer_id: int = entry.get("peer_id")
 			var channel_states: Array[Dictionary] = []
 			var peer_state := {
+				"peer_id": peer_id,
 				"connection": connection.get_connection_state(),
 				"gathering": connection.get_gathering_state(),
 				"signaling": connection.get_signaling_state(),

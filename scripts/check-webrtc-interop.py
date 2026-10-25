@@ -36,7 +36,7 @@ class RelayHandler(SimpleHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
-        if self.path in ("/signal/0", "/signal/1"):
+        if self.path in tuple(f"/signal/{seat}" for seat in range(len(self.queues))):
             seat = int(self.path[-1])
             with self.lock:
                 messages = self.queues[seat]
@@ -46,7 +46,7 @@ class RelayHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def do_POST(self) -> None:
-        if self.path not in ("/signal/0", "/signal/1"):
+        if self.path not in tuple(f"/signal/{seat}" for seat in range(len(self.queues))):
             self.send_error(404)
             return
         message = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -142,7 +142,12 @@ def prepare(project: Path, extension: Path | None, addon_root: Path) -> None:
         shutil.copytree(extension, project / "addons/webrtc_native")
     tests = project / "tests/smoke"
     tests.mkdir(parents=True)
-    for name in ("webrtc_interop_drill.gd", "webrtc_interop_drill.tscn", "webrtc_rpc_probe.gd"):
+    for name in (
+        "webrtc_interop_drill.gd",
+        "webrtc_interop_drill.tscn",
+        "webrtc_rpc_probe.gd",
+        "webrtc_multipeer_drill.gd",
+    ):
         shutil.copy2(ROOT / "tests/smoke" / name, tests / name)
     debug = (ROOT / "project.godot").read_text().split("[debug]\n", 1)[1].split("\n[", 1)[0]
     (project / "project.godot").write_text(PROJECT + "\n[debug]\n" + debug)
@@ -192,11 +197,16 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
                 continue
             break
     rpc_phases = []
+    multi_peer_phases = []
     for line in lines:
         if line.startswith("WEBRTC_RPC_RECOVERY_PHASE "):
             with contextlib.suppress(json.JSONDecodeError):
                 rpc_phases.append(json.loads(line.removeprefix("WEBRTC_RPC_RECOVERY_PHASE ")))
+        if line.startswith("WEBRTC_MULTIPEER_PHASE "):
+            with contextlib.suppress(json.JSONDecodeError):
+                multi_peer_phases.append(json.loads(line.removeprefix("WEBRTC_MULTIPEER_PHASE ")))
     return {
+        "multi_peer_phases": multi_peer_phases,
         "rpc_recovery_phases": rpc_phases,
         "seat": seat,
         "engine_banner": next((line for line in lines if line.startswith("Godot Engine v")), ""),
@@ -209,15 +219,18 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
     }
 
 
-def observe_browser(page: Page, process: subprocess.Popen[bytes], messages: list[str]) -> str:
+def observe_browser(
+    page: Page, process: subprocess.Popen[bytes], messages: list[str], seat: int = 1
+) -> str:
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         page.wait_for_timeout(200)
         if any(
-            message == "WEBRTC_INTEROP_PASS seat=1"
+            message == f"WEBRTC_INTEROP_PASS seat={seat}"
             or message.startswith("WEBRTC_INTEROP_FAIL ")
             or message.startswith("PAGE_ERROR ")
             or message == "BROWSER_CRASH"
+            or engine_failed(message)
             for message in messages
         ):
             return ""
@@ -226,11 +239,36 @@ def observe_browser(page: Page, process: subprocess.Popen[bytes], messages: list
     return "browser observation timed out after 60 seconds"
 
 
+def wait_web_startup(page: Page, outputs: list[tuple[int, list[str]]]) -> None:
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        for seat, messages in outputs:
+            if any(
+                engine_failed(message)
+                or message.startswith(("PAGE_ERROR ", "BROWSER_CRASH", "WEBRTC_INTEROP_FAIL "))
+                for message in messages
+            ):
+                raise RuntimeError(f"Web seat {seat} failed during engine startup")
+        if all(f"WEBRTC_MULTIPEER_LOADED seat={seat}" in messages for seat, messages in outputs):
+            return
+        page.wait_for_timeout(200)
+    missing = [
+        seat for seat, messages in outputs if f"WEBRTC_MULTIPEER_LOADED seat={seat}" not in messages
+    ]
+    raise RuntimeError(f"Web engine startup timed out after 60 seconds; missing seats: {missing}")
+
+
 def prepare_pair(args: argparse.Namespace, directory: Path, addon_root: Path) -> tuple[Path, Path]:
     native = directory / "native"
     web = directory / "web"
     prepare(native, args.native_extension, addon_root)
     prepare(web, None, addon_root)
+    if args.multi_peer:
+        for project in (native, web):
+            scene = project / SCENE
+            scene.write_text(
+                scene.read_text().replace("webrtc_interop_drill.gd", "webrtc_multipeer_drill.gd")
+            )
     for project, engine in ((native, args.godot), (web, args.web_godot or args.godot)):
         checked(
             [engine, "--headless", "--path", str(project), "--editor", "--import"],
@@ -247,7 +285,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
     directory.mkdir(parents=True)
 
     class TrialRelayHandler(RelayHandler):
-        queues: ClassVar[list[list[object]]] = [[], []]
+        queues: ClassVar[list[list[object]]] = [[] for _ in range(3 if args.multi_peer else 2)]
         lock = threading.Lock()
 
     handler = functools.partial(TrialRelayHandler, directory=str(web / "build/web"))
@@ -258,30 +296,31 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
     native_log = (directory / "native.log").open("w")
     process = None
     messages: list[str] = []
+    extra_messages: list[str] = []
+    extra_observation = BrowserObservation(url)
     driver_error = ""
     browser_version = ""
     observation = BrowserObservation(url)
     browser_observation: dict[str, object] = {}
+    browser_2_observation: dict[str, object] = {}
     try:
-        process = subprocess.Popen(  # noqa: S603
-            [
-                args.godot,
-                "--headless",
-                "--path",
-                str(native),
-                "--",
-                url,
-                *(["--mixed-traffic"] if args.mixed_traffic else []),
-                *(["--rpc-traffic"] if args.rpc_traffic else []),
-                *(["--rpc-recovery"] if args.rpc_recovery else []),
-                *(["--rpc-plan-recovery"] if args.rpc_plan_recovery else []),
-                *(["--metadata-probe"] if args.metadata_probe else []),
-                *(["--channel-receive"] if args.channel_receive else []),
-                *(["--safe-receive"] if args.safe_receive else []),
-            ],
-            stdout=native_log,
-            stderr=subprocess.STDOUT,
-        )
+        native_command = [
+            args.godot,
+            "--headless",
+            "--path",
+            str(native),
+            "--",
+            url,
+            *(["--mixed-traffic"] if args.mixed_traffic else []),
+            *(["--rpc-traffic"] if args.rpc_traffic else []),
+            *(["--rpc-recovery"] if args.rpc_recovery else []),
+            *(["--rpc-plan-recovery"] if args.rpc_plan_recovery else []),
+            *(["--metadata-probe"] if args.metadata_probe else []),
+            *(["--channel-receive"] if args.channel_receive else []),
+            *(["--safe-receive"] if args.safe_receive else []),
+        ]
+        if not args.multi_peer:
+            process = subprocess.Popen(native_command, stdout=native_log, stderr=subprocess.STDOUT)  # noqa: S603
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
                 headless=True,
@@ -317,9 +356,42 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 if args.channel_receive:
                     query += ("&" if query else "?") + "channel_receive=1"
                 page.goto(url + "/index.html" + query)
+                extra_page = None
+                if args.multi_peer:
+                    extra_page = browser.new_page()
+                    extra_page.add_init_script(path=ROOT / "scripts/webrtc-browser-observation.js")
+
+                    def extra_console(message: str) -> None:
+                        extra_messages.append(message)
+                        extra_observation.console(message)
+
+                    extra_page.on("console", lambda message: extra_console(message.text))
+                    extra_page.on("crash", lambda _: extra_console("BROWSER_CRASH"))
+                    extra_page.on(
+                        "pageerror", lambda error: extra_console("PAGE_ERROR " + str(error))
+                    )
+                    extra_page.on("request", extra_observation.started)
+                    extra_page.on("requestfinished", extra_observation.finished)
+                    extra_page.on(
+                        "requestfailed",
+                        lambda request: extra_observation.finished(request, failed=True),
+                    )
+                    extra_page.goto(url + "/index.html?seat=2")
+                    wait_web_startup(page, [(1, messages), (2, extra_messages)])
+                    process = subprocess.Popen(  # noqa: S603
+                        native_command, stdout=native_log, stderr=subprocess.STDOUT
+                    )
+                    page.evaluate("window.sfMeshStart = true")
+                    extra_page.evaluate("window.sfMeshStart = true")
+                if process is None:
+                    raise RuntimeError("Native seat was not started")
                 driver_error = observe_browser(page, process, messages)
+                if extra_page is not None and not driver_error:
+                    driver_error = observe_browser(extra_page, process, extra_messages, seat=2)
             finally:
                 browser_observation = observation.snapshot()
+                if args.multi_peer:
+                    browser_2_observation = extra_observation.snapshot()
                 (directory / "browser.log").write_text("\n".join(messages))
                 browser.close()
     except Exception as exc:
@@ -346,12 +418,17 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 seat_evidence(native_output, 0),
                 seat_evidence("\n".join(messages), 1),
             ]
+            if args.multi_peer:
+                (directory / "browser-2.log").write_text("\n".join(extra_messages))
+                seat_results.append(seat_evidence("\n".join(extra_messages), 2))
             if process is None or process.returncode != 0:
                 seat_results[0]["passed"] = False
             evidence = {
                 "driver_error": driver_error,
                 "browser_version": browser_version,
                 "browser_observation": browser_observation,
+                "browser_2_observation": browser_2_observation,
+                "multi_peer": args.multi_peer,
                 "godot": args.godot,
                 "web_godot": args.web_godot or args.godot,
                 "channel_receive": args.channel_receive,
@@ -433,6 +510,11 @@ def main() -> None:
     )
     scenarios = parser.add_mutually_exclusive_group()
     scenarios.add_argument(
+        "--multi-peer",
+        action="store_true",
+        help="Check three-seat mixed traffic and selective link recovery",
+    )
+    scenarios.add_argument(
         "--mixed-traffic",
         action="store_true",
         help="Probe concurrent modes; Godot 4.3 can return mismatched packet metadata",
@@ -467,6 +549,8 @@ def main() -> None:
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"
     )
     args = parser.parse_args()
+    if args.multi_peer and (args.rpc_traffic or args.channel_receive):
+        parser.error("--multi-peer uses the safe receiver and its own gameplay workload")
     if (args.rpc_recovery or args.rpc_plan_recovery) and (
         not args.safe_receive or args.rpc_traffic
     ):

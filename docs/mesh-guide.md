@@ -424,6 +424,37 @@ restores exact snapshots and positions. Phase records include `retirement`
 and `same_rpc_peer`; failure snapshots include `rpc_retirement`. This scenario
 injects service events locally. Full reference service sessions remain open.
 
+Use `--multi-peer` for one native seat and two independent Web seats. It uses
+one safe receiver per seat. Both Web engines must report startup within 60
+seconds before the native seat starts and the driver releases gameplay. Each
+network wait keeps its 15-second deadline. Each peer sends 64 exact 1,200-byte reliable chunks
+and 32 exact samples on each unreliable mode to each connected peer. The local
+qualification requires every sample, including its sender, destination, mode,
+channel and sequence. It does not model network loss.
+
+The drill selects packets from links that will survive, closes only the link
+between seats 0 and 1, and checks that those packets and the other connections
+stay intact. Traffic continues through seat 2. A fresh generation restores the
+triangle through the same safe receivers, then relay plans release all links.
+Native plus two Web seats passed on Godot 4.3, 4.4.1 and 4.7.2 with
+webrtc-native 1.2.2-stable and Chromium 154 on Linux arm64. This covers local
+Godot mesh pairings. Full reference service sessions remain open.
+
+`WEBRTC_MULTIPEER_PHASE` and `seats.json.multi_peer_phases` retain completed
+phases. Progress and failure records include counts per sender and mode,
+directed targets, the last packet's metadata and the selected survivor.
+Channel diagnostics include the Godot peer id. `browser_2_observation` and
+`browser-2.log` retain the second Web seat's HTTP and transport evidence.
+Every seat must complete; a missing terminal or engine error fails the trial.
+
+Keep snapshot sends bounded while receivers poll. The three-seat drill limits
+each sender to eight reliable chunks ahead of its slowest incoming stream. An
+unbounded 64-chunk burst on native/Web Godot 4.3 filled the Web receive buffer:
+its WebRTC stats recorded all 64 messages, while Godot emitted `Buffer full!
+Dropping data.` and the byte checks failed after 55 chunks. Reliable transport
+delivery alone does not prove that the game consumed each chunk. Applications
+should acknowledge consumed chunks and limit outstanding bytes per recipient.
+
 `--web-godot /path/to/godot` selects a separate engine for Web import and
 export. `--godot` still selects the native engine. Install the Web engine's
 matching export templates. Each seat report retains its actual engine banner.
