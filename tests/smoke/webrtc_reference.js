@@ -54,9 +54,19 @@ window.runReference = async function (
         `${partial ? "partial" : "snapshot"}:${phase}:${sender}:${sequence}:` +
         "0123456789abcdef".repeat(64);
       let observed = false;
+      let closeRequested = false;
       let closeQueued = false;
       let remoteClosed = false;
       let retired = false;
+      let heartbeatSent = 0;
+      let heartbeatReceived = 0;
+      let nextHeartbeat = 0;
+      const heartbeat = (sequence) =>
+        `heartbeat:${phase}:reference:${sequence}:` +
+        "0123456789abcdef".repeat(4);
+      const controller = new AbortController();
+      let signalingTask = null;
+      let signalingError = null;
       let started = performance.now();
       let nextProgress = 0;
       engine = new Engine(false, {
@@ -70,6 +80,20 @@ window.runReference = async function (
         onChannelClosed: (_peer, _generation, label, reason) =>
           events.push(["closed", label, reason]),
         onChannelMessage: (_peer, _generation, label, text) => {
+          if (text.startsWith("heartbeat:")) {
+            if (
+              !mixedTraffic ||
+              label !== "reliable" ||
+              heartbeatReceived >= heartbeatSent ||
+              text !== heartbeat(heartbeatReceived)
+            ) {
+              window.referenceError =
+                "reference heartbeat bytes or metadata differ";
+              return false;
+            }
+            heartbeatReceived++;
+            return true;
+          }
           if (text.startsWith("credit:")) {
             const count = Number(text.split(":").at(-1));
             if (
@@ -148,6 +172,9 @@ window.runReference = async function (
       });
       const evidence = () => ({
         phase,
+        heartbeat_sent: heartbeatSent,
+        heartbeat_received: heartbeatReceived,
+        signaling_pending: signalingTask !== null,
         mixed_traffic: mixedTraffic,
         credit_transport: creditTransport,
         max_credit_wait_ms: maxCreditWaitMs,
@@ -170,27 +197,18 @@ window.runReference = async function (
         events: events.slice(),
         snapshot: engine.diagnosticSnapshot("godot"),
       });
-      while (!retired && performance.now() - started < 14000) {
-        if (snapshotSent > snapshotAck)
-          maxCreditWaitMs = Math.max(
-            maxCreditWaitMs,
-            Math.round(performance.now() - creditUpdated),
-          );
-        if (performance.now() >= nextProgress) {
-          nextProgress = performance.now() + 1000;
-          console.log(
-            "WEBRTC_INTEROP_PROGRESS " +
-              JSON.stringify({
-                ...evidence(),
-                runtime: "reference",
-                elapsed_ms: Math.round(performance.now() - started),
-                paired,
-                snapshot_ack: snapshotAck,
-                close_queued: closeQueued,
-              }),
-          );
-        }
-        const response = await fetch(`/signal/${seat}`);
+      const sendSignal = async (message) => {
+        const response = await fetch(`/signal/${godotSeat}`, {
+          method: "POST",
+          body: JSON.stringify(message),
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`relay POST ${response.status}`);
+      };
+      const exchange = async () => {
+        const response = await fetch(`/signal/${seat}`, {
+          signal: controller.signal,
+        });
         if (!response.ok) throw new Error(`relay GET ${response.status}`);
         for (const message of await response.json()) {
           if (message.marker === `ready-${phase}` && !paired) {
@@ -208,8 +226,7 @@ window.runReference = async function (
             message.marker === `close-ready-${phase}` &&
             !closeQueued
           ) {
-            closeQueued = true;
-            engine.channel("godot", "reliable").send(`retired:${phase}`);
+            closeRequested = true;
           } else if (
             message.marker === `close-selected-${phase}` &&
             !remoteClosed
@@ -233,54 +250,117 @@ window.runReference = async function (
               await engine.handleRemoteCandidate("godot", payload.IceCandidate);
           }
         }
-        if (
-          !sent &&
-          engine.channel("godot", "reliable")?.readyState === "open" &&
-          engine.channel("godot", "unreliable")?.readyState === "open"
-        ) {
-          sent = true;
-          transferStarted = performance.now();
-          creditUpdated = transferStarted;
-          for (const label of ["reliable", "unreliable"])
-            engine.channel("godot", label).send(`reference:${phase}:${label}`);
-        }
-        const reliable = engine.channel("godot", "reliable");
-        if (sent && reliable?.readyState === "open") {
-          for (
-            let batch = 0;
-            batch < 4 && snapshotSent < 128 && snapshotSent - snapshotAck < 32;
-            batch++
-          ) {
-            reliable.send(chunk("reference", snapshotSent++));
-            peakOutstanding = Math.max(
-              peakOutstanding,
-              snapshotSent - snapshotAck,
+        while (outgoing.length)
+          await sendSignal({ generation, ...outgoing.shift() });
+      };
+      window.referenceProgress = evidence;
+      try {
+        while (!retired && performance.now() - started < 14000) {
+          if (snapshotSent > snapshotAck)
+            maxCreditWaitMs = Math.max(
+              maxCreditWaitMs,
+              Math.round(performance.now() - creditUpdated),
             );
-            if (mixedTraffic && snapshotSent % 4 === 0)
-              engine
-                .channel("godot", "unreliable")
-                .send(position("reference", positionsSent++));
+          if (performance.now() >= nextProgress) {
+            nextProgress = performance.now() + 1000;
+            console.log(
+              "WEBRTC_INTEROP_PROGRESS " +
+                JSON.stringify({
+                  ...evidence(),
+                  runtime: "reference",
+                  elapsed_ms: Math.round(performance.now() - started),
+                  paired,
+                  snapshot_ack: snapshotAck,
+                  close_queued: closeQueued,
+                }),
+            );
+          }
+          if (signalingError) throw signalingError;
+          if (signalingTask === null) {
+            signalingTask = exchange()
+              .catch((error) => {
+                if (!controller.signal.aborted || error?.name !== "AbortError")
+                  signalingError = error;
+              })
+              .finally(() => {
+                signalingTask = null;
+              });
           }
           if (
-            snapshotReceived === 128 &&
-            snapshotAck === 128 &&
+            !sent &&
+            engine.channel("godot", "reliable")?.readyState === "open" &&
+            engine.channel("godot", "unreliable")?.readyState === "open"
+          ) {
+            sent = true;
+            transferStarted = performance.now();
+            creditUpdated = transferStarted;
+            for (const label of ["reliable", "unreliable"])
+              engine
+                .channel("godot", label)
+                .send(`reference:${phase}:${label}`);
+          }
+          const reliable = engine.channel("godot", "reliable");
+          if (sent && reliable?.readyState === "open") {
+            for (
+              let batch = 0;
+              batch < 4 &&
+              snapshotSent < 128 &&
+              snapshotSent - snapshotAck < 32;
+              batch++
+            ) {
+              reliable.send(chunk("reference", snapshotSent++));
+              peakOutstanding = Math.max(
+                peakOutstanding,
+                snapshotSent - snapshotAck,
+              );
+              if (mixedTraffic && snapshotSent % 4 === 0)
+                engine
+                  .channel("godot", "unreliable")
+                  .send(position("reference", positionsSent++));
+            }
+            if (
+              snapshotReceived === 128 &&
+              snapshotAck === 128 &&
+              partialSent === 0
+            ) {
+              transferMs = Math.round(performance.now() - transferStarted);
+              for (; partialSent < 4; partialSent++)
+                reliable.send(chunk("reference", partialSent, true));
+            }
+          }
+          if (paired && !observed && performance.now() - started >= 6000) {
+            observed = true;
+            const observation = evidence();
+            window.referenceResults.push({ ...observation, observation });
+            outgoing.push({ marker: `observed-${phase}` });
+          }
+          if (
+            mixedTraffic &&
+            sent &&
+            reliable?.readyState === "open" &&
+            heartbeatSent < 128 &&
+            performance.now() >= nextHeartbeat &&
             partialSent === 0
           ) {
-            transferMs = Math.round(performance.now() - transferStarted);
-            for (; partialSent < 4; partialSent++)
-              reliable.send(chunk("reference", partialSent, true));
+            reliable.send(heartbeat(heartbeatSent++));
+            nextHeartbeat = performance.now() + 100;
           }
+          if (
+            closeRequested &&
+            !closeQueued &&
+            heartbeatReceived === heartbeatSent
+          ) {
+            closeQueued = true;
+            reliable.send(`retired:${phase}`);
+          }
+          if (window.referenceError) throw new Error(window.referenceError);
+          await new Promise((resolve) => setTimeout(resolve, 20));
         }
-        if (paired && !observed && performance.now() - started >= 6000) {
-          observed = true;
-          const observation = evidence();
-          window.referenceResults.push({ ...observation, observation });
-          outgoing.push({ marker: `observed-${phase}` });
-        }
-        while (outgoing.length) await post({ generation, ...outgoing.shift() });
-        if (window.referenceError) throw new Error(window.referenceError);
-        await new Promise((resolve) => setTimeout(resolve, 20));
+      } finally {
+        controller.abort();
+        await signalingTask;
       }
+      if (signalingError && !retired) throw signalingError;
       if (!retired) throw new Error(`phase ${phase} missing Godot teardown`);
       Object.assign(window.referenceResults.at(-1), evidence());
       console.log(
