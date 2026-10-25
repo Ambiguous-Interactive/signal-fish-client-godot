@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import ClassVar, Protocol, cast
@@ -253,6 +254,17 @@ def wait_for_godot(page: Page, messages: list[str]) -> str:
     return "Godot Web completion observation timed out after 15 seconds"
 
 
+def wait_for_godot_ready(page: Page, ready: Callable[[], bool], messages: list[str]) -> int:
+    started = time.monotonic()
+    while time.monotonic() - started < 60:
+        if page_failed(messages) or any(interop.engine_failed(line) for line in messages):
+            raise RuntimeError("Godot failed during reference assessment startup")
+        if ready():
+            return round((time.monotonic() - started) * 1000)
+        page.wait_for_timeout(100)
+    raise TimeoutError("Godot ready marker was not received during 60-second startup")
+
+
 def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
     project = directory / "project"
     interop.prepare(project, None if web else args.native_extension, ROOT)
@@ -359,6 +371,29 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 observations["reference"] = reference_observation
                 reference.goto(url)
                 reference.wait_for_function("typeof window.runReference === 'function'")
+                if web:
+                    page = browser.new_page()
+                    watch_page(page, messages)
+                    observations["godot"] = observe_page(page, url)
+                    page.goto(url + "/godot/index.html")
+                else:
+                    native = subprocess.Popen(  # noqa: S603
+                        [args.godot, "--headless", "--path", str(project), "--", url],
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                    )
+
+                def godot_ready() -> bool:
+                    if native is not None and native.poll() is not None:
+                        raise RuntimeError("Native Godot exited before its ready marker")
+                    with Handler.lock:
+                        return any(
+                            isinstance(message, dict) and message.get("marker") == "ready-1"
+                            for message in Handler.queues[0 if web else 1]
+                        )
+
+                report["startup_ms"] = wait_for_godot_ready(reference, godot_ready, messages)
+                report["reference_started_after_godot_ready"] = True
                 reference.evaluate(
                     "([seat, offer, mixed, credit, slow, channel, closer]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer); }",
                     [
@@ -371,17 +406,6 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         getattr(args, "closing_seat", "reference"),
                     ],
                 )
-                if web:
-                    page = browser.new_page()
-                    watch_page(page, messages)
-                    observations["godot"] = observe_page(page, url)
-                    page.goto(url + "/godot/index.html")
-                else:
-                    native = subprocess.Popen(  # noqa: S603
-                        [args.godot, "--headless", "--path", str(project), "--", url],
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                    )
                 hold_proof: dict[str, object] = {}
                 report["signaling_hold_progress"] = hold_proof
                 hold_started = 0.0

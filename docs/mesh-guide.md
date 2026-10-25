@@ -254,6 +254,8 @@ Phase `retirement` records the closing seat and channel, selected queue count,
 packet discard, peer removal and observed reference channel closures. Godot
 closure also records the final physical channel state. The ordered-channel
 case observes reference required-channel closure when Godot releases the link.
+The driver waits up to 60 seconds for Godot's ready marker before starting
+the reference phase. Reports retain `startup_ms` and the startup barrier result.
 Each case has its own directory. `summary.json` retains failed cases while
 later cases run. Network deadlines remain unchanged.
 

@@ -253,6 +253,26 @@ class ReferenceEvidenceTests(unittest.TestCase):
             self.assertEqual(results[2]["closing_channel"], "unreliable")
             self.assertTrue(results[-1]["gameplay_passed"])
 
+    def test_reference_phase_waits_for_engine_startup_without_consuming_its_marker(self) -> None:
+        page = Mock()
+        markers: list[str] = []
+        page.wait_for_timeout.side_effect = lambda _: markers.append("ready-1")
+        with patch.object(reference.time, "monotonic", side_effect=[0, 0, 20, 20]):
+            elapsed = reference.wait_for_godot_ready(
+                cast(Page, page), lambda: "ready-1" in markers, []
+            )
+        self.assertEqual(elapsed, 20000)
+        self.assertEqual(markers, ["ready-1"])
+        page.wait_for_timeout.assert_called_once_with(100)
+        with (
+            patch.object(reference.time, "monotonic", side_effect=[0, 60]),
+            self.assertRaisesRegex(TimeoutError, "60-second startup"),
+        ):
+            reference.wait_for_godot_ready(cast(Page, page), lambda: False, [])
+        for error in ("PAGE_ERROR load failed", "SCRIPT ERROR: bad engine"):
+            with self.assertRaisesRegex(RuntimeError, "during reference assessment startup"):
+                reference.wait_for_godot_ready(cast(Page, page), lambda: True, [error])
+
     def test_slow_reader_requires_a_real_pause_and_queued_mixed_packets(self) -> None:
         proof = {
             "resumed": True,
