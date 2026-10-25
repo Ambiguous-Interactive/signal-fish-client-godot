@@ -107,6 +107,138 @@ class ReferenceEvidenceTests(unittest.TestCase):
             self.assertFalse(reference.slow_receiver_passed(missing, True))
         self.assertTrue(reference.slow_receiver_passed({**proof, "queued_unreliable": 0}, False))
 
+    def test_reference_pause_requires_frozen_consumption_and_new_echoes(self) -> None:
+        proof = {
+            "resumed": True,
+            "elapsed_ms": 1510,
+            "received": 8,
+            "received_at_resume": 8,
+            "queued_snapshots": 32,
+            "queued_positions": 8,
+            "peak_queued": 40,
+            "heartbeat_sent": 3,
+            "heartbeat_received": 2,
+            "heartbeat_sent_at_resume": 18,
+            "heartbeat_received_at_resume": 17,
+        }
+        phase = {
+            "slow_reference_receiver": True,
+            "receive_pause": proof,
+            "queued_application_packets": 0,
+        }
+        self.assertTrue(reference.reference_receive_pause_passed(phase, True))
+        for field, value in (
+            ("resumed", False),
+            ("elapsed_ms", 1499),
+            ("received", 0),
+            ("received_at_resume", 9),
+            ("queued_snapshots", 23),
+            ("queued_snapshots", 33),
+            ("queued_positions", 0),
+            ("queued_positions", 33),
+            ("peak_queued", 39),
+            ("heartbeat_received", 4),
+            ("heartbeat_sent", -1),
+            ("heartbeat_received_at_resume", 3),
+            ("heartbeat_received_at_resume", 19),
+            ("heartbeat_sent_at_resume", 129),
+            ("elapsed_ms", True),
+        ):
+            with self.subTest(field=field, value=value):
+                self.assertFalse(
+                    reference.reference_receive_pause_passed(
+                        {**phase, "receive_pause": {**proof, field: value}}, True
+                    )
+                )
+        for field in proof:
+            self.assertFalse(
+                reference.reference_receive_pause_passed(
+                    {**phase, "receive_pause": {k: v for k, v in proof.items() if k != field}}, True
+                )
+            )
+        self.assertFalse(reference.reference_receive_pause_passed(phase, False))
+        self.assertFalse(
+            reference.reference_receive_pause_passed(
+                {**phase, "queued_application_packets": 1}, True
+            )
+        )
+        self.assertFalse(reference.reference_receive_pause_passed({}, True))
+        self.assertTrue(
+            reference.reference_receive_pause_passed({"slow_reference_receiver": False}, False)
+        )
+
+    def test_reference_queued_bytes_and_labels_are_checked_after_resume(self) -> None:
+        harness = r"""
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+const source = readFileSync(0, "utf8").split("\n").slice(1).join("\n");
+const fault = process.argv[1];
+let clock = 1, hooks, fed = false, ready = false;
+const context = {
+  window: {}, AbortController,
+  performance: { now: () => clock },
+  console: { log() {}, error() {} },
+  setTimeout: (resolve) => setImmediate(() => {
+    clock += 20;
+    if (!fed && hooks) {
+      fed = true;
+      for (let i = 0; i < (fault === "overflow" ? 41 : 40); i++) {
+        let text = `snapshot:1:godot:${i}:` + "0123456789abcdef".repeat(64);
+        if (fault === "bytes" && i === 20) text += "changed";
+        hooks.onChannelMessage("godot", "generation", fault === "mode" && i === 20 ? "unreliable" : "reliable", text);
+        if (i % 4 === 3) hooks.onChannelMessage("godot", "generation", "unreliable",
+          `position:1:godot:${Math.floor(i / 4)}:` + "0123456789abcdef".repeat(4));
+      }
+    }
+    resolve();
+  }),
+  Engine: class {
+    constructor(_native, callbacks) { hooks = callbacks; }
+    async pairWith() { return null; }
+    channel() { return { readyState: "open", send(text) {
+      if (text.startsWith("heartbeat:"))
+        queueMicrotask(() => hooks.onChannelMessage("godot", "generation", "reliable", text));
+    }}; }
+    diagnosticSnapshot() { return {}; }
+    removePeer() {}
+  },
+  fetch: async (_url, options) => ({ ok: true, json: async () => {
+    if (options.method === "POST" || ready) return [];
+    ready = true;
+    return [{ marker: "ready-1" }];
+  }}),
+};
+runInNewContext(source, context);
+await context.window.runReference(1, false, true, "webrtc", true);
+console.log(JSON.stringify({error:context.window.referenceError, ...context.window.referenceProgress()}));
+"""
+        source = (SCRIPT.parents[1] / "tests/smoke/webrtc_reference.js").read_text()
+        for fault in ("none", "bytes", "mode", "overflow"):
+            with self.subTest(fault=fault):
+                result = subprocess.run(  # noqa: S603
+                    ["node", "--input-type=module", "-e", harness, fault],  # noqa: S607
+                    input=source,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                    timeout=5,
+                )
+                evidence = json.loads(result.stdout)
+                proof = evidence["receive_pause"]
+                if fault == "overflow":
+                    self.assertIn("queue exceeded", evidence["error"])
+                    self.assertFalse(proof["resumed"])
+                    self.assertLessEqual(evidence["queued_application_packets"], 64)
+                else:
+                    self.assertTrue(reference.reference_receive_pause_passed(evidence, True))
+                    if fault == "none":
+                        self.assertEqual(evidence["snapshot_received"], 40)
+                        self.assertEqual(evidence["positions_received"], 10)
+                        self.assertIn("missing Godot teardown", evidence["error"])
+                    else:
+                        self.assertEqual(evidence["snapshot_received"], 20)
+                        self.assertIn("bytes or", evidence["error"])
+
     def test_credit_arriving_between_queue_locks_cannot_bypass_the_hold(self) -> None:
         credit = {"marker": "snapshot-ack-1-32"}
         mutex = threading.Lock()

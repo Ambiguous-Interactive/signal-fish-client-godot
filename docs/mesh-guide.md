@@ -310,6 +310,42 @@ Requests are canceled and settled before the next generation starts.
 These opt-in local controls keep the existing deadlines. They do not simulate
 WebRTC network delay or establish the cause of #396.
 
+### Slow browser reference consumer
+
+Use `--slow-reference-receiver --mixed-traffic` with the Web/reference-offer
+pairing to pause the reference application's snapshot and position consumption
+for 1500 ms after eight chunks. The reference keeps heartbeat echoes and
+reverse-direction consumption credits active during this pause. Choose either
+HTTP or WebRTC credit with the same Godot reader for a matched comparison.
+
+```bash
+python scripts/check-webrtc-reference.py --runtime web --offerer reference \
+  --safe-receive --mixed-traffic --slow-reference-receiver \
+  --credit-transport webrtc --native-extension /path/to/webrtc-native \
+  --reference-assets /path/to/reference-modules \
+  --reference-revision b264ec739400b299182eaa918dd6828fd611f3b9 \
+  --require-gameplay --output /tmp/reference-consumer-pause
+```
+
+The application queue retains each packet's original text and channel label.
+It holds at most 32 snapshot chunks and 32 position samples. Consumption credit
+is sent only after a chunk is checked and consumed. On resume, the reference
+checks the buffered bytes, sequence and channel before sending more credit.
+
+Each generation's reference `receive_pause` must show consumption fixed at
+eight chunks, at least 24 queued snapshot chunks, queued positions, and a new
+heartbeat echo from a heartbeat sent during the pause. Reports retain the
+pause duration, queue peak and heartbeat counts. All queued application packets
+must drain, both full snapshots and partial transfers must finish, and remote
+closure plus fresh-link recovery must pass.
+
+This option pauses application consumption after Engine callbacks. Browser
+network delivery and the page event loop keep running. It isolates application
+backlog in #396; it does not reproduce a frozen page or establish the captured
+stall's cause. Use `--slow-receiver` in a separate run to pause Godot reads.
+The two pause options cannot be combined. Full reference service sessions and
+native-reference recovery remain open in #355.
+
 ## Native reference engine assessment
 
 A local check paired the native
