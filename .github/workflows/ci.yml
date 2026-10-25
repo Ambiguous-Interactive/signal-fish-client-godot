@@ -59,6 +59,9 @@ jobs:
             - name: Analyze source scripts
               run: python3 scripts/check-source.py quality
 
+            - name: Test browser transport observation
+              run: node tests/test_webrtc_browser_observation.cjs
+
     static:
         name: Static checks
         runs-on: ubuntu-24.04
@@ -138,6 +141,9 @@ jobs:
 
             - name: Check Playwright system setup
               run: python3 -m unittest tests.test_install_playwright_deps
+
+            - name: Test WebRTC drill evidence
+              run: .venv-ci/bin/python -m unittest tests.test_webrtc_interop_observation tests.test_webrtc_reference
 
     test:
         name: Godot ${{ matrix.godot }} tests

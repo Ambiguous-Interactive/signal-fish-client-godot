@@ -71,11 +71,21 @@ class BrowserObservation:
         self.last_console: float | None = None
         self.last_progress: float | None = None
         self.recent: deque[dict[str, object]] = deque(maxlen=16)
+        self.stats: deque[tuple[float, dict[str, object]]] = deque(maxlen=16)
+        self.last_stats: float | None = None
 
     def console(self, message: str) -> None:
         self.last_console = time.monotonic()
         if message.startswith("WEBRTC_INTEROP_PROGRESS "):
             self.last_progress = self.last_console
+        if message.startswith("WEBRTC_BROWSER_STATS "):
+            try:
+                sample = json.loads(message.removeprefix("WEBRTC_BROWSER_STATS "))
+            except json.JSONDecodeError:
+                return
+            if isinstance(sample, dict):
+                self.last_stats = self.last_console
+                self.stats.append((self.last_stats, sample))
 
     def started(self, request: Request) -> None:
         if request.url.startswith(self.signal_url):
@@ -116,6 +126,13 @@ class BrowserObservation:
                 for request, started in self.inflight.items()
             ],
             "recent_requests": list(self.recent),
+            "last_stats_age_ms": (
+                round((now - self.last_stats) * 1000) if self.last_stats is not None else None
+            ),
+            "webrtc_stats": [
+                {"age_ms": round((now - observed_at) * 1000), "sample": sample}
+                for observed_at, sample in self.stats
+            ],
         }
 
 
@@ -176,6 +193,7 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
             break
     return {
         "seat": seat,
+        "engine_banner": next((line for line in lines if line.startswith("Godot Engine v")), ""),
         "passed": passed,
         "last_stage": next((line for line in reversed(lines) if "interop stage:" in line), ""),
         "last_ready": next((line for line in reversed(lines) if "interop ready:" in line), ""),
@@ -207,13 +225,13 @@ def prepare_pair(args: argparse.Namespace, directory: Path, addon_root: Path) ->
     web = directory / "web"
     prepare(native, args.native_extension, addon_root)
     prepare(web, None, addon_root)
-    for project in (native, web):
+    for project, engine in ((native, args.godot), (web, args.web_godot or args.godot)):
         checked(
-            [args.godot, "--headless", "--path", str(project), "--editor", "--import"],
+            [engine, "--headless", "--path", str(project), "--editor", "--import"],
             project / "import.log",
         )
     checked(
-        [args.godot, "--headless", "--path", str(web), "--export-debug", "Web"],
+        [args.web_godot or args.godot, "--headless", "--path", str(web), "--export-debug", "Web"],
         web / "export.log",
     )
     return native, web
@@ -265,6 +283,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
             browser_version = browser.version
             try:
                 page = browser.new_page()
+                page.add_init_script(path=ROOT / "scripts/webrtc-browser-observation.js")
 
                 def console_message(message: str) -> None:
                     messages.append(message)
@@ -322,6 +341,7 @@ def run_seats(args: argparse.Namespace, directory: Path, native: Path, web: Path
                 "browser_version": browser_version,
                 "browser_observation": browser_observation,
                 "godot": args.godot,
+                "web_godot": args.web_godot or args.godot,
                 "channel_receive": args.channel_receive,
                 "safe_receive": args.safe_receive,
                 "metadata_probe": args.metadata_probe,
@@ -389,6 +409,7 @@ def run(args: argparse.Namespace, directory: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", default="godot")
+    parser.add_argument("--web-godot", help="Web export engine (defaults to --godot)")
     parser.add_argument("--native-extension", type=Path, required=True)
     parser.add_argument("--chromium", help="Optional Playwright Chromium executable")
     parser.add_argument("--output", type=Path, help="Keep projects and logs in this new directory")
