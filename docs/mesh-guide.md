@@ -377,6 +377,36 @@ stall's cause. Use `--slow-receiver` in a separate run to pause Godot reads.
 The two pause options cannot be combined. Full reference service sessions and
 native-reference recovery remain open in #355.
 
+### Reference gameplay through a local service
+
+Add `--service-url ws://127.0.0.1:3537/v3/ws --service-app-id godot-reference`
+to the Web/reference-offer command above. Run a local Signal Fish server with
+`session.enable_webrtc` enabled, `session.enable_direct` disabled, and
+`session.default_topology` set to `host`. The service must accept the app ID.
+The browser Engine modules and service used for this assessment are pinned to
+`b264ec739400b299182eaa918dd6828fd611f3b9`.
+
+The production Godot client creates a two-player room. The reference seat
+joins that room through its own WebSocket. Both seats become ready, and the
+creator starts the game. The server assigns the reference seat the offer role.
+Both seats use the real session generation and relay SDP and ICE through the
+service. HTTP carries workload markers only; the driver rejects HTTP signaling
+in this mode.
+
+Two fresh rooms run the unchanged mixed snapshot workload and channel closure
+checks. Leaving each room must invalidate its safe receiver. A fresh receiver must
+work after the next server plan. A service pass requires matching room, generation and player IDs, matching nonzero
+signaling counts, confirmed room departure, and distinct rooms and generations.
+`service_godot` and `service_reference` retain this evidence in `assessment.json`.
+Use the existing HTTP/WebRTC credit and reader-pause controls to compare
+service signaling with gameplay progress. Per-stage service waits retain their
+failure stage in the Godot log.
+
+HTTP localhost exports can connect to a local `ws://` service. HTTPS exports
+require `wss://`. This assessment covers the browser reference Engine with a
+small service driver; full reference CLI sessions, the native reference Engine,
+and remote networks still need qualification.
+
 ## Native reference engine assessment
 
 A local check paired the native

@@ -1694,5 +1694,5 @@ func _is_secure_page() -> bool:
 	var window: Variant = JavaScriptBridge.get_interface("window")
 	if window == null:
 		return false
-	var is_secure_context: bool = window.isSecureContext
-	return is_secure_context
+	var location: Variant = window.location
+	return str(location.protocol) == "https:"

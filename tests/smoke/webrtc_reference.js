@@ -22,7 +22,12 @@ window.runReference = async function (
   let engine;
   try {
     for (let phase = 1; phase <= 2; phase++) {
-      const generation = `40000000-0000-0000-0000-${String(phase).padStart(12, "0")}`;
+      const service = window.referenceService
+        ? await window.referenceService.begin(phase, seat)
+        : null;
+      const generation =
+        service?.generation ??
+        `40000000-0000-0000-0000-${String(phase).padStart(12, "0")}`;
       const outgoing = [];
       const received = [];
       const events = [];
@@ -247,6 +252,10 @@ window.runReference = async function (
         snapshot: engine.diagnosticSnapshot("godot"),
       });
       const sendSignal = async (message) => {
+        if (service && message.payload) {
+          service.send(message.payload);
+          return;
+        }
         const response = await fetch(`/signal/${godotSeat}`, {
           method: "POST",
           body: JSON.stringify(message),
@@ -259,11 +268,17 @@ window.runReference = async function (
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(`relay GET ${response.status}`);
-        for (const message of await response.json()) {
+        const messages = await response.json();
+        if (service) messages.push(...service.drain());
+        for (const message of messages) {
           if (message.marker === `ready-${phase}` && !paired) {
             paired = true;
             started = performance.now();
-            const offer = await engine.pairWith("godot", !godotOffer, []);
+            const offer = await engine.pairWith(
+              "godot",
+              service?.initiate ?? !godotOffer,
+              service?.iceServers ?? [],
+            );
             outgoing.push({ marker: `ready-${phase}` });
             if (offer) outgoing.push({ payload: { Offer: offer } });
           } else if (
@@ -446,6 +461,7 @@ window.runReference = async function (
       engine.removePeer("godot");
       if (engine.isPaired("godot"))
         throw new Error("reference teardown retained peer");
+      if (service) await service.leave();
       await post({ marker: `retired-${phase}` });
     }
     window.referenceDone = true;
@@ -454,5 +470,6 @@ window.runReference = async function (
     console.error(window.referenceError);
   } finally {
     engine?.removePeer("godot");
+    window.referenceService?.close();
   }
 };
