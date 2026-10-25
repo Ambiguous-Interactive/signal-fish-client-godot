@@ -25,6 +25,7 @@ func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_channel_bytes_and_modes,
 		_test_round_robin_peers_and_channels,
+		_test_receive_membership_changes,
 		_test_read_errors_and_link_lifecycle
 	]
 	CompletionGuard.drive(self, cases, _failures)
@@ -104,6 +105,43 @@ func _test_round_robin_peers_and_channels() -> void:
 				counts.get("%d-%d" % [MeshScript.uuid_to_peer_id(player), mode]),
 				"fair read count"
 			)
+	_dispose(setup)
+	_done()
+
+
+func _test_receive_membership_changes() -> void:
+	var setup := _setup(3)
+	var mesh: MeshScript = setup[0]
+	var client: Object = setup[1]
+	var connections: Array = setup[2]
+	for index: int in 3:
+		var connection: Object = connections[index]
+		_queue(connection, 0, PackedByteArray([index]))
+	_assert_equal(PackedByteArray([0]), mesh.receive_packet().data, "initial receive order")
+	mesh.call("_drop_peer", PLAYERS[1])
+	var remaining := mesh.receive_packet()
+	_assert_equal(PackedByteArray([2]), remaining.data, "removed peer cannot deliver cached id")
+	mesh.call("_on_client_new_peer", PLAYERS[1], false)
+	var added: Array = _owner.call("_mesh_peers", mesh)
+	var added_connection: Object = added.back()
+	added_connection.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	_queue(added_connection, 0, PackedByteArray([88]))
+	_assert_equal(
+		PackedByteArray([88]), mesh.receive_packet().data, "additive peer joins receive list"
+	)
+	var peers: Array[Dictionary] = [_owner.call("_peer", PLAYERS[1], false)]
+	_owner.call("_inject_plan", client, peers, "40000000-0000-0000-0000-000000000002")
+	var fresh: Array = _owner.call("_mesh_peers", mesh)
+	var replacement: Object = fresh.back()
+	replacement.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	_assert_equal(null, mesh.receive_packet(), "replacement has no retired packets")
+	_queue(replacement, 2, PackedByteArray([99]))
+	var packet := mesh.receive_packet()
+	_assert_equal(MeshScript.uuid_to_peer_id(PLAYERS[1]), packet.peer_id, "replacement sender")
+	_assert_equal(PackedByteArray([99]), packet.data, "replacement delivers fresh bytes")
+	_assert_equal(
+		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE, packet.transfer_mode, "replacement mode"
+	)
 	_dispose(setup)
 	_done()
 
