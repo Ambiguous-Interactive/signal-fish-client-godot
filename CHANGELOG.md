@@ -41,6 +41,9 @@ released version.
 
 ### Fixed
 
+- WebRTC mesh accepts reference-client ICE candidate envelopes and preserves
+  their media and line index (#405).
+
 - Dead WebRTC links release their channels and allow replacement plans (#393).
 - Fresh rooms and plans report mesh status without old retry delays (#394).
 - Room session loss stops WebRTC links and unfinished Steam setup (#395).

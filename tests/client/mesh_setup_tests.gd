@@ -25,6 +25,7 @@ func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_negotiation_failures_release_only_failed_peer,
 		_test_candidate_refusal_keeps_link_usable,
+		_test_candidate_wire_formats,
 		_test_poll_failure_reports_down,
 		_test_terminal_links_release_and_retry,
 		_test_room_reset_during_status_refusal,
@@ -136,6 +137,71 @@ func _test_candidate_refusal_keeps_link_usable() -> void:
 	var candidates: Array = connection.get("added_candidates")
 	_assert_equal(2, candidates.size(), "later candidate reaches engine")
 	_assert_equal(1, transport.sent_text.size() - before, "later candidate can establish transport")
+	mesh.free()
+	client.free()
+	_done()
+
+
+func _test_candidate_wire_formats() -> void:
+	var client: ClientScript = _owner.call("_make_in_room_client")
+	var mesh: MeshScript = _owner.call("_make_mesh")
+	_owner.call("_attach", mesh, client)
+	_inject_single_peer(client)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var connection: Object = created[0]
+	var candidate := "candidate:1 1 UDP 2122260223 192.0.2.1 5000 typ host"
+	var cases: Array[Array] = [
+		[candidate, ["", 0, candidate]],
+		[" " + candidate + " ", ["", 0, " " + candidate + " "]],
+		[
+			JSON.stringify(
+				{
+					"candidate": candidate,
+					"sdpMid": "data",
+					"sdpMLineIndex": 2,
+					"usernameFragment": null
+				}
+			),
+			["data", 2, candidate]
+		],
+		[
+			JSON.stringify({"candidate": candidate, "sdpMid": null, "sdpMLineIndex": null}),
+			["", 0, candidate]
+		],
+		[JSON.stringify({"candidate": candidate}), ["", 0, candidate]],
+		[JSON.stringify({"candidate": "", "sdpMid": "0", "sdpMLineIndex": 0}), ["0", 0, ""]],
+	]
+	var applied_count := 0
+	for sample: Array in cases:
+		_inject_signal(client, {"IceCandidate": sample[0]})
+		var applied: Array = connection.get("added_candidates")
+		applied_count += 1
+		_assert_equal(applied_count, applied.size(), "each candidate reaches the engine once")
+		_assert_equal(sample[1], applied.back(), "candidate media, index and line reach engine")
+	var candidates: Array = connection.get("added_candidates")
+	var before := candidates.size()
+	for malformed: Variant in [
+		42,
+		{},
+		"{",
+		"{}",
+		'{"candidate":null}',
+		'{"candidate":false}',
+		'{"candidate":"line","sdpMid":3}',
+		'{"candidate":"line","sdpMLineIndex":false}',
+		'{"candidate":"line","sdpMLineIndex":-1}',
+		'{"candidate":"line","sdpMLineIndex":0.5}',
+		'{"candidate":"line","sdpMLineIndex":65536}',
+	]:
+		var lines: Array = _owner.call(
+			"_captured_log_lines",
+			func() -> void: _inject_signal(client, {"IceCandidate": malformed})
+		)
+		_assert_equal(1, lines.size(), "invalid envelope reports one diagnostic")
+	_assert_equal(before, candidates.size(), "invalid envelopes skip engine")
+	_assert_equal(1, mesh.get_peer_count(), "invalid envelope keeps negotiation available")
+	_inject_signal(client, {"IceCandidate": candidate})
+	_assert_equal(before + 1, candidates.size(), "later raw candidate works")
 	mesh.free()
 	client.free()
 	_done()

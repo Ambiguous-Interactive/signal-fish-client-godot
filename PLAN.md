@@ -20,7 +20,7 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Repair high-level RPC packet metadata in Godot (#403); validate the
       raw packet workaround across supported engines and remote networks.
 - [ ] Complete mesh channel interoperability with the reference engines (#355),
-      including candidate-envelope support (#405) and full service sessions.
+      including full service sessions after the candidate-envelope repair.
 - [ ] Trace the captured native/browser stream stall with frame-gap, channel
       queue, and acknowledgment diagnostics (#396; see `docs/mesh-guide.md`).
 

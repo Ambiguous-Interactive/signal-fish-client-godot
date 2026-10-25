@@ -333,13 +333,47 @@ func _on_client_signal_received(from_player: String, generation: String, payload
 		var error: Error = entry.connection.call("set_remote_description", type, sdp)
 		_check_peer_result(entry, "set_remote_description", error)
 	elif message.has("IceCandidate"):
-		# Matchbox convention relays the candidate string only; media and
-		# index are not part of the Signal Fish signal payload.
-		var error: Error = entry.connection.call(
-			"add_ice_candidate", "", 0, str(message["IceCandidate"])
-		)
-		if error != OK:
-			SFLogScript.warn("mesh: add_ice_candidate refused (%d)" % error)
+		_apply_ice_candidate(entry, message["IceCandidate"])
+
+
+func _apply_ice_candidate(entry: _MeshPeer, payload: Variant) -> void:
+	if not payload is String:
+		SFLogScript.warn("mesh: invalid ICE candidate")
+		return
+	var candidate: String = payload
+	var media := ""
+	var index := 0
+	# Native reference engine.rs @ b264ec7 emits RTCIceCandidateInit JSON.
+	# Existing raw-line peers keep their candidate text verbatim.
+	if candidate.strip_edges().begins_with("{"):
+		var parser := JSON.new()
+		if parser.parse(candidate) != OK:
+			SFLogScript.warn("mesh: invalid ICE candidate envelope")
+			return
+		var decoded: Variant = parser.data
+		if not decoded is Dictionary:
+			SFLogScript.warn("mesh: invalid ICE candidate envelope")
+			return
+		var envelope: Dictionary = decoded
+		if not envelope.get("candidate") is String:
+			SFLogScript.warn("mesh: invalid ICE candidate envelope")
+			return
+		var mid: Variant = envelope.get("sdpMid")
+		var line: Variant = envelope.get("sdpMLineIndex")
+		if mid != null and not mid is String:
+			SFLogScript.warn("mesh: invalid ICE candidate media")
+			return
+		if line != null:
+			if not SFTypeUtils.is_integral_number(line) or line < 0 or line > 65535:
+				SFLogScript.warn("mesh: invalid ICE candidate index")
+				return
+			var number: float = line
+			index = int(number)
+		media = mid if mid != null else ""
+		candidate = envelope["candidate"]
+	var error: Error = entry.connection.call("add_ice_candidate", media, index, candidate)
+	if error != OK:
+		SFLogScript.warn("mesh: add_ice_candidate refused (%d)" % error)
 
 
 func _on_client_new_peer(peer_id: String, you_initiate: bool) -> void:
