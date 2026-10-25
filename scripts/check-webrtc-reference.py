@@ -31,6 +31,7 @@ class CreditDelayRelay(interop.RelayHandler):  # type: ignore[name-defined,misc]
     credit_delay_ms: ClassVar[int] = 0
     credit_seat: ClassVar[int] = 0
     credit_delayed = threading.Event()
+    credit_hold_active = threading.Event()
 
     def reply(self, body: bytes) -> None:
         hold = False
@@ -47,7 +48,11 @@ class CreditDelayRelay(interop.RelayHandler):  # type: ignore[name-defined,misc]
                 if hold:
                     self.credit_delayed.set()
             if hold:
-                time.sleep(self.credit_delay_ms / 1000)
+                self.credit_hold_active.set()
+                try:
+                    time.sleep(self.credit_delay_ms / 1000)
+                finally:
+                    self.credit_hold_active.clear()
         super().reply(body)
 
 
@@ -138,6 +143,40 @@ def slow_receiver_passed(value: object, mixed_traffic: bool) -> bool:
     )
 
 
+def heartbeat_phase_passed(godot: dict[str, object], ref: dict[str, object], mixed: bool) -> bool:
+    count = ref.get("heartbeat_sent")
+    return (
+        type(count) is int
+        and (0 < count <= 128 if mixed else count == 0)
+        and type(ref.get("heartbeat_received")) is int
+        and type(godot.get("heartbeat_received")) is int
+        and ref.get("heartbeat_received") == count
+        and godot.get("heartbeat_received") == count
+    )
+
+
+def signaling_hold_passed(proof: dict[str, object]) -> bool:
+    before, during = proof.get("before"), proof.get("during")
+    if not isinstance(before, dict) or not isinstance(during, dict):
+        return False
+    elapsed = proof.get("elapsed_ms")
+    return (
+        type(elapsed) is int
+        and elapsed >= 1000
+        and before.get("phase") == during.get("phase") == 1
+        and before.get("signaling_pending") is True
+        and during.get("signaling_pending") is True
+        and type(before.get("heartbeat_sent")) is int
+        and type(during.get("heartbeat_sent")) is int
+        and type(during.get("heartbeat_received")) is int
+        and during["heartbeat_sent"] > before["heartbeat_sent"]
+        and before["heartbeat_sent"] < during["heartbeat_received"] <= during["heartbeat_sent"]
+        and type(before.get("snapshot_acknowledged")) is int
+        and 0 <= before["snapshot_acknowledged"] < 128
+        and before["snapshot_acknowledged"] == during.get("snapshot_acknowledged")
+    )
+
+
 def wait_for_godot(page: Page, messages: list[str]) -> str:
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
@@ -211,6 +250,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         lock = threading.Lock()
         observation = interop.RelayObservation()
         credit_delayed = threading.Event()
+        credit_hold_active = threading.Event()
         credit_delay_ms = getattr(args, "http_credit_delay_ms", 0)
         credit_seat = 0 if web else 1
 
@@ -265,9 +305,30 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         stdout=log,
                         stderr=subprocess.STDOUT,
                     )
-                reference.wait_for_function(
-                    "window.referenceDone === true || window.referenceError !== null", timeout=40000
-                )
+                hold_proof: dict[str, object] = {}
+                report["signaling_hold_progress"] = hold_proof
+                hold_started = 0.0
+                deadline = time.monotonic() + 40
+                while not reference.evaluate(
+                    "window.referenceDone === true || window.referenceError !== null"
+                ):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            "Reference completion observation timed out after 40 seconds"
+                        )
+                    if Handler.credit_hold_active.is_set() and args.mixed_traffic:
+                        progress = reference.evaluate("window.referenceProgress()")
+                        if not Handler.credit_hold_active.is_set():
+                            continue
+                        if not hold_proof:
+                            hold_proof["before"] = progress
+                            hold_started = time.monotonic()
+                        elif "during" not in hold_proof and time.monotonic() - hold_started >= 1:
+                            hold_proof["during"] = progress
+                            hold_proof["elapsed_ms"] = round(
+                                (time.monotonic() - hold_started) * 1000
+                            )
+                    reference.wait_for_timeout(100)
                 result = reference.evaluate(
                     "({phases:window.referenceResults, error:window.referenceError, done:window.referenceDone === true})"
                 )
@@ -302,6 +363,12 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         not getattr(args, "http_credit_delay_ms", 0)
                         or Handler.credit_delayed.is_set()
                     )
+                    and (
+                        not (
+                            getattr(args, "http_credit_delay_ms", 0) >= 1500 and args.mixed_traffic
+                        )
+                        or signaling_hold_passed(hold_proof)
+                    )
                     and all(
                         gameplay_phase_passed(
                             godot,
@@ -314,6 +381,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             mixed_traffic=args.mixed_traffic,
                             credit_transport=args.credit_transport,
                         )
+                        and heartbeat_phase_passed(godot, ref, args.mixed_traffic)
                         and (not args.safe_receive or godot.get("same_receiver") is True)
                         for godot, ref in zip(phases, result["phases"], strict=True)
                     )

@@ -140,6 +140,7 @@ class ReferenceEvidenceTests(unittest.TestCase):
         def sleep(seconds: float) -> None:
             self.assertTrue(mutex.acquire(blocking=False))
             mutex.release()
+            self.assertTrue(Handler.credit_hold_active.is_set())
             holds.append(seconds)
 
         def reply(_handler: object, body: bytes) -> None:
@@ -159,6 +160,57 @@ class ReferenceEvidenceTests(unittest.TestCase):
             handler.do_GET()
         self.assertEqual(replies, [credit, credit])
         self.assertEqual(holds, [4])
+        self.assertFalse(Handler.credit_hold_active.is_set())
+
+    def test_held_signaling_requires_new_gameplay_round_trip(self) -> None:
+        before = {
+            "phase": 1,
+            "signaling_pending": True,
+            "heartbeat_sent": 4,
+            "heartbeat_received": 4,
+            "snapshot_acknowledged": 24,
+        }
+        during = {**before, "heartbeat_sent": 14, "heartbeat_received": 13}
+        proof = {"before": before, "during": during, "elapsed_ms": 1000}
+        self.assertTrue(reference.signaling_hold_passed(proof))
+        for field, value in (
+            ("heartbeat_sent", 4),
+            ("heartbeat_received", 4),
+            ("heartbeat_received", 15),
+            ("heartbeat_received", None),
+            ("signaling_pending", False),
+            ("phase", 2),
+            ("snapshot_acknowledged", 32),
+        ):
+            with self.subTest(field=field, value=value):
+                self.assertFalse(
+                    reference.signaling_hold_passed({**proof, "during": {**during, field: value}})
+                )
+        for invalid in ({}, {"before": before}, {**proof, "elapsed_ms": 999}):
+            self.assertFalse(reference.signaling_hold_passed(invalid))
+
+    def test_heartbeat_verdict_requires_exact_echo_totals_on_both_seats(self) -> None:
+        for mixed, count in ((False, 0), (True, 12)):
+            godot = {"heartbeat_received": count}
+            ref = {"heartbeat_sent": count, "heartbeat_received": count}
+            self.assertTrue(reference.heartbeat_phase_passed(godot, ref, mixed))
+            for changed in (None, count + 1, count - 1, True):
+                self.assertFalse(
+                    reference.heartbeat_phase_passed({"heartbeat_received": changed}, ref, mixed)
+                )
+                self.assertFalse(
+                    reference.heartbeat_phase_passed(
+                        godot, {**ref, "heartbeat_received": changed}, mixed
+                    )
+                )
+        for invalid_count in (0, 129, None, True):
+            self.assertFalse(
+                reference.heartbeat_phase_passed(
+                    {"heartbeat_received": invalid_count},
+                    {"heartbeat_sent": invalid_count, "heartbeat_received": invalid_count},
+                    True,
+                )
+            )
 
     def test_page_listeners_keep_errors_and_crashes(self) -> None:
         page = Mock()

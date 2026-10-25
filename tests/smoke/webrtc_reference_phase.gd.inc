@@ -1,4 +1,5 @@
 # gdlint: disable=max-returns
+var _reference_heartbeats := 0
 var _reference_acknowledged := 0
 var _reference_peak_outstanding := 0
 var _reference_positions_sent := 0
@@ -21,6 +22,7 @@ func _run_phase(phase: int) -> bool:
 	if phase > 2:
 		return true
 	_phase = phase
+	_reference_heartbeats = 0
 	_reference_acknowledged = 0
 	_reference_peak_outstanding = 0
 	_reference_positions_sent = 0
@@ -238,6 +240,31 @@ func _reference_packets() -> void:
 		if packet == null:
 			break
 		var text := packet.data.get_string_from_utf8()
+		if text.begins_with("heartbeat:"):
+			var expected := (
+				(
+					"heartbeat:%d:reference:%d:" % [_phase, _reference_heartbeats]
+					+ "0123456789abcdef".repeat(4)
+				)
+				. to_utf8_buffer()
+			)
+			if (
+				not _reference_options["mixed_traffic"]
+				or packet.error != OK
+				or packet.peer_id != MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+				or packet.channel != 0
+				or packet.transfer_mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+				or _reference_heartbeats >= 128
+				or packet.data != expected
+			):
+				_fail("reference heartbeat bytes or metadata differ")
+				return
+			_reference_heartbeats += 1
+			peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_RELIABLE)
+			if peer.call("put_packet", packet.data) != OK:
+				_fail("reference heartbeat echo failed")
+				return
+			continue
 		if text.begins_with("credit:"):
 			var fields := text.split(":")
 			var count := int(fields[4]) if fields.size() == 5 else -1
@@ -386,6 +413,7 @@ func _reference_position(sender: String, sequence: int) -> PackedByteArray:
 
 func _reference_evidence() -> Dictionary:
 	return {
+		"heartbeat_received": _reference_heartbeats,
 		"mixed_traffic": _reference_options.get("mixed_traffic", false),
 		"credit_transport": _reference_options.get("credit_transport", "http"),
 		"snapshot_sent": _reference_snapshot_sent,

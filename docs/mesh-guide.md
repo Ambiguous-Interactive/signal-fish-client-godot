@@ -293,6 +293,20 @@ Godot keeps an active transfer running until all chunks and credit complete
 within the existing deadline. This catches premature teardown during a
 progressing HTTP wait.
 
+With `--mixed-traffic`, the reference sends a sequenced reliable heartbeat
+every 100 ms while snapshots run, up to 128 per phase. Godot checks its exact
+bytes, sender, channel and mode before echoing it. The reference checks each
+echo in order. Both seats must report matching heartbeat totals before remote
+closure. Queued reliable packet counts include these heartbeats.
+
+The reference runs one HTTP exchange at a time beside the gameplay loop.
+A held GET no longer stops gameplay sends. With mixed traffic and an HTTP
+hold of at least 1,500 ms, `signaling_hold_progress` must show new heartbeat
+echoes across a one-second interval while the held request stays active and
+snapshot credit stays fixed. Echoes must include a heartbeat sent after the
+first sample. This separates fresh WebRTC gameplay from HTTP credit progress.
+Requests are canceled and settled before the next generation starts.
+
 These opt-in local controls keep the existing deadlines. They do not simulate
 WebRTC network delay or establish the cause of #396.
 
