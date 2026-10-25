@@ -144,11 +144,8 @@ def retirement_passed(
         and proof.get("discarded") is True
         and proof.get("peer_removed") is True
         and isinstance(other.get("closed_labels"), list)
-        and (
-            channel in other["closed_labels"]
-            if channel != "ordered"
-            else any(label in ("reliable", "unreliable") for label in other["closed_labels"])
-        )
+        and any(label in ("reliable", "unreliable") for label in other["closed_labels"])
+        and (seat == "godot" or channel in other["closed_labels"])
         and (seat != "godot" or proof.get("channel_closed") is True)
     )
 

@@ -160,6 +160,31 @@ class ReferenceEvidenceTests(unittest.TestCase):
                     )
         self.assertFalse(reference.retirement_passed({}, {}, "reliable", "godot"))
 
+    def test_godot_close_can_report_a_different_reference_channel_first(self) -> None:
+        proof = {
+            "seat": "godot",
+            "channel": "unreliable",
+            "selected": True,
+            "queued": 1,
+            "discarded": True,
+            "peer_removed": True,
+            "channel_closed": True,
+        }
+        other = {"seat": "godot", "channel": "unreliable", "closed_labels": ["reliable"]}
+        self.assertTrue(
+            reference.retirement_passed(
+                {"retirement": proof}, {"retirement": other}, "unreliable", "godot"
+            )
+        )
+        self.assertFalse(
+            reference.retirement_passed(
+                {"retirement": {**proof, "seat": "reference"}},
+                {"retirement": {**other, "seat": "reference"}},
+                "unreliable",
+                "reference",
+            )
+        )
+
     def test_retirement_matrix_keeps_failed_cases_and_runs_the_remaining_cases(self) -> None:
         calls: list[tuple[str, str]] = []
         with tempfile.TemporaryDirectory() as temp:
