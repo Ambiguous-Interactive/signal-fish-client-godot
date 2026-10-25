@@ -528,6 +528,11 @@ Closed connections leave the observer. A stats request that takes over 750 ms
 records an error; other peers and state samples continue. The observer waits
 for that request to finish before requesting its stats again.
 
+Signaling request records include the drill `marker` when present. Match a
+pending `consumed-PHASE-SEAT-COUNT` marker to the sender's credit wait to
+trace delayed consumption acknowledgements. Other signaling records leave
+`marker` null.
+
 These samples run outside Godot's frame loop. In a controlled stopped-frame
 run, the engine heartbeat aged over 14 seconds while browser stats stayed
 fresh. A held HTTP request instead aged over 2.5 seconds while engine progress

@@ -66,6 +66,7 @@ class BrowserObservation:
     def __init__(self, signal_url: str) -> None:
         self.signal_url = signal_url + "/signal/"
         self.inflight: dict[Request, float] = {}
+        self.markers: dict[Request, str] = {}
         self.completed = 0
         self.failed = 0
         self.last_console: float | None = None
@@ -90,6 +91,12 @@ class BrowserObservation:
     def started(self, request: Request) -> None:
         if request.url.startswith(self.signal_url):
             self.inflight[request] = time.monotonic()
+            body = request.post_data
+            if isinstance(body, str):
+                with contextlib.suppress(json.JSONDecodeError):
+                    payload = json.loads(body)
+                    if isinstance(payload, dict) and isinstance(payload.get("marker"), str):
+                        self.markers[request] = payload["marker"]
 
     def finished(self, request: Request, *, failed: bool = False) -> None:
         started = self.inflight.pop(request, None)
@@ -101,6 +108,7 @@ class BrowserObservation:
             {
                 "method": request.method,
                 "seat": request.url.removeprefix(self.signal_url),
+                "marker": self.markers.pop(request, None),
                 "elapsed_ms": round((time.monotonic() - started) * 1000),
                 "failed": failed,
             }
@@ -121,6 +129,7 @@ class BrowserObservation:
                 {
                     "method": request.method,
                     "seat": request.url.removeprefix(self.signal_url),
+                    "marker": self.markers.get(request),
                     "age_ms": round((now - started) * 1000),
                 }
                 for request, started in self.inflight.items()
