@@ -124,6 +124,35 @@ def gameplay_phase_passed(
     )
 
 
+def retirement_passed(
+    godot: dict[str, object],
+    ref: dict[str, object],
+    channel: str,
+    seat: str,
+    safe_receive: bool = True,
+) -> bool:
+    proof = godot.get("retirement")
+    other = ref.get("retirement")
+    if not isinstance(proof, dict) or not isinstance(other, dict):
+        return False
+    return (
+        proof.get("channel") == other.get("channel") == channel
+        and proof.get("seat") == other.get("seat") == seat
+        and proof.get("selected") is safe_receive
+        and type(proof.get("queued")) is int
+        and proof["queued"] > 0
+        and proof.get("discarded") is True
+        and proof.get("peer_removed") is True
+        and isinstance(other.get("closed_labels"), list)
+        and (
+            channel in other["closed_labels"]
+            if channel != "ordered"
+            else any(label in ("reliable", "unreliable") for label in other["closed_labels"])
+        )
+        and (seat != "godot" or proof.get("channel_closed") is True)
+    )
+
+
 def slow_receiver_passed(value: object, mixed_traffic: bool) -> bool:
     if not isinstance(value, dict):
         return False
@@ -251,6 +280,8 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
                 "mixed_traffic": args.mixed_traffic,
                 "credit_transport": args.credit_transport,
                 "slow_receiver": getattr(args, "slow_receiver", False),
+                "closing_channel": getattr(args, "closing_channel", "reliable"),
+                "closing_seat": getattr(args, "closing_seat", "reference"),
             }
         )
     )
@@ -312,6 +343,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "slow_receiver": getattr(args, "slow_receiver", False),
         "slow_reference_receiver": getattr(args, "slow_reference_receiver", False),
         "http_credit_delay_ms": getattr(args, "http_credit_delay_ms", 0),
+        "closing_channel": getattr(args, "closing_channel", "reliable"),
+        "closing_seat": getattr(args, "closing_seat", "reference"),
         "godot": args.godot,
         "reference_revision": args.reference_revision,
     }
@@ -330,13 +363,15 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 reference.goto(url)
                 reference.wait_for_function("typeof window.runReference === 'function'")
                 reference.evaluate(
-                    "([seat, offer, mixed, credit, slow]) => { void window.runReference(seat, offer, mixed, credit, slow); }",
+                    "([seat, offer, mixed, credit, slow, channel, closer]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer); }",
                     [
                         1 if web else 0,
                         args.godot_offer,
                         args.mixed_traffic,
                         args.credit_transport,
                         getattr(args, "slow_reference_receiver", False),
+                        getattr(args, "closing_channel", "reliable"),
+                        getattr(args, "closing_seat", "reference"),
                     ],
                 )
                 if web:
@@ -427,6 +462,13 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             credit_transport=args.credit_transport,
                         )
                         and heartbeat_phase_passed(godot, ref, args.mixed_traffic)
+                        and retirement_passed(
+                            godot,
+                            ref,
+                            getattr(args, "closing_channel", "reliable"),
+                            getattr(args, "closing_seat", "reference"),
+                            args.safe_receive,
+                        )
                         and reference_receive_pause_passed(
                             ref, getattr(args, "slow_reference_receiver", False)
                         )
@@ -541,6 +583,15 @@ def main() -> None:
         default=0,
         help="Hold reference credit after 32 chunks for 0-8000 ms",
     )
+    parser.add_argument(
+        "--closing-channel", choices=("reliable", "ordered", "unreliable"), default="reliable"
+    )
+    parser.add_argument("--closing-seat", choices=("godot", "reference"), default="reference")
+    parser.add_argument(
+        "--retirement-matrix",
+        action="store_true",
+        help="Close each required channel from each seat",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--require-gameplay",
@@ -554,20 +605,67 @@ def main() -> None:
         parser.error("--http-credit-delay-ms must be between 0 and 8000")
     if args.http_credit_delay_ms and args.credit_transport != "http":
         parser.error("--http-credit-delay-ms needs --credit-transport http")
+    if (
+        not args.retirement_matrix
+        and args.closing_seat == "reference"
+        and args.closing_channel == "ordered"
+    ):
+        parser.error("the reference Engine has no ordered channel; use --closing-seat godot")
     directory = args.output or Path(tempfile.mkdtemp(prefix="sf-reference-assessment-"))
     results = []
     runtimes = (False, True) if args.runtime == "all" else (args.runtime == "web",)
     offers = (True, False) if args.offerer == "both" else (args.offerer == "godot",)
+    cases = (
+        [
+            (seat, channel)
+            for seat in ("godot", "reference")
+            for channel in (
+                ("reliable", "ordered", "unreliable")
+                if seat == "godot"
+                else ("reliable", "unreliable")
+            )
+        ]
+        if args.retirement_matrix
+        else [(args.closing_seat, args.closing_channel)]
+    )
     for web in runtimes:
         for godot_offer in offers:
             args.godot_offer = godot_offer
-            name = ("web" if web else "native") + (
-                "-godot-offer" if godot_offer else "-reference-offer"
-            )
-            result = assess(args, directory / name, web=web)
-            results.append(result)
-            (directory / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
-            print(f"{name}: assessed; gameplay={result['gameplay_passed']}")
+            for seat, channel in cases:
+                args.closing_seat, args.closing_channel = seat, channel
+                name = ("web" if web else "native") + (
+                    "-godot-offer" if godot_offer else "-reference-offer"
+                )
+                if args.retirement_matrix:
+                    name += f"-{seat}-{channel}"
+                folder = directory / name
+                if folder.exists():
+                    raise FileExistsError(f"Assessment output already exists: {folder}")
+                try:
+                    result = assess(args, folder, web=web)
+                except Exception as exc:
+                    report_path = folder / "assessment.json"
+                    if report_path.exists():
+                        result = json.loads(report_path.read_text())
+                    else:
+                        result = {
+                            "assessment_complete": False,
+                            "driver_error": f"{type(exc).__name__}: {exc}",
+                            "runtime": "web" if web else "native",
+                            "godot_offer": godot_offer,
+                            "closing_seat": seat,
+                            "closing_channel": channel,
+                        }
+                        folder.mkdir(parents=True, exist_ok=True)
+                        report_path.write_text(json.dumps(result, indent=2) + "\n")
+                results.append(result)
+                (directory / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
+                print(
+                    f"{name}: complete={result['assessment_complete']}; gameplay={result.get('gameplay_passed', False)}",
+                    flush=True,
+                )
+    if not all(result["assessment_complete"] for result in results):
+        raise RuntimeError(f"Incomplete reference assessment; see {directory}")
     if args.require_gameplay and not all(result["gameplay_passed"] for result in results):
         raise RuntimeError(
             f"Reference gameplay is unsupported for one or more pairings; see {directory}"

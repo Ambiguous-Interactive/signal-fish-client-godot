@@ -8,6 +8,8 @@ window.runReference = async function (
   mixedTraffic,
   creditTransport,
   slowReferenceReceiver = false,
+  closingChannel = "reliable",
+  closingSeat = "reference",
 ) {
   const seat = 1 - godotSeat;
   const post = async (message) => {
@@ -60,6 +62,7 @@ window.runReference = async function (
       let remoteClosed = false;
       let retired = false;
       const queued = [];
+      const closedLabels = [];
       const receivePause = {};
       let pauseStarted = 0;
       let heartbeatSent = 0;
@@ -179,8 +182,10 @@ window.runReference = async function (
           events.push(["open", label]);
           engine.noteChannelOpen("godot", label);
         },
-        onChannelClosed: (_peer, _generation, label, reason) =>
-          events.push(["closed", label, reason]),
+        onChannelClosed: (_peer, _generation, label, reason) => {
+          events.push(["closed", label, reason]);
+          if (!closedLabels.includes(label)) closedLabels.push(label);
+        },
         onChannelMessage: (_peer, _generation, label, text) => {
           if (
             pauseStarted &&
@@ -233,6 +238,11 @@ window.runReference = async function (
         partial_received: partialReceived,
         received: received.slice(),
         remote_closed: remoteClosed,
+        retirement: {
+          channel: closingChannel,
+          seat: closingSeat,
+          closed_labels: closedLabels.slice(),
+        },
         events: events.slice(),
         snapshot: engine.diagnosticSnapshot("godot"),
       });
@@ -271,7 +281,12 @@ window.runReference = async function (
             !remoteClosed
           ) {
             remoteClosed = true;
-            engine.channel("godot", "reliable").close();
+            if (closingSeat === "reference") {
+              const selected = engine.channel("godot", closingChannel);
+              if (!selected || selected.readyState !== "open")
+                throw new Error("reference closing channel is unavailable");
+              selected.close();
+            } else outgoing.push({ marker: `close-armed-${phase}` });
             window.referenceResults.at(-1).remote_closed = true;
           } else if (message.marker === `retired-${phase}`) {
             retired = true;

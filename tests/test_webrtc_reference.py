@@ -1,8 +1,10 @@
 """Reference assessments distinguish unsupported gameplay from incomplete evidence."""
 
+import argparse
 import importlib.util
 import json
 import subprocess
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -80,6 +82,151 @@ class ReferenceEvidenceTests(unittest.TestCase):
         self.assertFalse(reference.gameplay_phase_passed({**phase, "remote_closed": False}))
         self.assertFalse(reference.gameplay_phase_passed({}))
         self.assertFalse(reference.gameplay_phase_passed({**phase, "received": ["reliable"]}))
+
+    def test_retirement_requires_selected_packet_discard_and_physical_closure(self) -> None:
+        for seat, channels in (
+            ("godot", ("reliable", "ordered", "unreliable")),
+            ("reference", ("reliable", "unreliable")),
+        ):
+            for channel in channels:
+                proof = {
+                    "seat": seat,
+                    "channel": channel,
+                    "selected": True,
+                    "queued": 1,
+                    "discarded": True,
+                    "peer_removed": True,
+                    "channel_closed": True,
+                }
+                other = {
+                    "seat": seat,
+                    "channel": channel,
+                    "closed_labels": ["reliable" if channel == "ordered" else channel],
+                }
+                self.assertTrue(
+                    reference.retirement_passed(
+                        {"retirement": proof}, {"retirement": other}, channel, seat
+                    )
+                )
+                self.assertTrue(
+                    reference.retirement_passed(
+                        {"retirement": {**proof, "selected": False}},
+                        {"retirement": other},
+                        channel,
+                        seat,
+                        False,
+                    )
+                )
+                for field, value in (
+                    ("seat", "wrong"),
+                    ("channel", "wrong"),
+                    ("selected", False),
+                    ("queued", 0),
+                    ("queued", True),
+                    ("discarded", False),
+                    ("peer_removed", False),
+                ):
+                    with self.subTest(seat=seat, channel=channel, field=field):
+                        self.assertFalse(
+                            reference.retirement_passed(
+                                {"retirement": {**proof, field: value}},
+                                {"retirement": other},
+                                channel,
+                                seat,
+                            )
+                        )
+                for other_field, other_value in (
+                    ("seat", "wrong"),
+                    ("channel", "wrong"),
+                    ("closed_labels", []),
+                    ("closed_labels", ["other"]),
+                ):
+                    self.assertFalse(
+                        reference.retirement_passed(
+                            {"retirement": proof},
+                            {"retirement": {**other, other_field: other_value}},
+                            channel,
+                            seat,
+                        )
+                    )
+                if seat == "godot":
+                    self.assertFalse(
+                        reference.retirement_passed(
+                            {"retirement": {**proof, "channel_closed": False}},
+                            {"retirement": other},
+                            channel,
+                            seat,
+                        )
+                    )
+        self.assertFalse(reference.retirement_passed({}, {}, "reliable", "godot"))
+
+    def test_retirement_matrix_keeps_failed_cases_and_runs_the_remaining_cases(self) -> None:
+        calls: list[tuple[str, str]] = []
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "assessment"
+
+            def assess(
+                args: argparse.Namespace, directory: Path, *, web: bool
+            ) -> dict[str, object]:
+                self.assertTrue(web)
+                case = (args.closing_seat, args.closing_channel)
+                calls.append(case)
+                if len(calls) == 3:
+                    raise OSError("project preparation failed")
+                failed = len(calls) == 2
+                report: dict[str, object] = {
+                    "assessment_complete": not failed,
+                    "gameplay_passed": not failed,
+                }
+                directory.mkdir(parents=True)
+                (directory / "assessment.json").write_text(json.dumps(report))
+                if failed:
+                    raise RuntimeError("captured incomplete assessment")
+                return report
+
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        str(SCRIPT),
+                        "--native-extension",
+                        temp,
+                        "--reference-assets",
+                        temp,
+                        "--reference-revision",
+                        "revision",
+                        "--runtime",
+                        "web",
+                        "--offerer",
+                        "reference",
+                        "--retirement-matrix",
+                        "--output",
+                        str(output),
+                    ],
+                ),
+                patch.object(reference, "assess", side_effect=assess),
+                patch("builtins.print"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Incomplete reference assessment"):
+                    reference.main()
+                with self.assertRaisesRegex(FileExistsError, "output already exists"):
+                    reference.main()
+            self.assertEqual(
+                calls,
+                [
+                    ("godot", "reliable"),
+                    ("godot", "ordered"),
+                    ("godot", "unreliable"),
+                    ("reference", "reliable"),
+                    ("reference", "unreliable"),
+                ],
+            )
+            results = json.loads((output / "summary.json").read_text())
+            self.assertEqual(len(results), 5)
+            self.assertFalse(results[1]["assessment_complete"])
+            self.assertIn("project preparation failed", results[2]["driver_error"])
+            self.assertEqual(results[2]["closing_channel"], "unreliable")
+            self.assertTrue(results[-1]["gameplay_passed"])
 
     def test_slow_reader_requires_a_real_pause_and_queued_mixed_packets(self) -> None:
         proof = {
