@@ -198,6 +198,7 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
             break
     rpc_phases = []
     multi_peer_phases = []
+    multi_peer_interruptions = []
     for line in lines:
         if line.startswith("WEBRTC_RPC_RECOVERY_PHASE "):
             with contextlib.suppress(json.JSONDecodeError):
@@ -205,7 +206,13 @@ def seat_evidence(output: str, seat: int) -> dict[str, object]:
         if line.startswith("WEBRTC_MULTIPEER_PHASE "):
             with contextlib.suppress(json.JSONDecodeError):
                 multi_peer_phases.append(json.loads(line.removeprefix("WEBRTC_MULTIPEER_PHASE ")))
+        if line.startswith("WEBRTC_MULTIPEER_INTERRUPTION "):
+            with contextlib.suppress(json.JSONDecodeError):
+                multi_peer_interruptions.append(
+                    json.loads(line.removeprefix("WEBRTC_MULTIPEER_INTERRUPTION "))
+                )
     return {
+        "multi_peer_interruptions": multi_peer_interruptions,
         "multi_peer_phases": multi_peer_phases,
         "rpc_recovery_phases": rpc_phases,
         "seat": seat,

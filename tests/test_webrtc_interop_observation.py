@@ -70,6 +70,29 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(result["multi_peer_phases"], [phase])
         self.assertFalse(result["passed"])
 
+    def test_interruption_evidence_survives_later_stall(self) -> None:
+        interruption = {
+            "phase": 2,
+            "seat": 0,
+            "interrupted_snapshot": {
+                "queued_before_close": 48,
+                "queued_after_close": 24,
+                "consumed_by_sender_and_mode": {"2": [8, 8, 8]},
+                "selected_before_close": {"peer": 17, "mode": 2, "channel": 0},
+                "selected_after_close": {"peer": 23, "mode": 2, "channel": 0},
+            },
+        }
+        output = (
+            "WEBRTC_MULTIPEER_INTERRUPTION "
+            + drill.json.dumps(interruption)
+            + '\nWEBRTC_MULTIPEER_INTERRUPTION {"phase":3'
+            + '\nWEBRTC_INTEROP_FAIL {"stage":"fresh triangle notifications"}'
+        )
+        evidence = drill.seat_evidence(output, 0)
+        self.assertEqual(evidence["multi_peer_interruptions"], [interruption])
+        self.assertEqual(evidence["diagnostic"]["stage"], "fresh triangle notifications")
+        self.assertFalse(evidence["passed"])
+
     def test_startup_requires_both_loaded_seats_and_reports_missing_engine(self) -> None:
         page = Mock()
         outputs = [(1, ["WEBRTC_MULTIPEER_LOADED seat=1"]), (2, [])]
