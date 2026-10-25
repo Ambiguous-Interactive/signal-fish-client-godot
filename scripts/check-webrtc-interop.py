@@ -334,7 +334,7 @@ def run_seats(
             str(native),
             "--",
             url,
-            f"--retirement-case={retirement_case}",
+            *([f"--retirement-case={retirement_case}"] if args.multi_peer else []),
             *(["--mixed-traffic"] if args.mixed_traffic else []),
             *(["--rpc-traffic"] if args.rpc_traffic else []),
             *(["--rpc-recovery"] if args.rpc_recovery else []),
@@ -382,7 +382,8 @@ def run_seats(
                     query += ("&" if query else "?") + "safe_receive=1"
                 if args.channel_receive:
                     query += ("&" if query else "?") + "channel_receive=1"
-                query += ("&" if query else "?") + f"retirement_case={retirement_case}"
+                if args.multi_peer:
+                    query += ("&" if query else "?") + f"retirement_case={retirement_case}"
                 page.goto(url + "/index.html" + query)
                 extra_page = None
                 if args.multi_peer:

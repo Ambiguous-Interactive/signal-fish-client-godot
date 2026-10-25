@@ -1,5 +1,6 @@
 """Keep live-drill driver timeouts distinct from engine failures."""
 
+import argparse
 import importlib.util
 import subprocess
 import tempfile
@@ -7,7 +8,7 @@ import unittest
 from functools import partial
 from pathlib import Path
 from typing import cast
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from playwright.sync_api import Page, Request
 
@@ -198,6 +199,51 @@ class ObservationTests(unittest.TestCase):
 
 
 class RetirementMatrixTests(unittest.TestCase):
+    def test_retirement_arguments_only_reach_multi_peer_scene(self) -> None:
+        for multi_peer in (False, True):
+            with self.subTest(multi_peer=multi_peer), tempfile.TemporaryDirectory() as temporary:
+                args = argparse.Namespace(
+                    godot="godot",
+                    web_godot=None,
+                    chromium=None,
+                    multi_peer=multi_peer,
+                    mixed_traffic=False,
+                    rpc_traffic=False,
+                    rpc_recovery=False,
+                    rpc_plan_recovery=False,
+                    metadata_probe=False,
+                    channel_receive=False,
+                    safe_receive=False,
+                    slow_receiver=False,
+                )
+                browser = MagicMock(version="154-test")
+                playwright = MagicMock()
+                playwright.__enter__.return_value.chromium.launch.return_value = browser
+                process = Mock(returncode=0)
+                process.poll.return_value = 0
+                server = Mock(server_port=12345)
+                with (
+                    patch.object(drill, "ThreadingHTTPServer", return_value=server),
+                    patch.object(drill.threading, "Thread"),
+                    patch.object(drill, "sync_playwright", return_value=playwright),
+                    patch.object(drill, "wait_web_startup"),
+                    patch.object(drill, "observe_browser", return_value=""),
+                    patch.object(drill.subprocess, "Popen", return_value=process) as popen,
+                    self.assertRaisesRegex(RuntimeError, "Interoperability drill failed"),
+                ):
+                    drill.run_seats(
+                        args,
+                        Path(temporary) / "trial",
+                        Path("native"),
+                        Path("web"),
+                        retirement_case=7,
+                    )
+                command = popen.call_args.args[0]
+                self.assertEqual("--retirement-case=7" in command, multi_peer)
+                urls = [call.args[0] for call in browser.new_page.return_value.goto.call_args_list]
+                self.assertTrue(urls)
+                self.assertTrue(all(("retirement_case=7" in url) == multi_peer for url in urls))
+
     def test_terminal_requires_all_phases_and_the_requested_case(self) -> None:
         phases = [
             "WEBRTC_MULTIPEER_PHASE " + drill.json.dumps({"phase": phase, "retirement_case": 7})
