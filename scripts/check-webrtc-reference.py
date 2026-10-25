@@ -69,7 +69,9 @@ def phase_evidence(output: str) -> list[object]:
     return phases
 
 
-def gameplay_phase_passed(phase: dict[str, object]) -> bool:
+def gameplay_phase_passed(
+    phase: dict[str, object], *, mixed_traffic: bool = False, credit_transport: str = "http"
+) -> bool:
     return (
         phase.get("sent") is True
         and phase.get("received") in (["reliable", "unreliable"], ["unreliable", "reliable"])
@@ -78,6 +80,13 @@ def gameplay_phase_passed(phase: dict[str, object]) -> bool:
         and phase.get("partial_sent") == 4
         and phase.get("partial_received") == 4
         and phase.get("remote_closed") is True
+        and phase.get("mixed_traffic") is mixed_traffic
+        and phase.get("credit_transport") == credit_transport
+        and phase.get("snapshot_acknowledged") == 128
+        and phase.get("positions_sent") == (32 if mixed_traffic else 0)
+        and phase.get("positions_received") == (32 if mixed_traffic else 0)
+        and type(phase.get("peak_outstanding")) is int
+        and 0 < cast(int, phase["peak_outstanding"]) <= 32
     )
 
 
@@ -105,9 +114,19 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
     ready = source.index("func _ready() -> void:")
     source = source[:start] + "func _run_phase" + methods + source[end:]
     source = source[:ready] + variables + "\n\n" + source[ready:]
+    if source.count('"peers": []') != 1:
+        raise ValueError("Reference diagnostic insertion point changed")
+    source = source.replace('"peers": []', '"reference": _reference_evidence(), "peers": []')
     script.write_text(source)
     (project / "reference-options.json").write_text(
-        json.dumps({"godot_offer": args.godot_offer, "safe_receive": args.safe_receive})
+        json.dumps(
+            {
+                "godot_offer": args.godot_offer,
+                "safe_receive": args.safe_receive,
+                "mixed_traffic": args.mixed_traffic,
+                "credit_transport": args.credit_transport,
+            }
+        )
     )
     preset = project / "export_presets.cfg"
     preset.write_text(
@@ -158,6 +177,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "runtime": "web" if web else "native",
         "safe_receive": args.safe_receive,
         "godot_offer": args.godot_offer,
+        "mixed_traffic": args.mixed_traffic,
+        "credit_transport": args.credit_transport,
         "godot": args.godot,
         "reference_revision": args.reference_revision,
     }
@@ -176,8 +197,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 reference.goto(url)
                 reference.wait_for_function("typeof window.runReference === 'function'")
                 reference.evaluate(
-                    "([seat, offer]) => { void window.runReference(seat, offer); }",
-                    [1 if web else 0, args.godot_offer],
+                    "([seat, offer, mixed, credit]) => { void window.runReference(seat, offer, mixed, credit); }",
+                    [1 if web else 0, args.godot_offer, args.mixed_traffic, args.credit_transport],
                 )
                 if web:
                     page = browser.new_page()
@@ -222,8 +243,16 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     and not driver_error
                 )
                 gameplay = complete and all(
-                    gameplay_phase_passed(godot)
-                    and gameplay_phase_passed(ref)
+                    gameplay_phase_passed(
+                        godot,
+                        mixed_traffic=args.mixed_traffic,
+                        credit_transport=args.credit_transport,
+                    )
+                    and gameplay_phase_passed(
+                        ref,
+                        mixed_traffic=args.mixed_traffic,
+                        credit_transport=args.credit_transport,
+                    )
                     and (not args.safe_receive or godot.get("same_receiver") is True)
                     for godot, ref in zip(phases, result["phases"], strict=True)
                 )
@@ -262,6 +291,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         if web:
             (directory / "godot.log").write_text("\n".join(messages))
         output = (directory / "godot.log").read_text()
+        report["godot_evidence"] = interop.seat_evidence(output, 1 if web else 0)
         report["godot_phases"] = phase_evidence(output)
         report["reference_phases"] = phase_evidence("\n".join(reference_messages))
         report["engine_banner"] = next(
@@ -292,6 +322,17 @@ def main() -> None:
     parser.add_argument("--chromium")
     parser.add_argument(
         "--safe-receive", action="store_true", help="Read through the RPC-safe peer"
+    )
+    parser.add_argument(
+        "--mixed-traffic",
+        action="store_true",
+        help="Interleave exact position samples with snapshots",
+    )
+    parser.add_argument(
+        "--credit-transport",
+        choices=("http", "webrtc"),
+        default="http",
+        help="Return consumption credit over HTTP markers or reliable data-channel packets",
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument(

@@ -2,7 +2,12 @@ import { Engine } from "/reference/engine.js";
 
 window.referenceError = null;
 window.referenceResults = [];
-window.runReference = async function (godotSeat, godotOffer) {
+window.runReference = async function (
+  godotSeat,
+  godotOffer,
+  mixedTraffic,
+  creditTransport,
+) {
   const seat = 1 - godotSeat;
   const post = async (message) => {
     const response = await fetch(`/signal/${godotSeat}`, {
@@ -23,6 +28,21 @@ window.runReference = async function (godotSeat, godotOffer) {
       let snapshotSent = 0;
       let snapshotReceived = 0;
       let snapshotAck = 0;
+      let positionsSent = 0;
+      const positionsReceived = new Set();
+      let peakOutstanding = 0;
+      let creditUpdated = performance.now();
+      let transferStarted = 0;
+      let transferMs = -1;
+      const position = (sender, sequence) =>
+        `position:${phase}:${sender}:${sequence}:` +
+        "0123456789abcdef".repeat(4);
+      const acceptCredit = (count) => {
+        if (count > snapshotAck) {
+          snapshotAck = count;
+          creditUpdated = performance.now();
+        }
+      };
       let partialSent = 0;
       let partialReceived = 0;
       const chunk = (sender, sequence, partial = false) =>
@@ -45,6 +65,41 @@ window.runReference = async function (godotSeat, godotOffer) {
         onChannelClosed: (_peer, _generation, label, reason) =>
           events.push(["closed", label, reason]),
         onChannelMessage: (_peer, _generation, label, text) => {
+          if (text.startsWith("credit:")) {
+            const count = Number(text.split(":").at(-1));
+            if (
+              creditTransport !== "webrtc" ||
+              label !== "reliable" ||
+              text !== `credit:${phase}:godot:reference:${count}` ||
+              !Number.isInteger(count) ||
+              count <= snapshotAck ||
+              count > snapshotSent ||
+              count % 8 !== 0
+            ) {
+              window.referenceError = "reference consumption credit differs";
+              return false;
+            }
+            acceptCredit(count);
+            return true;
+          }
+          if (text.startsWith("position:")) {
+            const sequence = Number(text.split(":")[3]);
+            if (
+              !mixedTraffic ||
+              label !== "unreliable" ||
+              !Number.isInteger(sequence) ||
+              sequence < 0 ||
+              sequence >= 32 ||
+              positionsReceived.has(sequence) ||
+              text !== position("godot", sequence)
+            ) {
+              window.referenceError =
+                "reference position bytes or metadata differ";
+              return false;
+            }
+            positionsReceived.add(sequence);
+            return true;
+          }
           if (label === "reliable" && /^(snapshot|partial):/.test(text)) {
             const partial = text.startsWith("partial:");
             const sequence = partial ? partialReceived : snapshotReceived;
@@ -59,10 +114,18 @@ window.runReference = async function (godotSeat, godotOffer) {
             if (partial) partialReceived++;
             else {
               snapshotReceived++;
-              if (snapshotReceived % 8 === 0)
-                outgoing.push({
-                  marker: `snapshot-ack-${phase}-${snapshotReceived}`,
-                });
+              if (snapshotReceived % 8 === 0) {
+                if (creditTransport === "http")
+                  outgoing.push({
+                    marker: `snapshot-ack-${phase}-${snapshotReceived}`,
+                  });
+                else
+                  engine
+                    .channel("godot", "reliable")
+                    .send(
+                      `credit:${phase}:reference:godot:${snapshotReceived}`,
+                    );
+              }
             }
             return true;
           }
@@ -80,6 +143,17 @@ window.runReference = async function (godotSeat, godotOffer) {
       });
       const evidence = () => ({
         phase,
+        mixed_traffic: mixedTraffic,
+        credit_transport: creditTransport,
+        snapshot_acknowledged: snapshotAck,
+        positions_sent: positionsSent,
+        positions_received: positionsReceived.size,
+        peak_outstanding: peakOutstanding,
+        credit_wait_age_ms:
+          snapshotSent > snapshotAck
+            ? Math.round(performance.now() - creditUpdated)
+            : 0,
+        transfer_ms: transferMs,
         sent,
         snapshot_sent: snapshotSent,
         snapshot_received: snapshotReceived,
@@ -96,18 +170,12 @@ window.runReference = async function (godotSeat, godotOffer) {
           console.log(
             "WEBRTC_INTEROP_PROGRESS " +
               JSON.stringify({
+                ...evidence(),
                 runtime: "reference",
-                phase,
                 elapsed_ms: Math.round(performance.now() - started),
                 paired,
-                sent,
-                snapshot_sent: snapshotSent,
-                snapshot_received: snapshotReceived,
                 snapshot_ack: snapshotAck,
-                partial_sent: partialSent,
-                partial_received: partialReceived,
                 close_queued: closeQueued,
-                remote_closed: remoteClosed,
               }),
           );
         }
@@ -120,11 +188,11 @@ window.runReference = async function (godotSeat, godotOffer) {
             const offer = await engine.pairWith("godot", !godotOffer, []);
             outgoing.push({ marker: `ready-${phase}` });
             if (offer) outgoing.push({ payload: { Offer: offer } });
-          } else if (message.marker?.startsWith(`snapshot-ack-${phase}-`)) {
-            snapshotAck = Math.max(
-              snapshotAck,
-              Number(message.marker.split("-").at(-1)),
-            );
+          } else if (
+            creditTransport === "http" &&
+            message.marker?.startsWith(`snapshot-ack-${phase}-`)
+          ) {
+            acceptCredit(Number(message.marker.split("-").at(-1)));
           } else if (
             message.marker === `close-ready-${phase}` &&
             !closeQueued
@@ -160,6 +228,8 @@ window.runReference = async function (godotSeat, godotOffer) {
           engine.channel("godot", "unreliable")?.readyState === "open"
         ) {
           sent = true;
+          transferStarted = performance.now();
+          creditUpdated = transferStarted;
           for (const label of ["reliable", "unreliable"])
             engine.channel("godot", label).send(`reference:${phase}:${label}`);
         }
@@ -169,13 +239,23 @@ window.runReference = async function (godotSeat, godotOffer) {
             let batch = 0;
             batch < 4 && snapshotSent < 128 && snapshotSent - snapshotAck < 32;
             batch++
-          )
+          ) {
             reliable.send(chunk("reference", snapshotSent++));
+            peakOutstanding = Math.max(
+              peakOutstanding,
+              snapshotSent - snapshotAck,
+            );
+            if (mixedTraffic && snapshotSent % 4 === 0)
+              engine
+                .channel("godot", "unreliable")
+                .send(position("reference", positionsSent++));
+          }
           if (
             snapshotReceived === 128 &&
             snapshotAck === 128 &&
             partialSent === 0
           ) {
+            transferMs = Math.round(performance.now() - transferStarted);
             for (; partialSent < 4; partialSent++)
               reliable.send(chunk("reference", partialSent, true));
           }
