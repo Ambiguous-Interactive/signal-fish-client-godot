@@ -315,7 +315,7 @@ def service_source(source: str) -> str:
     source = source.replace("func _ready() -> void:", variables + "\n\nfunc _ready() -> void:", 1)
     start = source.index("\t_client._player_id = PLAYERS[_seat]")
     end = source.index("\t_mesh = MeshScript.new()", start)
-    source = source[:start] + "\t_service_setup()\n" + source[end:]
+    source = source[:start] + "\tif not _service_setup():\n\t\treturn\n" + source[end:]
     start = source.index(
         "\tvar plan := SessionScript.SessionPlanInfo.new()", source.index("func _run_phase")
     )

@@ -5,7 +5,7 @@ var _service_signals_received := 0
 var _service_receiver_retired := false
 
 
-func _service_setup() -> void:
+func _service_setup() -> bool:
 	var config := preload("res://addons/signal_fish/signal_fish_config.gd").new()
 	var options: Dictionary = JSON.parse_string(
 		FileAccess.get_file_as_string("res://reference-options.json")
@@ -46,7 +46,9 @@ func _service_setup() -> void:
 		_client.configure(config) != OK
 		or _client.connect_to_server(str(options["service_url"])) != OK
 	):
-		_fail("reference service connect failed")
+		_fail.call_deferred("reference service connect failed")
+		return false
+	return true
 
 
 func _service_begin(phase: int) -> bool:
