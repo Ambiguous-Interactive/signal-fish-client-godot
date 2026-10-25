@@ -27,6 +27,13 @@ var _outbox: HTTPRequest
 var _url := ""
 var _seat := 0
 var _mixed_traffic := false
+var _rpc_recovery := false
+var _rpc_api: SceneMultiplayer
+var _rpc_polling := false
+var _rpc_connected: Array[int] = []
+var _rpc_disconnected: Array[int] = []
+var _rpc_polls := 0
+var _rpc_selected := false
 var _rpc_traffic := false
 var _rpc_probe: RpcProbeScript
 var _metadata_probe := false
@@ -73,6 +80,9 @@ func _ready() -> void:
 	_start_stage("setup")
 	if _seat == 1:
 		_url = JavaScriptBridge.eval("window.location.origin")
+		_rpc_recovery = JavaScriptBridge.eval(
+			"new URLSearchParams(window.location.search).get('rpc_recovery') === '1'"
+		)
 		_rpc_traffic = JavaScriptBridge.eval(
 			"new URLSearchParams(window.location.search).get('rpc_traffic') === '1'"
 		)
@@ -99,6 +109,8 @@ func _ready() -> void:
 		_url = args[0]
 		for option: String in args.slice(1):
 			match option:
+				"--rpc-recovery":
+					_rpc_recovery = true
 				"--rpc-traffic":
 					_rpc_traffic = true
 				"--mixed-traffic":
@@ -130,13 +142,17 @@ func _ready() -> void:
 		_pending.append({"generation": generation, "payload": payload})
 	_mesh = MeshScript.new()
 	_mesh.attach(_client)
-	if (_safe_receive or _rpc_traffic) and not _mesh.has_method("get_safe_multiplayer_peer"):
+	if (
+		(_safe_receive or _rpc_traffic or _rpc_recovery)
+		and not _mesh.has_method("get_safe_multiplayer_peer")
+	):
 		_fail("scenario needs the metadata-safe peer addon")
 		return
 	for phase: int in range(1, 2 if _metadata_probe else 8):
 		if not await _run_phase(phase):
 			_fail("gameplay phase %d failed" % phase)
 			return
+	_release_rpc_recovery()
 	_finished = true
 	_inbox.cancel_request()
 	_outbox.cancel_request()
@@ -191,6 +207,12 @@ func _process(_delta: float) -> void:
 		var peer: WebRTCMultiplayerPeer = _mesh.get_multiplayer_peer()
 		if peer != null:
 			peer.poll()
+	if _rpc_api != null and _rpc_polling:
+		_rpc_polls += 1
+		if _rpc_api.poll() != OK:
+			_fail("RPC API poll failed")
+		elif not _rpc_probe.failure.is_empty():
+			_fail(_rpc_probe.failure)
 
 
 func _on_inbox(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
@@ -222,6 +244,18 @@ func _on_outbox(
 		_fail("signaling send failed")
 	else:
 		_signal_sent += 1
+
+
+func _release_rpc_recovery() -> void:
+	if _rpc_api == null:
+		return
+	_rpc_polling = false
+	get_tree().set_multiplayer(null, _rpc_probe.get_path())
+	_rpc_api.multiplayer_peer = OfflineMultiplayerPeer.new()
+	_rpc_api = null
+	_rpc_probe.free()
+	_rpc_probe = null
+	get_tree().multiplayer_poll = true
 
 
 func _run_phase(phase: int) -> bool:
@@ -317,6 +351,8 @@ func _run_phase(phase: int) -> bool:
 		"remote modes received marker", func() -> bool: return _markers.has("received-%d" % phase)
 	):
 		return false
+	if _rpc_recovery:
+		return await _rpc_recovery_gameplay(multiplayer_peer, channels, phase)
 	if _rpc_traffic:
 		if not await _rpc_gameplay(phase):
 			return false
@@ -342,6 +378,10 @@ func _run_phase(phase: int) -> bool:
 		if _packet_count(multiplayer_peer) != 0:
 			_fail("closed channel retained gameplay packets")
 			return false
+	return await _finish_phase(multiplayer_peer, phase)
+
+
+func _finish_phase(multiplayer_peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	_snapshot_received.clear()
 	_start_stage("relay teardown")
 	var relay := SessionScript.SessionPlanInfo.new()
@@ -368,6 +408,111 @@ func _run_phase(phase: int) -> bool:
 		return false
 	print("interop gameplay: seat=%d phase=%d all modes and relay teardown passed" % [_seat, phase])
 	return true
+
+
+func _rpc_recovery_gameplay(peer: WebRTCMultiplayerPeer, channels: Array, phase: int) -> bool:
+	if _rpc_api == null:
+		get_tree().multiplayer_poll = false
+		_rpc_probe = RpcProbeScript.new()
+		_rpc_probe.name = "RpcProbe"
+		add_child(_rpc_probe)
+		_rpc_api = SceneMultiplayer.new()
+		_rpc_api.peer_connected.connect(func(id: int) -> void: _rpc_connected.append(id))
+		_rpc_api.peer_disconnected.connect(func(id: int) -> void: _rpc_disconnected.append(id))
+		get_tree().set_multiplayer(_rpc_api, _rpc_probe.get_path())
+	_rpc_probe.reset_transfer(phase, _seat, MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat]))
+	_rpc_probe.outgoing = MsgpackScript.encode(_snapshot_value(phase, _seat))["bytes"]
+	_rpc_probe.expected = MsgpackScript.encode(_snapshot_value(phase, 1 - _seat))["bytes"]
+	var receiver: MultiplayerPeer = _mesh.call("get_safe_multiplayer_peer")
+	_rpc_api.multiplayer_peer = receiver
+	_rpc_polling = true
+	_rpc_selected = false
+	if not await _wait_until(
+		"recovery RPC peer discovery", func() -> bool: return _rpc_api.get_peers().size() == 1
+	):
+		return false
+	if _rpc_connected.size() != phase or _rpc_connected[-1] != _rpc_probe.expected_peer:
+		_fail("RPC connection notifications differ")
+		return false
+	_pending.append({"marker": "rpc-ready-%d" % phase})
+	if not await _wait_until(
+		"recovery remote RPC ready", func() -> bool: return _markers.has("rpc-ready-%d" % phase)
+	):
+		return false
+	if not await _wait_until(
+		"recovery RPC snapshot and positions",
+		func() -> bool:
+			_rpc_probe.send_batch()
+			return _rpc_probe.complete()
+	):
+		return false
+	_pending.append({"marker": "rpc-complete-%d" % phase})
+	if not await _wait_until(
+		"recovery remote snapshot complete",
+		func() -> bool: return _markers.has("rpc-complete-%d" % phase)
+	):
+		return false
+	_rpc_probe.send_partial()
+	if not await _wait_until(
+		"recovery partial RPC snapshot", func() -> bool: return _rpc_probe.partial_received == 4
+	):
+		return false
+	_rpc_polling = false
+	_pending.append({"marker": "rpc-paused-%d" % phase})
+	if not await _wait_until(
+		"recovery remote RPC paused", func() -> bool: return _markers.has("rpc-paused-%d" % phase)
+	):
+		return false
+	if (
+		_rpc_probe.rpc_id(
+			_rpc_probe.expected_peer, "retired_chunk", _rpc_probe.outgoing.slice(0, 32)
+		)
+		!= OK
+	):
+		_fail("retirement RPC send failed")
+		return false
+	if not await _wait_until(
+		"recovery queued retirement RPC",
+		func() -> bool: return receiver.get_available_packet_count() > 0
+	):
+		return false
+	_rpc_selected = true
+	if receiver.get_packet_mode() != MultiplayerPeer.TRANSFER_MODE_RELIABLE:
+		_fail("retirement RPC mode differs")
+		return false
+	_pending.append({"marker": "rpc-selected-%d" % phase})
+	if not await _wait_until(
+		"recovery remote retirement selected",
+		func() -> bool: return _markers.has("rpc-selected-%d" % phase)
+	):
+		return false
+	if _seat == (phase - 1) % 2:
+		var channel: WebRTCDataChannel = channels[((phase - 1) >> 1) % 3]
+		channel.close()
+	if not await _wait_until(
+		"recovery channel releases RPC link", func() -> bool: return _mesh.get_peer_count() == 0
+	):
+		return false
+	if receiver.get_available_packet_count() != 0:
+		_fail("closed link retained selected RPC bytes")
+		return false
+	_rpc_polling = true
+	if not await _wait_until(
+		"recovery RPC disconnect notification",
+		func() -> bool: return _rpc_api.get_peers().is_empty() and _rpc_disconnected.size() == phase
+	):
+		return false
+	if _rpc_disconnected[-1] != _rpc_probe.expected_peer or _rpc_probe.retired_received != 0:
+		_fail("RPC disconnection or retired delivery differs")
+		return false
+	var evidence := _rpc_probe.evidence()
+	evidence["phase"] = phase
+	evidence["connected"] = _rpc_connected.size()
+	evidence["disconnected"] = _rpc_disconnected.size()
+	print("WEBRTC_RPC_RECOVERY_PHASE " + JSON.stringify(evidence))
+	_rpc_polling = false
+	_rpc_api.multiplayer_peer = OfflineMultiplayerPeer.new()
+	return await _finish_phase(peer, phase)
 
 
 func _rpc_gameplay(phase: int) -> bool:
@@ -982,6 +1127,12 @@ func _snapshot() -> Dictionary:
 		"peak_queued": _peak_queued,
 		"mixed_traffic": _mixed_traffic,
 		"rpc_traffic": _rpc_traffic,
+		"rpc_recovery": _rpc_recovery,
+		"rpc_polling": _rpc_polling,
+		"rpc_polls": _rpc_polls,
+		"rpc_connected": _rpc_connected,
+		"rpc_disconnected": _rpc_disconnected,
+		"rpc_selected": _rpc_selected,
 		"rpc": _rpc_probe.evidence() if _rpc_probe != null else {},
 		"metadata_probe": _metadata_probe,
 		"channel_receive": _channel_receive,
@@ -1048,6 +1199,7 @@ func _fail(reason: String) -> void:
 	var snapshot := _snapshot()
 	snapshot["reason"] = reason
 	print("WEBRTC_INTEROP_FAIL " + JSON.stringify(snapshot))
+	_release_rpc_recovery()
 	if _inbox != null:
 		_inbox.cancel_request()
 	if _outbox != null:
