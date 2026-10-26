@@ -139,6 +139,163 @@ class RelayObservationTests(unittest.TestCase):
             thread.join()
 
 
+class LifetimeContractTests(unittest.TestCase):
+    def test_finite_property_gate_covers_all_peers_and_channels(self) -> None:
+        channels = [
+            {
+                "id": index + 1,
+                "label": label,
+                "negotiated": True,
+                "ordered": index != 2,
+                "max_packet_life_time": -1 if index == 0 else 1,
+                "max_retransmits": -1,
+            }
+            for index, label in enumerate(["reliable", "ordered", "unreliable"])
+        ]
+        contract = {"peers": [{"channels": channels}]}
+        output = "WEBRTC_INTEROP_PASS seat=0\nWEBRTC_CHANNEL_CONTRACT " + json.dumps(contract)
+        self.assertTrue(drill.seat_evidence(output, 0, require_finite_lifetimes=True)["passed"])
+        self.assertFalse(drill.finite_lifetimes([]))
+        self.assertFalse(drill.finite_lifetimes([{"peers": []}]))
+        for index in range(3):
+            for field, value in [
+                ("max_packet_life_time", -1 if index else 1),
+                ("max_retransmits", 0),
+                ("ordered", index == 2),
+            ]:
+                with self.subTest(index=index, field=field):
+                    changed = json.loads(json.dumps(contract))
+                    changed["peers"][0]["channels"][index][field] = value
+                    self.assertFalse(drill.finite_lifetimes([contract, changed]))
+        web_contract = json.loads(json.dumps(contract))
+        for index, channel in enumerate(web_contract["peers"][0]["channels"]):
+            channel["max_retransmits"] = 0
+            if index == 0:
+                channel["max_packet_life_time"] = 0
+        self.assertTrue(drill.finite_lifetimes([web_contract], unset=0))
+        self.assertFalse(drill.finite_lifetimes([web_contract]))
+        changed = json.loads(json.dumps(contract))
+        changed["peers"].append({"channels": []})
+        self.assertFalse(drill.finite_lifetimes([changed]))
+
+
+class CreditDelayTests(unittest.TestCase):
+    def test_hold_only_the_selected_credit_and_release_once(self) -> None:
+        delay = drill.CreditDelay(6000)
+        marker = {"marker": "consumed-1-1-8"}
+        with patch.object(drill.time, "monotonic", return_value=10):
+            self.assertFalse(delay.hold(1, marker))
+            self.assertFalse(delay.hold(0, {"marker": "consumed-1-2-8"}))
+            self.assertFalse(delay.hold(0, {"payload": {"Offer": "example"}}))
+            self.assertTrue(delay.hold(0, marker))
+        with patch.object(drill.time, "monotonic", return_value=15.999):
+            self.assertTrue(delay.hold(0, marker))
+        with patch.object(drill.time, "monotonic", return_value=16.1):
+            self.assertFalse(delay.hold(0, marker))
+        with patch.object(drill.time, "monotonic", return_value=20):
+            self.assertFalse(delay.hold(0, marker))
+        self.assertEqual(delay.snapshot()["held_ms"], 6100)
+        self.assertTrue(delay.snapshot()["released"])
+        self.assertFalse(drill.CreditDelay().hold(0, marker))
+
+    def test_delay_verdict_requires_release_and_independent_gameplay(self) -> None:
+        delay = drill.CreditDelay(6000)
+        proof = {
+            "sent": {"1": 8},
+            "acknowledged": {"1": 0, "2": 64},
+            "received": {"2": [32, 32, 64]},
+        }
+        self.assertFalse(delay.proven(proof))
+        with patch.object(drill.time, "monotonic", return_value=10):
+            delay.hold(0, {"marker": "consumed-1-1-8"})
+        self.assertFalse(delay.proven(proof))
+        with patch.object(drill.time, "monotonic", return_value=12):
+            delay.record_proof(2, {"from": 0, "marker": "credit-hold-proof-1-0"})
+        with patch.object(drill.time, "monotonic", return_value=16.1):
+            delay.hold(0, {"marker": "consumed-1-1-8"})
+        self.assertTrue(delay.proven(proof))
+        self.assertEqual(delay.snapshot()["proof_after_hold_start_ms"], 2000)
+        for field, key, value in [
+            ("sent", "1", 9),
+            ("acknowledged", "1", 8),
+            ("acknowledged", "2", 56),
+            ("received", "2", [32, 31, 64]),
+        ]:
+            changed = json.loads(json.dumps(proof))
+            changed[field][key] = value
+            self.assertFalse(delay.proven(changed))
+        self.assertFalse(delay.proven({}))
+
+    def test_late_proof_cannot_claim_gameplay_completed_during_hold(self) -> None:
+        for proof_time in [None, 9, 16, 17]:
+            with self.subTest(proof_time=proof_time):
+                delay = drill.CreditDelay(6000)
+                with patch.object(drill.time, "monotonic", return_value=10):
+                    delay.hold(0, {"marker": "consumed-1-1-8"})
+                if proof_time is not None:
+                    with patch.object(drill.time, "monotonic", return_value=proof_time):
+                        delay.record_proof(2, {"from": 0, "marker": "credit-hold-proof-1-0"})
+                with patch.object(drill.time, "monotonic", return_value=18):
+                    delay.hold(0, {"marker": "consumed-1-1-8"})
+                self.assertFalse(delay.proof_during_hold())
+        delay = drill.CreditDelay(6000)
+        delay.record_proof(1, {"from": 0, "marker": "credit-hold-proof-1-0"})
+        delay.record_proof(2, {"from": 1, "marker": "credit-hold-proof-1-0"})
+        delay.record_proof(2, {"from": 0, "marker": "other"})
+        self.assertIsNone(delay.proof_received)
+
+    def test_held_credit_does_not_block_other_markers_or_signaling(self) -> None:
+        class Handler(drill.RelayHandler):  # type: ignore[name-defined,misc]
+            queues: ClassVar[list[list[object]]] = [[], [], []]
+            lock = threading.Lock()
+            observation = drill.RelayObservation()
+            credit_delay = drill.CreditDelay(6000)
+
+        server = drill.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        held = {"marker": "consumed-1-1-8"}
+        other = [{"marker": "consumed-1-2-8"}, {"payload": {"Offer": "example"}}]
+        try:
+            for message in [held, *other]:
+                connection.request("POST", "/signal/0", body=json.dumps(message))
+                self.assertEqual(connection.getresponse().read(), b"{}")
+            with patch.object(drill.time, "monotonic", return_value=10):
+                connection.request("GET", "/signal/0")
+                self.assertEqual(json.loads(connection.getresponse().read()), other)
+            self.assertEqual(Handler.observation.snapshot()["queued_markers"], 1)
+            with patch.object(drill.time, "monotonic", return_value=12):
+                connection.request(
+                    "POST",
+                    "/signal/2",
+                    body=json.dumps({"from": 0, "marker": "credit-hold-proof-1-0"}),
+                )
+                self.assertEqual(connection.getresponse().read(), b"{}")
+                connection.request("GET", "/signal/2")
+                connection.getresponse().read()
+            self.assertTrue(Handler.credit_delay.proof_during_hold())
+            with patch.object(drill.time, "monotonic", return_value=16.1):
+                connection.request("GET", "/signal/0")
+                self.assertEqual(json.loads(connection.getresponse().read()), [held])
+            self.assertEqual(Handler.observation.snapshot()["queued_markers"], 0)
+            connection.request("GET", "/signal/0")
+            self.assertEqual(json.loads(connection.getresponse().read()), [])
+        finally:
+            connection.close()
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    def test_lifetime_control_missing_or_failed_cannot_pass(self) -> None:
+        for control, passed in [(None, False), ({"valid": False}, False), ({"valid": True}, True)]:
+            output = "WEBRTC_INTEROP_PASS seat=0"
+            if control is not None:
+                output += "\nWEBRTC_LIFETIME_CONTROLS " + json.dumps(control)
+            result = drill.seat_evidence(output, 0, require_lifetime_controls=True)
+            self.assertEqual(result["passed"], passed)
+
+
 class ObservationTests(unittest.TestCase):
     def test_browser_terminals(self) -> None:
         for terminal in (
@@ -344,6 +501,8 @@ class RetirementMatrixTests(unittest.TestCase):
                     safe_receive=False,
                     slow_receiver=False,
                     credit_transport="webrtc" if multi_peer else "http",
+                    http_credit_delay_ms=0,
+                    require_finite_lifetimes=False,
                 )
                 browser = MagicMock(version="154-test")
                 playwright = MagicMock()

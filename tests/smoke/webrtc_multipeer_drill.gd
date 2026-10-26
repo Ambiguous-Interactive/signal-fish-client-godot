@@ -12,6 +12,7 @@ const CHUNKS := 64
 const SAMPLES := 32
 const WINDOW := 8
 
+var _http_credit_hold_proof: Dictionary = {}
 var _credit_transport := "http"
 var _credits_sent: Dictionary = {}
 var _credits_received: Dictionary = {}
@@ -84,6 +85,8 @@ func _ready() -> void:
 	_remote_seat = (_closing_seat + 1 + int(float(_retirement_case % 6) / 3)) % 3
 	_closing_channel = _retirement_case % 3
 	_hub_seat = 3 - _closing_seat - _remote_seat
+	if not _check_lifetime_controls():
+		return
 	_inbox = HTTPRequest.new()
 	_outbox = HTTPRequest.new()
 	add_child(_inbox)
@@ -227,9 +230,12 @@ func _connect_generation(phase: int) -> bool:
 	if not await _barrier("responders-%d" % phase):
 		return false
 	_mesh._apply_plan(plan)
-	return await _wait_until(
+	if not await _wait_until(
 		"triangle channels open", func() -> bool: return _mesh._count_connected_peers() == 2
-	)
+	):
+		return false
+	print("WEBRTC_CHANNEL_CONTRACT " + JSON.stringify(_snapshot()))
+	return true
 
 
 func _traffic(phase: int, targets: Array[int]) -> bool:
@@ -342,6 +348,23 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 					_credit_updated[seat] = Time.get_ticks_msec()
 				var peak: int = _peak_outstanding[seat]
 				_peak_outstanding[seat] = maxi(peak, sequence + 1 - acknowledged)
+		if (
+			_seat == 0
+			and phase == 1
+			and _credit_transport == "http"
+			and _http_credit_hold_proof.is_empty()
+			and _sent.get(1) == WINDOW
+			and _acked.get(1) == 0
+			and _acked.get(2) == CHUNKS
+			and _counts.get(2) == [SAMPLES, SAMPLES, CHUNKS]
+		):
+			_http_credit_hold_proof = {
+				"sent": _sent.duplicate(),
+				"acknowledged": _acked.duplicate(),
+				"received": _counts.duplicate(true),
+				"tick_ms": Time.get_ticks_msec()
+			}
+			_pending.append({"to": 2, "from": 0, "marker": "credit-hold-proof-1-0"})
 		if _delay_reader and _seat != 1 and not _fast_pair_announced:
 			var fast_seat := 2 if _seat == 0 else 0
 			if _acked[fast_seat] == CHUNKS and _counts[fast_seat] == [SAMPLES, SAMPLES, CHUNKS]:
@@ -662,6 +685,7 @@ func _snapshot() -> Dictionary:
 	snapshot["multi_peer"] = true
 	snapshot["credit_transport"] = _credit_transport
 	snapshot["credits_sent_by_target"] = _credits_sent
+	snapshot["http_credit_hold_proof"] = _http_credit_hold_proof
 	snapshot["credits_received_by_target"] = _credits_received
 	snapshot["rpc_independent_pair_proof"] = _rpc_multi_proof
 	snapshot["rpc_reader_paused"] = _rpc_multi_reader_paused

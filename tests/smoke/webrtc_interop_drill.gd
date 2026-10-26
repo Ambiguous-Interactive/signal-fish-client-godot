@@ -3,6 +3,7 @@ extends Node
 
 ## Opt-in native/browser gameplay drill driven by check-webrtc-interop.py.
 
+const LifetimeProbeScript = preload("res://tests/smoke/webrtc_lifetime_probe.gd")
 const RpcProbeScript = preload("res://tests/smoke/webrtc_rpc_probe.gd")
 const MeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const ClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
@@ -139,6 +140,8 @@ func _ready() -> void:
 			_fail("choose one drill scenario")
 			return
 	_rpc_recovery = _rpc_recovery or _rpc_plan_recovery
+	if not _check_lifetime_controls():
+		return
 	_inbox = HTTPRequest.new()
 	_outbox = HTTPRequest.new()
 	add_child(_inbox)
@@ -180,6 +183,15 @@ func _ready() -> void:
 	# The driver owns Web teardown; early quit can race audio startup (#430).
 	if not OS.has_feature("web"):
 		get_tree().quit()
+
+
+func _check_lifetime_controls() -> bool:
+	var controls := LifetimeProbeScript.run()
+	print("WEBRTC_LIFETIME_CONTROLS " + JSON.stringify(controls))
+	if not controls["valid"]:
+		_fail("channel lifetime positive control failed")
+		return false
+	return true
 
 
 func _process(_delta: float) -> void:
@@ -346,6 +358,7 @@ func _run_phase(phase: int) -> bool:
 		):
 			_fail("channel %d id, negotiation or label differs" % index)
 			return false
+	print("WEBRTC_CHANNEL_CONTRACT " + JSON.stringify(_snapshot()))
 	var modes := [
 		MultiplayerPeer.TRANSFER_MODE_RELIABLE,
 		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED,
@@ -1245,6 +1258,9 @@ func _snapshot() -> Dictionary:
 							"state": channel.get_ready_state(),
 							"negotiated": channel.is_negotiated(),
 							"label": channel.get_label(),
+							"ordered": channel.is_ordered(),
+							"max_packet_life_time": channel.get_max_packet_life_time(),
+							"max_retransmits": channel.get_max_retransmits(),
 							"queued_packets": channel.get_available_packet_count(),
 							"buffered_bytes": channel.get_buffered_amount()
 						}
