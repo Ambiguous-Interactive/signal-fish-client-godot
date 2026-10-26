@@ -137,6 +137,17 @@ export class Engine {
           properties: event.properties,
           send: (text) =>
             void command({ op: "send", label: event.label, text }),
+          sendBinary: (data) => {
+            if (!(data instanceof Uint8Array))
+              throw new Error("native binary send needs Uint8Array");
+            void command({
+              op: "send_binary",
+              label: event.label,
+              data_base64: btoa(
+                Array.from(data, (byte) => String.fromCharCode(byte)).join(""),
+              ),
+            });
+          },
           close: () => void command({ op: "close", label: event.label }),
         });
         this.callbacks.onChannelOpen(...args, event.label);
@@ -148,6 +159,17 @@ export class Engine {
         break;
       case "message":
         this.callbacks.onChannelMessage(...args, event.label, event.text);
+        break;
+      case "binary":
+        if (typeof this.callbacks.onChannelBinaryMessage !== "function")
+          throw new Error("native binary callback is missing");
+        this.callbacks.onChannelBinaryMessage(
+          ...args,
+          event.label,
+          Uint8Array.from(atob(event.data_base64), (byte) =>
+            byte.charCodeAt(0),
+          ),
+        );
         break;
       default:
         throw new Error("unknown native event");

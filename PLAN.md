@@ -23,7 +23,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       repair (#433).
 - [ ] Complete mesh channel interoperability with the reference engines (#355),
       including full reference CLI sessions and native reference-engine recovery
-      (native recovered reliable-stream gap: server #1244).
+      (native recovered reliable-stream gap: server #1244; zero-byte script
+      sends: #437).
 - [ ] Compare the three-seat held-credit control with the captured native/browser
       stream stall using matched HTTP/WebRTC credit runs, independent gameplay
       and reference-consumer pause controls,

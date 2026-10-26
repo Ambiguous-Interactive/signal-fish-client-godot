@@ -154,11 +154,11 @@ Full reference-client gameplay sessions remain unverified.
 
 ## Native reference Godot profile
 
-The server's [native Engine at c527219](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/c527219905d904cc6812c0d600e3c5e2ef7dd415/clients/native/src/engine.rs)
+The server's [native Engine at 18cadb5](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/18cadb5d01701f427501444c4b3c27f6c765410f/clients/native/src/engine.rs)
 adds `ChannelProfile::Godot`. Both offer roles create all three negotiated
 channels. Its ordered and unordered channels request a 1 ms packet lifetime.
 The default reference profile keeps its existing layout. Keep this profile
-experimental: two retained Godot 4.3 native-offer controls skipped the start of
+experimental: two retained Godot 4.3 native-offer controls at c527219 skipped the start of
 a recovered reliable stream. Native raw/admitted counters retained the gap,
 with zero discarded or rejected receipts. Track the unresolved cause in
 [server #1244](https://github.com/Ambiguous-Interactive/signal-fish-server/issues/1244).
@@ -174,9 +174,9 @@ cargo build --manifest-path /path/to/server/clients/native/Cargo.toml \
   --example godot_qualification
 python scripts/check-webrtc-reference.py \
   --native-reference-probe /path/to/server/clients/native/target/debug/examples/godot_qualification \
-  --reference-revision c527219905d904cc6812c0d600e3c5e2ef7dd415 \
+  --reference-revision 18cadb5d01701f427501444c4b3c27f6c765410f \
   --native-extension /path/to/webrtc_native --safe-receive --mixed-traffic \
-  --retirement-matrix --require-gameplay --output /tmp/native-reference
+  --binary-traffic --retirement-matrix --require-gameplay --output /tmp/native-reference
 ```
 
 The browser coordinates the probe through local HTTP commands. WebRTC packets
@@ -204,6 +204,38 @@ Stable Godot's lifetime remains unset. This makes delivery properties asymmetric
 between the native profile and those engines. A missing lifetime-limited packet
 alone does not prove expiry. Repaired-engine comparison, controlled loss or delay,
 full service sessions and remote-network qualification remain open.
+
+### Exact binary gameplay
+
+The probe targets the native Engine binary event API at 18cadb5. Build it
+from the same source as the Engine. It handles `ChannelBinaryMessage` and
+keeps the physical generation, channel label and bytes in standard-base64
+`data_base64` output. Text and binary events retain their receive permit until
+the probe flushes output. The bridge requires a binary callback and checks
+its generation before delivery. Existing declared text probes use strict UTF-8
+decoding; opaque packets stay byte arrays.
+
+Add `--binary-traffic` to offer eight binary packets per transfer mode,
+per seat and generation, beside the snapshot workload. Payloads include a
+small empty-body envelope, UTF-8, embedded NULs, all 256 byte values, malformed
+UTF-8 and a larger all-byte block. Nonempty payloads identify their phase,
+sender and mode. Every reliable packet must arrive in order. Ordered and
+unordered lifetime-limited channels require distinct exact nonempty receipts;
+ordered receipts must increase. `binary_sequences` retains every received
+sequence and gap. `binary_sent` records the offered counts. Closure and fresh
+physical generations retain these checks.
+
+A zero-byte wire packet needs a separate control. Godot's
+[`PacketPeer.put_packet_buffer`](https://github.com/godotengine/godot/blob/4.3-stable/core/io/packet_peer.cpp)
+returns `OK` for an empty byte array before it calls the transport. The same
+branch exists in 4.4.1 and 4.7.2 and applies to native and Web scripts.
+Use a nonempty application envelope when its body is empty. Add
+`--empty-binary` to the binary command to retain a strict zero-byte wire
+qualification attempt. The Godot 4.3 native control fails when the first
+reliable receipt is sequence 1; the outgoing empty sequence 0 never reaches
+the native callback. This limit is tracked in
+[issue #437](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/437).
+Nonempty binary delivery does not qualify zero-byte wire packets.
 
 ## ICE candidate formats
 

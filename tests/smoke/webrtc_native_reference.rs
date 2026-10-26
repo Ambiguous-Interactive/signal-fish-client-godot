@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use signal_fish_reference_native::engine::{ChannelProfile, Engine, EngineEvent, EngineSettings};
 use signal_fish_server::protocol::PlayerId;
@@ -43,6 +44,12 @@ async fn main() -> anyhow::Result<()> {
                             channel.send_text(value["text"].as_str().unwrap()).await?;
                             Ok(Value::Null)
                         }
+                        "send_binary" => {
+                            let channel = engine.channel(peer, value["label"].as_str().unwrap()).ok_or_else(|| anyhow::anyhow!("missing channel"))?;
+                            let data = STANDARD.decode(value["data_base64"].as_str().ok_or_else(|| anyhow::anyhow!("missing binary data"))?)?;
+                            channel.send(data.as_slice().into()).await?;
+                            Ok(Value::Null)
+                        }
                         "close" => {
                             let channel = engine.channel(peer, value["label"].as_str().unwrap()).ok_or_else(|| anyhow::anyhow!("missing channel"))?;
                             channel.close().await?;
@@ -73,7 +80,14 @@ async fn main() -> anyhow::Result<()> {
                                 "retransmits":channel.max_retransmits().await?}}));
                     }
                     EngineEvent::PcState {state,..} => emit(json!({"event":"state", "generation":generation, "state":state.to_string()})),
-                    EngineEvent::ChannelMessage {label,text,..} => emit(json!({"event":"message", "generation":generation, "label":label,"text":text})),
+                    EngineEvent::ChannelMessage {label,text,queue_permit,..} => {
+                        emit(json!({"event":"message", "generation":generation, "label":label,"text":text}));
+                        drop(queue_permit);
+                    }
+                    EngineEvent::ChannelBinaryMessage {label,data,queue_permit,..} => {
+                        emit(json!({"event":"binary", "generation":generation, "label":label,"data_base64":STANDARD.encode(data)}));
+                        drop(queue_permit);
+                    }
                     EngineEvent::ChannelClosed {label,..} => emit(json!({"event":"closed", "generation":generation, "label":label})),
                     _ => {}
                 }

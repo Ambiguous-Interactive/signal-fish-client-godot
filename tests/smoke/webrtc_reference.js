@@ -12,6 +12,7 @@ window.runReference = async function (
   closingChannel = "reliable",
   closingSeat = "reference",
   queuedRetirement = false,
+  binaryPayloads = null,
 ) {
   const seat = 1 - godotSeat;
   const post = async (message) => {
@@ -37,6 +38,10 @@ window.runReference = async function (
       let sent = false;
       let snapshotSent = 0;
       let orderedSent = 0;
+      const binarySent = [0, 0, 0];
+      const binarySequences = [[], [], []];
+      const binaryLabels = ["reliable", "ordered", "unreliable"];
+      const binaryPackets = binaryPayloads?.[phase];
       const orderedSequences = [];
       let snapshotReceived = 0;
       let snapshotAck = 0;
@@ -201,7 +206,7 @@ window.runReference = async function (
         received.push(label);
         return true;
       };
-      engine = new Engine(false, {
+      const thisCallbacks = {
         onLocalCandidate: (_peer, _generation, candidate) =>
           outgoing.push({ payload: { IceCandidate: candidate } }),
         onPcState: (_peer, _generation, state) => events.push(["state", state]),
@@ -212,6 +217,38 @@ window.runReference = async function (
         onChannelClosed: (_peer, _generation, label, reason) => {
           events.push(["closed", label, reason]);
           if (!closedLabels.includes(label)) closedLabels.push(label);
+        },
+        onChannelBinaryMessage: (peer, generation, label, data) => {
+          if (binaryPackets) {
+            const mode = binaryLabels.indexOf(label);
+            const sequence = binaryPackets.godot[mode]?.findIndex(
+              (packet) =>
+                packet.length === data.length &&
+                packet.every((byte, index) => byte === data[index]),
+            );
+            if (sequence !== undefined && sequence >= 0) {
+              const received = binarySequences[mode];
+              if (
+                !received ||
+                received.includes(sequence) ||
+                (mode !== 2 &&
+                  received.length &&
+                  sequence <= received.at(-1)) ||
+                (mode === 0 && sequence !== received.length)
+              )
+                throw new Error("reference binary order or metadata differ");
+              received.push(sequence);
+              return;
+            }
+          }
+          const text = new TextDecoder("utf-8", { fatal: true }).decode(data);
+          if (
+            !/^(godot:|snapshot:|partial:|position:|ordered:|heartbeat:|credit:|retirement:|retired:)/.test(
+              text,
+            )
+          )
+            throw new Error("reference unexpected binary packet");
+          thisCallbacks.onChannelMessage(peer, generation, label, text);
         },
         onChannelMessage: (_peer, _generation, label, text) => {
           if (
@@ -237,7 +274,8 @@ window.runReference = async function (
           }
           return consume(label, text);
         },
-      });
+      };
+      engine = new Engine(false, thisCallbacks);
       const evidence = () => ({
         phase,
         slow_reference_receiver: slowReferenceReceiver,
@@ -260,6 +298,9 @@ window.runReference = async function (
         transfer_ms: transferMs,
         sent,
         native_profile: engine.nativeProfile === true,
+        binary_traffic: binaryPackets !== undefined,
+        binary_sent: binarySent.slice(),
+        binary_sequences: binarySequences.map((sequences) => sequences.slice()),
         ordered_sent: orderedSent,
         ordered_sequences: orderedSequences.slice(),
         position_sequences: [...positionsReceived],
@@ -444,6 +485,17 @@ window.runReference = async function (
               batch++
             ) {
               reliable.send(chunk("reference", snapshotSent++));
+              if (binaryPackets && snapshotSent % 16 === 0) {
+                for (const [mode, label] of binaryLabels.entries()) {
+                  engine
+                    .channel("godot", label)
+                    .sendBinary(
+                      new Uint8Array(
+                        binaryPackets.reference[mode][binarySent[mode]++],
+                      ),
+                    );
+                }
+              }
               if (engine.nativeProfile && snapshotSent % 16 === 0)
                 engine
                   .channel("godot", "ordered")
