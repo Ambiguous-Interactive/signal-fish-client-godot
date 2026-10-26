@@ -1,4 +1,6 @@
 # gdlint: disable=max-returns
+var _reference_ordered_received: Array[int] = []
+var _reference_ordered_sent := 0
 var _reference_heartbeats := 0
 var _reference_acknowledged := 0
 var _reference_peak_outstanding := 0
@@ -23,6 +25,8 @@ func _run_phase(phase: int) -> bool:
 	if phase > 2:
 		return true
 	_phase = phase
+	_reference_ordered_received.clear()
+	_reference_ordered_sent = 0
 	_reference_heartbeats = 0
 	_reference_acknowledged = 0
 	_reference_peak_outstanding = 0
@@ -105,6 +109,9 @@ func _run_phase(phase: int) -> bool:
 					"label": channel.call("get_label"),
 					"id": channel.call("get_id"),
 					"negotiated": channel.call("is_negotiated"),
+					"ordered": channel.call("is_ordered"),
+					"lifetime": channel.call("get_max_packet_life_time"),
+					"retransmits": channel.call("get_max_retransmits"),
 					"state": channel.call("get_ready_state")
 				}
 			)
@@ -212,11 +219,26 @@ func _reference_gameplay_complete() -> bool:
 		and _reference_snapshot_sent == 128
 		and _reference_partial_sent == 4
 		and _reference_partial_received == 4
-		and _reference_received.size() == 2
+		and (
+			_reference_received.has("reliable")
+			if _reference_options.get("native_profile", false)
+			else _reference_received.size() == 2
+		)
+		and (
+			not _reference_options.get("native_profile", false)
+			or not _reference_ordered_received.is_empty()
+		)
 		and _reference_acknowledged == 128
 		and (
-			_reference_positions_received.size()
-			== (32 if _reference_options["mixed_traffic"] else 0)
+			_reference_positions_received.size() > 0
+			if (
+				_reference_options.get("native_profile", false)
+				and _reference_options["mixed_traffic"]
+			)
+			else (
+				_reference_positions_received.size()
+				== (32 if _reference_options["mixed_traffic"] else 0)
+			)
 		)
 	)
 
@@ -257,6 +279,19 @@ func _reference_packets() -> void:
 				_fail("reference snapshot send failed")
 				return
 			_reference_snapshot_sent += 1
+			if (
+				_reference_options.get("native_profile", false)
+				and _reference_snapshot_sent % 16 == 0
+			):
+				peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED)
+				var ordered := (
+					("ordered:%d:godot:%d" % [_phase, _reference_ordered_sent]).to_utf8_buffer()
+				)
+				if peer.call("put_packet", ordered) != OK:
+					_fail("reference ordered send failed")
+					return
+				_reference_ordered_sent += 1
+				peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_RELIABLE)
 			_reference_peak_outstanding = maxi(
 				_reference_peak_outstanding, _reference_snapshot_sent - acknowledged
 			)
@@ -290,6 +325,27 @@ func _reference_packets() -> void:
 		if packet == null:
 			break
 		var text := packet.data.get_string_from_utf8()
+		if text.begins_with("ordered:"):
+			var fields := text.split(":")
+			var sequence := int(fields[3]) if fields.size() == 4 else -1
+			if (
+				not _reference_options.get("native_profile", false)
+				or packet.error != OK
+				or packet.peer_id != MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+				or packet.channel != 0
+				or packet.transfer_mode != MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED
+				or sequence < 0
+				or sequence >= 8
+				or (
+					not _reference_ordered_received.is_empty()
+					and sequence <= _reference_ordered_received[-1]
+				)
+				or packet.data != ("ordered:%d:reference:%d" % [_phase, sequence]).to_utf8_buffer()
+			):
+				_fail("reference ordered bytes or metadata differ")
+				return
+			_reference_ordered_received.append(sequence)
+			continue
 		if text.begins_with("heartbeat:"):
 			var expected := (
 				(
@@ -463,6 +519,10 @@ func _reference_position(sender: String, sequence: int) -> PackedByteArray:
 
 func _reference_evidence() -> Dictionary:
 	return {
+		"native_profile": _reference_options.get("native_profile", false),
+		"ordered_sent": _reference_ordered_sent,
+		"ordered_sequences": _reference_ordered_received.duplicate(),
+		"position_sequences": _reference_positions_received.keys(),
 		"heartbeat_received": _reference_heartbeats,
 		"mixed_traffic": _reference_options.get("mixed_traffic", false),
 		"credit_transport": _reference_options.get("credit_transport", "http"),

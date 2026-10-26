@@ -1,0 +1,85 @@
+use serde_json::{json, Value};
+use signal_fish_reference_native::engine::{ChannelProfile, Engine, EngineEvent, EngineSettings};
+use signal_fish_server::protocol::PlayerId;
+use std::io::{BufRead, Write};
+use tokio::sync::mpsc;
+
+fn emit(value: Value) {
+    println!("{value}");
+    std::io::stdout().flush().unwrap();
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let peer: PlayerId = "10000000-0000-0000-0000-000000000001".parse()?;
+    let (events_tx, mut events) = mpsc::unbounded_channel();
+    let (input_tx, mut input) = mpsc::unbounded_channel();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            if input_tx.send(line).is_err() { break; }
+        }
+    });
+    let mut engine = Engine::new(EngineSettings {
+        channel_profile: ChannelProfile::Godot,
+        ..EngineSettings::default()
+    }, events_tx)?;
+    loop {
+        tokio::select! {
+            Some(line) = input.recv() => {
+                let value: Value = serde_json::from_str(&line)?;
+                let id = value["id"].clone();
+                let result: anyhow::Result<Value> = async {
+                    match value["op"].as_str().unwrap_or("") {
+                        "pair" => {
+                            let offer = engine.pair_with(peer, value["offer"].as_bool().unwrap(), &[]).await?;
+                            Ok(json!({"offer":offer,"generation":engine.diagnostic_snapshot(peer)["generation"]}))
+                        }
+                        "offer" => Ok(json!(engine.handle_offer(peer, value["sdp"].as_str().unwrap().to_owned()).await?)),
+                        "answer" => { engine.handle_answer(peer, value["sdp"].as_str().unwrap().to_owned()).await?; Ok(Value::Null) }
+                        "candidate" => { engine.handle_remote_candidate(peer, value["candidate"].as_str().unwrap()).await?; Ok(Value::Null) }
+                        "send" => {
+                            let channel = engine.channel(peer, value["label"].as_str().unwrap()).ok_or_else(|| anyhow::anyhow!("missing channel"))?;
+                            channel.send_text(value["text"].as_str().unwrap()).await?;
+                            Ok(Value::Null)
+                        }
+                        "close" => {
+                            let channel = engine.channel(peer, value["label"].as_str().unwrap()).ok_or_else(|| anyhow::anyhow!("missing channel"))?;
+                            channel.close().await?;
+                            Ok(Value::Null)
+                        }
+                        "remove" => { engine.remove_peer(peer).await?; Ok(json!(!engine.is_paired(peer))) }
+                        "snapshot" => Ok(engine.diagnostic_snapshot(peer)),
+                        _ => anyhow::bail!("unknown operation"),
+                    }
+                }.await;
+                match result {
+                    Ok(result) => emit(json!({"id": id, "result": result})),
+                    Err(error) => emit(json!({"id": id, "error": error.to_string()})),
+                }
+            }
+            Some(event) = events.recv() => {
+                if !engine.is_current_event(&event) { continue; }
+                let (_, generation) = event.peer_generation();
+                match event {
+                    EngineEvent::LocalCandidate {candidate_json,..} => emit(json!({"event":"candidate", "generation":generation, "candidate":candidate_json})),
+                    EngineEvent::ChannelOpen {label,..} => {
+                        engine.note_channel_open(peer,&label).await;
+                        let channel = engine.channel(peer, &label).unwrap();
+                        emit(json!({"event":"open", "generation":generation, "label":label,
+                            "properties": {"internal_id":channel.id(), "negotiated":channel.negotiated().await?,
+                                "ordered":channel.ordered().await?,
+                                "lifetime":channel.max_packet_life_time().await?,
+                                "retransmits":channel.max_retransmits().await?}}));
+                    }
+                    EngineEvent::PcState {state,..} => emit(json!({"event":"state", "generation":generation, "state":state.to_string()})),
+                    EngineEvent::ChannelMessage {label,text,..} => emit(json!({"event":"message", "generation":generation, "label":label,"text":text})),
+                    EngineEvent::ChannelClosed {label,..} => emit(json!({"event":"closed", "generation":generation, "label":label})),
+                    _ => {}
+                }
+            }
+            else => break,
+        }
+    }
+    Ok(())
+}

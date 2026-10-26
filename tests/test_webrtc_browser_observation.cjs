@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 
 async function main() {
+  await require("./test_webrtc_native_reference.cjs")();
   let sample;
   const output = [];
   const channels = [];

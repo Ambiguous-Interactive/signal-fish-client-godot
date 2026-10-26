@@ -1,6 +1,7 @@
 """Reference assessments distinguish unsupported gameplay from incomplete evidence."""
 
 import argparse
+import copy
 import importlib.util
 import json
 import subprocess
@@ -22,6 +23,158 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_native_profile_checks_finite_properties_and_fresh_generation(self) -> None:
+        channels = {
+            label: {
+                "internal_id": index,
+                "negotiated": True,
+                "ordered": label != "unreliable",
+                "lifetime": None if label == "reliable" else 1,
+                "retransmits": None,
+            }
+            for index, label in enumerate(("reliable", "ordered", "unreliable"))
+        }
+        phases = [
+            {
+                "snapshot": {
+                    "backend": "native",
+                    "generation": generation,
+                    "channels": copy.deepcopy(channels),
+                }
+            }
+            for generation in (1, 2)
+        ]
+        self.assertTrue(reference.native_channel_contracts_passed(phases))
+        for label in channels:
+            for key, value in (
+                ("internal_id", -1),
+                ("internal_id", True),
+                ("negotiated", False),
+                ("ordered", label == "unreliable"),
+                ("lifetime", 0),
+                ("lifetime", True),
+                ("retransmits", 0),
+            ):
+                with self.subTest(label=label, key=key, value=value):
+                    broken = json.loads(json.dumps(phases))
+                    broken[1]["snapshot"]["channels"][label][key] = value
+                    self.assertFalse(reference.native_channel_contracts_passed(broken))
+        for label in channels:
+            for key in channels[label]:
+                broken = json.loads(json.dumps(phases))
+                del broken[1]["snapshot"]["channels"][label][key]
+                self.assertFalse(reference.native_channel_contracts_passed(broken))
+        for generation in (1, 0, True, None):
+            broken = json.loads(json.dumps(phases))
+            broken[1]["snapshot"]["generation"] = generation
+            self.assertFalse(reference.native_channel_contracts_passed(broken))
+        invalid_properties: object
+        for invalid_properties in (None, {}, [], "closed"):
+            broken = json.loads(json.dumps(phases))
+            broken[1]["snapshot"]["channels"]["ordered"] = invalid_properties
+            self.assertFalse(reference.native_channel_contracts_passed(broken))
+
+    def test_godot_native_pairing_keeps_actual_channel_layout(self) -> None:
+        for web in (False, True):
+            unset = 0 if web else -1
+            channels = [
+                {
+                    "label": label,
+                    "id": index,
+                    "negotiated": True,
+                    "ordered": label != "unreliable",
+                    "lifetime": unset,
+                    "retransmits": unset,
+                    "state": 1,
+                }
+                for index, label in enumerate(("reliable", "ordered", "unreliable"), 1)
+            ]
+            phases = [{"channels": channels}, {"channels": channels}]
+            self.assertTrue(reference.godot_native_contracts_passed(phases, web))
+            for key, value in (
+                ("label", "reliable"),
+                ("id", 3),
+                ("ordered", False),
+                ("negotiated", False),
+                ("lifetime", 0 if not web else -1),
+                ("state", 2),
+                ("retransmits", 2),
+            ):
+                broken = json.loads(json.dumps(phases))
+                broken[1]["channels"][1][key] = value
+                self.assertFalse(reference.godot_native_contracts_passed(broken, web))
+
+    def test_native_gameplay_keeps_reliable_delivery_strict(self) -> None:
+        phase = {
+            "sent": True,
+            "received": ["reliable"],
+            "snapshot_sent": 128,
+            "snapshot_received": 128,
+            "partial_sent": 4,
+            "partial_received": 4,
+            "remote_closed": True,
+            "mixed_traffic": True,
+            "credit_transport": "http",
+            "snapshot_acknowledged": 128,
+            "positions_sent": 32,
+            "positions_received": 2,
+            "position_sequences": [0, 31],
+            "native_profile": True,
+            "ordered_sent": 8,
+            "ordered_sequences": [0, 7],
+            "peak_outstanding": 32,
+        }
+        self.assertTrue(
+            reference.gameplay_phase_passed(phase, mixed_traffic=True, native_profile=True)
+        )
+        self.assertFalse(reference.gameplay_phase_passed(phase, mixed_traffic=True))
+        for key, value in (
+            ("snapshot_received", 127),
+            ("snapshot_acknowledged", 127),
+            ("partial_received", 3),
+            ("received", ["unreliable"]),
+            ("remote_closed", False),
+            ("positions_received", 0),
+            ("ordered_sequences", []),
+        ):
+            with self.subTest(key=key):
+                self.assertFalse(
+                    reference.gameplay_phase_passed(
+                        {**phase, key: value}, mixed_traffic=True, native_profile=True
+                    )
+                )
+
+    def test_native_loss_contract_preserves_exact_receipt_coordinates(self) -> None:
+        phase = {
+            "native_profile": True,
+            "ordered_sent": 8,
+            "ordered_sequences": [1, 3, 7],
+            "position_sequences": [31, 0, 4],
+            "positions_received": 3,
+        }
+        self.assertTrue(reference.native_delivery_passed(phase, True))
+        for key, value in (
+            ("native_profile", False),
+            ("ordered_sent", 7),
+            ("ordered_sequences", []),
+            ("ordered_sequences", [3, 1]),
+            ("ordered_sequences", [1, 1]),
+            ("ordered_sequences", [8]),
+            ("ordered_sequences", [True]),
+            ("position_sequences", [0, 0, 4]),
+            ("position_sequences", [0, 4, 32]),
+            ("positions_received", 2),
+            ("position_sequences", []),
+        ):
+            with self.subTest(key=key, value=value):
+                self.assertFalse(reference.native_delivery_passed({**phase, key: value}, True))
+        self.assertFalse(reference.native_delivery_passed(phase, False))
+        self.assertTrue(
+            reference.native_delivery_passed(
+                {**phase, "position_sequences": [], "positions_received": 0}, False
+            )
+        )
+
     def test_queued_retirement_requires_preserved_selection_and_both_arrivals(self) -> None:
         arrival = {"preserved": True, "queued_before_read": 3, "queued_after_read": 2}
         local = {"queued": 2, "queued_arrival": arrival}
@@ -893,6 +1046,52 @@ console.log(JSON.stringify(context.window.referenceError));
                 )
                 self.assertEqual(json.loads(result.stdout), expected)
 
+    def test_reference_settles_after_delayed_cleanup_and_keeps_primary_error(self) -> None:
+        harness = r"""
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+import assert from "node:assert/strict";
+const source = readFileSync(0, "utf8").split("\n").slice(1).join("\n");
+let clock = 0;
+let releaseCleanup, markStarted;
+const started = new Promise(resolve => { markStarted = resolve; });
+const cleanup = new Promise(resolve => { releaseCleanup = resolve; });
+const context = {
+  window: {}, AbortController, DOMException,
+  performance: { now: () => clock },
+  console: { log() {}, error() {} },
+  setTimeout: resolve => setImmediate(() => { clock = 14000; resolve(); }),
+  Engine: class {
+    channel() { return null; }
+    diagnosticSnapshot() { return {}; }
+    async removePeer() { markStarted(); await cleanup; throw new Error("cleanup failed"); }
+  },
+  fetch: (_url, { signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(new DOMException("cleanup cancellation", "AbortError")));
+  }),
+};
+runInNewContext(source, context);
+const task = context.window.runReference(1, false, false, "http");
+await started;
+assert.equal(context.window.referenceSettled, false);
+assert.equal(context.window.referenceError, "Error: phase 1 missing Godot teardown");
+releaseCleanup();
+await task;
+assert.equal(context.window.referenceSettled, true);
+assert.equal(context.window.referenceError, "Error: phase 1 missing Godot teardown");
+assert.equal(context.window.referenceCleanupError, "Error: cleanup failed");
+console.log("cleanup settled");
+"""
+        result = subprocess.run(  # noqa: S603
+            ["node", "--input-type=module", "-e", harness],  # noqa: S607
+            input=(SCRIPT.parents[1] / "tests/smoke/webrtc_reference.js").read_text(),
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+        self.assertEqual(result.stdout.strip(), "cleanup settled")
+
     def test_page_listeners_keep_errors_and_crashes(self) -> None:
         page = Mock()
         messages: list[str] = []
@@ -964,6 +1163,96 @@ console.log(JSON.stringify(context.window.referenceError));
             ),
             [{"phase": 1, "received": []}],
         )
+
+    def test_native_log_open_failure_does_not_spawn_probe(self) -> None:
+        stderr = Mock()
+        with (
+            patch.object(Path, "open", side_effect=[stderr, OSError("log unavailable")]),
+            patch.object(reference.native_reference.subprocess, "Popen") as spawn,
+            self.assertRaisesRegex(OSError, "log unavailable"),
+        ):
+            reference.native_reference.NativeReference(Path("probe"), Path("output"))
+        spawn.assert_not_called()
+        stderr.close.assert_called_once()
+
+    def test_native_spawn_failure_closes_both_logs(self) -> None:
+        stderr, log = Mock(), Mock()
+        with (
+            patch.object(Path, "open", side_effect=[stderr, log]),
+            patch.object(
+                reference.native_reference.subprocess,
+                "Popen",
+                side_effect=OSError("spawn failed"),
+            ),
+            self.assertRaisesRegex(OSError, "spawn failed"),
+        ):
+            reference.native_reference.NativeReference(Path("probe"), Path("output"))
+        stderr.close.assert_called_once()
+        log.close.assert_called_once()
+
+    def test_native_reader_start_failure_reaps_probe_and_closes_files(self) -> None:
+        stderr, log = Mock(), Mock()
+        process = Mock()
+        process.poll.return_value = None
+        with (
+            patch.object(Path, "open", side_effect=[stderr, log]),
+            patch.object(reference.native_reference.subprocess, "Popen", return_value=process),
+            patch.object(threading.Thread, "start", side_effect=RuntimeError("thread failed")),
+            self.assertRaisesRegex(RuntimeError, "thread failed"),
+        ):
+            reference.native_reference.NativeReference(Path("probe"), Path("output"))
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once_with(timeout=5)
+        process.stdin.close.assert_called_once()
+        process.stdout.close.assert_called_once()
+        stderr.close.assert_called_once()
+        log.close.assert_called_once()
+
+    def test_native_assessment_asset_failure_does_not_spawn_probe(self) -> None:
+        args = argparse.Namespace(native_reference_probe=Path("probe"))
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "assessment"
+            with (
+                patch.object(reference, "prepare", return_value=Path(temporary)),
+                patch.object(reference.shutil, "copy2", side_effect=OSError("copy failed")),
+                patch.object(reference.native_reference, "NativeReference") as backend,
+                self.assertRaisesRegex(OSError, "copy failed"),
+            ):
+                reference.assess(args, directory, web=False)
+            backend.assert_not_called()
+
+    def test_native_assessment_browser_failure_closes_probe_and_server(self) -> None:
+        args = argparse.Namespace(
+            native_reference_probe=Path("probe"),
+            safe_receive=False,
+            godot_offer=False,
+            mixed_traffic=False,
+            credit_transport="http",
+            godot="godot",
+            reference_revision="test",
+            chromium=None,
+        )
+        server, backend, playwright = Mock(), Mock(), Mock()
+        playwright.chromium.launch.side_effect = RuntimeError("browser failed")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "assessment"
+            with (
+                patch.object(reference, "prepare", return_value=Path(temporary)),
+                patch.object(reference.shutil, "copy2"),
+                patch.object(reference, "ThreadingHTTPServer", return_value=server),
+                patch.object(threading.Thread, "start"),
+                patch.object(reference.native_reference, "NativeReference", return_value=backend),
+                patch.object(reference, "sync_playwright") as start_playwright,
+            ):
+                start_playwright.return_value.__enter__.return_value = playwright
+                with self.assertRaisesRegex(RuntimeError, "Incomplete reference assessment"):
+                    reference.assess(args, directory, web=False)
+            report = json.loads((directory / "assessment.json").read_text())
+        self.assertEqual(report["driver_error"], "RuntimeError: browser failed")
+        self.assertEqual(report["reference_backend"], "native")
+        backend.close.assert_called_once()
+        server.shutdown.assert_called_once()
+        server.server_close.assert_called_once()
 
 
 if __name__ == "__main__":
