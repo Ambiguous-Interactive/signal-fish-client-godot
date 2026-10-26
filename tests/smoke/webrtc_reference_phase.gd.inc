@@ -14,6 +14,11 @@ var _reference_credit_updated := 0
 var _reference_transfer_started := 0
 var _reference_transfer_ms := -1
 var _reference_sent := false
+var _reference_outstanding_bytes := 0
+var _reference_peak_outstanding_bytes := 0
+var _reference_heartbeat_timings: Array[Dictionary] = []
+var _reference_receive_timings: Array[Dictionary] = []
+var _reference_receive_timings_dropped := 0
 var _reference_snapshot_sent := 0
 var _reference_snapshot_received := 0
 var _reference_partial_sent := 0
@@ -44,6 +49,11 @@ func _run_phase(phase: int) -> bool:
 	_reference_transfer_started = 0
 	_reference_transfer_ms = -1
 	_reference_sent = false
+	_reference_outstanding_bytes = 0
+	_reference_peak_outstanding_bytes = 0
+	_reference_heartbeat_timings.clear()
+	_reference_receive_timings.clear()
+	_reference_receive_timings_dropped = 0
 	_reference_snapshot_sent = 0
 	_reference_snapshot_received = 0
 	_reference_partial_sent = 0
@@ -299,10 +309,17 @@ func _reference_packets() -> void:
 			if _reference_snapshot_sent >= 128 or _reference_snapshot_sent - acknowledged >= 32:
 				break
 			var bytes := _reference_chunk("godot", _reference_snapshot_sent, false)
+			var byte_limit: int = _reference_options.get("snapshot_window_bytes", 0)
+			if byte_limit > 0 and _reference_outstanding_bytes + bytes.size() > byte_limit:
+				break
 			if peer.call("put_packet", bytes) != OK:
 				_fail("reference snapshot send failed")
 				return
 			_reference_snapshot_sent += 1
+			_reference_outstanding_bytes += bytes.size()
+			_reference_peak_outstanding_bytes = maxi(
+				_reference_peak_outstanding_bytes, _reference_outstanding_bytes
+			)
 			if (
 				_reference_options.get("binary_traffic", false)
 				and _reference_snapshot_sent % 16 == 0
@@ -354,6 +371,19 @@ func _reference_packets() -> void:
 		)
 		if packet == null:
 			break
+		if _reference_receive_timings.size() < 1024:
+			(
+				_reference_receive_timings
+				. append(
+					{
+						"ms": Time.get_ticks_msec(),
+						"bytes": packet.data.size(),
+						"mode": packet.transfer_mode,
+					}
+				)
+			)
+		else:
+			_reference_receive_timings_dropped += 1
 		if _reference_options.get("binary_traffic", false):
 			var binary_result := _reference_accept_binary(packet)
 			if binary_result < 0:
@@ -427,11 +457,21 @@ func _reference_packets() -> void:
 			):
 				_fail("reference heartbeat bytes or metadata differ")
 				return
+			(
+				_reference_heartbeat_timings
+				. append(
+					{
+						"sequence": _reference_heartbeats,
+						"receive_ms": Time.get_ticks_msec(),
+					}
+				)
+			)
 			_reference_heartbeats += 1
 			peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_RELIABLE)
 			if peer.call("put_packet", packet.data) != OK:
 				_fail("reference heartbeat echo failed")
 				return
+			_reference_heartbeat_timings[-1]["echo_ms"] = Time.get_ticks_msec()
 			continue
 		if text.begins_with("credit:"):
 			var fields := text.split(":")
@@ -480,7 +520,17 @@ func _reference_packets() -> void:
 				or sequence >= (4 if partial else 128)
 				or packet.data != _reference_chunk("reference", sequence, partial)
 			):
-				_fail("reference snapshot bytes or metadata differ")
+				_fail(
+					(
+						"reference snapshot differs: expected_sequence=%d received_sequence=%s bytes=%d mode=%d"
+						% [
+							sequence,
+							text.get_slice(":", 3),
+							packet.data.size(),
+							packet.transfer_mode
+						]
+					)
+				)
 				return
 			if partial:
 				_reference_partial_received += 1
@@ -557,10 +607,11 @@ func _reference_pause_reads(peer: Object) -> bool:
 
 
 func _reference_chunk(sender: String, sequence: int, partial: bool) -> PackedByteArray:
+	var body_bytes: int = _reference_options.get("snapshot_body_bytes", 1024)
 	return (
 		(
 			("%s:%d:%s:%d:" % ["partial" if partial else "snapshot", _phase, sender, sequence])
-			+ "0123456789abcdef".repeat(64)
+			+ "0123456789abcdef".repeat(body_bytes >> 4)
 		)
 		. to_utf8_buffer()
 	)
@@ -568,6 +619,8 @@ func _reference_chunk(sender: String, sequence: int, partial: bool) -> PackedByt
 
 func _reference_accept_credit(count: int) -> void:
 	if count > _reference_acknowledged:
+		for sequence: int in range(_reference_acknowledged, count):
+			_reference_outstanding_bytes -= _reference_chunk("godot", sequence, false).size()
 		_reference_acknowledged = count
 		_reference_credit_updated = Time.get_ticks_msec()
 
@@ -655,7 +708,28 @@ func _reference_position(sender: String, sequence: int) -> PackedByteArray:
 
 
 func _reference_evidence() -> Dictionary:
+	var body_bytes: int = _reference_options.get("snapshot_body_bytes", 1024)
+	var window_bytes: int = _reference_options.get("snapshot_window_bytes", 0)
+	var channel_queues: Array[Dictionary] = []
+	var peer: Object = _mesh.get_multiplayer_peer() if _mesh != null else null
+	var id := MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+	if peer != null and peer.call("has_peer", id):
+		var info: Dictionary = peer.call("get_peer", id)
+		for channel: WebRTCDataChannel in info["channels"]:
+			(
+				channel_queues
+				. append(
+					{
+						"label": channel.get_label(),
+						"available_packets": channel.get_available_packet_count(),
+						"buffered_amount": channel.get_buffered_amount(),
+					}
+				)
+			)
 	return {
+		"channel_queues": channel_queues,
+		"channel_in_buffer_kb":
+		ProjectSettings.get_setting("network/limits/webrtc/max_channel_in_buffer_kb"),
 		"startup_burst": _reference_options.get("startup_burst", false),
 		"startup_sent": _reference_startup_sent,
 		"startup_received": _reference_startup_received,
@@ -669,6 +743,13 @@ func _reference_evidence() -> Dictionary:
 		"heartbeat_received": _reference_heartbeats,
 		"mixed_traffic": _reference_options.get("mixed_traffic", false),
 		"credit_transport": _reference_options.get("credit_transport", "http"),
+		"snapshot_body_bytes": body_bytes,
+		"snapshot_window_bytes": window_bytes,
+		"outstanding_snapshot_bytes": _reference_outstanding_bytes,
+		"peak_outstanding_snapshot_bytes": _reference_peak_outstanding_bytes,
+		"heartbeat_timings": _reference_heartbeat_timings.duplicate(true),
+		"receive_timings": _reference_receive_timings.duplicate(true),
+		"receive_timings_dropped": _reference_receive_timings_dropped,
 		"snapshot_sent": _reference_snapshot_sent,
 		"snapshot_received": _reference_snapshot_received,
 		"snapshot_acknowledged": _reference_acknowledged,

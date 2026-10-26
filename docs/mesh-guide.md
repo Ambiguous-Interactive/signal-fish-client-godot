@@ -233,6 +233,67 @@ between the native profile and those engines. A missing lifetime-limited packet
 alone does not prove expiry. Repaired-engine comparison, controlled loss or delay,
 full service sessions and remote-network qualification remain open.
 
+### Snapshot bytes and receive buffers
+
+Games must bound bytes in flight as well as packet count. The default WebRTC
+channel receive buffer is 64 KiB. A 32-packet window with 4 KiB bodies can hold
+more than 128 KiB, before control packets. [Godot Web](https://github.com/godotengine/godot/blob/4.7.2-stable/modules/webrtc/webrtc_data_channel_js.cpp#L77)
+drops incoming data when that local buffer fills, including reliable packets. Poll and drain each frame;
+leave buffer space for credits, heartbeats and packet headers.
+
+Add `--snapshot-body-bytes 4096` to the reference drill to repeat the larger
+snapshot workload in #442. It keeps 128 chunks per direction and generation,
+the 32-packet window, exact receipt checks and existing deadlines. Startup and
+binary probes keep their own sizes. The default snapshot body remains 1024 bytes.
+
+For a separate pacing control, add `--snapshot-window-bytes 49152`. Both seats
+also cap unacknowledged snapshot bytes, including the application prefix.
+Credits still follow each eight consumed chunks. The byte window must hold
+eight chunks plus their headers. The CLI rejects smaller windows to prevent
+a credit deadlock. This limit covers snapshot bytes; account for other traffic
+when choosing a window for your game.
+
+Use `--slow-receiver` to pause Godot reads for 1500 ms. Use
+`--slow-reference-receiver` to pause reference snapshot consumption while
+heartbeats continue. Run these as separate controls. A byte-paced pause checks
+the queue depth that fits its smaller window. The original packet-window
+pause still requires at least 24 queued chunks. Every run still requires all
+reliable chunks and credits, exact metadata, retirement and fresh-link recovery.
+A paced pass does not qualify the original workload.
+
+Local Linux arm64 controls with webrtc-native 1.2.2-stable and Chromium 149
+preserved every 4 KiB snapshot through service rejoin with the 48 KiB window
+on native and Web Godot 4.3, 4.4.1 and 4.7.2. The Godot reader paused for
+1500 ms in each generation. Peak outstanding snapshot data was 45,331 bytes.
+The 4.7.2 Web packet-window control dropped 17 chunks during that pause;
+sequence 23 was expected when sequence 40 arrived. Its active-reader control
+passed. The original #442 history used Chromium 156 and remains open.
+
+Phase records include `snapshot_body_bytes`, `snapshot_window_bytes`,
+`outstanding_snapshot_bytes` and `peak_outstanding_snapshot_bytes`. A pass must
+match the requested sizes, stay within the window and finish with zero
+outstanding bytes. A snapshot failure records the expected and received
+sequence, received byte count and transfer mode. Godot progress retains the
+configured receive-buffer size, channel queue counts and outgoing buffered
+bytes. `buffered_amount` measures pending sends; it does not measure the
+receive queue.
+
+Browser stats include per-channel callback counts, bytes and up to 1024
+callback timestamps. Godot retains up to 1024 packet-read timestamps per phase,
+with byte counts and modes. Each trace reports overflow. The browser's
+callback bytes can include data later dropped by the engine buffer. Compare
+those callbacks with Godot reads and the first missing sequence.
+
+Native bridge snapshots retain packet enqueue, HTTP dispatch and command
+completion times in `packet_timings`. `native_sent` records completed native
+send calls and their later browser callback delivery. Heartbeat records join
+these stages by phase and sequence. Godot records receive times; the reference
+records enqueue and echo times. Browser and Godot timestamps use milliseconds
+on separate clocks. Native `probe_us` uses microseconds on another clock.
+Compare intervals within each clock. Command completion bounds send completion;
+it does not prove remote receipt. These traces help investigate #440 while
+preserving its new-round-trip-during-pause requirement.
+
 ### Exact binary gameplay
 
 The probe targets the native Engine binary event API at 67725d6. Build it

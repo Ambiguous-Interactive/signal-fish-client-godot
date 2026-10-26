@@ -7,6 +7,7 @@ module.exports = async function testNativeReference() {
   const releaseSignals = [];
   const context = {
     window: {},
+    performance,
     Uint8Array,
     atob,
     btoa,
@@ -228,6 +229,58 @@ module.exports = async function testNativeReference() {
     [...Array.from({ length: 260 }, (_, i) => String(i)), "after"],
   );
 
+  const timed = new context.Engine(false, callbacks);
+  await timed.pairWith("godot", true, []);
+  timed.dispatch({
+    event: "open",
+    generation: 2,
+    label: "reliable",
+    properties: {},
+  });
+  const originalFetch = context.fetch;
+  let releaseSend;
+  const heldSend = new Promise((resolve) => {
+    releaseSend = resolve;
+  });
+  context.fetch = async (url, options) => {
+    if (
+      url === "/native/command" &&
+      JSON.parse(options.body).op === "send_batch"
+    )
+      await heldSend;
+    return originalFetch(url, options);
+  };
+  const timedChannel = timed.channel("godot", "reliable");
+  timedChannel.send("heartbeat:1:reference:0:body");
+  for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+  timedChannel.send("heartbeat:1:reference:1:body");
+  let timings = timed.diagnosticSnapshot().packet_timings.slice(-2);
+  assert.equal(timings[0].marker, "heartbeat:1:reference:0");
+  assert.equal(typeof timings[0].dispatch_ms, "number");
+  assert.equal(timings[0].complete_ms, undefined);
+  assert.equal(timings[1].dispatch_ms, undefined);
+  releaseSend();
+  await timed.handleRemoteCandidate("godot", "timing fence");
+  timings = timed.diagnosticSnapshot().packet_timings.slice(-2);
+  for (const timing of timings) {
+    assert.ok(timing.enqueue_ms <= timing.dispatch_ms);
+    assert.ok(timing.dispatch_ms <= timing.complete_ms);
+  }
+  for (const generation of [1, 2])
+    timed.dispatch({
+      event: "sent",
+      generation,
+      label: "reliable",
+      marker: "heartbeat:1:reference:0",
+      probe_us: 500,
+    });
+  const nativeSent = timed.diagnosticSnapshot().native_sent;
+  assert.equal(nativeSent.length, 1);
+  assert.equal(nativeSent[0].probe_us, 500);
+  assert.equal(typeof nativeSent[0].callback_ms, "number");
+  await timed.removePeer("godot");
+  context.fetch = originalFetch;
+
   const failingSend = new context.Engine(false, callbacks);
   await failingSend.pairWith("godot", true, []);
   failingSend.dispatch({
@@ -255,6 +308,7 @@ module.exports = async function testNativeReference() {
   });
   const batchContext = {
     window: {},
+    performance,
     setTimeout: (callback) => setImmediate(callback),
     fetch: async (url) => ({
       ok: true,

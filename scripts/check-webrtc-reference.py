@@ -186,6 +186,7 @@ def gameplay_phase_passed(
     credit_transport: str = "http",
     slow_receiver: bool = False,
     native_profile: bool = False,
+    minimum_queued: int = 24,
 ) -> bool:
     return (
         phase.get("sent") is True
@@ -202,7 +203,10 @@ def gameplay_phase_passed(
         and phase.get("remote_closed") is True
         and phase.get("mixed_traffic") is mixed_traffic
         and phase.get("credit_transport") == credit_transport
-        and (not slow_receiver or slow_receiver_passed(phase.get("receive_pause"), mixed_traffic))
+        and (
+            not slow_receiver
+            or slow_receiver_passed(phase.get("receive_pause"), mixed_traffic, minimum_queued)
+        )
         and phase.get("snapshot_acknowledged") == 128
         and phase.get("positions_sent") == (32 if mixed_traffic else 0)
         and (
@@ -212,6 +216,21 @@ def gameplay_phase_passed(
         )
         and type(phase.get("peak_outstanding")) is int
         and 0 < cast(int, phase["peak_outstanding"]) <= 32
+    )
+
+
+def snapshot_flow_passed(phase: dict[str, object], body_bytes: int, window_bytes: int) -> bool:
+    peak = phase.get("peak_outstanding_snapshot_bytes")
+    return (
+        type(phase.get("snapshot_body_bytes")) is int
+        and phase["snapshot_body_bytes"] == body_bytes
+        and type(phase.get("snapshot_window_bytes")) is int
+        and phase["snapshot_window_bytes"] == window_bytes
+        and type(phase.get("outstanding_snapshot_bytes")) is int
+        and phase["outstanding_snapshot_bytes"] == 0
+        and type(peak) is int
+        and body_bytes < peak <= 32 * (body_bytes + 32)
+        and (not window_bytes or peak <= window_bytes)
     )
 
 
@@ -362,7 +381,7 @@ def queued_retirement_passed(
     )
 
 
-def slow_receiver_passed(value: object, mixed_traffic: bool) -> bool:
+def slow_receiver_passed(value: object, mixed_traffic: bool, minimum_queued: int = 24) -> bool:
     if not isinstance(value, dict):
         return False
     return (
@@ -373,7 +392,7 @@ def slow_receiver_passed(value: object, mixed_traffic: bool) -> bool:
         and 8 <= value["received"] < 128
         and value.get("received_at_resume") == value["received"]
         and type(value.get("queued_reliable")) is int
-        and value["queued_reliable"] >= 24
+        and value["queued_reliable"] >= minimum_queued
         and (
             not mixed_traffic
             or (type(value.get("queued_unreliable")) is int and value["queued_unreliable"] > 0)
@@ -381,7 +400,9 @@ def slow_receiver_passed(value: object, mixed_traffic: bool) -> bool:
     )
 
 
-def reference_receive_pause_passed(phase: dict[str, object], requested: bool) -> bool:
+def reference_receive_pause_passed(
+    phase: dict[str, object], requested: bool, minimum_queued: int = 24
+) -> bool:
     if phase.get("slow_reference_receiver") is not requested:
         return False
     if not requested:
@@ -407,7 +428,7 @@ def reference_receive_pause_passed(phase: dict[str, object], requested: bool) ->
         proof.get("resumed") is True
         and proof["elapsed_ms"] >= 1500
         and proof["received"] == proof["received_at_resume"] == 8
-        and 24 <= proof["queued_snapshots"] <= 32
+        and minimum_queued <= proof["queued_snapshots"] <= 32
         and 0 < proof["queued_positions"] <= 32
         and proof["peak_queued"] == proof["queued_snapshots"] + proof["queued_positions"]
         and 0 <= proof["heartbeat_received"] <= proof["heartbeat_sent"]
@@ -637,6 +658,8 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
                 "service_app_id": getattr(args, "service_app_id", "godot-reference"),
                 "native_profile": bool(getattr(args, "native_reference_probe", None)),
                 "startup_burst": getattr(args, "startup_burst", False),
+                "snapshot_body_bytes": getattr(args, "snapshot_body_bytes", 1024),
+                "snapshot_window_bytes": getattr(args, "snapshot_window_bytes", 0),
                 "receive_empty_binary": getattr(args, "receive_empty_binary", False),
                 "binary_traffic": getattr(args, "binary_traffic", False),
                 "binary_payloads": binary_payloads(
@@ -790,6 +813,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
             (probe if probe else assets / "reference/engine.js").read_bytes()
         ).hexdigest(),
         "startup_burst": getattr(args, "startup_burst", False),
+        "snapshot_body_bytes": getattr(args, "snapshot_body_bytes", 1024),
+        "snapshot_window_bytes": getattr(args, "snapshot_window_bytes", 0),
         "receive_empty_binary": getattr(args, "receive_empty_binary", False),
         "binary_traffic": getattr(args, "binary_traffic", False),
         "empty_binary": getattr(args, "empty_binary", False),
@@ -852,7 +877,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         ],
                     )
                 reference.evaluate(
-                    "([seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup); }",
+                    "([seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup, bodyBytes, windowBytes]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup, bodyBytes, windowBytes); }",
                     [
                         1 if web else 0,
                         args.godot_offer,
@@ -869,6 +894,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         if getattr(args, "binary_traffic", False)
                         else None,
                         getattr(args, "startup_burst", False),
+                        getattr(args, "snapshot_body_bytes", 1024),
+                        getattr(args, "snapshot_window_bytes", 0),
                     ],
                 )
                 hold_proof: dict[str, object] = {}
@@ -940,6 +967,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     and not page_failed(messages)
                     and not driver_error
                 )
+                body_bytes = getattr(args, "snapshot_body_bytes", 1024)
+                window_bytes = getattr(args, "snapshot_window_bytes", 0)
+                minimum_queued = min(24, window_bytes // (body_bytes + 32)) if window_bytes else 24
                 gameplay = (
                     complete
                     and (
@@ -958,6 +988,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             mixed_traffic=args.mixed_traffic,
                             credit_transport=args.credit_transport,
                             slow_receiver=getattr(args, "slow_receiver", False),
+                            minimum_queued=minimum_queued,
                             native_profile=backend is not None,
                         )
                         and gameplay_phase_passed(
@@ -965,6 +996,14 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             mixed_traffic=args.mixed_traffic,
                             credit_transport=args.credit_transport,
                             native_profile=backend is not None,
+                        )
+                        and all(
+                            snapshot_flow_passed(
+                                phase,
+                                getattr(args, "snapshot_body_bytes", 1024),
+                                getattr(args, "snapshot_window_bytes", 0),
+                            )
+                            for phase in (godot, ref)
                         )
                         and startup_phase_passed(godot, ref, getattr(args, "startup_burst", False))
                         and binary_phase_passed(
@@ -986,7 +1025,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             godot, ref, getattr(args, "queued_retirement", False)
                         )
                         and reference_receive_pause_passed(
-                            ref, getattr(args, "slow_reference_receiver", False)
+                            ref, getattr(args, "slow_reference_receiver", False), minimum_queued
                         )
                         and (not args.safe_receive or godot.get("same_receiver") is True)
                         for godot, ref in zip(phases, result["phases"], strict=True)
@@ -1117,6 +1156,18 @@ def main() -> None:
         action="store_true",
         help="Require zero-byte packets from native reference to Godot in all modes",
     )
+    parser.add_argument(
+        "--snapshot-body-bytes",
+        type=int,
+        default=1024,
+        help="Snapshot and partial body size, 16-16384 bytes in multiples of 16",
+    )
+    parser.add_argument(
+        "--snapshot-window-bytes",
+        type=int,
+        default=0,
+        help="Additional outstanding snapshot byte limit; 0 keeps the packet window",
+    )
     parser.add_argument("--chromium")
     parser.add_argument(
         "--safe-receive", action="store_true", help="Read through the RPC-safe peer"
@@ -1169,6 +1220,13 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if not 16 <= args.snapshot_body_bytes <= 16384 or args.snapshot_body_bytes % 16:
+        parser.error("--snapshot-body-bytes must be 16-16384 and a multiple of 16")
+    if args.snapshot_window_bytes < 0 or (
+        args.snapshot_window_bytes
+        and args.snapshot_window_bytes < 8 * (args.snapshot_body_bytes + 32)
+    ):
+        parser.error("--snapshot-window-bytes must be 0 or hold eight chunks including headers")
     if args.queued_retirement and not args.safe_receive:
         parser.error("--queued-retirement requires --safe-receive")
     if args.service_rejoin and (not args.service_url or not args.safe_receive):

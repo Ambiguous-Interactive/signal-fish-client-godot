@@ -3,6 +3,7 @@
 import argparse
 import copy
 import importlib.util
+import io
 import json
 import subprocess
 import tempfile
@@ -23,6 +24,59 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_snapshot_cli_rejects_sizes_that_cannot_return_credit(self) -> None:
+        base = [
+            "check-webrtc-reference.py",
+            "--native-extension",
+            "/missing",
+            "--reference-assets",
+            "/missing",
+            "--reference-revision",
+            "test",
+        ]
+        for arguments in (
+            ["--snapshot-body-bytes", "0"],
+            ["--snapshot-body-bytes", "17"],
+            ["--snapshot-body-bytes", "16400"],
+            ["--snapshot-window-bytes", "-1"],
+            ["--snapshot-body-bytes", "4096", "--snapshot-window-bytes", "32768"],
+        ):
+            with (
+                self.subTest(arguments=arguments),
+                patch("sys.argv", base + arguments),
+                patch("sys.stderr", new_callable=io.StringIO),
+                patch.object(reference, "assess") as assess,
+            ):
+                with self.assertRaises(SystemExit) as error:
+                    reference.main()
+                self.assertEqual(error.exception.code, 2)
+                assess.assert_not_called()
+
+    def test_byte_window_requires_matched_workload_and_complete_credit(self) -> None:
+        phase = {
+            "snapshot_body_bytes": 4096,
+            "snapshot_window_bytes": 49152,
+            "outstanding_snapshot_bytes": 0,
+            "peak_outstanding_snapshot_bytes": 45000,
+        }
+        self.assertTrue(reference.snapshot_flow_passed(phase, 4096, 49152))
+        self.assertFalse(reference.snapshot_flow_passed(phase, 1024, 49152))
+        self.assertFalse(reference.snapshot_flow_passed(phase, 4096, 0))
+        for field, values in {
+            "snapshot_body_bytes": [None, True, 4096.0, 1024],
+            "snapshot_window_bytes": [None, True, 49152.0, 0],
+            "outstanding_snapshot_bytes": [None, False, 0.0, -1, 1],
+            "peak_outstanding_snapshot_bytes": [None, True, 45000.0, 0, 4096, 49153],
+        }.items():
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    self.assertFalse(
+                        reference.snapshot_flow_passed({**phase, field: value}, 4096, 49152)
+                    )
+            missing = dict(phase)
+            del missing[field]
+            self.assertFalse(reference.snapshot_flow_passed(missing, 4096, 49152))
+
     def test_binary_evidence_requires_exact_reliable_and_distinct_mode_receipts(self) -> None:
         phase = {
             "binary_traffic": True,
@@ -870,6 +924,10 @@ console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvid
             "queued_unreliable": 8,
         }
         self.assertTrue(reference.slow_receiver_passed(proof, True))
+        paced = {**proof, "queued_reliable": 11}
+        self.assertFalse(reference.slow_receiver_passed(paced, True))
+        self.assertTrue(reference.slow_receiver_passed(paced, True, 11))
+        self.assertFalse(reference.slow_receiver_passed({**paced, "queued_reliable": 10}, True, 11))
         for field, value in (
             ("resumed", False),
             ("elapsed_ms", 1499),
@@ -906,6 +964,23 @@ console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvid
             "queued_application_packets": 0,
         }
         self.assertTrue(reference.reference_receive_pause_passed(phase, True))
+        paced = {**phase, "receive_pause": {**proof, "queued_snapshots": 11, "peak_queued": 19}}
+        self.assertFalse(reference.reference_receive_pause_passed(paced, True))
+        self.assertTrue(reference.reference_receive_pause_passed(paced, True, 11))
+        self.assertFalse(
+            reference.reference_receive_pause_passed(
+                {
+                    **paced,
+                    "receive_pause": {
+                        **proof,
+                        "queued_snapshots": 10,
+                        "peak_queued": 18,
+                    },
+                },
+                True,
+                11,
+            )
+        )
         for field, value in (
             ("resumed", False),
             ("elapsed_ms", 1499),

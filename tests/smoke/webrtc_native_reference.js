@@ -2,18 +2,51 @@ let tail = Promise.resolve();
 let current = null;
 let polling = false;
 let pendingBatch = null;
+const packetTimings = [];
+let timingsDropped = 0;
 
 function command(value) {
   const packet = value.op === "send" || value.op === "send_binary";
+  let timing = null;
+  if (packet) {
+    if (packetTimings.length < 4096) {
+      timing = {
+        label: value.label,
+        marker: value.text?.split(":").slice(0, 4).join(":"),
+        enqueue_ms: performance.now(),
+      };
+      packetTimings.push(timing);
+    } else timingsDropped++;
+  }
+  const result = submit(value, timing);
+  if (timing)
+    result.then(
+      () => {
+        timing.complete_ms = performance.now();
+      },
+      () => {
+        timing.failed_ms = performance.now();
+      },
+    );
+  return result;
+}
+
+function submit(value, timing) {
+  const packet = value.op === "send" || value.op === "send_binary";
   if (packet && pendingBatch && pendingBatch.packets.length < 256) {
     pendingBatch.packets.push(value);
+    if (timing) pendingBatch.timings.push(timing);
     return pendingBatch.result;
   }
-  const batch = packet ? { packets: [value] } : null;
+  const batch = packet
+    ? { packets: [value], timings: timing ? [timing] : [] }
+    : null;
   pendingBatch = batch;
   const result = tail.then(async () => {
     if (pendingBatch === batch) pendingBatch = null;
     if (batch && window.referenceError) throw new Error(window.referenceError);
+    if (batch)
+      for (const entry of batch.timings) entry.dispatch_ms = performance.now();
     const response = await fetch("/native/command", {
       method: "POST",
       body: JSON.stringify(
@@ -57,6 +90,8 @@ export class Engine {
     this.callbacks = callbacks;
     this.nativeProfile = true;
     this.channels = new Map();
+    this.sentTimings = [];
+    this.sentTimingsDropped = 0;
     this.startupPhase = 0;
     this.startupSent = 0;
     this.paired = false;
@@ -118,6 +153,10 @@ export class Engine {
       backend: "native",
       generation: this.generation,
       startup_sent: this.startupSent,
+      packet_timings: packetTimings.map((entry) => ({ ...entry })),
+      timings_dropped: timingsDropped,
+      native_sent: this.sentTimings.slice(),
+      native_sent_dropped: this.sentTimingsDropped,
       channels: Object.fromEntries(
         [...this.channels].map(([label, channel]) => [
           label,
@@ -146,6 +185,17 @@ export class Engine {
       return;
     }
     if (event.generation !== this.generation) return;
+    if (event.event === "sent") {
+      if (this.sentTimings.length < 4096)
+        this.sentTimings.push({
+          label: event.label,
+          marker: event.marker,
+          probe_us: event.probe_us,
+          callback_ms: performance.now(),
+        });
+      else this.sentTimingsDropped++;
+      return;
+    }
     const args = ["godot", event.generation];
     switch (event.event) {
       case "candidate":

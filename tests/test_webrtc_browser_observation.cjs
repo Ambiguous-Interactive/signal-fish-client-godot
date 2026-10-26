@@ -98,6 +98,9 @@ async function main() {
     addEventListener() {}
     createDataChannel(label, options) {
       return {
+        addEventListener(_event, listener) {
+          this.receive = listener;
+        },
         id: options.id,
         label,
         negotiated: true,
@@ -149,6 +152,8 @@ async function main() {
   }
   const context = {
     window: { RTCPeerConnection: Peer },
+    performance,
+    TextEncoder,
     setInterval(callback, period) {
       assert.equal(period, 1000);
       sample = callback;
@@ -198,14 +203,26 @@ async function main() {
   assert.equal(channels[1].max_packet_life_time, 100);
   assert.equal(channels[1].max_retransmits, null);
   assert.equal(channels[1].requested_lifetime, 100);
+  channel.receive({ data: new Uint8Array([1, 2, 3]).buffer });
+  channel.receive({ data: "ab" });
   await sample();
   let report = output.at(-1);
   assert.equal(report.created, 1);
+  assert.equal(report.peers[0].callbacks[0].packets, 2);
+  assert.equal(report.peers[0].callbacks[0].bytes, 5);
+  assert.equal(report.peers[0].callbacks[0].callbacks[0].bytes, 3);
+  assert.equal(report.peers[0].callbacks[0].dropped, 0);
   assert.equal(report.peers[0].channels[0].messages_received, 9);
   assert.equal(report.peers[0].channels[0].bytes_received, 90);
   assert.equal(report.peers[0].transports[0].bytes_sent, 100);
   assert.equal(report.peers[0].candidate_pairs.length, 1);
   assert.equal(report.peers[0].candidate_pairs[0].round_trip_seconds, 0.1);
+  for (let i = 0; i < 1025; i++)
+    channel.receive({ data: new Uint8Array([0]).buffer });
+  await sample();
+  assert.equal(output.at(-1).peers[0].callbacks[0].callbacks.length, 1024);
+  assert.equal(output.at(-1).peers[0].callbacks[0].dropped, 3);
+  assert.equal(output.at(-1).peers[0].callbacks[0].packets, 1027);
   peer.fail = true;
   await sample();
   assert.match(output.at(-1).peers[0].error, /sample unavailable/);

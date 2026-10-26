@@ -24,6 +24,8 @@ async fn send_packet(engine: &Engine, peer: PlayerId, value: &Value) -> anyhow::
         }
         _ => anyhow::bail!("invalid packet operation"),
     }
+    emit(json!({"event":"sent", "generation":engine.diagnostic_snapshot(peer)["generation"], "label":value["label"],
+        "marker":value["text"].as_str().map(|text| text.split(':').take(4).collect::<Vec<_>>().join(":"))}));
     Ok(())
 }
 
