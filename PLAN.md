@@ -24,8 +24,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Complete mesh channel interoperability with the reference engines (#355),
       including full reference CLI sessions and remote-network startup
       and recovery (reliable-prefix ingress attribution: server #1244;
-      zero-byte script sends: #437; Web receive-buffer flow control: #442;
-      heartbeat pause timing: #440).
+      zero-byte script sends: #437; original Chromium 156 receive loss: #442;
+      capture heartbeat pause failures with native receipt timing: #440).
 - [ ] Compare the three-seat held-credit control with the captured native/browser
       stream stall using matched HTTP/WebRTC credit runs, independent gameplay
       and reference-consumer pause controls,
