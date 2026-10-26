@@ -1049,8 +1049,22 @@ func _read_packet(peer: WebRTCMultiplayerPeer) -> MeshScript.ReceivedPacket:
 		packet.channel = reader.get_packet_channel()
 		packet.data = reader.get_packet()
 		packet.error = reader.get_packet_error()
-	if packet == null or packet.error != OK:
-		_fail("raw gameplay read failed")
+	if packet == null:
+		_fail("raw gameplay read returned no packet")
+		return null
+	if packet.error != OK:
+		_fail(
+			(
+				"raw gameplay read failed: error=%d peer=%d mode=%d channel=%d bytes=%d"
+				% [
+					packet.error,
+					packet.peer_id,
+					packet.transfer_mode,
+					packet.channel,
+					packet.data.size()
+				]
+			)
+		)
 		return null
 	return packet
 

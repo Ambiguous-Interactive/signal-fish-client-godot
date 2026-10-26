@@ -1,17 +1,30 @@
 let tail = Promise.resolve();
 let current = null;
 let polling = false;
+let pendingBatch = null;
 
 function command(value) {
+  const packet = value.op === "send" || value.op === "send_binary";
+  if (packet && pendingBatch && pendingBatch.packets.length < 256) {
+    pendingBatch.packets.push(value);
+    return pendingBatch.result;
+  }
+  const batch = packet ? { packets: [value] } : null;
+  pendingBatch = batch;
   const result = tail.then(async () => {
+    if (pendingBatch === batch) pendingBatch = null;
+    if (batch && window.referenceError) throw new Error(window.referenceError);
     const response = await fetch("/native/command", {
       method: "POST",
-      body: JSON.stringify(value),
+      body: JSON.stringify(
+        batch ? { op: "send_batch", packets: batch.packets } : value,
+      ),
     });
     const body = await response.json();
     if (!response.ok) throw new Error(body.error ?? "native command failed");
     return body.result;
   });
+  if (batch) batch.result = result;
   tail = result.catch((error) => {
     window.referenceError ??= String(error);
   });
@@ -44,6 +57,8 @@ export class Engine {
     this.callbacks = callbacks;
     this.nativeProfile = true;
     this.channels = new Map();
+    this.startupPhase = 0;
+    this.startupSent = 0;
     this.paired = false;
     this.generation = null;
     this.pending = [];
@@ -74,7 +89,11 @@ export class Engine {
   }
   async pairWith(_peer, offer, _servers) {
     this.paired = true;
-    const result = await this.signalCommand({ op: "pair", offer });
+    const result = await this.signalCommand({
+      op: "pair",
+      offer,
+      startup_phase: this.startupPhase,
+    });
     this.generation = result.generation;
     for (const event of this.pending) this.dispatch(event);
     this.pending = [];
@@ -97,6 +116,7 @@ export class Engine {
     return {
       backend: "native",
       generation: this.generation,
+      startup_sent: this.startupSent,
       channels: Object.fromEntries(
         [...this.channels].map(([label, channel]) => [
           label,
@@ -154,6 +174,9 @@ export class Engine {
           close: () => void command({ op: "close", label: event.label }),
         });
         this.callbacks.onChannelOpen(...args, event.label);
+        break;
+      case "startup_sent":
+        this.startupSent = event.count;
         break;
       case "closed":
         if (this.channels.has(event.label))

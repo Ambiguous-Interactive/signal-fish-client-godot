@@ -46,6 +46,7 @@ module.exports = async function testNativeReference() {
     onChannelClosed: (...args) => received.push(["closed", ...args]),
   };
   const engine = new context.Engine(false, callbacks);
+  engine.startupPhase = 2;
   const pairing = engine.pairWith("godot", true, []);
   engine.dispatch({ event: "candidate", generation: 2, candidate: "early" });
   engine.dispatch({
@@ -54,6 +55,7 @@ module.exports = async function testNativeReference() {
     label: "reliable",
     text: "stale",
   });
+  engine.dispatch({ event: "startup_sent", generation: 2, count: 32 });
   engine.dispatch({
     event: "open",
     generation: 2,
@@ -61,6 +63,10 @@ module.exports = async function testNativeReference() {
     properties: { lifetime: null },
   });
   assert.equal(await pairing, "sdp");
+  assert.equal(operations[0].startup_phase, 2);
+  assert.equal(engine.diagnosticSnapshot().startup_sent, 32);
+  engine.dispatch({ event: "startup_sent", generation: 1, count: 99 });
+  assert.equal(engine.diagnosticSnapshot().startup_sent, 32);
   assert.equal(received.length, 1);
   assert.equal(received[0][0], "open");
   releaseSignals.splice(0).forEach((callback) => callback());
@@ -126,8 +132,12 @@ module.exports = async function testNativeReference() {
   for (const data of payloads) channel.sendBinary(data);
   channel.send("second");
   await engine.removePeer("godot");
+  assert.equal(operations.filter((op) => op.op === "send_batch").length, 1);
+  const expanded = operations.flatMap((op) =>
+    op.op === "send_batch" ? op.packets : [op],
+  );
   assert.deepEqual(
-    operations.map((op) => op.op),
+    expanded.map((op) => op.op),
     [
       "pair",
       "send",
@@ -138,11 +148,11 @@ module.exports = async function testNativeReference() {
     ],
   );
   assert.deepEqual(
-    operations.filter((op) => op.op === "send").map((op) => op.text),
+    expanded.filter((op) => op.op === "send").map((op) => op.text),
     ["first", "second"],
   );
   assert.deepEqual(
-    operations
+    expanded
       .filter((op) => op.op === "send_binary")
       .map((op) => Array.from(Buffer.from(op.data_base64, "base64"))),
     payloads.map((data) => Array.from(data)),
@@ -164,6 +174,45 @@ module.exports = async function testNativeReference() {
     data_base64: "",
   });
   assert.equal(received.length, beforeRetired);
+
+  const boundaryStart = operations.length;
+  const bounded = new context.Engine(false, callbacks);
+  await bounded.pairWith("godot", true, []);
+  bounded.dispatch({
+    event: "open",
+    generation: 2,
+    label: "reliable",
+    properties: {},
+  });
+  const boundedChannel = bounded.channel("godot", "reliable");
+  for (let i = 0; i < 260; i++) boundedChannel.send(String(i));
+  const fence = bounded.handleRemoteCandidate("godot", "fence");
+  boundedChannel.send("after");
+  await fence;
+  await bounded.removePeer("godot");
+  const boundaryOps = operations.slice(boundaryStart);
+  assert.deepEqual(
+    boundaryOps.map((op) => op.op),
+    [
+      "pair",
+      "send_batch",
+      "send_batch",
+      "candidate",
+      "send_batch",
+      "snapshot",
+      "remove",
+    ],
+  );
+  assert.deepEqual(
+    boundaryOps
+      .filter((op) => op.op === "send_batch")
+      .map((op) => op.packets.length),
+    [256, 4, 1],
+  );
+  assert.deepEqual(
+    boundaryOps.flatMap((op) => op.packets ?? []).map((op) => op.text),
+    [...Array.from({ length: 260 }, (_, i) => String(i)), "after"],
+  );
 
   const failingSend = new context.Engine(false, callbacks);
   await failingSend.pairWith("godot", true, []);

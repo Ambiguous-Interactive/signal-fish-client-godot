@@ -154,7 +154,7 @@ Full reference-client gameplay sessions remain unverified.
 
 ## Native reference Godot profile
 
-The server's [native Engine at 18cadb5](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/18cadb5d01701f427501444c4b3c27f6c765410f/clients/native/src/engine.rs)
+The server's [native Engine at 67725d6](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/67725d677ff0fdb662d041af9b175d8a6d08c75f/clients/native/src/engine.rs)
 adds `ChannelProfile::Godot`. Both offer roles create all three negotiated
 channels. Its ordered and unordered channels request a 1 ms packet lifetime.
 The default reference profile keeps its existing layout. Keep this profile
@@ -163,7 +163,10 @@ a recovered reliable stream. Native raw/admitted counters retained the gap,
 with zero discarded or rejected receipts. A 4.4.1 startup control at 18cadb5
 also missed reliable snapshot sequences 0 through 3. Track the unresolved cause in
 [server #1244](https://github.com/Ambiguous-Interactive/signal-fish-server/issues/1244).
-Use server relay for mixed-client gameplay until recovery is qualified.
+The 67725d6 repair initializes negotiated channels before startup DATA. Its
+paired-wire regression preserves all 32 reliable packets before event polling.
+The original captured incident still needs matching ingress evidence. Use server
+relay until the required engine, recovery and remote-network checks pass.
 
 Build the opt-in probe in a checkout of that server revision:
 
@@ -175,20 +178,44 @@ cargo build --manifest-path /path/to/server/clients/native/Cargo.toml \
   --example godot_qualification
 python scripts/check-webrtc-reference.py \
   --native-reference-probe /path/to/server/clients/native/target/debug/examples/godot_qualification \
-  --reference-revision 18cadb5d01701f427501444c4b3c27f6c765410f \
+  --reference-revision 67725d677ff0fdb662d041af9b175d8a6d08c75f \
   --native-extension /path/to/webrtc_native --safe-receive --mixed-traffic \
-  --binary-traffic --retirement-matrix --require-gameplay --output /tmp/native-reference
+  --binary-traffic --startup-burst --retirement-matrix --require-gameplay \
+  --output /tmp/native-reference
 ```
 
 The browser coordinates the probe through local HTTP commands. WebRTC packets
 pass through the native Rust Engine. This control bridge adds scheduling delay;
-use its results to assess correctness. `assessment.json` records the backend,
+use its results to assess correctness. Adjacent packet sends share commands
+of up to 256 packets. Signaling, snapshot, close and removal commands retain
+their order after earlier packets. A failed batch stops at its first failed
+send. `assessment.json` records the backend,
 source revision and probe binary hash. `native-reference.jsonl` retains commands'
 results and native callbacks. `native_snapshots` retains Engine receipt counters
 before removal, including failure cleanup. The driver waits for cleanup before
 closing its coordinator and keeps the original gameplay failure. Native
 `internal_id` values identify local handles;
 Godot's channel IDs identify the negotiated SCTP streams.
+
+`native_timing` records command issue, output observation and reply delivery
+with command IDs and native JSONL line numbers. Times use microseconds from
+the bridge's monotonic clock. `probe_us` records emission time on a separate
+native monotonic clock; compare intervals within each clock. Records stop at
+10,000 and retain a dropped count. These timings distinguish bridge progress
+from gameplay progress. They do not measure SCTP ingress or prove packet-loss
+causes. `reference_terminal` retains the latest phase counters before cleanup,
+including failures before the six-second observation. The original observation
+stays separate. Read failures include the engine error, sender, mode, channel
+and byte count.
+
+Add `--startup-burst` to send 32 reliable packets per seat and generation
+without consumption credit. The native probe sends directly at reliable-channel
+open, before reporting that open to the browser coordinator. Godot sends when
+its mesh is ready. Both receivers require exact phase, sender, sequence, bytes
+and reliable mode. `startup_sent` and `startup_received` must each be 32 on
+both seats. The normal snapshots, mode checks, retirement and recovery still
+run. This control qualifies immediate native sends and ready-mesh Godot sends;
+it does not send from Godot before its mesh becomes ready.
 
 Each generation sends 128 reliable snapshot chunks, four partial-transfer chunks,
 32 unordered positions and eight ordered probes per seat. Every receipt must
@@ -208,7 +235,7 @@ full service sessions and remote-network qualification remain open.
 
 ### Exact binary gameplay
 
-The probe targets the native Engine binary event API at 18cadb5. Build it
+The probe targets the native Engine binary event API at 67725d6. Build it
 from the same source as the Engine. It handles `ChannelBinaryMessage` and
 keeps the physical generation, channel label and bytes in standard-base64
 `data_base64` output. Text and binary events retain their receive permit until
@@ -237,6 +264,14 @@ reliable receipt is sequence 1; the outgoing empty sequence 0 never reaches
 the native callback. This limit is tracked in
 [issue #437](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/437).
 Nonempty binary delivery does not qualify zero-byte wire packets.
+
+Use `--receive-empty-binary` with `--binary-traffic` to test inbound empty
+packets independently. The native reference sends zero bytes in each mode;
+Godot keeps its outgoing envelope. Every mode must receive sequence 0 plus
+exact nonempty controls. This flag excludes `--empty-binary`. Use the raw
+`receive_packet()` path first. The safe RPC peer's GDScript hook reports an
+empty result as `ERR_UNAVAILABLE`, so that strict control remains a failure.
+Do not infer send support from a successful receive control.
 
 ## ICE candidate formats
 

@@ -88,6 +88,41 @@ class ReferenceEvidenceTests(unittest.TestCase):
         self.assertFalse(reference.binary_phase_passed({}, True))
         self.assertTrue(reference.binary_phase_passed({}, False))
 
+    def test_startup_proof_requires_every_packet_from_each_seat(self) -> None:
+        good = {"startup_burst": True, "startup_sent": 32, "startup_received": 32}
+        self.assertTrue(reference.startup_phase_passed(good, good, True))
+        self.assertTrue(reference.startup_phase_passed({}, {}, False))
+        for field in good:
+            for value in (None, False, True, 0, 31, 33, 32.0):
+                if field == "startup_burst" and value is True:
+                    continue
+                broken = {**good, field: value}
+                self.assertFalse(reference.startup_phase_passed(broken, good, True))
+                self.assertFalse(reference.startup_phase_passed(good, broken, True))
+            broken = dict(good)
+            del broken[field]
+            self.assertFalse(reference.startup_phase_passed(broken, good, True))
+        self.assertFalse(reference.startup_phase_passed(good, good, False))
+
+    def test_inbound_empty_control_keeps_godot_sends_nonempty(self) -> None:
+        payloads = reference.binary_payloads(receive_empty=True)
+        for phase in payloads.values():
+            for sender, modes in phase.items():
+                for packets in modes:
+                    self.assertEqual(packets[0] == [], sender == "reference")
+                    self.assertTrue(all(packets[1:]))
+        good = {
+            "binary_traffic": True,
+            "binary_sent": [8, 8, 8],
+            "binary_sequences": [list(range(8)), [0, 2], [7, 0]],
+        }
+        self.assertTrue(reference.binary_phase_passed(good, True, require_empty=True))
+        for mode in (1, 2):
+            broken = copy.deepcopy(good)
+            cast(list[list[int]], broken["binary_sequences"])[mode].remove(0)
+            self.assertTrue(reference.binary_phase_passed(broken, True))
+            self.assertFalse(reference.binary_phase_passed(broken, True, require_empty=True))
+
     def test_binary_vectors_keep_wire_bytes_and_mode_generation_identity(self) -> None:
         payloads = reference.binary_payloads()
         self.assertEqual(set(payloads), {"1", "2"})
@@ -1114,7 +1149,7 @@ const context = {
 };
 runInNewContext(source, context);
 await context.window.runReference(1, false, false, "http");
-console.log(JSON.stringify(context.window.referenceError));
+console.log(JSON.stringify({error:context.window.referenceError, terminal:context.window.referenceTerminal}));
 """
         source = (SCRIPT.parents[1] / "tests/smoke/webrtc_reference.js").read_text()
         for case, expected in (
@@ -1131,7 +1166,12 @@ console.log(JSON.stringify(context.window.referenceError));
                     check=True,
                     timeout=5,
                 )
-                self.assertEqual(json.loads(result.stdout), expected)
+                proof = json.loads(result.stdout)
+                self.assertEqual(proof["error"], expected)
+                self.assertEqual(proof["terminal"]["phase"], 1)
+                self.assertEqual(proof["terminal"]["snapshot_received"], 0)
+                self.assertEqual(proof["terminal"]["snapshot_sent"], 0)
+                self.assertFalse(proof["terminal"]["retired"])
 
     def test_reference_settles_after_delayed_cleanup_and_keeps_primary_error(self) -> None:
         harness = r"""
@@ -1251,6 +1291,42 @@ console.log("cleanup settled");
             [{"phase": 1, "received": []}],
         )
 
+    def test_native_bridge_timing_correlates_commands_and_output_without_payloads(self) -> None:
+        import sys
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            probe = directory / "probe"
+            probe.write_text(
+                "#!"
+                + sys.executable
+                + "\nimport sys,json\nfor line in sys.stdin:\n v=json.loads(line)\n print(json.dumps({'event':'binary','generation':2,'label':'reliable','data_base64':'AP8='}),flush=True)\n print(json.dumps({'id':v['id'],'result':None}),flush=True)\n"
+            )
+            probe.chmod(0o700)
+            bridge = reference.native_reference.NativeReference(probe, directory)
+            try:
+                bridge.command({"op": "send", "label": "reliable", "text": "opaque-body"})
+                events = bridge.drain()
+                self.assertEqual(len(events), 1)
+                snapshot = bridge.timing_snapshot()
+                records = cast(list[dict[str, object]], snapshot["records"])
+                self.assertEqual(
+                    [record["stage"] for record in records],
+                    ["command", "output", "output", "reply"],
+                )
+                self.assertEqual([records[i]["id"] for i in (0, 2, 3)], [1, 1, 1])
+                self.assertEqual([records[i]["line"] for i in (1, 2)], [1, 2])
+                times = [record["us"] for record in records]
+                self.assertEqual(times, sorted(times))
+                self.assertNotIn("opaque-body", json.dumps(snapshot))
+                self.assertNotIn("AP8=", json.dumps(snapshot))
+                for _ in range(10010):
+                    bridge._trace("test")
+                self.assertEqual(len(bridge.timing_snapshot()["records"]), 10000)
+                self.assertEqual(bridge.timing_snapshot()["dropped"], 14)
+            finally:
+                bridge.close()
+
     def test_native_log_open_failure_does_not_spawn_probe(self) -> None:
         stderr = Mock()
         with (
@@ -1320,6 +1396,7 @@ console.log("cleanup settled");
             chromium=None,
         )
         server, backend, playwright = Mock(), Mock(), Mock()
+        backend.timing_snapshot.return_value = {"records": [], "dropped": 0}
         playwright.chromium.launch.side_effect = RuntimeError("browser failed")
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / "assessment"

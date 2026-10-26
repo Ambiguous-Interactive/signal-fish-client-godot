@@ -13,6 +13,7 @@ window.runReference = async function (
   closingSeat = "reference",
   queuedRetirement = false,
   binaryPayloads = null,
+  startupBurst = false,
 ) {
   const seat = 1 - godotSeat;
   const post = async (message) => {
@@ -37,6 +38,7 @@ window.runReference = async function (
       let paired = false;
       let sent = false;
       let snapshotSent = 0;
+      let startupReceived = 0;
       let orderedSent = 0;
       const binarySent = [0, 0, 0];
       const binarySequences = [[], [], []];
@@ -93,6 +95,22 @@ window.runReference = async function (
       let nextProgress = 0;
       const consume = (label, text) => {
         if (window.referenceError) return false;
+        if (text.startsWith("startup:")) {
+          const expected =
+            `startup:${phase}:godot:${startupReceived}:` +
+            "0123456789abcdef".repeat(64);
+          if (
+            !startupBurst ||
+            label !== "reliable" ||
+            startupReceived >= 32 ||
+            text !== expected
+          ) {
+            window.referenceError ??= `reference startup bytes or metadata differ: phase=${phase} expected_sequence=${startupReceived} received_sequence=${text.split(":")[3]}`;
+            return false;
+          }
+          startupReceived++;
+          return true;
+        }
         if (text.startsWith("ordered:")) {
           const sequence = Number(text.split(":")[3]);
           if (
@@ -251,7 +269,7 @@ window.runReference = async function (
           }
           const text = new TextDecoder("utf-8", { fatal: true }).decode(data);
           if (
-            !/^(godot:|snapshot:|partial:|position:|ordered:|heartbeat:|credit:|retirement:|retired:)/.test(
+            !/^(startup:|godot:|snapshot:|partial:|position:|ordered:|heartbeat:|credit:|retirement:|retired:)/.test(
               text,
             )
           )
@@ -285,8 +303,12 @@ window.runReference = async function (
         },
       };
       engine = new Engine(false, thisCallbacks);
+      engine.startupPhase = startupBurst ? phase : 0;
       const evidence = () => ({
         phase,
+        startup_burst: startupBurst,
+        startup_sent: engine.startupSent ?? 0,
+        startup_received: startupReceived,
         slow_reference_receiver: slowReferenceReceiver,
         receive_pause: { ...receivePause },
         queued_application_packets: queued.length,
@@ -565,6 +587,13 @@ window.runReference = async function (
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
       } finally {
+        window.referenceTerminal = {
+          ...evidence(),
+          elapsed_ms: Math.round(performance.now() - started),
+          retired,
+          paired,
+          outgoing_signals: outgoing.length,
+        };
         controller.abort();
         await signalingTask;
       }

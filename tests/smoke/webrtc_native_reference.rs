@@ -3,11 +3,28 @@ use serde_json::{json, Value};
 use signal_fish_reference_native::engine::{ChannelProfile, Engine, EngineEvent, EngineSettings};
 use signal_fish_server::protocol::PlayerId;
 use std::io::{BufRead, Write};
+use std::sync::OnceLock;
+use std::time::Instant;
 use tokio::sync::mpsc;
 
-fn emit(value: Value) {
+fn emit(mut value: Value) {
+    static START: OnceLock<Instant> = OnceLock::new();
+    value["probe_us"] = json!(START.get_or_init(Instant::now).elapsed().as_micros() as u64);
     println!("{value}");
     std::io::stdout().flush().unwrap();
+}
+
+async fn send_packet(engine: &Engine, peer: PlayerId, value: &Value) -> anyhow::Result<()> {
+    let channel = engine.channel(peer, value["label"].as_str().ok_or_else(|| anyhow::anyhow!("missing label"))?).ok_or_else(|| anyhow::anyhow!("missing channel"))?;
+    match value["op"].as_str().unwrap_or("") {
+        "send" => { channel.send_text(value["text"].as_str().ok_or_else(|| anyhow::anyhow!("missing text"))?).await?; }
+        "send_binary" => {
+            let data = STANDARD.decode(value["data_base64"].as_str().ok_or_else(|| anyhow::anyhow!("missing binary data"))?)?;
+            channel.send(data.as_slice().into()).await?;
+        }
+        _ => anyhow::bail!("invalid packet operation"),
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -25,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
         channel_profile: ChannelProfile::Godot,
         ..EngineSettings::default()
     }, events_tx)?;
+    let mut startup_phase = 0;
     loop {
         tokio::select! {
             Some(line) = input.recv() => {
@@ -33,22 +51,20 @@ async fn main() -> anyhow::Result<()> {
                 let result: anyhow::Result<Value> = async {
                     match value["op"].as_str().unwrap_or("") {
                         "pair" => {
+                            startup_phase = value["startup_phase"].as_u64().unwrap_or(0);
+                            anyhow::ensure!(startup_phase <= 2, "invalid startup phase");
                             let offer = engine.pair_with(peer, value["offer"].as_bool().unwrap(), &[]).await?;
                             Ok(json!({"offer":offer,"generation":engine.diagnostic_snapshot(peer)["generation"]}))
                         }
                         "offer" => Ok(json!(engine.handle_offer(peer, value["sdp"].as_str().unwrap().to_owned()).await?)),
                         "answer" => { engine.handle_answer(peer, value["sdp"].as_str().unwrap().to_owned()).await?; Ok(Value::Null) }
                         "candidate" => { engine.handle_remote_candidate(peer, value["candidate"].as_str().unwrap()).await?; Ok(Value::Null) }
-                        "send" => {
-                            let channel = engine.channel(peer, value["label"].as_str().unwrap()).ok_or_else(|| anyhow::anyhow!("missing channel"))?;
-                            channel.send_text(value["text"].as_str().unwrap()).await?;
-                            Ok(Value::Null)
-                        }
-                        "send_binary" => {
-                            let channel = engine.channel(peer, value["label"].as_str().unwrap()).ok_or_else(|| anyhow::anyhow!("missing channel"))?;
-                            let data = STANDARD.decode(value["data_base64"].as_str().ok_or_else(|| anyhow::anyhow!("missing binary data"))?)?;
-                            channel.send(data.as_slice().into()).await?;
-                            Ok(Value::Null)
+                        "send" | "send_binary" => { send_packet(&engine, peer, &value).await?; Ok(Value::Null) }
+                        "send_batch" => {
+                            let packets = value["packets"].as_array().ok_or_else(|| anyhow::anyhow!("missing packets"))?;
+                            anyhow::ensure!(!packets.is_empty() && packets.len() <= 256, "invalid packet batch size");
+                            for packet in packets { send_packet(&engine, peer, packet).await?; }
+                            Ok(json!(packets.len()))
                         }
                         "close" => {
                             let channel = engine.channel(peer, value["label"].as_str().unwrap()).ok_or_else(|| anyhow::anyhow!("missing channel"))?;
@@ -73,6 +89,13 @@ async fn main() -> anyhow::Result<()> {
                     EngineEvent::ChannelOpen {label,..} => {
                         engine.note_channel_open(peer,&label).await;
                         let channel = engine.channel(peer, &label).unwrap();
+                        if startup_phase > 0 && label == "reliable" {
+                            for sequence in 0..32 {
+                                let data = format!("startup:{startup_phase}:reference:{sequence}:{}", "0123456789abcdef".repeat(64));
+                                channel.send(data.as_bytes().into()).await?;
+                            }
+                            emit(json!({"event":"startup_sent", "generation":generation, "count":32}));
+                        }
                         emit(json!({"event":"open", "generation":generation, "label":label,
                             "properties": {"internal_id":channel.id(), "negotiated":channel.negotiated().await?,
                                 "ordered":channel.ordered().await?,

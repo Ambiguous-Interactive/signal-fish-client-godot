@@ -3,6 +3,7 @@
 import json
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import cast
 
@@ -14,6 +15,10 @@ class NativeReference:
         self.events: list[dict[str, object]] = []
         self.replies: dict[int, dict[str, object]] = {}
         self.next_id = 0
+        self.started_ns = time.monotonic_ns()
+        self.timings: list[dict[str, object]] = []
+        self.timings_dropped = 0
+        self.output_lines = 0
         self.error = ""
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.stderr = (directory / "native-reference.stderr").open("w")
@@ -41,6 +46,24 @@ class NativeReference:
             self.close()
             raise
 
+    def _trace(self, stage: str, **fields: object) -> None:
+        if len(self.timings) >= 10000:
+            self.timings_dropped += 1
+            return
+        self.timings.append(
+            {"stage": stage, "us": (time.monotonic_ns() - self.started_ns) // 1000, **fields}
+        )
+
+    def timing_snapshot(self) -> dict[str, object]:
+        with self.condition:
+            return {
+                "records": list(self.timings),
+                "dropped": self.timings_dropped,
+                "output_lines": self.output_lines,
+                "reader_terminal": self.error,
+                "process_returncode": self.process.poll(),
+            }
+
     def _read(self) -> None:
         if self.process.stdout is None:
             raise RuntimeError("native probe output pipe missing")
@@ -50,6 +73,16 @@ class NativeReference:
                 self.log.write(line)
                 self.log.flush()
                 with self.condition:
+                    self.output_lines += 1
+                    self._trace(
+                        "output",
+                        line=self.output_lines,
+                        id=value.get("id"),
+                        event=value.get("event"),
+                        probe_us=value.get("probe_us"),
+                        generation=value.get("generation"),
+                        label=value.get("label"),
+                    )
                     if "id" in value:
                         self.replies[cast(int, value["id"])] = value
                     else:
@@ -68,15 +101,26 @@ class NativeReference:
             command_id = self.next_id
             if self.process.stdin is None:
                 raise RuntimeError("native probe input pipe missing")
+            self._trace(
+                "command",
+                id=command_id,
+                op=value.get("op"),
+                label=value.get("label"),
+                packets=len(cast(list[object], value["packets"]))
+                if isinstance(value.get("packets"), list)
+                else None,
+            )
             self.process.stdin.write(json.dumps({**value, "id": command_id}) + "\n")
             self.process.stdin.flush()
             if not self.condition.wait_for(
                 lambda: command_id in self.replies or bool(self.error), timeout=10
             ):
+                self._trace("timeout", id=command_id)
                 raise RuntimeError("native probe command timed out")
             if command_id not in self.replies:
                 raise RuntimeError(self.error)
             reply = self.replies.pop(command_id)
+            self._trace("reply", id=command_id, failed="error" in reply)
             if "error" in reply:
                 raise RuntimeError(str(reply["error"]))
             return reply["result"]
