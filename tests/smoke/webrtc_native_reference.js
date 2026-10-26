@@ -26,7 +26,10 @@ async function pump() {
       const response = await fetch("/native/events");
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "native events failed");
-      for (const event of body.result) current?.dispatch(event);
+      for (const event of body.result) {
+        if (window.referenceError) break;
+        current?.dispatch(event);
+      }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   } catch (error) {
@@ -61,7 +64,7 @@ export class Engine {
     }
   }
   flushCandidates() {
-    if (this.signaling || !this.paired) return;
+    if (window.referenceError || this.signaling || !this.paired) return;
     for (const event of this.candidates.splice(0))
       this.callbacks.onLocalCandidate(
         "godot",
@@ -116,7 +119,7 @@ export class Engine {
     return this.paired;
   }
   dispatch(event) {
-    if (!this.paired) return;
+    if (window.referenceError || !this.paired) return;
     if (this.generation === null) {
       this.pending.push(event);
       return;
@@ -137,6 +140,17 @@ export class Engine {
           properties: event.properties,
           send: (text) =>
             void command({ op: "send", label: event.label, text }),
+          sendBinary: (data) => {
+            if (!(data instanceof Uint8Array))
+              throw new Error("native binary send needs Uint8Array");
+            void command({
+              op: "send_binary",
+              label: event.label,
+              data_base64: btoa(
+                Array.from(data, (byte) => String.fromCharCode(byte)).join(""),
+              ),
+            });
+          },
           close: () => void command({ op: "close", label: event.label }),
         });
         this.callbacks.onChannelOpen(...args, event.label);
@@ -148,6 +162,17 @@ export class Engine {
         break;
       case "message":
         this.callbacks.onChannelMessage(...args, event.label, event.text);
+        break;
+      case "binary":
+        if (typeof this.callbacks.onChannelBinaryMessage !== "function")
+          throw new Error("native binary callback is missing");
+        this.callbacks.onChannelBinaryMessage(
+          ...args,
+          event.label,
+          Uint8Array.from(atob(event.data_base64), (byte) =>
+            byte.charCodeAt(0),
+          ),
+        );
         break;
       default:
         throw new Error("unknown native event");

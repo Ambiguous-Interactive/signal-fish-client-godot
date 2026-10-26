@@ -1,4 +1,6 @@
 # gdlint: disable=max-returns
+var _reference_binary_sent: Array[int] = [0, 0, 0]
+var _reference_binary_sequences: Array = [[], [], []]
 var _reference_ordered_received: Array[int] = []
 var _reference_ordered_sent := 0
 var _reference_heartbeats := 0
@@ -25,6 +27,8 @@ func _run_phase(phase: int) -> bool:
 	if phase > 2:
 		return true
 	_phase = phase
+	_reference_binary_sent.assign([0, 0, 0])
+	_reference_binary_sequences = [[], [], []]
 	_reference_ordered_received.clear()
 	_reference_ordered_sent = 0
 	_reference_heartbeats = 0
@@ -228,6 +232,7 @@ func _reference_gameplay_complete() -> bool:
 			not _reference_options.get("native_profile", false)
 			or not _reference_ordered_received.is_empty()
 		)
+		and _reference_binary_complete()
 		and _reference_acknowledged == 128
 		and (
 			_reference_positions_received.size() > 0
@@ -280,6 +285,12 @@ func _reference_packets() -> void:
 				return
 			_reference_snapshot_sent += 1
 			if (
+				_reference_options.get("binary_traffic", false)
+				and _reference_snapshot_sent % 16 == 0
+			):
+				if not _reference_send_binary(peer):
+					return
+			if (
 				_reference_options.get("native_profile", false)
 				and _reference_snapshot_sent % 16 == 0
 			):
@@ -324,6 +335,12 @@ func _reference_packets() -> void:
 		)
 		if packet == null:
 			break
+		if _reference_options.get("binary_traffic", false):
+			var binary_result := _reference_accept_binary(packet)
+			if binary_result < 0:
+				return
+			if binary_result > 0:
+				continue
 		var text := packet.data.get_string_from_utf8()
 		if text.begins_with("ordered:"):
 			var fields := text.split(":")
@@ -510,6 +527,81 @@ func _reference_accept_credit(count: int) -> void:
 		_reference_credit_updated = Time.get_ticks_msec()
 
 
+func _reference_binary_packet(sender: String, mode: int, sequence: int) -> PackedByteArray:
+	var payloads: Dictionary = _reference_options["binary_payloads"][str(_phase)]
+	var modes: Array = payloads[sender]
+	var packets: Array = modes[mode]
+	var data: Array = packets[sequence]
+	return PackedByteArray(data)
+
+
+func _reference_binary_complete() -> bool:
+	if not _reference_options.get("binary_traffic", false):
+		return true
+	var ordered: Array = _reference_binary_sequences[1]
+	var unordered: Array = _reference_binary_sequences[2]
+	return (
+		_reference_binary_sent == [8, 8, 8]
+		and _reference_binary_sequences[0] == [0, 1, 2, 3, 4, 5, 6, 7]
+		and not ordered.is_empty()
+		and ordered[-1] > 0
+		and not unordered.is_empty()
+		and (unordered.size() > 1 or unordered[0] > 0)
+	)
+
+
+func _reference_send_binary(peer: Object) -> bool:
+	var modes := [
+		MultiplayerPeer.TRANSFER_MODE_RELIABLE,
+		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED,
+		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE,
+	]
+	for index: int in 3:
+		var data := _reference_binary_packet("godot", index, _reference_binary_sent[index])
+		peer.set("transfer_mode", modes[index])
+		if peer.call("put_packet", data) != OK:
+			_fail(
+				(
+					"reference binary send failed: mode=%d sequence=%d"
+					% [index, _reference_binary_sent[index]]
+				)
+			)
+			return false
+		_reference_binary_sent[index] += 1
+	peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_RELIABLE)
+	return true
+
+
+func _reference_accept_binary(packet: RefCounted) -> int:
+	var modes := [
+		MultiplayerPeer.TRANSFER_MODE_RELIABLE,
+		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED,
+		MultiplayerPeer.TRANSFER_MODE_UNRELIABLE,
+	]
+	var index := modes.find(packet.get("transfer_mode"))
+	if index < 0:
+		_fail("reference binary transfer mode differs")
+		return -1
+	var data: PackedByteArray = packet.get("data")
+	for sequence: int in 8:
+		if data != _reference_binary_packet("reference", index, sequence):
+			continue
+		var received: Array = _reference_binary_sequences[index]
+		if (
+			packet.get("error") != OK
+			or packet.get("peer_id") != MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+			or packet.get("channel") != 0
+			or received.has(sequence)
+			or (index != 2 and not received.is_empty() and sequence <= received[-1])
+			or (index == 0 and sequence != received.size())
+		):
+			_fail("reference binary bytes, order or metadata differ")
+			return -1
+		received.append(sequence)
+		return 1
+	return 0
+
+
 func _reference_position(sender: String, sequence: int) -> PackedByteArray:
 	return (
 		("position:%d:%s:%d:" % [_phase, sender, sequence] + "0123456789abcdef".repeat(4))
@@ -520,6 +612,9 @@ func _reference_position(sender: String, sequence: int) -> PackedByteArray:
 func _reference_evidence() -> Dictionary:
 	return {
 		"native_profile": _reference_options.get("native_profile", false),
+		"binary_traffic": _reference_options.get("binary_traffic", false),
+		"binary_sent": _reference_binary_sent.duplicate(),
+		"binary_sequences": _reference_binary_sequences.duplicate(true),
 		"ordered_sent": _reference_ordered_sent,
 		"ordered_sequences": _reference_ordered_received.duplicate(),
 		"position_sequences": _reference_positions_received.keys(),

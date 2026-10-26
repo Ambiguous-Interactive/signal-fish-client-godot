@@ -12,6 +12,7 @@ window.runReference = async function (
   closingChannel = "reliable",
   closingSeat = "reference",
   queuedRetirement = false,
+  binaryPayloads = null,
 ) {
   const seat = 1 - godotSeat;
   const post = async (message) => {
@@ -37,6 +38,10 @@ window.runReference = async function (
       let sent = false;
       let snapshotSent = 0;
       let orderedSent = 0;
+      const binarySent = [0, 0, 0];
+      const binarySequences = [[], [], []];
+      const binaryLabels = ["reliable", "ordered", "unreliable"];
+      const binaryPackets = binaryPayloads?.[phase];
       const orderedSequences = [];
       let snapshotReceived = 0;
       let snapshotAck = 0;
@@ -87,6 +92,7 @@ window.runReference = async function (
       let started = performance.now();
       let nextProgress = 0;
       const consume = (label, text) => {
+        if (window.referenceError) return false;
         if (text.startsWith("ordered:")) {
           const sequence = Number(text.split(":")[3]);
           if (
@@ -98,7 +104,7 @@ window.runReference = async function (
             (orderedSequences.length && sequence <= orderedSequences.at(-1)) ||
             text !== `ordered:${phase}:godot:${sequence}`
           ) {
-            window.referenceError =
+            window.referenceError ??=
               "reference ordered bytes or metadata differ";
             return false;
           }
@@ -112,7 +118,7 @@ window.runReference = async function (
             heartbeatReceived >= heartbeatSent ||
             text !== heartbeat(heartbeatReceived)
           ) {
-            window.referenceError =
+            window.referenceError ??=
               "reference heartbeat bytes or metadata differ";
             return false;
           }
@@ -130,7 +136,7 @@ window.runReference = async function (
             count > snapshotSent ||
             count % 8 !== 0
           ) {
-            window.referenceError = "reference consumption credit differs";
+            window.referenceError ??= "reference consumption credit differs";
             return false;
           }
           acceptCredit(count);
@@ -147,7 +153,7 @@ window.runReference = async function (
             positionsReceived.has(sequence) ||
             text !== position("godot", sequence)
           ) {
-            window.referenceError =
+            window.referenceError ??=
               "reference position bytes or metadata differ";
             return false;
           }
@@ -161,7 +167,7 @@ window.runReference = async function (
             sequence >= (partial ? 4 : 128) ||
             text !== chunk("godot", sequence, partial)
           ) {
-            window.referenceError = `reference snapshot bytes or sequence differ: phase=${phase} label=${label} expected_sequence=${sequence} received_sequence=${text.split(":")[3]} expected_bytes=${chunk("godot", sequence, partial).length} received_bytes=${text.length}`;
+            window.referenceError ??= `reference snapshot bytes or sequence differ: phase=${phase} label=${label} expected_sequence=${sequence} received_sequence=${text.split(":")[3]} expected_bytes=${chunk("godot", sequence, partial).length} received_bytes=${text.length}`;
             return false;
           }
           if (partial) partialReceived++;
@@ -195,25 +201,65 @@ window.runReference = async function (
           text !== `godot:${phase}:${label}` ||
           received.includes(label)
         ) {
-          window.referenceError = "reference probe bytes or metadata differ";
+          window.referenceError ??= "reference probe bytes or metadata differ";
           return false;
         }
         received.push(label);
         return true;
       };
-      engine = new Engine(false, {
-        onLocalCandidate: (_peer, _generation, candidate) =>
-          outgoing.push({ payload: { IceCandidate: candidate } }),
-        onPcState: (_peer, _generation, state) => events.push(["state", state]),
+      const thisCallbacks = {
+        onLocalCandidate: (_peer, _generation, candidate) => {
+          if (!window.referenceError)
+            outgoing.push({ payload: { IceCandidate: candidate } });
+        },
+        onPcState: (_peer, _generation, state) => {
+          if (!window.referenceError) events.push(["state", state]);
+        },
         onChannelOpen: (_peer, _generation, label) => {
+          if (window.referenceError) return;
           events.push(["open", label]);
           engine.noteChannelOpen("godot", label);
         },
         onChannelClosed: (_peer, _generation, label, reason) => {
+          if (window.referenceError) return;
           events.push(["closed", label, reason]);
           if (!closedLabels.includes(label)) closedLabels.push(label);
         },
+        onChannelBinaryMessage: (peer, generation, label, data) => {
+          if (window.referenceError) return false;
+          if (binaryPackets) {
+            const mode = binaryLabels.indexOf(label);
+            const sequence = binaryPackets.godot[mode]?.findIndex(
+              (packet) =>
+                packet.length === data.length &&
+                packet.every((byte, index) => byte === data[index]),
+            );
+            if (sequence !== undefined && sequence >= 0) {
+              const received = binarySequences[mode];
+              if (
+                !received ||
+                received.includes(sequence) ||
+                (mode !== 2 &&
+                  received.length &&
+                  sequence <= received.at(-1)) ||
+                (mode === 0 && sequence !== received.length)
+              )
+                throw new Error("reference binary order or metadata differ");
+              received.push(sequence);
+              return;
+            }
+          }
+          const text = new TextDecoder("utf-8", { fatal: true }).decode(data);
+          if (
+            !/^(godot:|snapshot:|partial:|position:|ordered:|heartbeat:|credit:|retirement:|retired:)/.test(
+              text,
+            )
+          )
+            throw new Error("reference unexpected binary packet");
+          thisCallbacks.onChannelMessage(peer, generation, label, text);
+        },
         onChannelMessage: (_peer, _generation, label, text) => {
+          if (window.referenceError) return false;
           if (
             pauseStarted &&
             !receivePause.resumed &&
@@ -224,7 +270,7 @@ window.runReference = async function (
             ).length;
             const positions = queued.length - snapshots;
             if ((text.startsWith("snapshot:") ? snapshots : positions) >= 32) {
-              window.referenceError =
+              window.referenceError ??=
                 "reference paused receive queue exceeded its window";
               return false;
             }
@@ -237,7 +283,8 @@ window.runReference = async function (
           }
           return consume(label, text);
         },
-      });
+      };
+      engine = new Engine(false, thisCallbacks);
       const evidence = () => ({
         phase,
         slow_reference_receiver: slowReferenceReceiver,
@@ -260,6 +307,9 @@ window.runReference = async function (
         transfer_ms: transferMs,
         sent,
         native_profile: engine.nativeProfile === true,
+        binary_traffic: binaryPackets !== undefined,
+        binary_sent: binarySent.slice(),
+        binary_sequences: binarySequences.map((sequences) => sequences.slice()),
         ordered_sent: orderedSent,
         ordered_sequences: orderedSequences.slice(),
         position_sequences: [...positionsReceived],
@@ -280,6 +330,7 @@ window.runReference = async function (
         snapshot: engine.diagnosticSnapshot("godot"),
       });
       const sendSignal = async (message) => {
+        if (window.referenceError) return;
         if (service && message.payload) {
           service.send(message.payload);
           return;
@@ -299,6 +350,7 @@ window.runReference = async function (
         const messages = await response.json();
         if (service) messages.push(...service.drain());
         for (const message of messages) {
+          if (window.referenceError) return;
           if (message.marker === `ready-${phase}` && !paired) {
             paired = true;
             started = performance.now();
@@ -307,6 +359,7 @@ window.runReference = async function (
               service?.initiate ?? !godotOffer,
               service?.iceServers ?? [],
             );
+            if (window.referenceError) return;
             outgoing.push({ marker: `ready-${phase}` });
             if (offer) outgoing.push({ payload: { Offer: offer } });
           } else if (
@@ -361,12 +414,13 @@ window.runReference = async function (
               await engine.handleRemoteCandidate("godot", payload.IceCandidate);
           }
         }
-        while (outgoing.length)
+        while (outgoing.length && !window.referenceError)
           await sendSignal({ generation, ...outgoing.shift() });
       };
       window.referenceProgress = evidence;
       try {
         while (!retired && performance.now() - started < 14000) {
+          if (window.referenceError) throw new Error(window.referenceError);
           if (
             pauseStarted &&
             !receivePause.resumed &&
@@ -444,6 +498,17 @@ window.runReference = async function (
               batch++
             ) {
               reliable.send(chunk("reference", snapshotSent++));
+              if (binaryPackets && snapshotSent % 16 === 0) {
+                for (const [mode, label] of binaryLabels.entries()) {
+                  engine
+                    .channel("godot", label)
+                    .sendBinary(
+                      new Uint8Array(
+                        binaryPackets.reference[mode][binarySent[mode]++],
+                      ),
+                    );
+                }
+              }
               if (engine.nativeProfile && snapshotSent % 16 === 0)
                 engine
                   .channel("godot", "ordered")
@@ -518,7 +583,7 @@ window.runReference = async function (
     }
     window.referenceDone = true;
   } catch (error) {
-    window.referenceError = String(error);
+    window.referenceError ??= String(error);
     console.error(window.referenceError);
   } finally {
     try {

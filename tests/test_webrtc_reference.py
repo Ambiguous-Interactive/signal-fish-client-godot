@@ -23,6 +23,93 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_binary_evidence_requires_exact_reliable_and_distinct_mode_receipts(self) -> None:
+        phase = {
+            "binary_traffic": True,
+            "binary_sent": [8, 8, 8],
+            "binary_sequences": [list(range(8)), [0, 3, 7], [7, 2]],
+        }
+        self.assertTrue(reference.binary_phase_passed(phase, True))
+        self.assertFalse(reference.binary_phase_passed(phase, False))
+        for index, sequences in (
+            (0, list(range(1, 8))),
+            (0, [0, 1]),
+            (1, []),
+            (1, [0]),
+            (2, [0]),
+            (1, [2, 1]),
+            (2, [1, 1]),
+            (2, [True]),
+            (2, [0, 1.0]),
+            (2, [8]),
+        ):
+            with self.subTest(index=index, sequences=sequences):
+                broken = copy.deepcopy(phase)
+                cast(list[list[object]], broken["binary_sequences"])[index] = cast(
+                    list[object], sequences
+                )
+                self.assertFalse(reference.binary_phase_passed(broken, True))
+        for counts in (
+            [],
+            [8, 8],
+            [8, 8, 8, 8],
+            [True, 8, 8],
+            [8, True, 8],
+            [8, 8, True],
+            [8.0, 8, 8],
+            [8, 8.0, 8],
+            [8, 8, 8.0],
+            [8, 7, 8],
+            [8, 8, 9],
+        ):
+            with self.subTest(sent=counts):
+                self.assertFalse(
+                    reference.binary_phase_passed({**phase, "binary_sent": counts}, True)
+                )
+        receipt_cases: tuple[list[list[int]], ...] = (
+            [list(range(8)), [0], [0]],
+            [list(range(8)), [], []],
+            [[], [], []],
+        )
+        for receipts in receipt_cases:
+            with self.subTest(receipts=receipts):
+                self.assertFalse(
+                    reference.binary_phase_passed({**phase, "binary_sequences": receipts}, True)
+                )
+        self.assertTrue(
+            reference.binary_phase_passed(
+                {**phase, "binary_sequences": [list(range(8)), [7], [3]]}, True
+            )
+        )
+        for field in phase:
+            broken = copy.deepcopy(phase)
+            del broken[field]
+            self.assertFalse(reference.binary_phase_passed(broken, True))
+        self.assertFalse(reference.binary_phase_passed({}, True))
+        self.assertTrue(reference.binary_phase_passed({}, False))
+
+    def test_binary_vectors_keep_wire_bytes_and_mode_generation_identity(self) -> None:
+        payloads = reference.binary_payloads()
+        self.assertEqual(set(payloads), {"1", "2"})
+        nonempty: list[bytes] = []
+        for phase in payloads.values():
+            for modes in phase.values():
+                self.assertEqual(len(modes), 3)
+                for packets in modes:
+                    self.assertEqual(len(packets), 8)
+                    self.assertTrue(packets[0])
+                    self.assertIn(0, packets[2])
+                    self.assertEqual(packets[3][-256:], list(range(256)))
+                    self.assertEqual(packets[4][-4:], [255, 254, 192, 128])
+                    for data in packets[4:]:
+                        with self.assertRaises(UnicodeDecodeError):
+                            bytes(data).decode("utf-8")
+                    nonempty.extend(bytes(data) for data in packets[1:])
+        self.assertEqual(len(nonempty), len(set(nonempty)))
+        for phase in reference.binary_payloads(empty=True).values():
+            for modes in phase.values():
+                self.assertTrue(all(packets[0] == [] for packets in modes))
+
     def test_native_profile_checks_finite_properties_and_fresh_generation(self) -> None:
         channels = {
             label: {

@@ -106,6 +106,58 @@ def phase_evidence(output: str) -> list[object]:
     return phases
 
 
+def binary_payloads(*, empty: bool = False) -> dict[str, dict[str, list[list[list[int]]]]]:
+    result: dict[str, dict[str, list[list[list[int]]]]] = {}
+    for phase in (1, 2):
+        result[str(phase)] = {}
+        for sender in ("godot", "reference"):
+            modes = []
+            for label in ("reliable", "ordered", "unreliable"):
+                prefix = f"binary:{phase}:{sender}:{label}:".encode()
+                packets = [
+                    b"" if empty else prefix + b"empty-body",
+                    prefix + b"utf8",
+                    prefix + b"\x00",
+                    prefix + bytes(range(256)),
+                    prefix + b"\xff\xfe\xc0\x80",
+                    prefix + b"\xf0\x28\x8c\x28",
+                    prefix + bytes(range(256)) * 4,
+                    prefix + b"tail\x00\xff",
+                ]
+                modes.append([list(packet) for packet in packets])
+            result[str(phase)][sender] = modes
+    return result
+
+
+def binary_phase_passed(phase: dict[str, object], requested: bool) -> bool:
+    if phase.get("binary_traffic", False) is not requested:
+        return False
+    if not requested:
+        return True
+    sent = phase.get("binary_sent")
+    received = phase.get("binary_sequences")
+    if (
+        not isinstance(sent, list)
+        or len(sent) != 3
+        or any(type(count) is not int or count != 8 for count in sent)
+        or not isinstance(received, list)
+        or len(received) != 3
+    ):
+        return False
+    for mode, sequences in enumerate(received):
+        if (
+            not isinstance(sequences, list)
+            or not sequences
+            or not any(type(seq) is int and seq > 0 for seq in sequences)
+            or any(type(seq) is not int or not 0 <= seq < 8 for seq in sequences)
+            or len(sequences) != len(set(sequences))
+            or (mode != 2 and sequences != sorted(sequences))
+            or (mode == 0 and sequences != list(range(8)))
+        ):
+            return False
+    return True
+
+
 def gameplay_phase_passed(
     phase: dict[str, object],
     *,
@@ -563,6 +615,8 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
                 "queued_retirement": getattr(args, "queued_retirement", False),
                 "service_app_id": getattr(args, "service_app_id", "godot-reference"),
                 "native_profile": bool(getattr(args, "native_reference_probe", None)),
+                "binary_traffic": getattr(args, "binary_traffic", False),
+                "binary_payloads": binary_payloads(empty=getattr(args, "empty_binary", False)),
                 "godot_offer": args.godot_offer,
                 "safe_receive": args.safe_receive,
                 "mixed_traffic": args.mixed_traffic,
@@ -702,6 +756,11 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "godot": args.godot,
         "reference_revision": args.reference_revision,
         "reference_backend": "native" if probe else "browser",
+        "binary_traffic": getattr(args, "binary_traffic", False),
+        "empty_binary": getattr(args, "empty_binary", False),
+        "binary_payloads": binary_payloads(empty=getattr(args, "empty_binary", False))
+        if getattr(args, "binary_traffic", False)
+        else {},
     }
     try:
         with (directory / "godot.log").open("w") as log, sync_playwright() as playwright:
@@ -755,7 +814,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         ],
                     )
                 reference.evaluate(
-                    "([seat, offer, mixed, credit, slow, channel, closer, queued]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued); }",
+                    "([seat, offer, mixed, credit, slow, channel, closer, queued, binary]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued, binary); }",
                     [
                         1 if web else 0,
                         args.godot_offer,
@@ -765,6 +824,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         getattr(args, "closing_channel", "reliable"),
                         getattr(args, "closing_seat", "reference"),
                         getattr(args, "queued_retirement", False),
+                        binary_payloads(empty=getattr(args, "empty_binary", False))
+                        if getattr(args, "binary_traffic", False)
+                        else None,
                     ],
                 )
                 hold_proof: dict[str, object] = {}
@@ -862,6 +924,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             credit_transport=args.credit_transport,
                             native_profile=backend is not None,
                         )
+                        and binary_phase_passed(godot, getattr(args, "binary_traffic", False))
+                        and binary_phase_passed(ref, getattr(args, "binary_traffic", False))
                         and heartbeat_phase_passed(godot, ref, args.mixed_traffic)
                         and retirement_passed(
                             godot,
@@ -978,6 +1042,16 @@ def main() -> None:
         default="both",
         help="Select the offer role to assess",
     )
+    parser.add_argument(
+        "--binary-traffic",
+        action="store_true",
+        help="Check exact opaque native-profile packets in all three modes",
+    )
+    parser.add_argument(
+        "--empty-binary",
+        action="store_true",
+        help="Include zero-byte wire packets in binary qualification",
+    )
     parser.add_argument("--chromium")
     parser.add_argument(
         "--safe-receive", action="store_true", help="Read through the RPC-safe peer"
@@ -1057,6 +1131,10 @@ def main() -> None:
         and args.closing_channel == "ordered"
     ):
         parser.error("the reference Engine has no ordered channel; use --closing-seat godot")
+    if args.empty_binary and not args.binary_traffic:
+        parser.error("--empty-binary requires --binary-traffic")
+    if args.binary_traffic and not args.native_reference_probe:
+        parser.error("--binary-traffic requires --native-reference-probe")
     if args.native_reference_probe and not args.mixed_traffic:
         parser.error("--native-reference-probe requires --mixed-traffic")
     directory = args.output or Path(tempfile.mkdtemp(prefix="sf-reference-assessment-"))
