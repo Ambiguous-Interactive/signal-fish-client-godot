@@ -20,6 +20,7 @@ class NativeReference:
         self.timings_dropped = 0
         self.output_lines = 0
         self.error = ""
+        self.receive_failure = ""
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.stderr = (directory / "native-reference.stderr").open("w")
         try:
@@ -62,6 +63,7 @@ class NativeReference:
                 "output_lines": self.output_lines,
                 "reader_terminal": self.error,
                 "process_returncode": self.process.poll(),
+                "receive_failure": self.receive_failure,
             }
 
     def _read(self) -> None:
@@ -74,6 +76,11 @@ class NativeReference:
                 self.log.flush()
                 with self.condition:
                     self.output_lines += 1
+                    if value.get("event") == "receive_rejected":
+                        self.receive_failure = self.receive_failure or (
+                            f"native receive rejected: generation={value.get('generation')} "
+                            f"channel={value.get('label')}"
+                        )
                     self._trace(
                         "output",
                         line=self.output_lines,

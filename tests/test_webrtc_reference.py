@@ -1327,6 +1327,30 @@ console.log("cleanup settled");
             finally:
                 bridge.close()
 
+    def test_native_rejection_survives_unconsumed_events_and_shutdown(self) -> None:
+        import sys
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            probe = directory / "probe"
+            probe.write_text(
+                "#!"
+                + sys.executable
+                + "\nimport sys,json\nfor line in sys.stdin:\n v=json.loads(line)\n print(json.dumps({'event':'receive_rejected','generation':2,'label':'unreliable'}),flush=True)\n print(json.dumps({'event':'receive_rejected','generation':3,'label':'ordered'}),flush=True)\n print(json.dumps({'id':v['id'],**({'result':True} if v['op']=='remove' else {'error':'teardown failure'})}),flush=True)\n"
+            )
+            probe.chmod(0o700)
+            bridge = reference.native_reference.NativeReference(probe, directory)
+            try:
+                self.assertTrue(bridge.command({"op": "remove"}))
+                with self.assertRaisesRegex(RuntimeError, "teardown failure"):
+                    bridge.command({"op": "snapshot"})
+            finally:
+                bridge.close()
+            self.assertEqual(
+                bridge.timing_snapshot()["receive_failure"],
+                "native receive rejected: generation=2 channel=unreliable",
+            )
+
     def test_native_log_open_failure_does_not_spawn_probe(self) -> None:
         stderr = Mock()
         with (
@@ -1400,18 +1424,32 @@ console.log("cleanup settled");
         playwright.chromium.launch.side_effect = RuntimeError("browser failed")
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / "assessment"
+            args.native_reference_probe = Path(temporary) / "probe.exe"
+            args.native_reference_probe.write_bytes(b"original probe")
+
+            def spawn_backend(probe: Path, _directory: Path) -> Mock:
+                self.assertEqual(probe, directory / "native-reference-probe.exe")
+                self.assertEqual(probe.read_bytes(), b"original probe")
+                args.native_reference_probe.write_bytes(b"replacement probe")
+                return backend
+
             with (
                 patch.object(reference, "prepare", return_value=Path(temporary)),
-                patch.object(reference.shutil, "copy2"),
                 patch.object(reference, "ThreadingHTTPServer", return_value=server),
                 patch.object(threading.Thread, "start"),
-                patch.object(reference.native_reference, "NativeReference", return_value=backend),
+                patch.object(
+                    reference.native_reference, "NativeReference", side_effect=spawn_backend
+                ),
                 patch.object(reference, "sync_playwright") as start_playwright,
             ):
                 start_playwright.return_value.__enter__.return_value = playwright
                 with self.assertRaisesRegex(RuntimeError, "Incomplete reference assessment"):
                     reference.assess(args, directory, web=False)
             report = json.loads((directory / "assessment.json").read_text())
+            self.assertEqual(
+                report["reference_engine_sha256"],
+                reference.hashlib.sha256(b"original probe").hexdigest(),
+            )
         self.assertEqual(report["driver_error"], "RuntimeError: browser failed")
         self.assertEqual(report["reference_backend"], "native")
         backend.close.assert_called_once()
