@@ -1,6 +1,7 @@
 import { Engine } from "/reference/engine.js";
 
 window.referenceError = null;
+window.referenceSettled = false;
 window.referenceResults = [];
 window.runReference = async function (
   godotSeat,
@@ -35,6 +36,8 @@ window.runReference = async function (
       let paired = false;
       let sent = false;
       let snapshotSent = 0;
+      let orderedSent = 0;
+      const orderedSequences = [];
       let snapshotReceived = 0;
       let snapshotAck = 0;
       let positionsSent = 0;
@@ -84,6 +87,24 @@ window.runReference = async function (
       let started = performance.now();
       let nextProgress = 0;
       const consume = (label, text) => {
+        if (text.startsWith("ordered:")) {
+          const sequence = Number(text.split(":")[3]);
+          if (
+            !engine.nativeProfile ||
+            label !== "ordered" ||
+            !Number.isInteger(sequence) ||
+            sequence < 0 ||
+            sequence >= 8 ||
+            (orderedSequences.length && sequence <= orderedSequences.at(-1)) ||
+            text !== `ordered:${phase}:godot:${sequence}`
+          ) {
+            window.referenceError =
+              "reference ordered bytes or metadata differ";
+            return false;
+          }
+          orderedSequences.push(sequence);
+          return true;
+        }
         if (text.startsWith("heartbeat:")) {
           if (
             !mixedTraffic ||
@@ -140,8 +161,7 @@ window.runReference = async function (
             sequence >= (partial ? 4 : 128) ||
             text !== chunk("godot", sequence, partial)
           ) {
-            window.referenceError =
-              "reference snapshot bytes or sequence differ";
+            window.referenceError = `reference snapshot bytes or sequence differ: phase=${phase} label=${label} expected_sequence=${sequence} received_sequence=${text.split(":")[3]} expected_bytes=${chunk("godot", sequence, partial).length} received_bytes=${text.length}`;
             return false;
           }
           if (partial) partialReceived++;
@@ -239,6 +259,10 @@ window.runReference = async function (
             : 0,
         transfer_ms: transferMs,
         sent,
+        native_profile: engine.nativeProfile === true,
+        ordered_sent: orderedSent,
+        ordered_sequences: orderedSequences.slice(),
+        position_sequences: [...positionsReceived],
         snapshot_sent: snapshotSent,
         snapshot_received: snapshotReceived,
         partial_sent: partialSent,
@@ -398,7 +422,9 @@ window.runReference = async function (
           if (
             !sent &&
             engine.channel("godot", "reliable")?.readyState === "open" &&
-            engine.channel("godot", "unreliable")?.readyState === "open"
+            engine.channel("godot", "unreliable")?.readyState === "open" &&
+            (!engine.nativeProfile ||
+              engine.channel("godot", "ordered")?.readyState === "open")
           ) {
             sent = true;
             transferStarted = performance.now();
@@ -418,6 +444,10 @@ window.runReference = async function (
               batch++
             ) {
               reliable.send(chunk("reference", snapshotSent++));
+              if (engine.nativeProfile && snapshotSent % 16 === 0)
+                engine
+                  .channel("godot", "ordered")
+                  .send(`ordered:${phase}:reference:${orderedSent++}`);
               peakOutstanding = Math.max(
                 peakOutstanding,
                 snapshotSent - snapshotAck,
@@ -480,7 +510,7 @@ window.runReference = async function (
         "WEBRTC_REFERENCE_PHASE " +
           JSON.stringify(window.referenceResults.at(-1)),
       );
-      engine.removePeer("godot");
+      await engine.removePeer("godot");
       if (engine.isPaired("godot"))
         throw new Error("reference teardown retained peer");
       if (service) await service.leave();
@@ -491,7 +521,14 @@ window.runReference = async function (
     window.referenceError = String(error);
     console.error(window.referenceError);
   } finally {
-    engine?.removePeer("godot");
-    window.referenceService?.close();
+    try {
+      await engine?.removePeer("godot");
+      window.referenceService?.close();
+    } catch (error) {
+      window.referenceCleanupError = String(error);
+      window.referenceError ??= window.referenceCleanupError;
+    } finally {
+      window.referenceSettled = true;
+    }
   }
 };

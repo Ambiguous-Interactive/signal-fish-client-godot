@@ -26,6 +26,13 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError("Could not load interoperability driver")
 interop = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(interop)
+NATIVE_SPEC = importlib.util.spec_from_file_location(
+    "webrtc_native_reference", ROOT / "scripts/webrtc_native_reference.py"
+)
+if NATIVE_SPEC is None or NATIVE_SPEC.loader is None:
+    raise RuntimeError("Could not load native reference bridge")
+native_reference = importlib.util.module_from_spec(NATIVE_SPEC)
+NATIVE_SPEC.loader.exec_module(native_reference)
 
 
 class CreditDelayRelay(interop.RelayHandler):  # type: ignore[name-defined,misc]
@@ -105,10 +112,16 @@ def gameplay_phase_passed(
     mixed_traffic: bool = False,
     credit_transport: str = "http",
     slow_receiver: bool = False,
+    native_profile: bool = False,
 ) -> bool:
     return (
         phase.get("sent") is True
-        and phase.get("received") in (["reliable", "unreliable"], ["unreliable", "reliable"])
+        and (
+            phase.get("received")
+            in (["reliable"], ["reliable", "unreliable"], ["unreliable", "reliable"])
+            if native_profile
+            else phase.get("received") in (["reliable", "unreliable"], ["unreliable", "reliable"])
+        )
         and phase.get("snapshot_sent") == 128
         and phase.get("snapshot_received") == 128
         and phase.get("partial_sent") == 4
@@ -119,10 +132,103 @@ def gameplay_phase_passed(
         and (not slow_receiver or slow_receiver_passed(phase.get("receive_pause"), mixed_traffic))
         and phase.get("snapshot_acknowledged") == 128
         and phase.get("positions_sent") == (32 if mixed_traffic else 0)
-        and phase.get("positions_received") == (32 if mixed_traffic else 0)
+        and (
+            native_delivery_passed(phase, mixed_traffic)
+            if native_profile
+            else phase.get("positions_received") == (32 if mixed_traffic else 0)
+        )
         and type(phase.get("peak_outstanding")) is int
         and 0 < cast(int, phase["peak_outstanding"]) <= 32
     )
+
+
+def native_delivery_passed(phase: dict[str, object], mixed: bool) -> bool:
+    ordered = phase.get("ordered_sequences")
+    positions = phase.get("position_sequences")
+    if not isinstance(ordered, list) or not isinstance(positions, list):
+        return False
+    return (
+        phase.get("native_profile") is True
+        and phase.get("ordered_sent") == 8
+        and 0 < len(ordered) <= 8
+        and all(type(seq) is int and 0 <= seq < 8 for seq in ordered)
+        and ordered == sorted(set(ordered))
+        and type(phase.get("positions_received")) is int
+        and len(positions) == phase.get("positions_received")
+        and all(type(seq) is int and 0 <= seq < 32 for seq in positions)
+        and len(set(positions)) == len(positions)
+        and (0 < len(positions) <= 32 if mixed else not positions)
+    )
+
+
+def native_channel_contracts_passed(phases: list[dict[str, object]]) -> bool:
+    if len(phases) != 2:
+        return False
+    generations = []
+    for phase in phases:
+        snapshot = phase.get("snapshot")
+        if not isinstance(snapshot, dict) or snapshot.get("backend") != "native":
+            return False
+        generation = snapshot.get("generation")
+        if type(generation) is not int or generation <= 0:
+            return False
+        generations.append(generation)
+        channels = snapshot.get("channels")
+        if not isinstance(channels, dict) or set(channels) != {"reliable", "ordered", "unreliable"}:
+            return False
+        internal_ids = []
+        for label in ("reliable", "ordered", "unreliable"):
+            properties = channels[label]
+            if (
+                not isinstance(properties, dict)
+                or not {"internal_id", "negotiated", "ordered", "lifetime", "retransmits"}.issubset(
+                    properties
+                )
+                or type(properties.get("internal_id")) is not int
+                or properties["internal_id"] < 0
+                or properties.get("negotiated") is not True
+                or properties.get("ordered") is not (label != "unreliable")
+                or (
+                    properties.get("lifetime") is not None
+                    if label == "reliable"
+                    else type(properties.get("lifetime")) is not int or properties["lifetime"] != 1
+                )
+                or properties.get("retransmits") is not None
+            ):
+                return False
+            internal_ids.append(properties["internal_id"])
+        if len(set(internal_ids)) != 3:
+            return False
+    return generations[0] != generations[1]
+
+
+def godot_native_contracts_passed(phases: list[dict[str, object]], web: bool) -> bool:
+    if len(phases) != 2:
+        return False
+    unset = 0 if web else -1
+    for phase in phases:
+        channels = phase.get("channels")
+        if not isinstance(channels, list) or len(channels) != 3:
+            return False
+        for index, label in enumerate(("reliable", "ordered", "unreliable"), 1):
+            channel = channels[index - 1]
+            if not isinstance(channel, dict):
+                return False
+            if (
+                type(channel.get("id")) is not int
+                or channel["id"] != index
+                or channel.get("label") != label
+                or channel.get("negotiated") is not True
+                or channel.get("ordered") is not (label != "unreliable")
+                or type(channel.get("lifetime")) is not int
+                or channel["lifetime"] not in ((unset,) if label == "reliable" else (unset, 1))
+                or type(channel.get("retransmits")) is not int
+                or channel["retransmits"] != unset
+                or type(channel.get("state")) is not int
+                or channel.get("state") != 1
+            ):
+                return False
+    return True
 
 
 def retirement_passed(
@@ -131,6 +237,7 @@ def retirement_passed(
     channel: str,
     seat: str,
     safe_receive: bool = True,
+    native_profile: bool = False,
 ) -> bool:
     proof = godot.get("retirement")
     other = ref.get("retirement")
@@ -145,7 +252,15 @@ def retirement_passed(
         and proof.get("discarded") is True
         and proof.get("peer_removed") is True
         and isinstance(other.get("closed_labels"), list)
-        and any(label in ("reliable", "unreliable") for label in other["closed_labels"])
+        and any(
+            label
+            in (
+                ("reliable", "ordered", "unreliable")
+                if native_profile
+                else ("reliable", "unreliable")
+            )
+            for label in other["closed_labels"]
+        )
         and (seat == "godot" or channel in other["closed_labels"])
         and (seat != "godot" or proof.get("channel_closed") is True)
     )
@@ -447,6 +562,7 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
                 "service_rejoin": getattr(args, "service_rejoin", False),
                 "queued_retirement": getattr(args, "queued_retirement", False),
                 "service_app_id": getattr(args, "service_app_id", "godot-reference"),
+                "native_profile": bool(getattr(args, "native_reference_probe", None)),
                 "godot_offer": args.godot_offer,
                 "safe_receive": args.safe_receive,
                 "mixed_traffic": args.mixed_traffic,
@@ -478,7 +594,15 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     project = prepare(args, directory, web=web)
     assets = directory / "assets"
     assets.mkdir()
-    shutil.copytree(args.reference_assets, assets / "reference")
+    probe = getattr(args, "native_reference_probe", None)
+    backend = None
+    if probe:
+        (assets / "reference").mkdir()
+        shutil.copy2(
+            ROOT / "tests/smoke/webrtc_native_reference.js", assets / "reference/engine.js"
+        )
+    else:
+        shutil.copytree(args.reference_assets, assets / "reference")
     shutil.copy2(ROOT / "tests/smoke/webrtc_reference.js", assets / "assess.js")
     shutil.copy2(ROOT / "tests/smoke/webrtc_reference_service.js", assets / "service.js")
     (assets / "index.html").write_text(
@@ -501,7 +625,35 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
 
         rejected_http_signals = 0
 
+        def native_reply(self, command: bool) -> None:
+            if backend is None:
+                raise RuntimeError("Native backend unavailable")
+            try:
+                result = (
+                    backend.command(
+                        json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    )
+                    if command
+                    else backend.drain()
+                )
+                self.reply(json.dumps({"result": result}).encode())
+            except Exception as exc:
+                body = json.dumps({"error": str(exc)}).encode()
+                self.send_response(500)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        def do_GET(self) -> None:
+            if backend and self.path == "/native/events":
+                self.native_reply(False)
+                return
+            super().do_GET()
+
         def do_POST(self) -> None:
+            if backend and self.path == "/native/command":
+                self.native_reply(True)
+                return
             if not getattr(args, "service_url", ""):
                 super().do_POST()
                 return
@@ -549,14 +701,18 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "closing_seat": getattr(args, "closing_seat", "reference"),
         "godot": args.godot,
         "reference_revision": args.reference_revision,
+        "reference_backend": "native" if probe else "browser",
     }
     try:
         with (directory / "godot.log").open("w") as log, sync_playwright() as playwright:
+            if probe:
+                backend = native_reference.NativeReference(probe, directory)
             browser = playwright.chromium.launch(
                 headless=True,
                 executable_path=args.chromium,
                 args=["--no-sandbox", "--enable-unsafe-swiftshader"],
             )
+            reference: Page | None = None
             try:
                 reference = browser.new_page()
                 watch_page(reference, reference_messages)
@@ -615,9 +771,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 report["signaling_hold_progress"] = hold_proof
                 hold_started = 0.0
                 deadline = time.monotonic() + 40
-                while not reference.evaluate(
-                    "window.referenceDone === true || window.referenceError !== null"
-                ):
+                while not reference.evaluate("window.referenceSettled === true"):
                     if time.monotonic() >= deadline:
                         raise TimeoutError(
                             "Reference completion observation timed out after 40 seconds"
@@ -636,10 +790,13 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             )
                     reference.wait_for_timeout(100)
                 result = reference.evaluate(
-                    "({phases:window.referenceResults, error:window.referenceError, done:window.referenceDone === true})"
+                    "({phases:window.referenceResults, error:window.referenceError, cleanup_error:window.referenceCleanupError ?? null, done:window.referenceDone === true})"
                 )
+                report["reference"] = result
                 driver_error = ""
                 if native:
+                    if result["error"]:
+                        native.terminate()
                     native.wait(timeout=10)
                     log.flush()
                     output = (directory / "godot.log").read_text()
@@ -662,6 +819,13 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 )
                 complete = (
                     service_passed
+                    and (
+                        not backend
+                        or (
+                            native_channel_contracts_passed(result["phases"])
+                            and godot_native_contracts_passed(phases, web)
+                        )
+                    )
                     and result["done"]
                     and not result["error"]
                     and [phase["phase"] for phase in phases] == [1, 2]
@@ -690,11 +854,13 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             mixed_traffic=args.mixed_traffic,
                             credit_transport=args.credit_transport,
                             slow_receiver=getattr(args, "slow_receiver", False),
+                            native_profile=backend is not None,
                         )
                         and gameplay_phase_passed(
                             ref,
                             mixed_traffic=args.mixed_traffic,
                             credit_transport=args.credit_transport,
+                            native_profile=backend is not None,
                         )
                         and heartbeat_phase_passed(godot, ref, args.mixed_traffic)
                         and retirement_passed(
@@ -703,6 +869,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             getattr(args, "closing_channel", "reliable"),
                             getattr(args, "closing_seat", "reference"),
                             args.safe_receive,
+                            native_profile=backend is not None,
                         )
                         and queued_retirement_passed(
                             godot, ref, getattr(args, "queued_retirement", False)
@@ -724,13 +891,20 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         "gameplay_passed": gameplay,
                         "browser": browser.version,
                         "reference_engine_sha256": hashlib.sha256(
-                            (args.reference_assets / "engine.js").read_bytes()
+                            (probe if probe else args.reference_assets / "engine.js").read_bytes()
                         ).hexdigest(),
                         "godot_phases": phases,
                         "reference": result,
                     }
                 )
             finally:
+                if backend and reference is not None:
+                    try:
+                        report["native_snapshots"] = reference.evaluate(
+                            "window.nativeReferenceSnapshots ?? []"
+                        )
+                    except Exception as exc:
+                        report["native_snapshot_error"] = str(exc)
                 report["browser_observations"] = {
                     name: observer.snapshot() for name, observer in observations.items()
                 }
@@ -749,6 +923,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         report["http_credit_delay_applied"] = Handler.credit_delayed.is_set()
         server.shutdown()
         server.server_close()
+        if backend:
+            backend.close()
         if "relay_observation" not in report:
             report["relay_observation"] = Handler.observation.snapshot()
         if web:
@@ -778,10 +954,13 @@ def main() -> None:
         "--service-rejoin", action="store_true", help="Rejoin the same running service room"
     )
     parser.add_argument("--native-extension", type=Path, required=True)
-    parser.add_argument(
+    sources = parser.add_mutually_exclusive_group(required=True)
+    sources.add_argument(
+        "--native-reference-probe", type=Path, help="Built native Engine qualification probe"
+    )
+    sources.add_argument(
         "--reference-assets",
         type=Path,
-        required=True,
         help="Directory containing engine.js and its imports",
     )
     parser.add_argument(
@@ -873,10 +1052,13 @@ def main() -> None:
         parser.error("--http-credit-delay-ms needs --credit-transport http")
     if (
         not args.retirement_matrix
+        and not args.native_reference_probe
         and args.closing_seat == "reference"
         and args.closing_channel == "ordered"
     ):
         parser.error("the reference Engine has no ordered channel; use --closing-seat godot")
+    if args.native_reference_probe and not args.mixed_traffic:
+        parser.error("--native-reference-probe requires --mixed-traffic")
     directory = args.output or Path(tempfile.mkdtemp(prefix="sf-reference-assessment-"))
     results = []
     runtimes = (False, True) if args.runtime == "all" else (args.runtime == "web",)
@@ -887,7 +1069,7 @@ def main() -> None:
             for seat in ("godot", "reference")
             for channel in (
                 ("reliable", "ordered", "unreliable")
-                if seat == "godot"
+                if seat == "godot" or args.native_reference_probe
                 else ("reliable", "unreliable")
             )
         ]

@@ -146,10 +146,64 @@ Use the same Godot channel layout at both ends. The server's
 [browser](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/182cb234c7aa601be3c2aad881948b3c5b853aaa/clients/browser/src/page/engine.ts)
 and
 [native](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/182cb234c7aa601be3c2aad881948b3c5b853aaa/clients/native/src/engine.rs)
-reference engines create two in-band channels, `reliable` and `unreliable`.
+default reference profiles create two in-band channels, `reliable` and `unreliable`.
 Their responders adopt remote channel announcements. Godot's negotiated
 channels do not send these announcements. Use server relay for these
-pairings. Full reference-client gameplay sessions remain unverified.
+pairings. The native Engine also has an opt-in Godot profile described below.
+Full reference-client gameplay sessions remain unverified.
+
+## Native reference Godot profile
+
+The server's [native Engine at c527219](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/c527219905d904cc6812c0d600e3c5e2ef7dd415/clients/native/src/engine.rs)
+adds `ChannelProfile::Godot`. Both offer roles create all three negotiated
+channels. Its ordered and unordered channels request a 1 ms packet lifetime.
+The default reference profile keeps its existing layout. Keep this profile
+experimental: two retained Godot 4.3 native-offer controls skipped the start of
+a recovered reliable stream. Native raw/admitted counters retained the gap,
+with zero discarded or rejected receipts. Track the unresolved cause in
+[server #1244](https://github.com/Ambiguous-Interactive/signal-fish-server/issues/1244).
+Use server relay for mixed-client gameplay until recovery is qualified.
+
+Build the opt-in probe in a checkout of that server revision:
+
+```sh
+mkdir -p /path/to/server/clients/native/examples
+cp tests/smoke/webrtc_native_reference.rs \
+  /path/to/server/clients/native/examples/godot_qualification.rs
+cargo build --manifest-path /path/to/server/clients/native/Cargo.toml \
+  --example godot_qualification
+python scripts/check-webrtc-reference.py \
+  --native-reference-probe /path/to/server/clients/native/target/debug/examples/godot_qualification \
+  --reference-revision c527219905d904cc6812c0d600e3c5e2ef7dd415 \
+  --native-extension /path/to/webrtc_native --safe-receive --mixed-traffic \
+  --retirement-matrix --require-gameplay --output /tmp/native-reference
+```
+
+The browser coordinates the probe through local HTTP commands. WebRTC packets
+pass through the native Rust Engine. This control bridge adds scheduling delay;
+use its results to assess correctness. `assessment.json` records the backend,
+source revision and probe binary hash. `native-reference.jsonl` retains commands'
+results and native callbacks. `native_snapshots` retains Engine receipt counters
+before removal, including failure cleanup. The driver waits for cleanup before
+closing its coordinator and keeps the original gameplay failure. Native
+`internal_id` values identify local handles;
+Godot's channel IDs identify the negotiated SCTP streams.
+
+Each generation sends 128 reliable snapshot chunks, four partial-transfer chunks,
+32 unordered positions and eight ordered probes per seat. Every receipt must
+match its bytes, sender, channel and transfer mode. Reliable snapshots require
+all receipts and credits. Lifetime-limited channels require positive receipts,
+unique position sequences and increasing ordered sequences. Reports retain the
+exact received sequences and offered counts, including gaps. Native properties
+must show negotiated channels, correct ordering, unset retransmission limits,
+a reliable lifetime of `null` and two 1 ms lifetimes. Recovery must create a
+new native generation. The retirement matrix closes each of the three channels
+from either seat after the safe receiver selects a packet.
+
+Stable Godot's lifetime remains unset. This makes delivery properties asymmetric
+between the native profile and those engines. A missing lifetime-limited packet
+alone does not prove expiry. Repaired-engine comparison, controlled loss or delay,
+full service sessions and remote-network qualification remain open.
 
 ## ICE candidate formats
 
