@@ -1,4 +1,6 @@
 # gdlint: disable=max-returns
+var _reference_startup_sent := 0
+var _reference_startup_received := 0
 var _reference_binary_sent: Array[int] = [0, 0, 0]
 var _reference_binary_sequences: Array = [[], [], []]
 var _reference_ordered_received: Array[int] = []
@@ -27,6 +29,8 @@ func _run_phase(phase: int) -> bool:
 	if phase > 2:
 		return true
 	_phase = phase
+	_reference_startup_sent = 0
+	_reference_startup_received = 0
 	_reference_binary_sent.assign([0, 0, 0])
 	_reference_binary_sequences = [[], [], []]
 	_reference_ordered_received.clear()
@@ -219,7 +223,11 @@ func _run_phase(phase: int) -> bool:
 
 func _reference_gameplay_complete() -> bool:
 	return (
-		_reference_snapshot_received == 128
+		(
+			not _reference_options.get("startup_burst", false)
+			or (_reference_startup_sent == 32 and _reference_startup_received == 32)
+		)
+		and _reference_snapshot_received == 128
 		and _reference_snapshot_sent == 128
 		and _reference_partial_sent == 4
 		and _reference_partial_received == 4
@@ -258,6 +266,17 @@ func _reference_packets() -> void:
 		_reference_transfer_started = Time.get_ticks_msec()
 		_reference_credit_updated = _reference_transfer_started
 		peer.call("set_target_peer", MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat]))
+		if _reference_options.get("startup_burst", false):
+			peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_RELIABLE)
+			for sequence: int in 32:
+				var data := (
+					("startup:%d:godot:%d:" % [_phase, sequence] + "0123456789abcdef".repeat(64))
+					. to_utf8_buffer()
+				)
+				if peer.call("put_packet", data) != OK:
+					_fail("reference startup send failed")
+					return
+				_reference_startup_sent += 1
 		for label: String in ["reliable", "unreliable"]:
 			peer.set(
 				"transfer_mode",
@@ -342,6 +361,32 @@ func _reference_packets() -> void:
 			if binary_result > 0:
 				continue
 		var text := packet.data.get_string_from_utf8()
+		if text.begins_with("startup:"):
+			var expected := (
+				(
+					"startup:%d:reference:%d:" % [_phase, _reference_startup_received]
+					+ "0123456789abcdef".repeat(64)
+				)
+				. to_utf8_buffer()
+			)
+			if (
+				not _reference_options.get("startup_burst", false)
+				or packet.error != OK
+				or packet.peer_id != MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+				or packet.channel != 0
+				or packet.transfer_mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+				or _reference_startup_received >= 32
+				or packet.data != expected
+			):
+				_fail(
+					(
+						"reference startup bytes or metadata differ: expected_sequence=%d"
+						% _reference_startup_received
+					)
+				)
+				return
+			_reference_startup_received += 1
+			continue
 		if text.begins_with("ordered:"):
 			var fields := text.split(":")
 			var sequence := int(fields[3]) if fields.size() == 4 else -1
@@ -611,6 +656,9 @@ func _reference_position(sender: String, sequence: int) -> PackedByteArray:
 
 func _reference_evidence() -> Dictionary:
 	return {
+		"startup_burst": _reference_options.get("startup_burst", false),
+		"startup_sent": _reference_startup_sent,
+		"startup_received": _reference_startup_received,
 		"native_profile": _reference_options.get("native_profile", false),
 		"binary_traffic": _reference_options.get("binary_traffic", false),
 		"binary_sent": _reference_binary_sent.duplicate(),

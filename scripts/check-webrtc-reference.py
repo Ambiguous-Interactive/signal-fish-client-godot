@@ -106,7 +106,9 @@ def phase_evidence(output: str) -> list[object]:
     return phases
 
 
-def binary_payloads(*, empty: bool = False) -> dict[str, dict[str, list[list[list[int]]]]]:
+def binary_payloads(
+    *, empty: bool = False, receive_empty: bool = False
+) -> dict[str, dict[str, list[list[list[int]]]]]:
     result: dict[str, dict[str, list[list[list[int]]]]] = {}
     for phase in (1, 2):
         result[str(phase)] = {}
@@ -115,7 +117,9 @@ def binary_payloads(*, empty: bool = False) -> dict[str, dict[str, list[list[lis
             for label in ("reliable", "ordered", "unreliable"):
                 prefix = f"binary:{phase}:{sender}:{label}:".encode()
                 packets = [
-                    b"" if empty else prefix + b"empty-body",
+                    b""
+                    if empty or (receive_empty and sender == "reference")
+                    else prefix + b"empty-body",
                     prefix + b"utf8",
                     prefix + b"\x00",
                     prefix + bytes(range(256)),
@@ -129,11 +133,27 @@ def binary_payloads(*, empty: bool = False) -> dict[str, dict[str, list[list[lis
     return result
 
 
-def binary_phase_passed(phase: dict[str, object], requested: bool) -> bool:
+def startup_phase_passed(godot: dict[str, object], ref: dict[str, object], requested: bool) -> bool:
+    return all(
+        phase.get("startup_burst", False) is requested
+        and (
+            not requested
+            or all(
+                type(phase.get(key)) is int and phase[key] == 32
+                for key in ("startup_sent", "startup_received")
+            )
+        )
+        for phase in (godot, ref)
+    )
+
+
+def binary_phase_passed(
+    phase: dict[str, object], requested: bool, *, require_empty: bool = False
+) -> bool:
     if phase.get("binary_traffic", False) is not requested:
         return False
     if not requested:
-        return True
+        return not require_empty
     sent = phase.get("binary_sent")
     received = phase.get("binary_sequences")
     if (
@@ -148,6 +168,7 @@ def binary_phase_passed(phase: dict[str, object], requested: bool) -> bool:
         if (
             not isinstance(sequences, list)
             or not sequences
+            or (require_empty and 0 not in sequences)
             or not any(type(seq) is int and seq > 0 for seq in sequences)
             or any(type(seq) is not int or not 0 <= seq < 8 for seq in sequences)
             or len(sequences) != len(set(sequences))
@@ -615,8 +636,13 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
                 "queued_retirement": getattr(args, "queued_retirement", False),
                 "service_app_id": getattr(args, "service_app_id", "godot-reference"),
                 "native_profile": bool(getattr(args, "native_reference_probe", None)),
+                "startup_burst": getattr(args, "startup_burst", False),
+                "receive_empty_binary": getattr(args, "receive_empty_binary", False),
                 "binary_traffic": getattr(args, "binary_traffic", False),
-                "binary_payloads": binary_payloads(empty=getattr(args, "empty_binary", False)),
+                "binary_payloads": binary_payloads(
+                    empty=getattr(args, "empty_binary", False),
+                    receive_empty=getattr(args, "receive_empty_binary", False),
+                ),
                 "godot_offer": args.godot_offer,
                 "safe_receive": args.safe_receive,
                 "mixed_traffic": args.mixed_traffic,
@@ -756,9 +782,14 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "godot": args.godot,
         "reference_revision": args.reference_revision,
         "reference_backend": "native" if probe else "browser",
+        "startup_burst": getattr(args, "startup_burst", False),
+        "receive_empty_binary": getattr(args, "receive_empty_binary", False),
         "binary_traffic": getattr(args, "binary_traffic", False),
         "empty_binary": getattr(args, "empty_binary", False),
-        "binary_payloads": binary_payloads(empty=getattr(args, "empty_binary", False))
+        "binary_payloads": binary_payloads(
+            empty=getattr(args, "empty_binary", False),
+            receive_empty=getattr(args, "receive_empty_binary", False),
+        )
         if getattr(args, "binary_traffic", False)
         else {},
     }
@@ -814,7 +845,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         ],
                     )
                 reference.evaluate(
-                    "([seat, offer, mixed, credit, slow, channel, closer, queued, binary]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued, binary); }",
+                    "([seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup); }",
                     [
                         1 if web else 0,
                         args.godot_offer,
@@ -824,9 +855,13 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         getattr(args, "closing_channel", "reliable"),
                         getattr(args, "closing_seat", "reference"),
                         getattr(args, "queued_retirement", False),
-                        binary_payloads(empty=getattr(args, "empty_binary", False))
+                        binary_payloads(
+                            empty=getattr(args, "empty_binary", False),
+                            receive_empty=getattr(args, "receive_empty_binary", False),
+                        )
                         if getattr(args, "binary_traffic", False)
                         else None,
+                        getattr(args, "startup_burst", False),
                     ],
                 )
                 hold_proof: dict[str, object] = {}
@@ -924,7 +959,12 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             credit_transport=args.credit_transport,
                             native_profile=backend is not None,
                         )
-                        and binary_phase_passed(godot, getattr(args, "binary_traffic", False))
+                        and startup_phase_passed(godot, ref, getattr(args, "startup_burst", False))
+                        and binary_phase_passed(
+                            godot,
+                            getattr(args, "binary_traffic", False),
+                            require_empty=getattr(args, "receive_empty_binary", False),
+                        )
                         and binary_phase_passed(ref, getattr(args, "binary_traffic", False))
                         and heartbeat_phase_passed(godot, ref, args.mixed_traffic)
                         and retirement_passed(
@@ -962,6 +1002,13 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     }
                 )
             finally:
+                if reference is not None:
+                    try:
+                        report["reference_terminal"] = reference.evaluate(
+                            "window.referenceTerminal ?? window.referenceProgress?.() ?? null"
+                        )
+                    except Exception as exc:
+                        report["reference_terminal_error"] = str(exc)
                 if backend and reference is not None:
                     try:
                         report["native_snapshots"] = reference.evaluate(
@@ -989,6 +1036,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         server.server_close()
         if backend:
             backend.close()
+            report["native_timing"] = backend.timing_snapshot()
         if "relay_observation" not in report:
             report["relay_observation"] = Handler.observation.snapshot()
         if web:
@@ -1051,6 +1099,16 @@ def main() -> None:
         "--empty-binary",
         action="store_true",
         help="Include zero-byte wire packets in binary qualification",
+    )
+    parser.add_argument(
+        "--startup-burst",
+        action="store_true",
+        help="Send 32 reliable packets at native channel open and Godot readiness",
+    )
+    parser.add_argument(
+        "--receive-empty-binary",
+        action="store_true",
+        help="Require zero-byte packets from native reference to Godot in all modes",
     )
     parser.add_argument("--chromium")
     parser.add_argument(
@@ -1131,6 +1189,10 @@ def main() -> None:
         and args.closing_channel == "ordered"
     ):
         parser.error("the reference Engine has no ordered channel; use --closing-seat godot")
+    if args.startup_burst and not args.native_reference_probe:
+        parser.error("--startup-burst requires --native-reference-probe")
+    if args.receive_empty_binary and (not args.binary_traffic or args.empty_binary):
+        parser.error("--receive-empty-binary requires --binary-traffic and excludes --empty-binary")
     if args.empty_binary and not args.binary_traffic:
         parser.error("--empty-binary requires --binary-traffic")
     if args.binary_traffic and not args.native_reference_probe:
