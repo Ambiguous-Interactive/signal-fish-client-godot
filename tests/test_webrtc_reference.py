@@ -1336,12 +1336,14 @@ console.log("cleanup settled");
             probe.write_text(
                 "#!"
                 + sys.executable
-                + "\nimport sys,json\nfor line in sys.stdin:\n v=json.loads(line)\n print(json.dumps({'event':'receive_rejected','generation':2,'label':'unreliable'}),flush=True)\n print(json.dumps({'id':v['id'],'result':True}),flush=True)\n"
+                + "\nimport sys,json\nfor line in sys.stdin:\n v=json.loads(line)\n print(json.dumps({'event':'receive_rejected','generation':2,'label':'unreliable'}),flush=True)\n print(json.dumps({'event':'receive_rejected','generation':3,'label':'ordered'}),flush=True)\n print(json.dumps({'id':v['id'],**({'result':True} if v['op']=='remove' else {'error':'teardown failure'})}),flush=True)\n"
             )
             probe.chmod(0o700)
             bridge = reference.native_reference.NativeReference(probe, directory)
             try:
                 self.assertTrue(bridge.command({"op": "remove"}))
+                with self.assertRaisesRegex(RuntimeError, "teardown failure"):
+                    bridge.command({"op": "snapshot"})
             finally:
                 bridge.close()
             self.assertEqual(

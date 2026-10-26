@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
                 let result: anyhow::Result<Value> = async {
                     if receive_failure.is_none() { receive_failure = rejected_receive(&engine, peer); }
                     if let Some(error) = &receive_failure {
-                        engine.remove_peer(peer).await?;
+                        let _ = engine.remove_peer(peer).await;
                         anyhow::bail!("{error}");
                     }
                     match value["op"].as_str().unwrap_or("") {
@@ -99,9 +99,11 @@ async fn main() -> anyhow::Result<()> {
             }
             Some(event) = events.recv() => {
                 if let EngineEvent::ChannelReceiveRejected {generation,label,..} = &event {
-                    receive_failure = Some(format!("native receive rejected: generation={generation} channel={label}"));
-                    engine.remove_peer(peer).await?;
-                    emit(json!({"event":"receive_rejected", "generation":generation, "label":label}));
+                    if receive_failure.is_none() {
+                        receive_failure = Some(format!("native receive rejected: generation={generation} channel={label}"));
+                        emit(json!({"event":"receive_rejected", "generation":generation, "label":label}));
+                    }
+                    let _ = engine.remove_peer(peer).await;
                     continue;
                 }
                 if !engine.is_current_event(&event) { continue; }
