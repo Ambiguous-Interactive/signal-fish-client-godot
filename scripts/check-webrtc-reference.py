@@ -273,7 +273,9 @@ def service_evidence(output: str) -> list[dict[str, object]]:
     ]
 
 
-def service_session_passed(godot: list[dict[str, object]], ref: list[dict[str, object]]) -> bool:
+def service_session_passed(
+    godot: list[dict[str, object]], ref: list[dict[str, object]], *, rejoin: bool = False
+) -> bool:
     if [phase.get("phase") for phase in godot] != [1, 2] or [
         phase.get("phase") for phase in ref
     ] != [1, 2]:
@@ -294,7 +296,8 @@ def service_session_passed(godot: list[dict[str, object]], ref: list[dict[str, o
         ):
             return False
         for phase in (local, remote):
-            if phase.get("left") is not True:
+            expected_left = not (rejoin and phase is godot[0])
+            if phase.get("left") is not expected_left:
                 return False
             for key in ("signals_sent", "signals_received"):
                 if type(phase.get(key)) is not int or cast(int, phase[key]) <= 0:
@@ -304,6 +307,26 @@ def service_session_passed(godot: list[dict[str, object]], ref: list[dict[str, o
             or remote["signals_sent"] != local["signals_received"]
         ):
             return False
+    if rejoin:
+        if any(
+            type(local.get("reference_epoch")) is not int
+            or type(remote.get("reference_epoch")) is not int
+            or cast(int, local["reference_epoch"]) <= 0
+            or local["reference_epoch"] != remote.get("reference_epoch")
+            for local, remote in zip(godot, ref, strict=True)
+        ):
+            return False
+        return (
+            godot[0]["room_id"] == godot[1]["room_id"]
+            and godot[0]["generation"] != godot[1]["generation"]
+            and godot[0]["player_id"] == godot[1]["player_id"]
+            and godot[0]["peer_id"] == godot[1]["peer_id"]
+            and godot[0].get("peer_departed") is True
+            and ref[0].get("departure_stage") == "selected_packet"
+            and godot[1].get("same_receiver") is True
+            and godot[1].get("receiver_retired") is True
+            and cast(int, godot[1]["reference_epoch"]) > cast(int, godot[0]["reference_epoch"])
+        )
     return godot[1].get("receiver_retired") is True and all(
         godot[0][key] != godot[1][key] for key in ("room_id", "generation")
     )
@@ -341,12 +364,12 @@ def service_source(source: str) -> str:
     )
     source = source.replace(
         "\t\tif phase == 1:\n\t\t\t_reference_receiver = receiver\n\t\telif receiver != _reference_receiver:",
-        "\t\tif phase > 1 and receiver == _reference_receiver:",
+        "\t\tif not _service_receiver_matches(phase, receiver):",
         1,
     )
     source = source.replace(
         '\t\t\t_fail("reference recovery replaced the safe receiver")\n\t\t\treturn false',
-        '\t\t\t_fail("service room reused the retired safe receiver")\n\t\t\treturn false\n\t\t_reference_receiver = receiver',
+        '\t\t\t_fail("service receiver identity differs")\n\t\t\treturn false\n\t\t_reference_receiver = receiver',
         1,
     )
     source = source.replace("PLAYERS[1 - _seat]", "_signal_players[1 - _seat]")
@@ -395,6 +418,7 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
         json.dumps(
             {
                 "service_url": getattr(args, "service_url", ""),
+                "service_rejoin": getattr(args, "service_rejoin", False),
                 "service_app_id": getattr(args, "service_app_id", "godot-reference"),
                 "godot_offer": args.godot_offer,
                 "safe_receive": args.safe_receive,
@@ -483,6 +507,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     observations: dict[str, Observation] = {}
     report: dict[str, object] = {
         "service_url": getattr(args, "service_url", ""),
+        "service_rejoin": getattr(args, "service_rejoin", False),
         "assessment_complete": False,
         "driver_error": "",
         "runtime": "web" if web else "native",
@@ -539,8 +564,12 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 report["reference_started_after_godot_ready"] = True
                 if getattr(args, "service_url", ""):
                     reference.evaluate(
-                        "([url, app]) => window.configureReferenceService(url, app)",
-                        [args.service_url, args.service_app_id],
+                        "([url, app, rejoin]) => window.configureReferenceService(url, app, rejoin)",
+                        [
+                            args.service_url,
+                            args.service_app_id,
+                            getattr(args, "service_rejoin", False),
+                        ],
                     )
                 reference.evaluate(
                     "([seat, offer, mixed, credit, slow, channel, closer]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer); }",
@@ -599,7 +628,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 service_ref = reference.evaluate("window.referenceServiceEvidence ?? []")
                 service_passed = not getattr(args, "service_url", "") or (
                     Handler.rejected_http_signals == 0
-                    and service_session_passed(service_godot, service_ref)
+                    and service_session_passed(
+                        service_godot, service_ref, rejoin=getattr(args, "service_rejoin", False)
+                    )
                 )
                 complete = (
                     service_passed
@@ -712,6 +743,9 @@ def main() -> None:
     parser.add_argument("--godot", default="godot")
     parser.add_argument("--service-url", default="", help="Use real v3 service rooms and signaling")
     parser.add_argument("--service-app-id", default="godot-reference")
+    parser.add_argument(
+        "--service-rejoin", action="store_true", help="Rejoin the same running service room"
+    )
     parser.add_argument("--native-extension", type=Path, required=True)
     parser.add_argument(
         "--reference-assets",
@@ -781,6 +815,16 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if args.service_rejoin and (not args.service_url or not args.safe_receive):
+        parser.error("--service-rejoin requires --service-url and --safe-receive")
+    if args.service_rejoin and (
+        args.retirement_matrix
+        or args.closing_seat != "reference"
+        or args.closing_channel != "reliable"
+    ):
+        parser.error(
+            "--service-rejoin uses room departure, then reference reliable-channel closure"
+        )
     if args.service_url and (args.runtime != "web" or args.offerer != "reference"):
         parser.error("--service-url requires --runtime web --offerer reference")
     if args.slow_reference_receiver and (not args.mixed_traffic or args.slow_receiver):

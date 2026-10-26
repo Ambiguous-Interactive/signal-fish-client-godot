@@ -1,10 +1,11 @@
-export function configureReferenceService(url, appId) {
+export function configureReferenceService(url, appId, rejoin = false) {
   const socket = new WebSocket(url);
   const inbox = [];
   const evidence = [];
   let failure = null;
   let signalsSent = 0;
   let signalsReceived = 0;
+  let currentSession = null;
   const send = (type, data) => {
     if (socket.readyState !== WebSocket.OPEN)
       throw new Error("reference service socket is not open");
@@ -32,6 +33,15 @@ export function configureReferenceService(url, appId) {
         throw new Error(
           `reference service ${frame.type}: ${JSON.stringify(frame.data)}`,
         );
+      if (frame.type === "Signal") {
+        if (
+          !currentSession ||
+          frame.data.from !== currentSession.peer_id ||
+          frame.data.generation !== currentSession.generation
+        )
+          throw new Error("reference service signal identity differs");
+        signalsReceived++;
+      }
       inbox.push(frame);
     } catch (error) {
       failure = error;
@@ -82,8 +92,10 @@ export function configureReferenceService(url, appId) {
         join_only: true,
       });
       const joined = await wait(() => take("RoomJoined"), "room admission");
-      send("PlayerReady");
-      await wait(() => take("GameStarting"), "game start");
+      if (!rejoin || phase === 1) {
+        send("PlayerReady");
+        await wait(() => take("GameStarting"), "game start");
+      }
       const plan = await wait(() => take("SessionPlan"), "session plan");
       if (
         plan.transport !== "webrtc" ||
@@ -100,19 +112,26 @@ export function configureReferenceService(url, appId) {
         generation: plan.generation,
         player_id: joined.player_id,
         peer_id: room.player_id,
+        reference_epoch: joined.current_players.find(
+          (player) => player.id === joined.player_id,
+        )?.epoch,
         signals_sent: 0,
         signals_received: 0,
         left: false,
       };
       const sentBefore = signalsSent;
       const receivedBefore = signalsReceived;
+      let leaving = null;
+      currentSession = record;
       evidence.push(record);
       window.referenceServiceEvidence = evidence;
       return {
+        rejoin,
         generation: plan.generation,
         initiate: plan.peers[0].initiate,
         iceServers: plan.ice_servers ?? [],
         send(payload) {
+          if (leaving) return;
           send("Signal", {
             to: room.player_id,
             generation: plan.generation,
@@ -127,12 +146,6 @@ export function configureReferenceService(url, appId) {
             const frame = inbox[i];
             if (frame.type === "Signal") {
               inbox.splice(i, 1);
-              if (
-                frame.data.from !== room.player_id ||
-                frame.data.generation !== plan.generation
-              )
-                throw new Error("reference service signal identity differs");
-              signalsReceived++;
               messages.push({
                 generation: plan.generation,
                 payload: frame.data.signal,
@@ -141,14 +154,19 @@ export function configureReferenceService(url, appId) {
           }
           return messages;
         },
-        async leave() {
-          record.signals_sent = signalsSent - sentBefore;
-          record.signals_received = signalsReceived - receivedBefore;
-          send("LeaveRoom");
-          await wait(() => take("RoomLeft"), "room leave");
-          record.left = true;
-          console.log("WEBRTC_REFERENCE_SERVICE " + JSON.stringify(record));
-          inbox.length = 0;
+        leave(stage = "teardown") {
+          leaving ??= (async () => {
+            record.departure_stage = stage;
+            send("LeaveRoom");
+            await wait(() => take("RoomLeft"), "room leave");
+            currentSession = null;
+            record.signals_sent = signalsSent - sentBefore;
+            record.signals_received = signalsReceived - receivedBefore;
+            record.left = true;
+            console.log("WEBRTC_REFERENCE_SERVICE " + JSON.stringify(record));
+            inbox.length = 0;
+          })();
+          return leaving;
         },
       };
     },

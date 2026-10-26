@@ -402,6 +402,24 @@ Use the existing HTTP/WebRTC credit and reader-pause controls to compare
 service signaling with gameplay progress. Per-stage service waits retain their
 failure stage in the Godot log.
 
+Add `--service-rejoin --safe-receive` to keep Godot in the same running room.
+In the first phase, the reference player leaves while Godot has a reliable
+packet selected. The service departure must remove the link and discard those
+bytes. The same reference player then joins that room again. Its new server
+plan must restore exact mixed snapshots and positions through the same Godot
+safe receiver. The second phase closes the reference reliable channel and
+both seats leave the room.
+
+The report requires unchanged room and player IDs, a distinct plan generation,
+an increased reference membership epoch, confirmed peer departure and
+`same_receiver` in the second service record. Both seats must report the same
+`reference_epoch` in each phase.
+The first reference record must retain `departure_stage: "selected_packet"`.
+Use matched HTTP and WebRTC credit runs, then the reader-pause controls, to
+compare membership recovery and application waits. This option requires service
+mode and the safe receiver; it runs separately from `--retirement-matrix` and
+custom channel-closure cases.
+
 HTTP localhost exports can connect to a local `ws://` service. HTTPS exports
 require `wss://`. This assessment covers the browser reference Engine with a
 small service driver; full reference CLI sessions, the native reference Engine,
