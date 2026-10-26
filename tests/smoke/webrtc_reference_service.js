@@ -1,4 +1,4 @@
-export function configureReferenceService(url, appId) {
+export function configureReferenceService(url, appId, rejoin = false) {
   const socket = new WebSocket(url);
   const inbox = [];
   const evidence = [];
@@ -82,8 +82,10 @@ export function configureReferenceService(url, appId) {
         join_only: true,
       });
       const joined = await wait(() => take("RoomJoined"), "room admission");
-      send("PlayerReady");
-      await wait(() => take("GameStarting"), "game start");
+      if (!rejoin || phase === 1) {
+        send("PlayerReady");
+        await wait(() => take("GameStarting"), "game start");
+      }
       const plan = await wait(() => take("SessionPlan"), "session plan");
       if (
         plan.transport !== "webrtc" ||
@@ -100,15 +102,20 @@ export function configureReferenceService(url, appId) {
         generation: plan.generation,
         player_id: joined.player_id,
         peer_id: room.player_id,
+        reference_epoch: joined.current_players.find(
+          (player) => player.id === joined.player_id,
+        )?.epoch,
         signals_sent: 0,
         signals_received: 0,
         left: false,
       };
       const sentBefore = signalsSent;
       const receivedBefore = signalsReceived;
+      let leaving = null;
       evidence.push(record);
       window.referenceServiceEvidence = evidence;
       return {
+        rejoin,
         generation: plan.generation,
         initiate: plan.peers[0].initiate,
         iceServers: plan.ice_servers ?? [],
@@ -141,14 +148,18 @@ export function configureReferenceService(url, appId) {
           }
           return messages;
         },
-        async leave() {
-          record.signals_sent = signalsSent - sentBefore;
-          record.signals_received = signalsReceived - receivedBefore;
-          send("LeaveRoom");
-          await wait(() => take("RoomLeft"), "room leave");
-          record.left = true;
-          console.log("WEBRTC_REFERENCE_SERVICE " + JSON.stringify(record));
-          inbox.length = 0;
+        leave(stage = "teardown") {
+          leaving ??= (async () => {
+            record.departure_stage = stage;
+            record.signals_sent = signalsSent - sentBefore;
+            record.signals_received = signalsReceived - receivedBefore;
+            send("LeaveRoom");
+            await wait(() => take("RoomLeft"), "room leave");
+            record.left = true;
+            console.log("WEBRTC_REFERENCE_SERVICE " + JSON.stringify(record));
+            inbox.length = 0;
+          })();
+          return leaving;
         },
       };
     },

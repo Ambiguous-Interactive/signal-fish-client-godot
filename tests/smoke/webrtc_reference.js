@@ -296,7 +296,9 @@ window.runReference = async function (
             !remoteClosed
           ) {
             remoteClosed = true;
-            if (closingSeat === "reference") {
+            if (service?.rejoin && phase === 1) {
+              await service.leave("selected_packet");
+            } else if (closingSeat === "reference") {
               const selected = engine.channel("godot", closingChannel);
               if (!selected || selected.readyState !== "open")
                 throw new Error("reference closing channel is unavailable");

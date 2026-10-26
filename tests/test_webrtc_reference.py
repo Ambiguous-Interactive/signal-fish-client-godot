@@ -22,6 +22,75 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_service_rejoin_requires_same_room_receiver_and_new_generation(self) -> None:
+        godot = [
+            {
+                "phase": phase,
+                "room_id": "room",
+                "generation": f"generation-{phase}",
+                "player_id": "godot",
+                "peer_id": "reference",
+                "signals_sent": 3,
+                "signals_received": 4,
+                "left": phase == 2,
+                "receiver_retired": True,
+                "same_receiver": phase == 2,
+                "peer_departed": phase == 1,
+                "reference_epoch": phase,
+            }
+            for phase in (1, 2)
+        ]
+        remote = [
+            {
+                **phase,
+                "player_id": "reference",
+                "peer_id": "godot",
+                "signals_sent": 4,
+                "signals_received": 3,
+                "left": True,
+                "departure_stage": "selected_packet" if phase["phase"] == 1 else "teardown",
+            }
+            for phase in godot
+        ]
+        self.assertTrue(reference.service_session_passed(godot, remote, rejoin=True))
+        self.assertFalse(reference.service_session_passed(godot, remote))
+        self.assertFalse(
+            reference.service_session_passed(
+                godot, [{**remote[0], "departure_stage": "teardown"}, remote[1]], rejoin=True
+            )
+        )
+        for value in (None, True, 1.0, 2):
+            with self.subTest(remote_epoch=value):
+                self.assertFalse(
+                    reference.service_session_passed(
+                        godot, [{**remote[0], "reference_epoch": value}, remote[1]], rejoin=True
+                    )
+                )
+        for index, key, value in (
+            (0, "peer_departed", False),
+            (0, "left", True),
+            (1, "same_receiver", False),
+            (1, "receiver_retired", False),
+            (1, "room_id", "new-room"),
+            (1, "generation", "generation-1"),
+            (1, "player_id", "new-godot"),
+            (1, "peer_id", "new-reference"),
+            (1, "reference_epoch", 1),
+            (1, "reference_epoch", 0),
+            (1, "reference_epoch", True),
+        ):
+            with self.subTest(key=key):
+                local = [dict(phase) for phase in godot]
+                other = [dict(phase) for phase in remote]
+                local[index][key] = value
+                if key in ("room_id", "generation", "reference_epoch"):
+                    other[index][key] = value
+                if key == "player_id":
+                    other[index]["peer_id"] = value
+                if key == "peer_id":
+                    other[index]["player_id"] = value
+                self.assertFalse(reference.service_session_passed(local, other, rejoin=True))
+
     def test_service_sessions_require_matching_ids_signaling_and_fresh_rooms(self) -> None:
         godot = [
             {
@@ -87,6 +156,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 const source = readFileSync(0, "utf8").replace("export function", "function");
 const fault = process.argv[1];
+const rejoin = fault === "rejoin";
 let socket, clock = 0, phase = 0;
 const sent = [];
 const frame = (type, data) => socket.onmessage({data: JSON.stringify({type, data})});
@@ -106,9 +176,14 @@ class Socket {
       phase++;
       if (!message.data.join_only || message.data.room_code !== "CODE")
         throw new Error("room admission differs");
-      frame("RoomJoined", {room_id: `room-${phase}`, player_id: "reference"});
+      frame("RoomJoined", {room_id: `room-${phase}`, player_id: "reference",
+        current_players: [{id: "reference", epoch: phase}]});
+      if (rejoin && phase === 2)
+        frame("SessionPlan", {transport: "webrtc", generation: `generation-${phase}`,
+          peers: [{player_id: "godot", initiate: true}]});
     }
     if (message.type === "PlayerReady") {
+      if (rejoin && phase === 2) throw new Error("rejoin must keep the running game");
       frame("GameStarting", {});
       frame("SessionPlan", {transport: "webrtc", generation: `generation-${phase}`,
         peers: [{player_id: "godot", initiate: true}], ice_servers: []});
@@ -127,7 +202,7 @@ const context = {
   ]}),
 };
 runInNewContext(source, context);
-context.configureReferenceService("ws://service/v3/ws", "app");
+context.configureReferenceService("ws://service/v3/ws", "app", rejoin);
 let error = "";
 try {
   for (let round = 1; round <= 2; round++) {
@@ -143,14 +218,17 @@ try {
     const messages = service.drain();
     if (messages.length !== 1 || messages[0].payload.Answer !== "answer-text")
       throw new Error("Signal payload changed");
+    if (rejoin && round === 1) await service.leave("selected_packet");
     await service.leave();
+    if (sent.filter(message => message.type === "LeaveRoom").length !== round)
+      throw new Error("room departure repeated");
   }
 } catch (caught) { error = String(caught); }
 context.window.referenceService.close();
 console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvidence, closed: socket.readyState === 3}));
 """
         source = (SCRIPT.parents[1] / "tests/smoke/webrtc_reference_service.js").read_text()
-        for fault in ("none", "peer", "generation"):
+        for fault in ("none", "rejoin", "peer", "generation"):
             with self.subTest(fault=fault):
                 result = subprocess.run(  # noqa: S603
                     ["node", "--input-type=module", "-e", harness, fault],  # noqa: S607
@@ -162,13 +240,15 @@ console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvid
                 )
                 proof = json.loads(result.stdout)
                 self.assertTrue(proof["closed"])
-                if fault == "none":
+                if fault in ("none", "rejoin"):
                     self.assertEqual(proof["error"], "")
                     self.assertEqual([phase["phase"] for phase in proof["evidence"]], [1, 2])
                     for phase in proof["evidence"]:
                         self.assertTrue(phase["left"])
                         self.assertEqual(phase["signals_sent"], 1)
                         self.assertEqual(phase["signals_received"], 1)
+                    if fault == "rejoin":
+                        self.assertEqual(proof["evidence"][0]["departure_stage"], "selected_packet")
                 else:
                     self.assertIn("signal identity differs", proof["error"])
                     self.assertFalse(proof["evidence"][0]["left"])
