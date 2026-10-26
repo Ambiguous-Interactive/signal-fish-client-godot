@@ -101,8 +101,6 @@ func _run_phase(phase: int) -> bool:
 		return false
 	_reference_packets()
 	var channel_evidence: Array[Dictionary] = []
-	var body_bytes: int = _reference_options.get("snapshot_body_bytes", 1024)
-	var window_bytes: int = _reference_options.get("snapshot_window_bytes", 0)
 	var evidence := {
 		"phase": phase,
 		"same_receiver": _safe_receive and _mesh.get_safe_multiplayer_peer() == _reference_receiver,
@@ -110,13 +108,6 @@ func _run_phase(phase: int) -> bool:
 		"retained": _mesh.get_peer_count(),
 		"transport_reports": _client.statuses.duplicate(),
 		"sent": _reference_sent,
-		"snapshot_body_bytes": body_bytes,
-		"snapshot_window_bytes": window_bytes,
-		"outstanding_snapshot_bytes": _reference_outstanding_bytes,
-		"peak_outstanding_snapshot_bytes": _reference_peak_outstanding_bytes,
-		"heartbeat_timings": _reference_heartbeat_timings.duplicate(true),
-		"receive_timings": _reference_receive_timings.duplicate(true),
-		"receive_timings_dropped": _reference_receive_timings_dropped,
 		"snapshot_sent": _reference_snapshot_sent,
 		"snapshot_received": _reference_snapshot_received,
 		"partial_sent": _reference_partial_sent,

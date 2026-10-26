@@ -261,6 +261,14 @@ pause still requires at least 24 queued chunks. Every run still requires all
 reliable chunks and credits, exact metadata, retirement and fresh-link recovery.
 A paced pass does not qualify the original workload.
 
+Local Linux arm64 controls with webrtc-native 1.2.2-stable and Chromium 149
+preserved every 4 KiB snapshot through service rejoin with the 48 KiB window
+on native and Web Godot 4.3, 4.4.1 and 4.7.2. The Godot reader paused for
+1500 ms in each generation. Peak outstanding snapshot data was 45,331 bytes.
+The 4.7.2 Web packet-window control dropped 17 chunks during that pause;
+sequence 23 was expected when sequence 40 arrived. Its active-reader control
+passed. The original #442 history used Chromium 156 and remains open.
+
 Phase records include `snapshot_body_bytes`, `snapshot_window_bytes`,
 `outstanding_snapshot_bytes` and `peak_outstanding_snapshot_bytes`. A pass must
 match the requested sizes, stay within the window and finish with zero
