@@ -59,11 +59,13 @@ class ReferenceEvidenceTests(unittest.TestCase):
                 godot, [{**remote[0], "departure_stage": "teardown"}, remote[1]], rejoin=True
             )
         )
-        for value in (None, True, 1.0, 2):
-            with self.subTest(remote_epoch=value):
+        for remote_epoch in (None, True, 1.0, 2):
+            with self.subTest(remote_epoch=remote_epoch):
                 self.assertFalse(
                     reference.service_session_passed(
-                        godot, [{**remote[0], "reference_epoch": value}, remote[1]], rejoin=True
+                        godot,
+                        [{**remote[0], "reference_epoch": remote_epoch}, remote[1]],
+                        rejoin=True,
                     )
                 )
         for index, key, value in (
