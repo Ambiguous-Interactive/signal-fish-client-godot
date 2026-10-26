@@ -10,6 +10,7 @@ window.runReference = async function (
   slowReferenceReceiver = false,
   closingChannel = "reliable",
   closingSeat = "reference",
+  queuedRetirement = false,
 ) {
   const seat = 1 - godotSeat;
   const post = async (message) => {
@@ -65,6 +66,7 @@ window.runReference = async function (
       let closeRequested = false;
       let closeQueued = false;
       let remoteClosed = false;
+      let lateRetirementSent = false;
       let retired = false;
       const queued = [];
       const closedLabels = [];
@@ -247,6 +249,8 @@ window.runReference = async function (
           channel: closingChannel,
           seat: closingSeat,
           closed_labels: closedLabels.slice(),
+          queued_retirement: queuedRetirement,
+          late_sent: lateRetirementSent,
         },
         events: events.slice(),
         snapshot: engine.diagnosticSnapshot("godot"),
@@ -291,6 +295,18 @@ window.runReference = async function (
             !closeQueued
           ) {
             closeRequested = true;
+          } else if (
+            queuedRetirement &&
+            message.marker === `close-cached-${phase}` &&
+            !lateRetirementSent
+          ) {
+            engine
+              .channel("godot", "reliable")
+              .send(`retirement:${phase}:reliable`);
+            engine
+              .channel("godot", "unreliable")
+              .send(`retirement:${phase}:tail`);
+            lateRetirementSent = true;
           } else if (
             message.marker === `close-selected-${phase}` &&
             !remoteClosed
@@ -444,7 +460,11 @@ window.runReference = async function (
             heartbeatReceived === heartbeatSent
           ) {
             closeQueued = true;
-            reliable.send(`retired:${phase}`);
+            if (queuedRetirement)
+              engine
+                .channel("godot", "unreliable")
+                .send(`retirement:${phase}:unreliable`);
+            else reliable.send(`retired:${phase}`);
           }
           if (window.referenceError) throw new Error(window.referenceError);
           await new Promise((resolve) => setTimeout(resolve, 20));

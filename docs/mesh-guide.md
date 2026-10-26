@@ -420,6 +420,23 @@ compare membership recovery and application waits. This option requires service
 mode and the safe receiver; it runs separately from `--retirement-matrix` and
 custom channel-closure cases.
 
+Add `--queued-retirement --safe-receive` to test a late reliable arrival while
+an unreliable packet is selected. After full mixed snapshots finish, Godot
+selects an unreliable retirement packet and keeps it unread. The reference then
+sends a reliable packet and another unreliable packet. Godot must report three
+queued packets and return the original unreliable bytes with their original
+sender, mode and channel. It then selects the reliable packet, leaving two
+packets unread for channel closure or service departure.
+
+Both unread packets must disappear at teardown. With `--service-rejoin`, the
+same safe receiver must complete the second generation after the player rejoins.
+Each phase reports `retirement.queued_arrival` with `preserved`,
+`queued_before_read` (3), `queued_after_read` (2) and `arrival_wait_ms`. Progress
+snapshots retain the arrival wait while the packets are pending. The reference reports
+`queued_retirement` and `late_sent`. Missing proof fails the requested scenario.
+This option also works with the channel retirement matrix. Use the HTTP/WebRTC
+credit and reader-pause controls for matched workload comparisons (#396).
+
 HTTP localhost exports can connect to a local `ws://` service. HTTPS exports
 require `wss://`. This assessment covers the browser reference Engine with a
 small service driver; full reference CLI sessions, the native reference Engine,

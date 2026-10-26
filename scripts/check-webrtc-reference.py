@@ -151,6 +151,29 @@ def retirement_passed(
     )
 
 
+def queued_retirement_passed(
+    godot: dict[str, object], ref: dict[str, object], requested: bool
+) -> bool:
+    local = godot.get("retirement")
+    remote = ref.get("retirement")
+    if not isinstance(local, dict) or not isinstance(remote, dict):
+        return False
+    if remote.get("queued_retirement") is not requested:
+        return False
+    if not requested:
+        return True
+    proof = local.get("queued_arrival")
+    return (
+        remote.get("late_sent") is True
+        and isinstance(proof, dict)
+        and proof.get("preserved") is True
+        and type(proof.get("queued_before_read")) is int
+        and proof["queued_before_read"] == 3
+        and type(proof.get("queued_after_read")) is int
+        and proof["queued_after_read"] == local.get("queued") == 2
+    )
+
+
 def slow_receiver_passed(value: object, mixed_traffic: bool) -> bool:
     if not isinstance(value, dict):
         return False
@@ -419,6 +442,7 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
             {
                 "service_url": getattr(args, "service_url", ""),
                 "service_rejoin": getattr(args, "service_rejoin", False),
+                "queued_retirement": getattr(args, "queued_retirement", False),
                 "service_app_id": getattr(args, "service_app_id", "godot-reference"),
                 "godot_offer": args.godot_offer,
                 "safe_receive": args.safe_receive,
@@ -572,7 +596,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         ],
                     )
                 reference.evaluate(
-                    "([seat, offer, mixed, credit, slow, channel, closer]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer); }",
+                    "([seat, offer, mixed, credit, slow, channel, closer, queued]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued); }",
                     [
                         1 if web else 0,
                         args.godot_offer,
@@ -581,6 +605,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         getattr(args, "slow_reference_receiver", False),
                         getattr(args, "closing_channel", "reliable"),
                         getattr(args, "closing_seat", "reference"),
+                        getattr(args, "queued_retirement", False),
                     ],
                 )
                 hold_proof: dict[str, object] = {}
@@ -675,6 +700,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             getattr(args, "closing_channel", "reliable"),
                             getattr(args, "closing_seat", "reference"),
                             args.safe_receive,
+                        )
+                        and queued_retirement_passed(
+                            godot, ref, getattr(args, "queued_retirement", False)
                         )
                         and reference_receive_pause_passed(
                             ref, getattr(args, "slow_reference_receiver", False)
@@ -773,6 +801,11 @@ def main() -> None:
         "--safe-receive", action="store_true", help="Read through the RPC-safe peer"
     )
     parser.add_argument(
+        "--queued-retirement",
+        action="store_true",
+        help="Preserve an unreliable selection across late reliable arrivals before teardown",
+    )
+    parser.add_argument(
         "--mixed-traffic",
         action="store_true",
         help="Interleave exact position samples with snapshots",
@@ -815,6 +848,8 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if args.queued_retirement and not args.safe_receive:
+        parser.error("--queued-retirement requires --safe-receive")
     if args.service_rejoin and (not args.service_url or not args.safe_receive):
         parser.error("--service-rejoin requires --service-url and --safe-receive")
     if args.service_rejoin and (
