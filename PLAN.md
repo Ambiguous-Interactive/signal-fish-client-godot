@@ -17,6 +17,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
+- [ ] Qualify native Godot service membership recovery and matched reader/credit
+      pauses with exact packet metadata (#355, #403, #396).
 - [ ] Complete upstream engine metadata repair and remote-network qualification
       for the opt-in safe RPC peer (#403).
 - [ ] Qualify finite packet lifetimes on stable Godot engines after the upstream

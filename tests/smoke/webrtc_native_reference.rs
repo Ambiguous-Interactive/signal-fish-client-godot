@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use signal_fish_reference_native::engine::{ChannelProfile, Engine, EngineEvent, EngineSettings};
-use signal_fish_server::protocol::PlayerId;
+use signal_fish_server::protocol::{IceServer, PlayerId};
 use std::io::{BufRead, Write};
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -27,6 +27,15 @@ async fn send_packet(engine: &Engine, peer: PlayerId, value: &Value) -> anyhow::
     Ok(())
 }
 
+fn rejected_receive(engine: &Engine, peer: PlayerId) -> Option<String> {
+    let snapshot = engine.diagnostic_snapshot(peer);
+    let channels = snapshot["channels"].as_object()?;
+    channels.iter().find_map(|(label, channel)| {
+        (channel["receipts"]["rejected"].as_u64().unwrap_or(0) > 0)
+            .then(|| format!("native receive rejected: generation={} channel={label}", snapshot["generation"]))
+    })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let peer: PlayerId = "10000000-0000-0000-0000-000000000001".parse()?;
@@ -43,17 +52,24 @@ async fn main() -> anyhow::Result<()> {
         ..EngineSettings::default()
     }, events_tx)?;
     let mut startup_phase = 0;
+    let mut receive_failure: Option<String> = None;
     loop {
         tokio::select! {
             Some(line) = input.recv() => {
                 let value: Value = serde_json::from_str(&line)?;
                 let id = value["id"].clone();
                 let result: anyhow::Result<Value> = async {
+                    if receive_failure.is_none() { receive_failure = rejected_receive(&engine, peer); }
+                    if let Some(error) = &receive_failure {
+                        engine.remove_peer(peer).await?;
+                        anyhow::bail!("{error}");
+                    }
                     match value["op"].as_str().unwrap_or("") {
                         "pair" => {
                             startup_phase = value["startup_phase"].as_u64().unwrap_or(0);
                             anyhow::ensure!(startup_phase <= 2, "invalid startup phase");
-                            let offer = engine.pair_with(peer, value["offer"].as_bool().unwrap(), &[]).await?;
+                            let servers: Vec<IceServer> = serde_json::from_value(value["ice_servers"].clone())?;
+                            let offer = engine.pair_with(peer, value["offer"].as_bool().unwrap(), &servers).await?;
                             Ok(json!({"offer":offer,"generation":engine.diagnostic_snapshot(peer)["generation"]}))
                         }
                         "offer" => Ok(json!(engine.handle_offer(peer, value["sdp"].as_str().unwrap().to_owned()).await?)),
@@ -82,6 +98,12 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             Some(event) = events.recv() => {
+                if let EngineEvent::ChannelReceiveRejected {generation,label,..} = &event {
+                    receive_failure = Some(format!("native receive rejected: generation={generation} channel={label}"));
+                    engine.remove_peer(peer).await?;
+                    emit(json!({"event":"receive_rejected", "generation":generation, "label":label}));
+                    continue;
+                }
                 if !engine.is_current_event(&event) { continue; }
                 let (_, generation) = event.peer_generation();
                 match event {

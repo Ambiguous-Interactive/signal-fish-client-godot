@@ -47,7 +47,8 @@ module.exports = async function testNativeReference() {
   };
   const engine = new context.Engine(false, callbacks);
   engine.startupPhase = 2;
-  const pairing = engine.pairWith("godot", true, []);
+  const iceServers = [{ urls: ["stun:127.0.0.1:3478"] }];
+  const pairing = engine.pairWith("godot", true, iceServers);
   engine.dispatch({ event: "candidate", generation: 2, candidate: "early" });
   engine.dispatch({
     event: "message",
@@ -64,6 +65,7 @@ module.exports = async function testNativeReference() {
   });
   assert.equal(await pairing, "sdp");
   assert.equal(operations[0].startup_phase, 2);
+  assert.deepEqual(operations[0].ice_servers, iceServers);
   assert.equal(engine.diagnosticSnapshot().startup_sent, 32);
   engine.dispatch({ event: "startup_sent", generation: 1, count: 99 });
   assert.equal(engine.diagnosticSnapshot().startup_sent, 32);
@@ -117,6 +119,18 @@ module.exports = async function testNativeReference() {
     /binary callback is missing/,
   );
   callbacks.onChannelBinaryMessage = binaryCallback;
+  engine.dispatch({
+    event: "receive_rejected",
+    generation: 1,
+    label: "unreliable",
+  });
+  for (const label of ["reliable", "ordered", "unreliable"]) {
+    assert.throws(
+      () =>
+        engine.dispatch({ event: "receive_rejected", generation: 2, label }),
+      /native receive rejected: generation=2 channel=/,
+    );
+  }
   assert.throws(
     () =>
       engine.dispatch({

@@ -675,6 +675,10 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     assets = directory / "assets"
     assets.mkdir()
     probe = getattr(args, "native_reference_probe", None)
+    if probe:
+        frozen_probe = directory / "native-reference-probe"
+        shutil.copy2(probe, frozen_probe)
+        probe = frozen_probe
     backend = None
     if probe:
         (assets / "reference").mkdir()
@@ -782,6 +786,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "godot": args.godot,
         "reference_revision": args.reference_revision,
         "reference_backend": "native" if probe else "browser",
+        "reference_engine_sha256": hashlib.sha256(
+            (probe if probe else assets / "reference/engine.js").read_bytes()
+        ).hexdigest(),
         "startup_burst": getattr(args, "startup_burst", False),
         "receive_empty_binary": getattr(args, "receive_empty_binary", False),
         "binary_traffic": getattr(args, "binary_traffic", False),
@@ -994,9 +1001,6 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         "driver_error": driver_error,
                         "gameplay_passed": gameplay,
                         "browser": browser.version,
-                        "reference_engine_sha256": hashlib.sha256(
-                            (probe if probe else args.reference_assets / "engine.js").read_bytes()
-                        ).hexdigest(),
                         "godot_phases": phases,
                         "reference": result,
                     }
@@ -1036,7 +1040,10 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         server.server_close()
         if backend:
             backend.close()
-            report["native_timing"] = backend.timing_snapshot()
+            native_timing = backend.timing_snapshot()
+            report["native_timing"] = native_timing
+            if native_timing.get("receive_failure"):
+                report.update(assessment_complete=False, gameplay_passed=False)
         if "relay_observation" not in report:
             report["relay_observation"] = Handler.observation.snapshot()
         if web:
@@ -1174,8 +1181,8 @@ def main() -> None:
         parser.error(
             "--service-rejoin uses room departure, then reference reliable-channel closure"
         )
-    if args.service_url and (args.runtime != "web" or args.offerer != "reference"):
-        parser.error("--service-url requires --runtime web --offerer reference")
+    if args.service_url and args.offerer != "reference":
+        parser.error("--service-url requires --offerer reference")
     if args.slow_reference_receiver and (not args.mixed_traffic or args.slow_receiver):
         parser.error("--slow-reference-receiver needs --mixed-traffic and an active Godot reader")
     if not 0 <= args.http_credit_delay_ms <= 8000:

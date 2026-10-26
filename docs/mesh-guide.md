@@ -150,7 +150,7 @@ default reference profiles create two in-band channels, `reliable` and `unreliab
 Their responders adopt remote channel announcements. Godot's negotiated
 channels do not send these announcements. Use server relay for these
 pairings. The native Engine also has an opt-in Godot profile described below.
-Full reference-client gameplay sessions remain unverified.
+Full reference CLI sessions remain unverified.
 
 ## Native reference Godot profile
 
@@ -522,7 +522,7 @@ network delivery and the page event loop keep running. It isolates application
 backlog in #396; it does not reproduce a frozen page or establish the captured
 stall's cause. Use `--slow-receiver` in a separate run to pause Godot reads.
 The two pause options cannot be combined. Full reference CLI sessions and
-native-reference recovery remain open in #355.
+remote-network recovery remain open in #355.
 
 ### Reference gameplay through a local service
 
@@ -532,6 +532,34 @@ to the Web/reference-offer command above. Run a local Signal Fish server with
 `session.default_topology` set to `host`. The service must accept the app ID.
 The browser Engine modules and service used for this assessment are pinned to
 `b264ec739400b299182eaa918dd6828fd611f3b9`.
+
+Use the native reference Godot profile to assess native and Web Godot seats
+through the same service. Build the probe above, then run:
+
+```bash
+python scripts/check-webrtc-reference.py --runtime all --offerer reference \
+  --native-reference-probe /path/to/server/clients/native/target/debug/examples/godot_qualification \
+  --reference-revision 67725d677ff0fdb662d041af9b175d8a6d08c75f \
+  --native-extension /path/to/webrtc_native --safe-receive --mixed-traffic \
+  --binary-traffic --startup-burst --queued-retirement --service-rejoin \
+  --service-url ws://127.0.0.1:3537/v3/ws --service-app-id godot-reference \
+  --require-gameplay --output /tmp/native-reference-service
+```
+
+The coordinator still runs in a browser; the reference Engine and native Godot
+seat use separate native processes. Each runtime gets its own room session.
+Use `--runtime native` or `--runtime web` for a single Godot seat. The service
+assigns the offer role, so this mode requires `--offerer reference`.
+The browser reference profile cannot exchange gameplay with native Godot's
+negotiated channels; changing the signaling route does not repair that pairing.
+
+The portable native probe forwards the plan's ICE server settings to its
+Engine. A receive-rejection event retires its physical link and fails the
+assessment with the channel and generation. The probe retains that failure
+across retirement, even when the browser has yet to read the event. Later
+control commands must also fail. Finite-mode receipt gaps cannot hide a
+rejected receive queue. Local controls use empty ICE server lists;
+TURN and remote-network operation still need qualification.
 
 The production Godot client creates a two-player room. The reference seat
 joins that room through its own WebSocket. Both seats become ready, and the

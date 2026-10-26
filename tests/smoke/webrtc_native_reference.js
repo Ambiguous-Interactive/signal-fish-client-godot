@@ -87,11 +87,12 @@ export class Engine {
         event.candidate,
       );
   }
-  async pairWith(_peer, offer, _servers) {
+  async pairWith(_peer, offer, servers) {
     this.paired = true;
     const result = await this.signalCommand({
       op: "pair",
       offer,
+      ice_servers: servers,
       startup_phase: this.startupPhase,
     });
     this.generation = result.generation;
@@ -197,6 +198,10 @@ export class Engine {
           ),
         );
         break;
+      case "receive_rejected":
+        throw new Error(
+          `native receive rejected: generation=${event.generation} channel=${event.label}`,
+        );
       default:
         throw new Error("unknown native event");
     }
