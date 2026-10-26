@@ -869,8 +869,13 @@ of safe-peer RPCs, mixed traffic, exact snapshots and interrupted-link recovery
 with webrtc-native 1.2.2-stable and Chromium 154 on Linux arm64. The engine-only
 metadata control failed on both seats. Godot 4.7.2 passed the safe metadata
 probe and the persistent RPC recovery scenario on both native and Web with the same extension and browser. The raw
-engine metadata probe failed on both seats. Remote networks still need live
-qualification.
+engine metadata probe failed on both seats.
+
+Godot 4.4.1 and 4.7.2 also pass all 18 three-seat directed channel-closure
+cases with raw mixed traffic, RPCs, paused readers and fresh-link recovery.
+All three supported engines pass the six-second HTTP credit hold with RPCs
+and independent-link proof. These runs use local links; remote networks still
+need live qualification.
 
 `browser_observation.webrtc_stats` retains the last 16 browser transport
 samples, with sample ages and per-connection ids. Samples include channel
