@@ -5,6 +5,7 @@ const vm = require("node:vm");
 async function main() {
   let sample;
   const output = [];
+  const channels = [];
   const timers = new Map();
   let nextTimer = 0;
   class Peer {
@@ -16,6 +17,16 @@ async function main() {
     deferred = null;
     calls = 0;
     addEventListener() {}
+    createDataChannel(label, options) {
+      return {
+        id: options.id,
+        label,
+        negotiated: true,
+        ordered: options.ordered,
+        maxPacketLifeTime: options.maxPacketLifeTime ?? null,
+        maxRetransmits: null,
+      };
+    }
     async getStats() {
       this.calls++;
       if (this.deferred) return this.deferred;
@@ -73,7 +84,13 @@ async function main() {
     },
     console: {
       log(line) {
-        output.push(JSON.parse(line.slice("WEBRTC_BROWSER_STATS ".length)));
+        if (line.startsWith("WEBRTC_BROWSER_CHANNEL ")) {
+          channels.push(
+            JSON.parse(line.slice("WEBRTC_BROWSER_CHANNEL ".length)),
+          );
+        } else {
+          output.push(JSON.parse(line.slice("WEBRTC_BROWSER_STATS ".length)));
+        }
       },
     },
   };
@@ -84,6 +101,24 @@ async function main() {
   assert.equal(context.window.RTCPeerConnection.marker, 42);
   const peer = new context.window.RTCPeerConnection();
   assert.ok(peer instanceof Peer);
+  const channel = peer.createDataChannel("ordered", {
+    id: 2,
+    ordered: true,
+    maxPacketLifetime: 1,
+  });
+  assert.equal(channel.maxPacketLifeTime, null);
+  assert.equal(channels[0].max_packet_life_time, null);
+  assert.equal(channels[0].requested_misspelled_lifetime, 1);
+  assert.equal(channels[0].requested_lifetime, null);
+  const finite = peer.createDataChannel("control", {
+    id: 10,
+    ordered: false,
+    maxPacketLifeTime: 100,
+  });
+  assert.equal(finite.maxPacketLifeTime, 100);
+  assert.equal(channels[1].max_packet_life_time, 100);
+  assert.equal(channels[1].max_retransmits, null);
+  assert.equal(channels[1].requested_lifetime, 100);
   await sample();
   let report = output.at(-1);
   assert.equal(report.created, 1);

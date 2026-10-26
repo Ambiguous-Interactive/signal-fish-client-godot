@@ -9,6 +9,25 @@
       const peer = Reflect.construct(target, args, newTarget);
       const id = ++created;
       peers.set(peer, { id, pending: null });
+      const createChannel = peer.createDataChannel;
+      peer.createDataChannel = function (label, options) {
+        const channel = Reflect.apply(createChannel, this, [label, options]);
+        console.log(
+          "WEBRTC_BROWSER_CHANNEL " +
+            JSON.stringify({
+              peer: id,
+              id: channel.id,
+              label: channel.label,
+              negotiated: channel.negotiated,
+              ordered: channel.ordered,
+              max_packet_life_time: channel.maxPacketLifeTime,
+              max_retransmits: channel.maxRetransmits,
+              requested_lifetime: options?.maxPacketLifeTime ?? null,
+              requested_misspelled_lifetime: options?.maxPacketLifetime ?? null,
+            }),
+        );
+        return channel;
+      };
       peer.addEventListener("connectionstatechange", () => {
         if (peer.connectionState === "closed" && peers.delete(peer)) closed++;
       });

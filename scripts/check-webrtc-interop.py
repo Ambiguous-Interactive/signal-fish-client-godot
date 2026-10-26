@@ -13,7 +13,7 @@ import time
 from collections import OrderedDict, deque
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from playwright.sync_api import Page, Request, sync_playwright
 
@@ -83,10 +83,84 @@ class RelayObservation:
             }
 
 
+class CreditDelay:
+    def __init__(self, milliseconds: int = 0) -> None:
+        self.milliseconds = milliseconds
+        self.started: float | None = None
+        self.released: float | None = None
+        self.proof_received: float | None = None
+
+    def hold(self, seat: int, message: object) -> bool:
+        if (
+            not self.milliseconds
+            or seat != 0
+            or not isinstance(message, dict)
+            or message.get("marker") != "consumed-1-1-8"
+            or self.released is not None
+        ):
+            return False
+        now = time.monotonic()
+        if self.started is None:
+            self.started = now
+        if (now - self.started) * 1000 < self.milliseconds:
+            return True
+        self.released = now
+        return False
+
+    def record_proof(self, seat: int, message: object) -> None:
+        if (
+            self.milliseconds
+            and seat == 2
+            and isinstance(message, dict)
+            and message.get("from") == 0
+            and message.get("marker") == "credit-hold-proof-1-0"
+            and self.proof_received is None
+        ):
+            self.proof_received = time.monotonic()
+
+    def proof_during_hold(self) -> bool:
+        return (
+            self.started is not None
+            and self.proof_received is not None
+            and 0 <= (self.proof_received - self.started) * 1000 < self.milliseconds
+            and (self.released is None or self.proof_received < self.released)
+        )
+
+    def proven(self, proof: object) -> bool:
+        return (
+            self.started is not None
+            and self.released is not None
+            and self.proof_during_hold()
+            and (self.released - self.started) * 1000 >= self.milliseconds > 0
+            and isinstance(proof, dict)
+            and proof.get("sent", {}).get("1") == 8
+            and proof.get("acknowledged", {}).get("1") == 0
+            and proof.get("acknowledged", {}).get("2") == 64
+            and proof.get("received", {}).get("2") == [32, 32, 64]
+        )
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "proof_received_while_held": self.proof_during_hold(),
+            "proof_after_hold_start_ms": round((self.proof_received - self.started) * 1000)
+            if self.proof_received is not None and self.started is not None
+            else None,
+            "requested_ms": self.milliseconds,
+            "destination": 0,
+            "marker": "consumed-1-1-8",
+            "started": self.started is not None,
+            "released": self.released is not None,
+            "held_ms": round((self.released - self.started) * 1000)
+            if self.released is not None and self.started is not None
+            else None,
+        }
+
+
 class RelayHandler(SimpleHTTPRequestHandler):
     queues: ClassVar[list[list[object]]] = [[], []]
     lock = threading.Lock()
     observation = RelayObservation()
+    credit_delay = CreditDelay()
 
     def log_message(self, _format: str, *_args: object) -> None:
         pass
@@ -95,8 +169,11 @@ class RelayHandler(SimpleHTTPRequestHandler):
         if self.path in tuple(f"/signal/{seat}" for seat in range(len(self.queues))):
             seat = int(self.path[-1])
             with self.lock:
-                messages = self.queues[seat]
-                self.queues[seat] = []
+                messages: list[object] = []
+                pending: list[object] = []
+                for message in self.queues[seat]:
+                    (pending if self.credit_delay.hold(seat, message) else messages).append(message)
+                self.queues[seat] = pending
                 self.observation.dequeue(seat, messages)
             self.reply(json.dumps(messages).encode())
         else:
@@ -109,6 +186,7 @@ class RelayHandler(SimpleHTTPRequestHandler):
         message = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         with self.lock:
             seat = int(self.path[-1])
+            self.credit_delay.record_proof(seat, message)
             self.queues[seat].append(message)
             self.observation.enqueue(seat, message)
         self.reply(b"{}")
@@ -211,6 +289,7 @@ def prepare(project: Path, extension: Path | None, addon_root: Path) -> None:
     tests = project / "tests/smoke"
     tests.mkdir(parents=True)
     for name in (
+        "webrtc_lifetime_probe.gd",
         "webrtc_interop_drill.gd",
         "webrtc_interop_drill.tscn",
         "webrtc_rpc_probe.gd",
@@ -244,6 +323,34 @@ def checked(command: list[str], log: Path) -> None:
         raise RuntimeError(f"Command failed; see {log}")
 
 
+def finite_lifetimes(contracts: list[dict[str, object]], *, unset: int = -1) -> bool:
+    if not contracts:
+        return False
+    for contract in contracts:
+        peers = contract.get("peers")
+        if not isinstance(peers, list) or not peers:
+            return False
+        for peer in peers:
+            channels = peer.get("channels") if isinstance(peer, dict) else None
+            if not isinstance(channels, list) or len(channels) != 3:
+                return False
+            for index, channel in enumerate(channels):
+                if not isinstance(channel, dict):
+                    return False
+                lifetime = channel.get("max_packet_life_time")
+                if (
+                    channel.get("id") != index + 1
+                    or channel.get("label") != ["reliable", "ordered", "unreliable"][index]
+                    or channel.get("negotiated") is not True
+                    or channel.get("ordered") is not (index != 2)
+                    or channel.get("max_retransmits") != unset
+                    or not isinstance(lifetime, int)
+                    or (lifetime != unset if index == 0 else lifetime <= 0)
+                ):
+                    return False
+    return True
+
+
 def seat_evidence(
     output: str,
     seat: int,
@@ -251,6 +358,8 @@ def seat_evidence(
     retirement_case: int | None = None,
     require_multi_rpc: bool = False,
     credit_transport: str | None = None,
+    require_lifetime_controls: bool = False,
+    require_finite_lifetimes: bool = False,
 ) -> dict[str, object]:
     print(output)
     lines = output.splitlines()
@@ -272,6 +381,29 @@ def seat_evidence(
             except json.JSONDecodeError:
                 continue
             break
+    lifetime_controls = None
+    for line in lines:
+        if line.startswith("WEBRTC_LIFETIME_CONTROLS "):
+            with contextlib.suppress(json.JSONDecodeError):
+                lifetime_controls = json.loads(line.removeprefix("WEBRTC_LIFETIME_CONTROLS "))
+    if require_lifetime_controls:
+        passed = (
+            passed
+            and isinstance(lifetime_controls, dict)
+            and lifetime_controls.get("valid") is True
+        )
+    browser_channels = []
+    channel_contracts = []
+    for line in lines:
+        if line.startswith("WEBRTC_BROWSER_CHANNEL "):
+            with contextlib.suppress(json.JSONDecodeError):
+                browser_channels.append(json.loads(line.removeprefix("WEBRTC_BROWSER_CHANNEL ")))
+        if line.startswith("WEBRTC_CHANNEL_CONTRACT "):
+            with contextlib.suppress(json.JSONDecodeError):
+                channel_contracts.append(json.loads(line.removeprefix("WEBRTC_CHANNEL_CONTRACT ")))
+    lifetimes_finite = finite_lifetimes(channel_contracts, unset=-1 if seat == 0 else 0)
+    if require_finite_lifetimes:
+        passed = passed and lifetimes_finite
     rpc_phases = []
     multi_peer_phases = []
     multi_peer_interruptions = []
@@ -317,6 +449,10 @@ def seat_evidence(
             )
         passed = passed and scenario_complete
     return {
+        "finite_gameplay_lifetimes": lifetimes_finite,
+        "browser_channels": browser_channels,
+        "channel_contracts": channel_contracts,
+        "lifetime_controls": lifetime_controls,
         "scenario_complete": scenario_complete,
         "multi_peer_interruptions": multi_peer_interruptions,
         "multi_peer_phases": multi_peer_phases,
@@ -408,6 +544,7 @@ def run_seats(
         queues: ClassVar[list[list[object]]] = [[] for _ in range(3 if args.multi_peer else 2)]
         lock = threading.Lock()
         observation = RelayObservation()
+        credit_delay = CreditDelay(args.http_credit_delay_ms)
 
     handler = functools.partial(TrialRelayHandler, directory=str(web / "build/web"))
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -572,6 +709,8 @@ def run_seats(
                     retirement_case=expected_case,
                     require_multi_rpc=args.multi_peer and args.rpc_traffic,
                     credit_transport=args.credit_transport if args.multi_peer else None,
+                    require_lifetime_controls=True,
+                    require_finite_lifetimes=args.require_finite_lifetimes,
                 ),
                 seat_evidence(
                     "\n".join(messages),
@@ -579,6 +718,8 @@ def run_seats(
                     retirement_case=expected_case,
                     require_multi_rpc=args.multi_peer and args.rpc_traffic,
                     credit_transport=args.credit_transport if args.multi_peer else None,
+                    require_lifetime_controls=True,
+                    require_finite_lifetimes=args.require_finite_lifetimes,
                 ),
             ]
             if args.multi_peer:
@@ -590,11 +731,22 @@ def run_seats(
                         retirement_case=expected_case,
                         require_multi_rpc=args.multi_peer and args.rpc_traffic,
                         credit_transport=args.credit_transport if args.multi_peer else None,
+                        require_lifetime_controls=True,
+                        require_finite_lifetimes=args.require_finite_lifetimes,
                     )
                 )
             if process is None or process.returncode != 0:
                 seat_results[0]["passed"] = False
+            delay_control = TrialRelayHandler.credit_delay.snapshot()
+            if args.http_credit_delay_ms:
+                phases = cast(list[dict[str, object]], seat_results[0]["multi_peer_phases"])
+                proof = phases[0].get("http_credit_hold_proof", {}) if phases else {}
+                delay_proven = TrialRelayHandler.credit_delay.proven(proof)
+                seat_results[0]["passed"] = seat_results[0]["passed"] and delay_proven
+                delay_control["independent_pair_completed_while_held"] = delay_proven
             evidence = {
+                "require_finite_lifetimes": args.require_finite_lifetimes,
+                "http_credit_delay": delay_control,
                 "driver_error": driver_error,
                 "browser_version": browser_version,
                 "browser_observation": browser_observation,
@@ -679,7 +831,18 @@ def run(args: argparse.Namespace, directory: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", default="godot")
+    parser.add_argument(
+        "--require-finite-lifetimes",
+        action="store_true",
+        help="Fail unless gameplay channels have finite ordered/unordered lifetimes (engine #433 qualification)",
+    )
     parser.add_argument("--web-godot", help="Web export engine (defaults to --godot)")
+    parser.add_argument(
+        "--http-credit-delay-ms",
+        type=positive_count,
+        default=0,
+        help="With --multi-peer and HTTP credit, hold the first Web-1 credit to native",
+    )
     parser.add_argument("--native-extension", type=Path, required=True)
     parser.add_argument("--chromium", help="Optional Playwright Chromium executable")
     parser.add_argument("--output", type=Path, help="Keep projects and logs in this new directory")
@@ -744,6 +907,15 @@ def main() -> None:
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"
     )
     args = parser.parse_args()
+    if args.http_credit_delay_ms and (
+        not args.multi_peer
+        or args.credit_transport != "http"
+        or args.slow_receiver
+        or args.http_credit_delay_ms > 10000
+    ):
+        parser.error(
+            "HTTP credit delay needs --multi-peer, HTTP credit, no --slow-receiver and <=10000 ms"
+        )
     if args.credit_transport != "http" and not args.multi_peer:
         parser.error("--credit-transport webrtc requires --multi-peer")
     if args.retirement_matrix and not args.multi_peer:

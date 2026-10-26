@@ -126,6 +126,22 @@ packet lifetime. Transfer-mode labels alone do not establish transport loss
 behavior. The [upstream repair](https://github.com/godotengine/godot/commit/caa386e89570d293c03ad7c723d5fbd7eb1a2717)
 needs stable-engine qualification; track it in [issue #433](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/433).
 
+Every interoperability run checks direct reliable, ordered and unordered
+channel controls. The finite controls request `maxPacketLifeTime: 100`;
+the reliable and misspelled-option controls leave the lifetime unset.
+`seats.json` retains `lifetime_controls`, per-generation `channel_contracts`
+and direct `browser_channels` properties. `finite_gameplay_lifetimes` reports
+the observed gameplay contract for each seat. Godot Web getters convert browser
+`null` to `0`; native getters use `-1` for an unset limit. Use the direct
+browser properties to distinguish these values from a configured limit.
+
+Add `--require-finite-lifetimes` to qualify a repaired engine or backport.
+This requires finite ordered and unordered gameplay channel lifetimes on
+every seat and recorded generation. Existing supported stable engines fail
+this check. Passing it establishes channel configuration; controlled loss
+or delay is still needed to prove packet expiry. Reliable delivery, exact
+packet metadata and interrupted-link recovery remain part of the drill.
+
 Use the same Godot channel layout at both ends. The server's
 [browser](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/182cb234c7aa601be3c2aad881948b3c5b853aaa/clients/browser/src/page/engine.ts)
 and
@@ -770,6 +786,30 @@ credits per phase. The driver rejects a report from the wrong credit path or
 with missing per-peer credits. HTTP still carries setup and phase barriers.
 The selected credit path applies to raw traffic; RPC traffic keeps its own
 reliable RPC credits.
+
+Use `--http-credit-delay-ms 6000` with HTTP credit to hold the first
+Web-1 consumption credit to native for six seconds. Other markers and
+signaling continue. The driver requires the native/Web-2 pair to complete
+its exact snapshots and all transfer modes while native has eight chunks
+outstanding and zero credit from Web-1. It then requires all credits,
+selective link retirement and fresh-triangle recovery to complete.
+
+```bash
+python scripts/check-webrtc-interop.py --multi-peer --rpc-traffic \
+  --http-credit-delay-ms 6000 --native-extension /path/to/webrtc-native \
+  --output /tmp/multi-peer-held-credit
+```
+
+`http_credit_delay` records the marker, destination, actual hold time and
+independent-pair verdict. The relay must receive `credit-hold-proof-1-0`
+from native before the hold deadline. Late proof fails the control. Native
+phase records retain `http_credit_hold_proof`
+with sent, acknowledged and received counts. Compare a matched run without
+the delay, then use `--credit-transport webrtc` for the data-channel control.
+The delay accepts at most 10,000 ms and runs separately from `--slow-receiver`.
+A short hold that does not establish independence fails the control. These
+runs isolate a known HTTP credit delay; the original intermittent timeout
+still needs a causal capture (#396).
 
 WebRTC credits carry the phase, sender, destination and cumulative consumed
 count. Reads check exact bytes, reliable mode, channel zero, the next eight-chunk
