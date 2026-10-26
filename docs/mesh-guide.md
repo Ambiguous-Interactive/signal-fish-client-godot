@@ -120,6 +120,12 @@ down and releases the link even when its peer connection was connected. A later
 plan can create a replacement link. Applications still drive their
 `MultiplayerAPI` or poll the multiplayer peer to deliver gameplay packets.
 
+Godot 4.3, 4.4.1 and 4.7.2 pass a misspelled lifetime option when creating
+ordered and unreliable channels. Native and Web controls found no finite
+packet lifetime. Transfer-mode labels alone do not establish transport loss
+behavior. The [upstream repair](https://github.com/godotengine/godot/commit/caa386e89570d293c03ad7c723d5fbd7eb1a2717)
+needs stable-engine qualification; track it in [issue #433](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/433).
+
 Use the same Godot channel layout at both ends. The server's
 [browser](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/182cb234c7aa601be3c2aad881948b3c5b853aaa/clients/browser/src/page/engine.ts)
 and
@@ -461,6 +467,28 @@ same tools and reference commit. Both Godot runtimes and the native reference
 reported zero candidate errors. All four still had zero gameplay receipts;
 the channel observations in the table were unchanged. Removing the reference
 peer cleared its pairing in every run.
+
+A fresh Godot 4.3 control confirmed negotiated IDs 1, 2 and 3. With the
+native reference offering, its channel-open messages reached IDs 1 and 3
+already reserved by Godot. The native Godot stack warned about both used
+streams and released the link. With Godot offering, the reference received
+no channel announcements. Both roles retained zero gameplay receipts.
+
+The setup contracts differ in two places:
+
+- Godot's [channel setup](https://github.com/godotengine/godot/blob/4.3/modules/webrtc/webrtc_multiplayer_peer.cpp)
+  creates three negotiated channels before either offer or answer.
+- The pinned native Engine's `pair_with` creates two in-band channels only
+  for the offerer. Its responder uses `on_data_channel` to adopt announcements.
+
+A native Engine profile compatible with this mesh would need matching
+negotiated IDs, delivery settings and all three required channels in both
+roles. It must also register and poll those channels without waiting for
+remote announcements. Renaming channels cannot resolve the stream collision.
+Any future profile needs exact bytes and modes, mixed traffic, required-channel
+closure and fresh-link recovery checks before a pairing can be supported.
+Track the profile in [server #1240](https://github.com/Ambiguous-Interactive/signal-fish-server/issues/1240).
+
 A connected peer connection or a local transport-up report cannot prove
 cross-client gameplay. Keep these pairings on the server relay. This check
 uses the native Engine API with local signaling; full service sessions and
@@ -849,6 +877,28 @@ reported by `WebRTCMultiplayerPeer.get_packet_mode()`. A queued unreliable
 packet can keep the cached mode selected when a reliable packet arrives;
 the next read then returns the reliable bytes. This was reproduced on
 native Linux arm64 with webrtc-native 1.2.2-stable and Chromium 154.
+The standalone `tests/smoke/webrtc_metadata_repro.tscn` reproduces the same
+failure with engine APIs only. It connects two senders to one receiver, then
+checks each sender across a late reliable arrival and another frame. Run it
+with a native WebRTC extension installed:
+
+```bash
+godot --path . tests/smoke/webrtc_metadata_repro.tscn
+```
+
+For Web, export this scene as the main scene and include its script in the
+export preset. The scene and script can also be copied into an empty Godot
+project. They have no addon or service dependency. Native runs need the
+WebRTC extension; Web runs use browser WebRTC.
+
+`WEBRTC_METADATA_RESULT` retains the engine version, selected peer/mode/channel
+and both packet bodies. `valid` means setup and both reads completed.
+`reproduced` means unreliable metadata accompanied the reliable body;
+`consistent` means each read matched its metadata, in either order.
+`preserved` also requires the original unreliable selection to stay first.
+The Web page stays open after its result. Native exit code 1 means the control
+could not complete. Godot 4.3, 4.4.1 and 4.7.2 reproduced the mismatch on
+native Linux arm64 and Chromium 154 Web exports.
 See [issue #403](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/403).
 
 Use `--metadata-probe` for the controlled reproduction. Both seats queue an

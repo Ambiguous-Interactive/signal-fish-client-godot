@@ -177,7 +177,9 @@ func _ready() -> void:
 	_client.free()
 	_client = null
 	print("WEBRTC_INTEROP_PASS seat=%d" % _seat)
-	get_tree().quit()
+	# The driver owns Web teardown; early quit can race audio startup (#430).
+	if not OS.has_feature("web"):
+		get_tree().quit()
 
 
 func _process(_delta: float) -> void:
@@ -230,9 +232,9 @@ func _process(_delta: float) -> void:
 
 
 func _on_inbox(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-	_receiving = false
-	if _finished:
+	if _failed or _finished:
 		return
+	_receiving = false
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
 		_fail("signaling receive failed")
 		return
@@ -252,9 +254,9 @@ func _on_inbox(result: int, code: int, _headers: PackedStringArray, body: Packed
 func _on_outbox(
 	result: int, code: int, _headers: PackedStringArray, _body: PackedByteArray
 ) -> void:
-	_sending = false
-	if _finished:
+	if _failed or _finished:
 		return
+	_sending = false
 	if not _sending_marker.is_empty():
 		var now := Time.get_ticks_msec()
 		_marker_posts.append(
@@ -1271,7 +1273,8 @@ func _fail(reason: String) -> void:
 	if _client != null:
 		_client.free()
 		_client = null
-	get_tree().quit(1)
+	if not OS.has_feature("web"):
+		get_tree().quit(1)
 
 
 class DrillClient:
