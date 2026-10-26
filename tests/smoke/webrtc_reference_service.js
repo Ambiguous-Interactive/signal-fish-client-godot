@@ -5,6 +5,7 @@ export function configureReferenceService(url, appId, rejoin = false) {
   let failure = null;
   let signalsSent = 0;
   let signalsReceived = 0;
+  let currentSession = null;
   const send = (type, data) => {
     if (socket.readyState !== WebSocket.OPEN)
       throw new Error("reference service socket is not open");
@@ -32,6 +33,15 @@ export function configureReferenceService(url, appId, rejoin = false) {
         throw new Error(
           `reference service ${frame.type}: ${JSON.stringify(frame.data)}`,
         );
+      if (frame.type === "Signal") {
+        if (
+          !currentSession ||
+          frame.data.from !== currentSession.peer_id ||
+          frame.data.generation !== currentSession.generation
+        )
+          throw new Error("reference service signal identity differs");
+        signalsReceived++;
+      }
       inbox.push(frame);
     } catch (error) {
       failure = error;
@@ -112,6 +122,7 @@ export function configureReferenceService(url, appId, rejoin = false) {
       const sentBefore = signalsSent;
       const receivedBefore = signalsReceived;
       let leaving = null;
+      currentSession = record;
       evidence.push(record);
       window.referenceServiceEvidence = evidence;
       return {
@@ -120,6 +131,7 @@ export function configureReferenceService(url, appId, rejoin = false) {
         initiate: plan.peers[0].initiate,
         iceServers: plan.ice_servers ?? [],
         send(payload) {
+          if (leaving) return;
           send("Signal", {
             to: room.player_id,
             generation: plan.generation,
@@ -134,12 +146,6 @@ export function configureReferenceService(url, appId, rejoin = false) {
             const frame = inbox[i];
             if (frame.type === "Signal") {
               inbox.splice(i, 1);
-              if (
-                frame.data.from !== room.player_id ||
-                frame.data.generation !== plan.generation
-              )
-                throw new Error("reference service signal identity differs");
-              signalsReceived++;
               messages.push({
                 generation: plan.generation,
                 payload: frame.data.signal,
@@ -151,10 +157,11 @@ export function configureReferenceService(url, appId, rejoin = false) {
         leave(stage = "teardown") {
           leaving ??= (async () => {
             record.departure_stage = stage;
-            record.signals_sent = signalsSent - sentBefore;
-            record.signals_received = signalsReceived - receivedBefore;
             send("LeaveRoom");
             await wait(() => take("RoomLeft"), "room leave");
+            currentSession = null;
+            record.signals_sent = signalsSent - sentBefore;
+            record.signals_received = signalsReceived - receivedBefore;
             record.left = true;
             console.log("WEBRTC_REFERENCE_SERVICE " + JSON.stringify(record));
             inbox.length = 0;

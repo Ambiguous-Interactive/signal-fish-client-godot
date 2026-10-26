@@ -190,7 +190,13 @@ class Socket {
       frame("SessionPlan", {transport: "webrtc", generation: `generation-${phase}`,
         peers: [{player_id: "godot", initiate: true}], ice_servers: []});
     }
-    if (message.type === "LeaveRoom") frame("RoomLeft");
+    if (message.type === "LeaveRoom") {
+      if (fault.startsWith("late")) frame("Signal", {
+        from: fault === "late-peer" ? "other" : "godot",
+        generation: fault === "late-generation" ? "old" : `generation-${phase}`,
+        signal: {IceCandidate: "late-candidate"}});
+      frame("RoomLeft");
+    }
   }
   close() { this.readyState = 3; }
 }
@@ -222,6 +228,9 @@ try {
       throw new Error("Signal payload changed");
     if (rejoin && round === 1) await service.leave("selected_packet");
     await service.leave();
+    const sentAtDeparture = sent.length;
+    service.send({IceCandidate: "after-departure"});
+    if (sent.length !== sentAtDeparture) throw new Error("departed membership sent ICE");
     if (sent.filter(message => message.type === "LeaveRoom").length !== round)
       throw new Error("room departure repeated");
   }
@@ -230,7 +239,15 @@ context.window.referenceService.close();
 console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvidence, closed: socket.readyState === 3}));
 """
         source = (SCRIPT.parents[1] / "tests/smoke/webrtc_reference_service.js").read_text()
-        for fault in ("none", "rejoin", "peer", "generation"):
+        for fault in (
+            "none",
+            "rejoin",
+            "late",
+            "peer",
+            "generation",
+            "late-peer",
+            "late-generation",
+        ):
             with self.subTest(fault=fault):
                 result = subprocess.run(  # noqa: S603
                     ["node", "--input-type=module", "-e", harness, fault],  # noqa: S607
@@ -242,13 +259,13 @@ console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvid
                 )
                 proof = json.loads(result.stdout)
                 self.assertTrue(proof["closed"])
-                if fault in ("none", "rejoin"):
+                if fault in ("none", "rejoin", "late"):
                     self.assertEqual(proof["error"], "")
                     self.assertEqual([phase["phase"] for phase in proof["evidence"]], [1, 2])
                     for phase in proof["evidence"]:
                         self.assertTrue(phase["left"])
                         self.assertEqual(phase["signals_sent"], 1)
-                        self.assertEqual(phase["signals_received"], 1)
+                        self.assertEqual(phase["signals_received"], 2 if fault == "late" else 1)
                     if fault == "rejoin":
                         self.assertEqual(proof["evidence"][0]["departure_stage"], "selected_packet")
                 else:
