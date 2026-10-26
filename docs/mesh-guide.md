@@ -271,6 +271,9 @@ Godot keeps its outgoing envelope. Every mode must receive sequence 0 plus
 exact nonempty controls. This flag excludes `--empty-binary`. Use the raw
 `receive_packet()` path first. The safe RPC peer's GDScript hook reports an
 empty result as `ERR_UNAVAILABLE`, so that strict control remains a failure.
+Godot 4.3 raw native/Web controls passed both offer roles and fresh
+generations with empty receipts in all three modes. The strict native safe-peer
+control failed at a zero-byte read with `ERR_UNAVAILABLE`.
 Do not infer send support from a successful receive control.
 
 ## ICE candidate formats
