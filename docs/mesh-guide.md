@@ -160,7 +160,8 @@ channels. Its ordered and unordered channels request a 1 ms packet lifetime.
 The default reference profile keeps its existing layout. Keep this profile
 experimental: two retained Godot 4.3 native-offer controls at c527219 skipped the start of
 a recovered reliable stream. Native raw/admitted counters retained the gap,
-with zero discarded or rejected receipts. Track the unresolved cause in
+with zero discarded or rejected receipts. A 4.4.1 startup control at 18cadb5
+also missed reliable snapshot sequences 0 through 3. Track the unresolved cause in
 [server #1244](https://github.com/Ambiguous-Interactive/signal-fish-server/issues/1244).
 Use server relay for mixed-client gameplay until recovery is qualified.
 

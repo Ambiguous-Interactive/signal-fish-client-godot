@@ -186,5 +186,50 @@ module.exports = async function testNativeReference() {
   const failed = new context.Engine(false, callbacks);
   await assert.rejects(failed.pairWith("godot", false, []), /native failure/);
   assert.match(context.window.referenceError, /native failure/);
+  let releaseBatch;
+  const eventBatch = new Promise((resolve) => {
+    releaseBatch = resolve;
+  });
+  const batchContext = {
+    window: {},
+    setTimeout: (callback) => setImmediate(callback),
+    fetch: async (url) => ({
+      ok: true,
+      json: async () => ({
+        result: url === "/native/events" ? await eventBatch : { generation: 2 },
+      }),
+    }),
+  };
+  vm.runInNewContext(
+    fs
+      .readFileSync("tests/smoke/webrtc_native_reference.js", "utf8")
+      .replace("export class Engine", "globalThis.Engine = class Engine"),
+    batchContext,
+  );
+  let dispatched = 0;
+  const batchEngine = new batchContext.Engine(false, {
+    onChannelMessage: (_peer, _generation, _label, text) => {
+      dispatched++;
+      batchContext.window.referenceError = text;
+    },
+  });
+  await batchEngine.pairWith("godot", true, []);
+  releaseBatch([
+    {
+      event: "message",
+      generation: 2,
+      label: "reliable",
+      text: "first failure",
+    },
+    {
+      event: "message",
+      generation: 2,
+      label: "reliable",
+      text: "later failure",
+    },
+  ]);
+  await new Promise(setImmediate);
+  assert.equal(dispatched, 1);
+  assert.equal(batchContext.window.referenceError, "first failure");
   console.log("Native reference bridge tests passed");
 };

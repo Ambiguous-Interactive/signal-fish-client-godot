@@ -26,7 +26,10 @@ async function pump() {
       const response = await fetch("/native/events");
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "native events failed");
-      for (const event of body.result) current?.dispatch(event);
+      for (const event of body.result) {
+        if (window.referenceError) break;
+        current?.dispatch(event);
+      }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   } catch (error) {
@@ -61,7 +64,7 @@ export class Engine {
     }
   }
   flushCandidates() {
-    if (this.signaling || !this.paired) return;
+    if (window.referenceError || this.signaling || !this.paired) return;
     for (const event of this.candidates.splice(0))
       this.callbacks.onLocalCandidate(
         "godot",
@@ -116,7 +119,7 @@ export class Engine {
     return this.paired;
   }
   dispatch(event) {
-    if (!this.paired) return;
+    if (window.referenceError || !this.paired) return;
     if (this.generation === null) {
       this.pending.push(event);
       return;

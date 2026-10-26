@@ -2,8 +2,86 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
+async function testReferenceFirstFailure() {
+  for (const binary of [false, true]) {
+    let callbacks;
+    let removed = false;
+    let posted = 0;
+    const context = {
+      window: {},
+      TextDecoder,
+      AbortController,
+      performance: { now: () => 1 },
+      console: { log() {}, error() {} },
+      setTimeout: (callback) => setImmediate(callback),
+      fetch: async (_url, options) => {
+        if (options?.method === "POST") posted++;
+        return { ok: true, json: async () => [{ marker: "ready-1" }] };
+      },
+      Engine: class {
+        nativeProfile = true;
+        constructor(_verbose, handlers) {
+          callbacks = handlers;
+        }
+        async pairWith() {
+          await Promise.resolve();
+          for (const sequence of [4, 11, 0]) {
+            const text =
+              `snapshot:1:godot:${sequence}:` + "0123456789abcdef".repeat(64);
+            if (binary)
+              callbacks.onChannelBinaryMessage(
+                "godot",
+                1,
+                "reliable",
+                new TextEncoder().encode(text),
+              );
+            else callbacks.onChannelMessage("godot", 1, "reliable", text);
+          }
+          callbacks.onChannelMessage(
+            "godot",
+            1,
+            "unreliable",
+            "position:1:godot:0:" + "0123456789abcdef".repeat(4),
+          );
+          callbacks.onChannelClosed("godot", 1, "reliable", "late");
+          return null;
+        }
+        channel() {
+          return null;
+        }
+        diagnosticSnapshot() {
+          return {};
+        }
+        async removePeer() {
+          removed = true;
+        }
+      },
+    };
+    vm.runInNewContext(
+      fs
+        .readFileSync("tests/smoke/webrtc_reference.js", "utf8")
+        .replace(/^import .*;\n/, ""),
+      context,
+    );
+    await context.window.runReference(0, true, true, "http");
+    assert.match(
+      context.window.referenceError,
+      /expected_sequence=0 received_sequence=4 /,
+    );
+    const evidence = context.window.referenceProgress();
+    assert.equal(evidence.snapshot_received, 0);
+    assert.equal(evidence.positions_received, 0);
+    assert.equal(evidence.retirement.closed_labels.length, 0);
+    assert.equal(posted, 0);
+    assert.equal(removed, true);
+    assert.equal(context.window.referenceSettled, true);
+  }
+  console.log("Reference first-failure tests passed");
+}
+
 async function main() {
   await require("./test_webrtc_native_reference.cjs")();
+  await testReferenceFirstFailure();
   let sample;
   const output = [];
   const channels = [];
