@@ -124,6 +124,11 @@ func _run_phase(phase: int) -> bool:
 				)
 		):
 			return false
+		var queued_proof: Dictionary = {}
+		if _reference_options["queued_retirement"]:
+			queued_proof = await _reference_queued_retirement(safe, peer, id, phase)
+			if queued_proof.is_empty():
+				return false
 		if safe != null:
 			if (
 				safe.get_packet_peer() != id
@@ -132,6 +137,7 @@ func _run_phase(phase: int) -> bool:
 				_fail("reference retirement metadata differs")
 				return false
 		_reference_retirement = {
+			"queued_arrival": queued_proof,
 			"channel": _reference_options["closing_channel"],
 			"seat": _reference_options["closing_seat"],
 			"selected": safe != null,
@@ -476,3 +482,54 @@ func _reference_evidence() -> Dictionary:
 		"receive_pause": _reference_receive_pause.duplicate(),
 		"retirement": _reference_retirement.duplicate(),
 	}
+
+
+func _reference_queued_retirement(
+	safe: MultiplayerPeer, peer: Object, id: int, phase: int
+) -> Dictionary:
+	if (
+		safe.get_packet_peer() != id
+		or safe.get_packet_mode() != MultiplayerPeer.TRANSFER_MODE_UNRELIABLE
+		or safe.get_packet_channel() != 0
+	):
+		_fail("reference initial retirement selection differs")
+		return {}
+	var proof := {"preserved": false, "arrival_wait_ms": 0}
+	_reference_retirement["queued_arrival"] = proof
+	var started := Time.get_ticks_msec()
+	_pending.append({"marker": "close-cached-%d" % phase})
+	var info: Dictionary = peer.call("get_peer", id)
+	var channels: Array = info["channels"]
+	var reliable: WebRTCDataChannel = channels[0]
+	var unreliable: WebRTCDataChannel = channels[2]
+	if not await _wait_until(
+		"reference late retirement arrivals",
+		func() -> bool:
+			proof["arrival_wait_ms"] = Time.get_ticks_msec() - started
+			return (
+				reliable.get_available_packet_count() == 1
+				and unreliable.get_available_packet_count() == 1
+			)
+	):
+		return {}
+	proof["queued_before_read"] = safe.get_available_packet_count()
+	if (
+		proof["queued_before_read"] != 3
+		or safe.get_packet_peer() != id
+		or safe.get_packet_mode() != MultiplayerPeer.TRANSFER_MODE_UNRELIABLE
+		or safe.get_packet_channel() != 0
+		or safe.get_packet() != ("retirement:%d:unreliable" % phase).to_utf8_buffer()
+	):
+		_fail("reference late arrival changed selected bytes or metadata")
+		return {}
+	proof["queued_after_read"] = safe.get_available_packet_count()
+	if (
+		proof["queued_after_read"] != 2
+		or safe.get_packet_peer() != id
+		or safe.get_packet_mode() != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+		or safe.get_packet_channel() != 0
+	):
+		_fail("reference late reliable selection differs")
+		return {}
+	proof["preserved"] = true
+	return proof

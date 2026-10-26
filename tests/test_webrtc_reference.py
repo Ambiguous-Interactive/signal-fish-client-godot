@@ -22,6 +22,50 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_queued_retirement_requires_preserved_selection_and_both_arrivals(self) -> None:
+        arrival = {"preserved": True, "queued_before_read": 3, "queued_after_read": 2}
+        local = {"queued": 2, "queued_arrival": arrival}
+        remote = {"queued_retirement": True, "late_sent": True}
+        self.assertTrue(
+            reference.queued_retirement_passed({"retirement": local}, {"retirement": remote}, True)
+        )
+        for key, value in (
+            ("preserved", False),
+            ("queued_before_read", 2),
+            ("queued_before_read", 3.0),
+            ("queued_after_read", 1),
+            ("queued_after_read", 2.0),
+        ):
+            with self.subTest(key=key, value=value):
+                proof = {**local, "queued_arrival": {**arrival, key: value}}
+                self.assertFalse(
+                    reference.queued_retirement_passed(
+                        {"retirement": proof}, {"retirement": remote}, True
+                    )
+                )
+        for local_change, remote_change in (
+            ({"queued": 1}, {}),
+            ({"queued_arrival": None}, {}),
+            ({}, {"queued_retirement": False}),
+            ({}, {"late_sent": False}),
+        ):
+            self.assertFalse(
+                reference.queued_retirement_passed(
+                    {"retirement": {**local, **local_change}},
+                    {"retirement": {**remote, **remote_change}},
+                    True,
+                )
+            )
+        self.assertFalse(reference.queued_retirement_passed({}, {}, True))
+        self.assertFalse(
+            reference.queued_retirement_passed({"retirement": local}, {"retirement": remote}, False)
+        )
+        self.assertTrue(
+            reference.queued_retirement_passed(
+                {"retirement": {}}, {"retirement": {"queued_retirement": False}}, False
+            )
+        )
+
     def test_service_rejoin_requires_same_room_receiver_and_new_generation(self) -> None:
         godot = [
             {
