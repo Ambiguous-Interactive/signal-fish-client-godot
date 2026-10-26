@@ -8,10 +8,31 @@
     construct(target, args, newTarget) {
       const peer = Reflect.construct(target, args, newTarget);
       const id = ++created;
-      peers.set(peer, { id, pending: null });
+      const observedChannels = [];
+      peers.set(peer, { id, pending: null, observedChannels });
       const createChannel = peer.createDataChannel;
       peer.createDataChannel = function (label, options) {
         const channel = Reflect.apply(createChannel, this, [label, options]);
+        const received = {
+          id: channel.id,
+          label: channel.label,
+          packets: 0,
+          bytes: 0,
+          callbacks: [],
+          dropped: 0,
+        };
+        observedChannels.push(received);
+        channel.addEventListener("message", (event) => {
+          const bytes =
+            typeof event.data === "string"
+              ? new TextEncoder().encode(event.data).byteLength
+              : (event.data.byteLength ?? event.data.size);
+          received.packets++;
+          received.bytes += bytes;
+          if (received.callbacks.length < 1024)
+            received.callbacks.push({ ms: performance.now(), bytes });
+          else received.dropped++;
+        });
         console.log(
           "WEBRTC_BROWSER_CHANNEL " +
             JSON.stringify({
@@ -51,6 +72,10 @@
             connection: peer.connectionState,
             ice: peer.iceConnectionState,
             sctp: peer.sctp?.state ?? null,
+            callbacks: entry.observedChannels.map((channel) => ({
+              ...channel,
+              callbacks: channel.callbacks.slice(),
+            })),
             channels: [],
             transports: [],
             candidate_pairs: [],

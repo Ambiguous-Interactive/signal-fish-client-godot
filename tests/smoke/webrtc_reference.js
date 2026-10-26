@@ -14,6 +14,8 @@ window.runReference = async function (
   queuedRetirement = false,
   binaryPayloads = null,
   startupBurst = false,
+  snapshotBodyBytes = 1024,
+  snapshotWindowBytes = 0,
 ) {
   const seat = 1 - godotSeat;
   const post = async (message) => {
@@ -47,6 +49,9 @@ window.runReference = async function (
       const orderedSequences = [];
       let snapshotReceived = 0;
       let snapshotAck = 0;
+      let outstandingBytes = 0;
+      let peakOutstandingBytes = 0;
+      const heartbeatTimings = [];
       let positionsSent = 0;
       const positionsReceived = new Set();
       let peakOutstanding = 0;
@@ -63,6 +68,8 @@ window.runReference = async function (
             maxCreditWaitMs,
             Math.round(performance.now() - creditUpdated),
           );
+          for (let sequence = snapshotAck; sequence < count; sequence++)
+            outstandingBytes -= chunk("reference", sequence).length;
           snapshotAck = count;
           creditUpdated = performance.now();
         }
@@ -71,7 +78,7 @@ window.runReference = async function (
       let partialReceived = 0;
       const chunk = (sender, sequence, partial = false) =>
         `${partial ? "partial" : "snapshot"}:${phase}:${sender}:${sequence}:` +
-        "0123456789abcdef".repeat(64);
+        "0123456789abcdef".repeat(snapshotBodyBytes / 16);
       let observed = false;
       let closeRequested = false;
       let closeQueued = false;
@@ -140,6 +147,9 @@ window.runReference = async function (
               "reference heartbeat bytes or metadata differ";
             return false;
           }
+          heartbeatTimings[heartbeatReceived].echo_ms = Math.round(
+            performance.now() - started,
+          );
           heartbeatReceived++;
           return true;
         }
@@ -306,6 +316,7 @@ window.runReference = async function (
       engine.startupPhase = startupBurst ? phase : 0;
       const evidence = () => ({
         phase,
+        phase_started_ms: started,
         startup_burst: startupBurst,
         startup_sent: engine.startupSent ?? 0,
         startup_received: startupReceived,
@@ -335,6 +346,11 @@ window.runReference = async function (
         ordered_sent: orderedSent,
         ordered_sequences: orderedSequences.slice(),
         position_sequences: [...positionsReceived],
+        snapshot_body_bytes: snapshotBodyBytes,
+        snapshot_window_bytes: snapshotWindowBytes,
+        outstanding_snapshot_bytes: outstandingBytes,
+        peak_outstanding_snapshot_bytes: peakOutstandingBytes,
+        heartbeat_timings: heartbeatTimings.map((entry) => ({ ...entry })),
         snapshot_sent: snapshotSent,
         snapshot_received: snapshotReceived,
         partial_sent: partialSent,
@@ -519,7 +535,19 @@ window.runReference = async function (
               snapshotSent - snapshotAck < 32;
               batch++
             ) {
-              reliable.send(chunk("reference", snapshotSent++));
+              const data = chunk("reference", snapshotSent);
+              if (
+                snapshotWindowBytes &&
+                outstandingBytes + data.length > snapshotWindowBytes
+              )
+                break;
+              reliable.send(data);
+              snapshotSent++;
+              outstandingBytes += data.length;
+              peakOutstandingBytes = Math.max(
+                peakOutstandingBytes,
+                outstandingBytes,
+              );
               if (binaryPackets && snapshotSent % 16 === 0) {
                 for (const [mode, label] of binaryLabels.entries()) {
                   engine
@@ -568,6 +596,10 @@ window.runReference = async function (
             performance.now() >= nextHeartbeat &&
             partialSent === 0
           ) {
+            heartbeatTimings.push({
+              sequence: heartbeatSent,
+              enqueue_ms: Math.round(performance.now() - started),
+            });
             reliable.send(heartbeat(heartbeatSent++));
             nextHeartbeat = performance.now() + 100;
           }
