@@ -676,7 +676,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
     assets.mkdir()
     probe = getattr(args, "native_reference_probe", None)
     if probe:
-        frozen_probe = directory / "native-reference-probe"
+        frozen_probe = directory / ("native-reference-probe" + probe.suffix)
         shutil.copy2(probe, frozen_probe)
         probe = frozen_probe
     backend = None

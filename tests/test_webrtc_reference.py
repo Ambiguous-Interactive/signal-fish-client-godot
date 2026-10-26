@@ -1424,11 +1424,11 @@ console.log("cleanup settled");
         playwright.chromium.launch.side_effect = RuntimeError("browser failed")
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / "assessment"
-            args.native_reference_probe = Path(temporary) / "probe"
+            args.native_reference_probe = Path(temporary) / "probe.exe"
             args.native_reference_probe.write_bytes(b"original probe")
 
             def spawn_backend(probe: Path, _directory: Path) -> Mock:
-                self.assertEqual(probe, directory / "native-reference-probe")
+                self.assertEqual(probe, directory / "native-reference-probe.exe")
                 self.assertEqual(probe.read_bytes(), b"original probe")
                 args.native_reference_probe.write_bytes(b"replacement probe")
                 return backend
