@@ -90,6 +90,8 @@ export class Engine {
     this.callbacks = callbacks;
     this.nativeProfile = true;
     this.channels = new Map();
+    this.heartbeatReceived = [];
+    this.heartbeatReceivedDropped = 0;
     this.sentTimings = [];
     this.sentTimingsDropped = 0;
     this.startupPhase = 0;
@@ -155,6 +157,8 @@ export class Engine {
       startup_sent: this.startupSent,
       packet_timings: packetTimings.map((entry) => ({ ...entry })),
       timings_dropped: timingsDropped,
+      native_heartbeat_received: this.heartbeatReceived.slice(),
+      native_heartbeat_received_dropped: this.heartbeatReceivedDropped,
       native_sent: this.sentTimings.slice(),
       native_sent_dropped: this.sentTimingsDropped,
       channels: Object.fromEntries(
@@ -177,6 +181,16 @@ export class Engine {
   }
   isPaired() {
     return this.paired;
+  }
+  noteHeartbeat(event, text) {
+    if (!text.startsWith("heartbeat:")) return;
+    if (this.heartbeatReceived.length < 128)
+      this.heartbeatReceived.push({
+        marker: text.split(":").slice(0, 4).join(":"),
+        probe_us: event.probe_us,
+        callback_ms: performance.now(),
+      });
+    else this.heartbeatReceivedDropped++;
   }
   dispatch(event) {
     if (window.referenceError || !this.paired) return;
@@ -235,19 +249,21 @@ export class Engine {
         this.callbacks.onChannelClosed(...args, event.label, "native callback");
         break;
       case "message":
+        this.noteHeartbeat(event, event.text);
         this.callbacks.onChannelMessage(...args, event.label, event.text);
         break;
-      case "binary":
+      case "binary": {
+        const binary = atob(event.data_base64);
+        this.noteHeartbeat(event, binary);
         if (typeof this.callbacks.onChannelBinaryMessage !== "function")
           throw new Error("native binary callback is missing");
         this.callbacks.onChannelBinaryMessage(
           ...args,
           event.label,
-          Uint8Array.from(atob(event.data_base64), (byte) =>
-            byte.charCodeAt(0),
-          ),
+          Uint8Array.from(binary, (byte) => byte.charCodeAt(0)),
         );
         break;
+      }
       case "receive_rejected":
         throw new Error(
           `native receive rejected: generation=${event.generation} channel=${event.label}`,

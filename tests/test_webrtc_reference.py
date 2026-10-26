@@ -395,12 +395,34 @@ class ReferenceEvidenceTests(unittest.TestCase):
             )
         )
 
+    def test_receive_capacity_control_is_applied_before_engine_import(self) -> None:
+        for capacity in (0, 64, 256):
+            with self.subTest(capacity=capacity), tempfile.TemporaryDirectory() as temporary:
+                args = argparse.Namespace(
+                    native_extension=Path("extension"),
+                    godot="godot",
+                    godot_offer=False,
+                    safe_receive=True,
+                    mixed_traffic=True,
+                    credit_transport="webrtc",
+                    channel_in_buffer_kb=capacity,
+                )
+                with patch.object(reference.interop, "checked") as checked:
+                    project = reference.prepare(args, Path(temporary), web=True)
+                content = (project / "project.godot").read_text()
+                if capacity:
+                    self.assertIn(f"limits/webrtc/max_channel_in_buffer_kb={capacity}", content)
+                else:
+                    self.assertNotIn("limits/webrtc/max_channel_in_buffer_kb=", content)
+                self.assertEqual(checked.call_count, 2)
+
     def test_service_rejoin_requires_same_room_receiver_and_new_generation(self) -> None:
         godot = [
             {
                 "phase": phase,
                 "room_id": "room",
                 "generation": f"generation-{phase}",
+                "initiate": False,
                 "player_id": "godot",
                 "peer_id": "reference",
                 "signals_sent": 3,
@@ -418,6 +440,7 @@ class ReferenceEvidenceTests(unittest.TestCase):
                 **phase,
                 "player_id": "reference",
                 "peer_id": "godot",
+                "initiate": True,
                 "signals_sent": 4,
                 "signals_received": 3,
                 "left": True,
@@ -426,6 +449,17 @@ class ReferenceEvidenceTests(unittest.TestCase):
             for phase in godot
         ]
         self.assertTrue(reference.service_session_passed(godot, remote, rejoin=True))
+        self.assertTrue(
+            reference.service_session_passed(
+                [{**godot[0], "initiate": True}, godot[1]],
+                [{**remote[0], "initiate": False}, remote[1]],
+                rejoin=True,
+                godot_offer=True,
+            )
+        )
+        self.assertFalse(
+            reference.service_session_passed(godot, remote, rejoin=True, godot_offer=True)
+        )
         self.assertFalse(reference.service_session_passed(godot, remote))
         self.assertFalse(
             reference.service_session_passed(
@@ -472,6 +506,7 @@ class ReferenceEvidenceTests(unittest.TestCase):
                 "phase": phase,
                 "room_id": f"room-{phase}",
                 "generation": f"generation-{phase}",
+                "initiate": False,
                 "player_id": "godot",
                 "peer_id": "reference",
                 "signals_sent": 3,
@@ -486,6 +521,7 @@ class ReferenceEvidenceTests(unittest.TestCase):
                 **phase,
                 "player_id": "reference",
                 "peer_id": "godot",
+                "initiate": True,
                 "signals_sent": 4,
                 "signals_received": 3,
             }
@@ -495,6 +531,10 @@ class ReferenceEvidenceTests(unittest.TestCase):
         for records in (godot, remote):
             for key, value in (
                 ("phase", 1),
+                ("initiate", None),
+                ("initiate", 0),
+                ("initiate", "true"),
+                ("initiate", records is godot),
                 ("room_id", "wrong-room"),
                 ("generation", "wrong-generation"),
                 ("player_id", "wrong-player"),
@@ -531,7 +571,9 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 const source = readFileSync(0, "utf8").replace("export function", "function");
 const fault = process.argv[1];
-const rejoin = fault === "rejoin";
+const rejoin = fault.includes("rejoin");
+const godotOffer = fault.startsWith("godot") || fault.startsWith("early");
+const initiate = () => rejoin && phase === 2 ? true : !godotOffer;
 let socket, clock = 0, phase = 0;
 const sent = [];
 const frame = (type, data) => socket.onmessage({data: JSON.stringify({type, data})});
@@ -553,15 +595,30 @@ class Socket {
         throw new Error("room admission differs");
       frame("RoomJoined", {room_id: `room-${phase}`, player_id: "reference",
         current_players: [{id: "reference", epoch: phase}]});
-      if (rejoin && phase === 2)
+      if (rejoin && phase === 2) {
+        if (fault === "early-rejoin") frame("Signal", {from: "godot",
+          generation: `generation-${phase}`, signal: {Offer: "early-offer"}});
         frame("SessionPlan", {transport: "webrtc", generation: `generation-${phase}`,
-          peers: [{player_id: "godot", initiate: true}]});
+          peers: [{player_id: "godot", initiate: initiate()}]});
+      }
     }
-    if (message.type === "PlayerReady") {
+    if (message.type === "AuthorityRequest") {
+      if (!godotOffer || !message.data.become_authority) throw new Error("authority request differs");
+      frame("AuthorityResponse", {granted: true});
+    }
+    if (message.type === "PlayerReady" && godotOffer) {
+      frame("LobbyStateChanged", {all_ready: false});
+      frame("LobbyStateChanged", {all_ready: true});
+    }
+    if (message.type === (godotOffer ? "StartGame" : "PlayerReady")) {
       if (rejoin && phase === 2) throw new Error("rejoin must keep the running game");
+      if (fault.startsWith("early")) frame("Signal", {
+        from: fault === "early-peer" ? "other" : "godot",
+        generation: fault === "early-generation" ? "old" : `generation-${phase}`,
+        signal: {Offer: "early-offer"}});
       frame("GameStarting", {});
       frame("SessionPlan", {transport: "webrtc", generation: `generation-${phase}`,
-        peers: [{player_id: "godot", initiate: true}], ice_servers: []});
+        peers: [{player_id: "godot", initiate: initiate()}], ice_servers: []});
     }
     if (message.type === "LeaveRoom") {
       if (fault.startsWith("late")) frame("Signal", {
@@ -583,11 +640,18 @@ const context = {
   ]}),
 };
 runInNewContext(source, context);
-context.configureReferenceService("ws://service/v3/ws", "app", rejoin);
+context.configureReferenceService("ws://service/v3/ws", "app", rejoin, godotOffer);
 let error = "";
 try {
   for (let round = 1; round <= 2; round++) {
     const service = await context.window.referenceService.begin(round, 0);
+    if (service.initiate !== initiate()) throw new Error("offer role differs");
+    if (service.drain(false).length) throw new Error("unpaired peer received a signal");
+    if (fault === "early" || fault === "early-rejoin") {
+      const queued = service.drain();
+      if (queued.length !== 1 || queued[0].payload.Offer !== "early-offer")
+        throw new Error("early offer was lost");
+    }
     service.send({Offer: "offer-text"});
     const outbound = sent.at(-1);
     if (JSON.stringify(outbound) !== JSON.stringify({type: "Signal", data: {
@@ -614,6 +678,12 @@ console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvid
         source = (SCRIPT.parents[1] / "tests/smoke/webrtc_reference_service.js").read_text()
         for fault in (
             "none",
+            "godot",
+            "godot-rejoin",
+            "early",
+            "early-rejoin",
+            "early-peer",
+            "early-generation",
             "rejoin",
             "late",
             "peer",
@@ -632,18 +702,30 @@ console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvid
                 )
                 proof = json.loads(result.stdout)
                 self.assertTrue(proof["closed"])
-                if fault in ("none", "rejoin", "late"):
+                if fault in (
+                    "none",
+                    "rejoin",
+                    "late",
+                    "godot",
+                    "godot-rejoin",
+                    "early",
+                    "early-rejoin",
+                ):
                     self.assertEqual(proof["error"], "")
                     self.assertEqual([phase["phase"] for phase in proof["evidence"]], [1, 2])
                     for phase in proof["evidence"]:
                         self.assertTrue(phase["left"])
                         self.assertEqual(phase["signals_sent"], 1)
-                        self.assertEqual(phase["signals_received"], 2 if fault == "late" else 1)
+                        self.assertEqual(
+                            phase["signals_received"],
+                            2 if fault in ("late", "early", "early-rejoin") else 1,
+                        )
                     if fault == "rejoin":
                         self.assertEqual(proof["evidence"][0]["departure_stage"], "selected_packet")
                 else:
                     self.assertIn("signal identity differs", proof["error"])
-                    self.assertFalse(proof["evidence"][0]["left"])
+                    if proof.get("evidence"):
+                        self.assertFalse(proof["evidence"][0]["left"])
 
     def test_snapshot_verdict_requires_complete_stream_and_partial_transfer(self) -> None:
         phase = {

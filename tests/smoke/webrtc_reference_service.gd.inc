@@ -1,3 +1,6 @@
+var _service_generation := ""
+var _service_initiate := false
+var _service_godot_offer := false
 var _service_plan: SessionScript.SessionPlanInfo
 var _service_ready := false
 var _service_all_ready := false
@@ -16,6 +19,7 @@ func _service_setup() -> bool:
 	)
 	config.app_id = options["service_app_id"]
 	_service_rejoin = options["service_rejoin"]
+	_service_godot_offer = options["godot_offer"]
 	config.protocol_version = 3
 	config.auto_poll = false
 	config.supported_transports = PackedStringArray(["relay", "webrtc"])
@@ -98,12 +102,14 @@ func _service_join(phase: int) -> bool:
 	params.game_name = _service_game_name
 	params.player_name = "Godot"
 	params.max_players = 2
-	params.supports_authority = false
+	params.supports_authority = _service_godot_offer
 	if not existing and _client.join_room(params) != OK:
 		return false
 	if not await _wait_until(
 		"service room", func() -> bool: return not _client.get_room_code().is_empty()
 	):
+		return false
+	if _service_godot_offer and not existing and _client.request_authority(false) != OK:
 		return false
 	(
 		_pending
@@ -129,7 +135,7 @@ func _service_finalize() -> bool:
 			return false
 		if not await _wait_until("service readiness", func() -> bool: return _service_all_ready):
 			return false
-		if _client.start_game() != OK:
+		if not _service_godot_offer and _client.start_game() != OK:
 			return false
 	if not await _wait_until(
 		"service plan",
@@ -139,10 +145,15 @@ func _service_finalize() -> bool:
 	if (
 		_service_plan.transport != SessionScript.TransportKind.WEBRTC
 		or _service_plan.peers.size() != 1
-		or _service_plan.peers[0].initiate
+		or (
+			(not _service_rejoin or _phase == 1)
+			and _service_plan.peers[0].initiate != _service_godot_offer
+		)
 	):
-		_fail("service needs a WebRTC host plan with the reference offering")
+		_fail("service WebRTC offer role differs")
 		return false
+	_service_generation = _service_plan.generation
+	_service_initiate = _service_plan.peers[0].initiate
 	_signal_players[_seat] = _client.get_player_id()
 	_signal_players[1 - _seat] = _service_plan.peers[0].player_id
 	_service_reference_epoch = 0
@@ -156,7 +167,8 @@ func _service_end(phase: int) -> bool:
 	var evidence := {
 		"phase": phase,
 		"room_id": _client.get_room_id(),
-		"generation": _service_plan.generation,
+		"generation": _service_generation,
+		"initiate": _service_initiate,
 		"player_id": _client.get_player_id(),
 		"peer_id": _signal_players[1 - _seat],
 		"signals_sent": _client.service_signals_sent,

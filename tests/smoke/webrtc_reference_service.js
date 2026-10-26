@@ -1,4 +1,9 @@
-export function configureReferenceService(url, appId, rejoin = false) {
+export function configureReferenceService(
+  url,
+  appId,
+  rejoin = false,
+  godotOffer = false,
+) {
   const socket = new WebSocket(url);
   const inbox = [];
   const evidence = [];
@@ -35,9 +40,9 @@ export function configureReferenceService(url, appId, rejoin = false) {
         );
       if (frame.type === "Signal") {
         if (
-          !currentSession ||
-          frame.data.from !== currentSession.peer_id ||
-          frame.data.generation !== currentSession.generation
+          currentSession &&
+          (frame.data.from !== currentSession.peer_id ||
+            frame.data.generation !== currentSession.generation)
         )
           throw new Error("reference service signal identity differs");
         signalsReceived++;
@@ -64,6 +69,8 @@ export function configureReferenceService(url, appId, rejoin = false) {
   let loggedIn = false;
   window.referenceService = {
     async begin(phase, seat) {
+      const sentBefore = signalsSent;
+      const receivedBefore = signalsReceived;
       if (!loggedIn) {
         await wait(() => take("Authenticated"), "login");
         const protocol = await wait(() => take("ProtocolInfo"), "protocol");
@@ -88,12 +95,25 @@ export function configureReferenceService(url, appId, rejoin = false) {
         room_code: room.room_code,
         player_name: "Reference",
         max_players: 2,
-        supports_authority: false,
+        supports_authority: godotOffer,
         join_only: true,
       });
       const joined = await wait(() => take("RoomJoined"), "room admission");
       if (!rejoin || phase === 1) {
+        if (godotOffer) {
+          send("AuthorityRequest", { become_authority: true });
+          const authority = await wait(
+            () => take("AuthorityResponse"),
+            "reference authority",
+          );
+          if (!authority.granted)
+            throw new Error("reference authority was refused");
+        }
         send("PlayerReady");
+        if (godotOffer) {
+          await wait(() => take("LobbyStateChanged")?.all_ready, "all ready");
+          send("StartGame");
+        }
         await wait(() => take("GameStarting"), "game start");
       }
       const plan = await wait(() => take("SessionPlan"), "session plan");
@@ -101,15 +121,15 @@ export function configureReferenceService(url, appId, rejoin = false) {
         plan.transport !== "webrtc" ||
         plan.peers.length !== 1 ||
         plan.peers[0].player_id !== room.player_id ||
-        !plan.peers[0].initiate
+        typeof plan.peers[0].initiate !== "boolean" ||
+        ((!rejoin || phase === 1) && plan.peers[0].initiate === godotOffer)
       )
-        throw new Error(
-          "reference service needs an initiating WebRTC host plan",
-        );
+        throw new Error("reference service offer role differs");
       const record = {
         phase,
         room_id: joined.room_id,
         generation: plan.generation,
+        initiate: plan.peers[0].initiate,
         player_id: joined.player_id,
         peer_id: room.player_id,
         reference_epoch: joined.current_players.find(
@@ -119,10 +139,16 @@ export function configureReferenceService(url, appId, rejoin = false) {
         signals_received: 0,
         left: false,
       };
-      const sentBefore = signalsSent;
-      const receivedBefore = signalsReceived;
       let leaving = null;
       currentSession = record;
+      const validate = (frame) => {
+        if (
+          frame.data.from !== record.peer_id ||
+          frame.data.generation !== record.generation
+        )
+          throw new Error("reference service queued signal identity differs");
+      };
+      for (const frame of inbox) if (frame.type === "Signal") validate(frame);
       evidence.push(record);
       window.referenceServiceEvidence = evidence;
       return {
@@ -139,12 +165,14 @@ export function configureReferenceService(url, appId, rejoin = false) {
           });
           signalsSent++;
         },
-        drain() {
+        drain(paired = true) {
           if (failure) throw failure;
+          if (!paired) return [];
           const messages = [];
           for (let i = 0; i < inbox.length;) {
             const frame = inbox[i];
             if (frame.type === "Signal") {
+              validate(frame);
               inbox.splice(i, 1);
               messages.push({
                 generation: plan.generation,
