@@ -280,7 +280,10 @@ def wait_for_godot(page: Page, messages: list[str]) -> str:
 def wait_for_godot_ready(page: Page, ready: Callable[[], bool], messages: list[str]) -> int:
     started = time.monotonic()
     while time.monotonic() - started < 60:
-        if page_failed(messages) or any(interop.engine_failed(line) for line in messages):
+        if page_failed(messages) or any(
+            line.startswith("WEBRTC_INTEROP_FAIL ") or interop.engine_failed(line)
+            for line in messages
+        ):
             raise RuntimeError("Godot failed during reference assessment startup")
         if ready():
             return round((time.monotonic() - started) * 1000)

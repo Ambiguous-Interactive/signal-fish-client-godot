@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/smoke/webrtc_metadata_repro.gd" id="1"]
+
+[node name="WebRTCMetadataRepro" type="Node"]
+script = ExtResource("1")

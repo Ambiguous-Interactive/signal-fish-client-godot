@@ -563,9 +563,27 @@ console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvid
             self.assertRaisesRegex(TimeoutError, "60-second startup"),
         ):
             reference.wait_for_godot_ready(cast(Page, page), lambda: False, [])
-        for error in ("PAGE_ERROR load failed", "SCRIPT ERROR: bad engine"):
+        for error in (
+            "PAGE_ERROR load failed",
+            "SCRIPT ERROR: bad engine",
+            'WEBRTC_INTEROP_FAIL {"stage":"setup","reason":"connect failed"}',
+        ):
+            ready = Mock(return_value=True)
             with self.assertRaisesRegex(RuntimeError, "during reference assessment startup"):
-                reference.wait_for_godot_ready(cast(Page, page), lambda: True, [error])
+                reference.wait_for_godot_ready(cast(Page, page), ready, [error])
+            ready.assert_not_called()
+
+    def test_startup_failure_during_polling_wins_over_a_ready_marker(self) -> None:
+        page = Mock()
+        messages: list[str] = []
+        page.wait_for_timeout.side_effect = lambda _: messages.append(
+            'WEBRTC_INTEROP_FAIL {"stage":"setup","reason":"connect failed"}'
+        )
+        ready = Mock(side_effect=[False, True])
+        with self.assertRaisesRegex(RuntimeError, "during reference assessment startup"):
+            reference.wait_for_godot_ready(cast(Page, page), ready, messages)
+        ready.assert_called_once_with()
+        page.wait_for_timeout.assert_called_once_with(100)
 
     def test_slow_reader_requires_a_real_pause_and_queued_mixed_packets(self) -> None:
         proof = {
