@@ -24,6 +24,71 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_receive_schedule_requires_observed_packet_budget_and_interval(self) -> None:
+        schedule = {
+            "batch_packets": 4,
+            "interval_ms": 200,
+            "dropped": 0,
+            "drains": [{"ms": 10, "reads": 4}, {"ms": 210, "reads": 0}],
+        }
+        self.assertTrue(reference.receive_schedule_passed({"receive_schedule": schedule}, 4, 200))
+        for field, value in (
+            ("batch_packets", 32),
+            ("interval_ms", 0),
+            ("dropped", 1),
+            ("dropped", False),
+            ("drains", []),
+            ("drains", [{"ms": 10, "reads": 5}]),
+            ("drains", [{"ms": 10, "reads": -1}]),
+            ("drains", [{"ms": True, "reads": 1}]),
+            ("drains", [{"ms": 10, "reads": True}]),
+            ("drains", [{"ms": 10, "reads": 4}, {"ms": 209, "reads": 1}]),
+            ("drains", [{"ms": 10, "reads": 4}, None]),
+        ):
+            with self.subTest(field=field, value=value):
+                self.assertFalse(
+                    reference.receive_schedule_passed(
+                        {"receive_schedule": {**schedule, field: value}}, 4, 200
+                    )
+                )
+        self.assertFalse(reference.receive_schedule_passed({}, 4, 200))
+        self.assertTrue(reference.receive_schedule_passed({}, 32, 0))
+        args = argparse.Namespace(
+            mixed_traffic=True,
+            credit_transport="webrtc",
+            safe_receive=True,
+            receive_batch_packets=4,
+            receive_interval_ms=200,
+        )
+        self.assertFalse(reference.gameplay_phase_checks({}, {}, args, 4, True)["receive_schedule"])
+
+    def test_receive_schedule_cli_rejects_invalid_controls_before_preparation(self) -> None:
+        base = [
+            "check-webrtc-reference.py",
+            "--native-extension",
+            "/missing",
+            "--reference-assets",
+            "/missing",
+            "--reference-revision",
+            "test",
+        ]
+        for flag, value in (
+            ("--receive-batch-packets", "0"),
+            ("--receive-batch-packets", "257"),
+            ("--receive-interval-ms", "-1"),
+            ("--receive-interval-ms", "1001"),
+        ):
+            with (
+                self.subTest(flag=flag, value=value),
+                patch("sys.argv", [*base, flag, value]),
+                patch("sys.stderr", new_callable=io.StringIO),
+                patch.object(reference, "prepare") as prepare,
+            ):
+                with self.assertRaises(SystemExit) as error:
+                    reference.main()
+                self.assertEqual(error.exception.code, 2)
+                prepare.assert_not_called()
+
     def test_snapshot_boundary_retains_callback_and_read_hole(self) -> None:
         callbacks = [
             {
@@ -753,6 +818,8 @@ class ReferenceEvidenceTests(unittest.TestCase):
                     mixed_traffic=True,
                     credit_transport="webrtc",
                     channel_in_buffer_kb=capacity,
+                    receive_batch_packets=4,
+                    receive_interval_ms=200,
                 )
                 with patch.object(reference.interop, "checked") as checked:
                     project = reference.prepare(args, Path(temporary), web=True)
@@ -761,6 +828,9 @@ class ReferenceEvidenceTests(unittest.TestCase):
                     self.assertIn(f"limits/webrtc/max_channel_in_buffer_kb={capacity}", content)
                 else:
                     self.assertNotIn("limits/webrtc/max_channel_in_buffer_kb=", content)
+                options = json.loads((project / "reference-options.json").read_text())
+                self.assertEqual(options["receive_batch_packets"], 4)
+                self.assertEqual(options["receive_interval_ms"], 200)
                 self.assertEqual(checked.call_count, 2)
 
     def test_service_rejoin_requires_same_room_receiver_and_new_generation(self) -> None:
