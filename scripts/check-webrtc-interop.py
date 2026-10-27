@@ -543,6 +543,105 @@ def seat_evidence(
     }
 
 
+def multi_peer_credit_diagnostics(
+    seats: list[dict[str, object]], relay: dict[str, object]
+) -> list[dict[str, object]]:
+    snapshots: dict[tuple[int, int], dict[str, object]] = {}
+    for seat in seats:
+        records = [
+            seat.get("last_progress"),
+            *cast(list[object], seat.get("multi_peer_phases", [])),
+            seat.get("diagnostic"),
+        ]
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            phase, number = record.get("phase"), seat.get("seat")
+            if type(phase) is int and type(number) is int:
+                previous = snapshots.get((phase, number), {})
+                tick, previous_tick = record.get("tick_ms"), previous.get("tick_ms")
+                if type(tick) is int and type(previous_tick) is int and tick < previous_tick:
+                    continue
+                snapshots[phase, number] = record
+
+    def mapping(record: dict[str, object], key: str) -> dict[str, object]:
+        value = record.get(key)
+        return value if isinstance(value, dict) else {}
+
+    def matching(records: object, marker: str, destination: int) -> dict[str, object]:
+        if not isinstance(records, list):
+            return {}
+        return next(
+            (
+                record
+                for record in reversed(records)
+                if isinstance(record, dict)
+                and record.get("marker") == marker
+                and record.get("to", record.get("seat")) == destination
+            ),
+            {},
+        )
+
+    rows: list[dict[str, object]] = []
+    for (phase, sender), source in sorted(snapshots.items()):
+        for target, sent in mapping(source, "sent_by_target").items():
+            if not isinstance(target, str) or not target.isdecimal():
+                continue
+            receiver = snapshots.get((phase, int(target)), {})
+            acknowledged = mapping(source, "acknowledged_by_target").get(target)
+            counts = mapping(receiver, "received_by_seat_and_mode").get(str(sender))
+            transport = source.get("credit_transport")
+            row: dict[str, object] = {
+                "phase": phase,
+                "sender": sender,
+                "receiver": int(target),
+                "transport": transport,
+                "sender_tick_ms": source.get("tick_ms"),
+                "receiver_tick_ms": receiver.get("tick_ms"),
+                "sender_stage": source.get("stage"),
+                "receiver_stage": receiver.get("stage"),
+                "receiver_reader_paused": receiver.get("reader_paused"),
+                "sent_chunks": sent,
+                "acknowledged_chunks": acknowledged,
+                "receiver_consumed_chunks": counts[2]
+                if isinstance(counts, list) and len(counts) == 3
+                else None,
+                "receiver_credits_sent": mapping(receiver, "credits_sent_by_target").get(
+                    str(sender)
+                ),
+                "sender_credits_received": mapping(source, "credits_received_by_target").get(
+                    target
+                ),
+                "window_wait_ms": mapping(source, "credit_wait_age_ms_by_target").get(target),
+            }
+            if (
+                transport == "http"
+                and type(sent) is int
+                and type(acknowledged) is int
+                and sent - acknowledged == 8
+            ):
+                marker = f"consumed-{phase}-{target}-{acknowledged + 8}"
+                post = matching(receiver.get("marker_posts"), marker, sender)
+                pending = matching(relay.get("pending_markers"), marker, sender)
+                dequeued = matching(relay.get("recent_dequeues"), marker, sender)
+                row["http_credit"] = {
+                    "marker": marker,
+                    "post": post or None,
+                    "post_inflight_ms": receiver.get("send_inflight_ms")
+                    if receiver.get("sending_marker") == marker
+                    and receiver.get("sending_to") == sender
+                    else None,
+                    "relay_pending_age_ms": pending.get("age_ms"),
+                    "relay_dequeue_queue_ms": dequeued.get("queue_ms"),
+                    "relay_dequeue_age_ms": dequeued.get("age_ms"),
+                    "sender_marker_observed": marker in cast(list[object], source["markers"])
+                    if isinstance(source.get("markers"), list)
+                    else None,
+                }
+            rows.append(row)
+    return rows
+
+
 def observe_browser(
     page: Page,
     process: subprocess.Popen[bytes],
@@ -819,6 +918,7 @@ def run_seats(
                 delay_proven = TrialRelayHandler.credit_delay.proven(proof)
                 seat_results[0]["passed"] = seat_results[0]["passed"] and delay_proven
                 delay_control["independent_pair_completed_while_held"] = delay_proven
+            relay_observation = relay_observation or TrialRelayHandler.observation.snapshot()
             evidence = {
                 "require_finite_lifetimes": args.require_finite_lifetimes,
                 "http_credit_delay": delay_control,
@@ -826,7 +926,7 @@ def run_seats(
                 "browser_version": browser_version,
                 "browser_observation": browser_observation,
                 "browser_2_observation": browser_2_observation,
-                "relay_observation": relay_observation or TrialRelayHandler.observation.snapshot(),
+                "relay_observation": relay_observation,
                 "retirement_case": retirement_case,
                 "multi_peer": args.multi_peer,
                 "slow_receiver": args.slow_receiver,
@@ -842,6 +942,9 @@ def run_seats(
                 "rpc_plan_recovery": args.rpc_plan_recovery,
                 "native_exit_code": process.returncode if process is not None else None,
                 "seats": seat_results,
+                "credit_diagnostics": multi_peer_credit_diagnostics(seat_results, relay_observation)
+                if args.multi_peer
+                else [],
             }
             (directory / "seats.json").write_text(json.dumps(evidence, indent=2) + "\n")
             server.shutdown()

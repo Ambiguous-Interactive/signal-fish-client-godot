@@ -1,6 +1,7 @@
 extends RefCounted
 
 const MeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
+const DrillScript = preload("res://tests/smoke/webrtc_interop_drill.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 const PLAYER := "10000000-0000-0000-0000-000000000002"
 
@@ -19,6 +20,7 @@ static func run(owner: Object) -> Array[String]:
 func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_cached_channel_selection,
+		_test_drill_channel_counts_include_selected_packet,
 		_test_multi_peer_selection,
 		_test_membership_change_keeps_selected_packet,
 		_test_packet_count,
@@ -64,6 +66,64 @@ func _queue(connection: Object, channel: int, data: PackedByteArray) -> void:
 	var data_channel: Object = channels[channel]
 	var packets: Array = data_channel.get("packets")
 	packets.append(data)
+
+
+func _test_drill_channel_counts_include_selected_packet() -> void:
+	for index: int in 3:
+		var setup := _setup(2)
+		var mesh: MeshScript = setup[0]
+		var connection: Object = setup[2]
+		var peer: MultiplayerPeer = setup[3]
+		var channels: Array = connection.get("channels")
+		var channel: Object = channels[index]
+		var mode: int = [2, 1, 0][index]
+		var id := MeshScript.uuid_to_peer_id(PLAYER)
+		var drill := DrillScript.new()
+		drill.set("_mesh", mesh)
+		drill.set("_safe_receive", false)
+		_queue(connection, index, PackedByteArray([index]))
+		_assert_equal(
+			1, drill.call("_channel_packet_count", channel, mode, id), "raw diagnostic count"
+		)
+		_assert_equal(
+			1, channel.call("get_available_packet_count"), "raw diagnostic leaves channel"
+		)
+		drill.set("_safe_receive", true)
+		_assert_equal(1, peer.get_available_packet_count(), "diagnostic selects queued packet")
+		_assert_equal(0, channel.call("get_available_packet_count"), "selection leaves raw channel")
+		for repeat: int in 2:
+			_assert_equal(
+				1,
+				drill.call("_channel_packet_count", channels[index], mode, id),
+				"diagnostic counts selected packet once %d" % repeat
+			)
+		_assert_equal(
+			0,
+			drill.call(
+				"_channel_packet_count",
+				channel,
+				mode,
+				MeshScript.uuid_to_peer_id("10000000-0000-0000-0000-000000000003")
+			),
+			"diagnostic excludes selected packet from other peer"
+		)
+		_assert_equal(
+			0,
+			drill.call("_channel_packet_count", channels[index], (mode + 1) % 3, id),
+			"diagnostic excludes selected packet from other mode"
+		)
+		_assert_equal(PackedByteArray([index]), peer.get_packet(), "diagnostic leaves bytes unread")
+		_queue(connection, index, PackedByteArray([index]))
+		_assert_equal(1, peer.get_available_packet_count(), "diagnostic caches lifecycle packet")
+		mesh.detach()
+		_assert_equal(
+			0,
+			drill.call("_channel_packet_count", channels[index], mode, id),
+			"diagnostic excludes stale selected packet"
+		)
+		drill.free()
+		_dispose(setup)
+	_done()
 
 
 func _test_cached_channel_selection() -> void:

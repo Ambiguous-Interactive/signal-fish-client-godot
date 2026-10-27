@@ -17,6 +17,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
+- [ ] Clarify the empty-packet script API contract upstream before qualifying
+      zero-byte mesh sends and safe-peer receives (#437).
 - [ ] Complete upstream engine metadata repair and remote-network qualification
       for the opt-in safe RPC peer (#403).
 - [ ] Qualify finite packet lifetimes on stable Godot engines after the upstream

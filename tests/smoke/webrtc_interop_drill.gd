@@ -910,7 +910,9 @@ func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 		func() -> bool:
 			if not _drain_realtime(peer, phase):
 				return false
-			_interrupted_queued = _reliable_packet_count(reliable_channel)
+			_interrupted_queued = _channel_packet_count(
+				reliable_channel, MultiplayerPeer.TRANSFER_MODE_RELIABLE, remote_id
+			)
 			return (
 				_interrupted_queued == INTERRUPTED_CHUNKS
 				and _packet_count(peer) >= INTERRUPTED_CHUNKS
@@ -933,7 +935,9 @@ func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 		var mode := received.transfer_mode
 		var channel := received.channel
 		var packet := received.data
-		_interrupted_queued = _reliable_packet_count(reliable_channel)
+		_interrupted_queued = _channel_packet_count(
+			reliable_channel, MultiplayerPeer.TRANSFER_MODE_RELIABLE, remote_id
+		)
 		if (
 			packet != expected.slice(offset, offset + SNAPSHOT_CHUNK_BYTES)
 			or sender != remote_id
@@ -959,7 +963,9 @@ func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 			return false
 		_snapshot_received.append_array(packet)
 		_interrupted_received += 1
-	_interrupted_queued = _reliable_packet_count(reliable_channel)
+	_interrupted_queued = _channel_packet_count(
+		reliable_channel, MultiplayerPeer.TRANSFER_MODE_RELIABLE, remote_id
+	)
 	if _interrupted_queued != INTERRUPTED_CHUNKS - CONSUMED_CHUNKS:
 		_fail("interrupted snapshot queued count differs")
 		return false
@@ -977,15 +983,19 @@ func _interrupt_snapshot(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
 	return true
 
 
-func _reliable_packet_count(channel: WebRTCDataChannel) -> int:
-	var cached_reliable := false
+func _channel_packet_count(channel: Object, mode: int, peer_id: int) -> int:
+	var cached := false
 	if _safe_receive:
 		var reader: MultiplayerPeer = _mesh.call("get_safe_multiplayer_peer")
-		cached_reliable = (
-			reader.get_available_packet_count() > 0
-			and reader.get_packet_mode() == MultiplayerPeer.TRANSFER_MODE_RELIABLE
+		cached = (
+			reader != null
+			and reader.get_available_packet_count() > 0
+			and reader.get_packet_peer() == peer_id
+			and reader.get_packet_mode() == mode
+			and reader.get_packet_channel() == 0
 		)
-	return channel.get_available_packet_count() + (1 if cached_reliable else 0)
+	var queued: int = channel.call("get_available_packet_count")
+	return queued + (1 if cached else 0)
 
 
 func _drain_realtime(peer: WebRTCMultiplayerPeer, phase: int) -> bool:
@@ -1265,7 +1275,10 @@ func _snapshot() -> Dictionary:
 			}
 			if multiplayer_peer != null and multiplayer_peer.has_peer(peer_id):
 				var peer: Dictionary = multiplayer_peer.get_peer(peer_id)
-				for channel: WebRTCDataChannel in peer["channels"]:
+				var channels: Array = peer["channels"]
+				for index: int in channels.size():
+					var channel: WebRTCDataChannel = channels[index]
+					var mode: int = [2, 1, 0][index]
 					channel_states.append(
 						{
 							"id": channel.get_id(),
@@ -1275,7 +1288,7 @@ func _snapshot() -> Dictionary:
 							"ordered": channel.is_ordered(),
 							"max_packet_life_time": channel.get_max_packet_life_time(),
 							"max_retransmits": channel.get_max_retransmits(),
-							"queued_packets": channel.get_available_packet_count(),
+							"queued_packets": _channel_packet_count(channel, mode, peer_id),
 							"buffered_bytes": channel.get_buffered_amount()
 						}
 					)
