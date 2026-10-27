@@ -204,6 +204,7 @@ async function testSmallSnapshotWindows() {
 
 async function main() {
   await require("./test_webrtc_native_reference.cjs")();
+  await require("./test_webrtc_http_request.cjs")();
   await testReferenceFirstFailure();
   await testSmallSnapshotWindows();
   let sample;

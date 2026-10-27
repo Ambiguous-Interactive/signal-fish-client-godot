@@ -27,6 +27,19 @@ SPEC.loader.exec_module(drill)
 
 
 class RelayObservationTests(unittest.TestCase):
+    def test_fetch_control_requires_observed_web_backend(self) -> None:
+        for enabled in (None, False, True, 1):
+            with self.subTest(enabled=enabled):
+                output = (
+                    "WEBRTC_INTEROP_PROGRESS "
+                    + json.dumps({"web_http_fetch": enabled})
+                    + "\nWEBRTC_INTEROP_PASS seat=1"
+                )
+                result = drill.seat_evidence(output, 1, require_web_http_fetch=True)
+                self.assertEqual(result["passed"], enabled is True)
+        result = drill.seat_evidence("WEBRTC_INTEROP_PASS seat=1", 1, require_web_http_fetch=True)
+        self.assertFalse(result["passed"])
+
     def test_relay_reuses_connection_for_markers_and_static_assets(self) -> None:
         class Handler(drill.RelayHandler):  # type: ignore[name-defined,misc]
             queues: ClassVar[list[list[object]]] = [[], []]

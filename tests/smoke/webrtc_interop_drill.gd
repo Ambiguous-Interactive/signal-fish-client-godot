@@ -5,6 +5,7 @@ extends Node
 
 const LifetimeProbeScript = preload("res://tests/smoke/webrtc_lifetime_probe.gd")
 const RpcProbeScript = preload("res://tests/smoke/webrtc_rpc_probe.gd")
+const HttpScript = preload("res://tests/smoke/webrtc_http_request.gd")
 const MeshScript = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const ClientScript = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SessionScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
@@ -24,8 +25,8 @@ const PLAYERS: Array[String] = [
 var _signal_players: Array[String] = PLAYERS
 var _client: DrillClient
 var _mesh: MeshScript
-var _inbox: HTTPRequest
-var _outbox: HTTPRequest
+var _inbox: HttpScript
+var _outbox: HttpScript
 var _url := ""
 var _seat := 0
 var _mixed_traffic := false
@@ -142,12 +143,7 @@ func _ready() -> void:
 	_rpc_recovery = _rpc_recovery or _rpc_plan_recovery
 	if not _check_lifetime_controls():
 		return
-	_inbox = HTTPRequest.new()
-	_outbox = HTTPRequest.new()
-	add_child(_inbox)
-	add_child(_outbox)
-	_inbox.request_completed.connect(_on_inbox)
-	_outbox.request_completed.connect(_on_outbox)
+	_setup_http()
 	_client = DrillClient.new()
 	_client._player_id = PLAYERS[_seat]
 	_client._room_id = "20000000-0000-0000-0000-000000000001"
@@ -183,6 +179,24 @@ func _ready() -> void:
 	# The driver owns Web teardown; early quit can race audio startup (#430).
 	if not OS.has_feature("web"):
 		get_tree().quit()
+
+
+func _setup_http(use_fetch := false) -> void:
+	_inbox = HttpScript.new()
+	_outbox = HttpScript.new()
+	if OS.has_feature("web"):
+		use_fetch = (
+			use_fetch
+			or JavaScriptBridge.eval(
+				"new URLSearchParams(window.location.search).get('http_fetch') === '1'"
+			)
+		)
+	_inbox.use_fetch = use_fetch
+	_outbox.use_fetch = use_fetch
+	add_child(_inbox)
+	add_child(_outbox)
+	_inbox.request_completed.connect(_on_inbox)
+	_outbox.request_completed.connect(_on_outbox)
 
 
 func _check_lifetime_controls() -> bool:
@@ -1242,6 +1256,7 @@ func _snapshot() -> Dictionary:
 		"interrupted_received": _interrupted_received,
 		"interrupted_queued": _interrupted_queued,
 		"pending_signals": _pending.size(),
+		"web_http_fetch": OS.has_feature("web") and _inbox != null and _inbox.use_fetch,
 		"signal_sent": _signal_sent,
 		"signal_received": _signal_received,
 		"last_marker_sent": _last_marker_sent,

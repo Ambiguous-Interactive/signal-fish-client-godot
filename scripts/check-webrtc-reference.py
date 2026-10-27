@@ -1141,6 +1141,8 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
         )
     script = project / "tests/smoke/webrtc_interop_drill.gd"
     source = script.read_text()
+    if getattr(args, "web_http_fetch", False):
+        source = source.replace("\t_setup_http()", "\t_setup_http(true)", 1)
     fragment = (ROOT / "tests/smoke/webrtc_reference_phase.gd.inc").read_text()
     variables, methods = fragment.split("\n\nfunc _run_phase", 1)
     start = source.index("func _run_phase(phase: int) -> bool:")
@@ -1274,8 +1276,12 @@ def gameplay_phase_checks(
     args: argparse.Namespace,
     minimum_queued: int,
     native_profile: bool,
+    *,
+    web: bool = False,
 ) -> dict[str, bool]:
     return {
+        "http_backend": not getattr(args, "web_http_fetch", False)
+        or godot.get("web_http_fetch") is web,
         "godot_gameplay": gameplay_phase_passed(
             godot,
             mixed_traffic=args.mixed_traffic,
@@ -1451,6 +1457,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "assessment_complete": False,
         "driver_error": "",
         "runtime": "web" if web else "native",
+        "web_http_fetch": web and getattr(args, "web_http_fetch", False),
         "safe_receive": args.safe_receive,
         "godot_offer": args.godot_offer,
         "mixed_traffic": args.mixed_traffic,
@@ -1639,7 +1646,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 window_bytes = getattr(args, "snapshot_window_bytes", 0)
                 minimum_queued = min(24, window_bytes // (body_bytes + 32)) if window_bytes else 24
                 phase_checks = [
-                    gameplay_phase_checks(godot, ref, args, minimum_queued, backend is not None)
+                    gameplay_phase_checks(
+                        godot, ref, args, minimum_queued, backend is not None, web=web
+                    )
                     for godot, ref in zip(phases, result["phases"], strict=False)
                 ]
                 gameplay = (
@@ -1744,6 +1753,11 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", default="godot")
+    parser.add_argument(
+        "--web-http-fetch",
+        action="store_true",
+        help="Use browser fetch for Godot drill HTTP markers; keep the default HTTPRequest control separate",
+    )
     parser.add_argument("--service-url", default="", help="Use real v3 service rooms and signaling")
     parser.add_argument("--service-app-id", default="godot-reference")
     parser.add_argument(

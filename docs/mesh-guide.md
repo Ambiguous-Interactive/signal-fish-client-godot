@@ -808,6 +808,21 @@ both generations. Treat this as a credit-turnover limit; pacing preserves
 bytes but does not promise completion within a chosen deadline. Keep larger
 HTTP workloads as explicit qualification controls.
 
+Use `--web-http-fetch` in either reference or native/browser drill to compare
+Godot's HTTPRequest marker path with direct browser fetch. Native seats keep
+HTTPRequest. The option changes only the Web drill's HTTP marker and signaling
+requests. Keep the default run and fetch run in separate output directories.
+Use the same packet bodies, byte window, receive schedule and deadlines.
+`web_http_fetch` records the selected backend; a requested control must observe
+it in the Web evidence. Fetch errors and non-200 responses still fail the run.
+Cancellation suppresses late responses before request objects leave the tree.
+
+This control can isolate frame-driven HTTP polling from WebRTC gameplay and
+heartbeat progress (#396, #440). Compare request durations, relay queue dwell
+and marker observation times. It does not add receive capacity or qualify the
+original reliable loss (#442). Run packet-only and byte-window histories
+separately. The default HTTPRequest history keeps its own verdict.
+
 For game code, count encoded bytes per destination and channel. Reserve buffer
 space for control traffic and packet framing. Release credit only after the
 receiver validates and consumes a chunk. Keep reading and echoing heartbeats

@@ -299,6 +299,7 @@ def prepare(project: Path, extension: Path | None, addon_root: Path) -> None:
     tests.mkdir(parents=True)
     for name in (
         "webrtc_lifetime_probe.gd",
+        "webrtc_http_request.gd",
         "webrtc_interop_drill.gd",
         "webrtc_interop_drill.tscn",
         "webrtc_rpc_probe.gd",
@@ -435,6 +436,7 @@ def seat_evidence(
     credit_transport: str | None = None,
     require_lifetime_controls: bool = False,
     require_finite_lifetimes: bool = False,
+    require_web_http_fetch: bool = False,
 ) -> dict[str, object]:
     print(output)
     lines = output.splitlines()
@@ -456,6 +458,8 @@ def seat_evidence(
             except json.JSONDecodeError:
                 continue
             break
+    if require_web_http_fetch:
+        passed = passed and isinstance(progress, dict) and progress.get("web_http_fetch") is True
     lifetime_controls = None
     for line in lines:
         if line.startswith("WEBRTC_LIFETIME_CONTROLS "):
@@ -827,6 +831,8 @@ def run_seats(
                     query += ("&" if query else "?") + "safe_receive=1"
                 if args.channel_receive:
                     query += ("&" if query else "?") + "channel_receive=1"
+                if getattr(args, "web_http_fetch", False):
+                    query += ("&" if query else "?") + "http_fetch=1"
                 if args.multi_peer:
                     query += (
                         ("&" if query else "?")
@@ -859,6 +865,7 @@ def run_seats(
                         + f"&credit_transport={args.credit_transport}"
                         + ("&slow_receiver=1" if args.slow_receiver else "")
                         + ("&rpc_traffic=1" if args.rpc_traffic else "")
+                        + ("&http_fetch=1" if getattr(args, "web_http_fetch", False) else "")
                     )
                     wait_web_startup(page, [(1, messages), (2, extra_messages)])
                     process = subprocess.Popen(  # noqa: S603
@@ -917,6 +924,7 @@ def run_seats(
                 seat_evidence(
                     "\n".join(messages),
                     1,
+                    require_web_http_fetch=getattr(args, "web_http_fetch", False),
                     retirement_case=expected_case,
                     require_multi_rpc=args.multi_peer and args.rpc_traffic,
                     credit_transport=args.credit_transport if args.multi_peer else None,
@@ -930,6 +938,7 @@ def run_seats(
                     seat_evidence(
                         "\n".join(extra_messages),
                         2,
+                        require_web_http_fetch=getattr(args, "web_http_fetch", False),
                         retirement_case=expected_case,
                         require_multi_rpc=args.multi_peer and args.rpc_traffic,
                         credit_transport=args.credit_transport if args.multi_peer else None,
@@ -948,6 +957,7 @@ def run_seats(
                 delay_control["independent_pair_completed_while_held"] = delay_proven
             relay_observation = relay_observation or TrialRelayHandler.observation.snapshot()
             evidence = {
+                "web_http_fetch": getattr(args, "web_http_fetch", False),
                 "require_finite_lifetimes": args.require_finite_lifetimes,
                 "http_credit_delay": delay_control,
                 "driver_error": driver_error,
@@ -1037,6 +1047,11 @@ def run(args: argparse.Namespace, directory: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", default="godot")
+    parser.add_argument(
+        "--web-http-fetch",
+        action="store_true",
+        help="Use browser fetch for Web drill HTTP markers; native keeps HTTPRequest",
+    )
     parser.add_argument(
         "--require-finite-lifetimes",
         action="store_true",
