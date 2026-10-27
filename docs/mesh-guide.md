@@ -304,6 +304,14 @@ retirement and service rejoin with the same reader pause. The queue proof
 counts the safe reader's selected unread packet; omitting it caused a false
 failure in the earlier four-chunk control.
 
+A later Chromium 156 active-reader service run, with Godot offering, logged
+five buffer drops. The reliable reader expected sequence 107 and read 112.
+Browser callbacks contain all five missing chunks with complete traces.
+Callbacks 92-111 delivered 82,420 snapshot bytes within 11 ms to the default
+64 KiB channel buffer. The largest Godot frame gap was 127 ms. Byte limits
+also apply to games that drain every frame. The original nine-drop history
+still needs its own attribution.
+
 Phase records include `snapshot_body_bytes`, `snapshot_window_bytes`,
 `outstanding_snapshot_bytes` and `peak_outstanding_snapshot_bytes`. A pass must
 match the requested sizes, stay within the window and finish with zero
@@ -735,6 +743,11 @@ this queue delay from the native round trip and command bridge. The separate
 1500 ms pause still defers snapshot validation after scheduled reads.
 Qualification requires an empty scheduled queue, complete timing records and
 the requested drain budget. The queue fails above 256 packets. Each generation starts fresh.
+
+One-second application drains on both seats passed native/Web service rejoin
+under four CPU workers. Native heartbeat round trips reached about one second
+and reference queue waits reached 661 ms. Each pause still proved 4-7 new
+echoes. Use the sent-after-pause sequence cohort to assess that proof.
 
 A slow active reader can fill the engine receive buffer even when it never
 uses the explicit 1500 ms pause. Budget gameplay bytes against receive capacity
