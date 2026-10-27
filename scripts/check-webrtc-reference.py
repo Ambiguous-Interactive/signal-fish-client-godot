@@ -13,7 +13,6 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import ClassVar, Protocol, cast
 
@@ -1014,7 +1013,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 self.observation.enqueue(seat, message)
             self.reply(b"{}")
 
-    server = ThreadingHTTPServer(
+    server = interop.RelayServer(
         ("127.0.0.1", 0), functools.partial(Handler, directory=str(assets))
     )
     threading.Thread(target=server.serve_forever, daemon=True).start()

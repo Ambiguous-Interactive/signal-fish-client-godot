@@ -313,6 +313,12 @@ preserving its new-round-trip-during-pause requirement.
 
 ### Read a failed reference assessment
 
+Both gameplay drivers reuse HTTP connections for relay markers and native
+commands. Their local server allows 128 pending connections and sends small
+replies without Nagle delays. This reduces connection pressure when several
+seats poll at once. It does not establish the cause of an earlier timeout or
+change any gameplay deadline, byte check or pause requirement.
+
 `assessment.json` includes `diagnostics` even when the driver fails. Start with
 `godot_failure.reason`, `last_stage` and `last_ready`. `godot_progress` keeps
 the last observed frame gap and polling state when a driver timeout leaves
@@ -322,6 +328,14 @@ snapshot progress, unacknowledged bytes, channel queue counts and configured
 receive capacity at failure. `godot_buffer_drop_messages` counts the engine's
 local receive-buffer drop messages in the Godot log. A snapshot sequence gap
 and a local drop are separate observations; retain both with the full log.
+
+Each import or export log has a `.process.json` file beside it. It records
+exit status, elapsed time, timeout limit and host disk, load and memory samples
+before and after setup. Timeouts keep partial engine output. Failed setup also
+records the engine and native extension file SHA-256 values measured after
+the command. Missing resource data or unreadable files use `null`. These host
+samples do not show a process peak or prove a resource cause. Retain a crash
+report or backtrace separately when the engine crashes (#447).
 
 `phase_checks` names each gameplay check for completed phase pairs. Every
 check runs even if an earlier check fails. A false `reference_pause` with true

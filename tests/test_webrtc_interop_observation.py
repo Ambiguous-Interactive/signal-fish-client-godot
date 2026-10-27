@@ -1,9 +1,11 @@
 """Keep live-drill driver timeouts distinct from engine failures."""
 
 import argparse
+import hashlib
 import http.client
 import importlib.util
 import json
+import socket
 import subprocess
 import tempfile
 import threading
@@ -25,6 +27,50 @@ SPEC.loader.exec_module(drill)
 
 
 class RelayObservationTests(unittest.TestCase):
+    def test_relay_reuses_connection_for_markers_and_static_assets(self) -> None:
+        class Handler(drill.RelayHandler):  # type: ignore[name-defined,misc]
+            queues: ClassVar[list[list[object]]] = [[], []]
+            lock = threading.Lock()
+            observation = drill.RelayObservation()
+            nodelay: ClassVar[list[int]] = []
+
+            def setup(self) -> None:
+                super().setup()
+                self.nodelay.append(
+                    self.connection.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY)
+                )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            Path(temporary, "asset.js").write_text("exact asset")
+            server = drill.RelayServer(("127.0.0.1", 0), partial(Handler, directory=temporary))
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+            try:
+                connection.request("POST", "/signal/1", body='{"marker":"credit"}')
+                connected = connection.sock
+                response = connection.getresponse()
+                self.assertFalse(response.will_close)
+                self.assertEqual(response.read(), b"{}")
+                self.assertIsNotNone(connected)
+                for path, expected in (
+                    ("/signal/1", b'[{"marker": "credit"}]'),
+                    ("/asset.js", b"exact asset"),
+                    ("/signal/1", b"[]"),
+                ):
+                    connection.request("GET", path)
+                    self.assertIs(connection.sock, connected)
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, 200)
+                    self.assertFalse(response.will_close)
+                    self.assertEqual(response.read(), expected)
+                self.assertEqual(Handler.nodelay, [1])
+            finally:
+                connection.close()
+                server.shutdown()
+                server.server_close()
+                thread.join()
+
     def test_setup_failure_retains_process_exit_and_engine_error_separately(self) -> None:
         for code, output, engine_error in (
             (-11, b"normal output", False),
@@ -45,6 +91,85 @@ class RelayObservationTests(unittest.TestCase):
                 ):
                     drill.checked(["engine"], log)
                 self.assertEqual(log.read_bytes(), output)
+                evidence = json.loads(log.with_suffix(".process.json").read_text())
+                self.assertEqual(evidence["returncode"], code)
+                self.assertEqual(evidence["engine_error"], engine_error)
+                self.assertEqual(evidence["status"], "exited")
+                self.assertIn("disk_free_bytes", evidence["before"])
+                self.assertIn("disk_free_bytes", evidence["after"])
+
+    def test_setup_timeout_keeps_partial_output_and_resources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "import.log"
+            with (
+                patch.object(
+                    drill.subprocess,
+                    "run",
+                    side_effect=subprocess.TimeoutExpired(
+                        ["engine"], 120, output=b"partial output"
+                    ),
+                ),
+                self.assertRaises(subprocess.TimeoutExpired),
+            ):
+                drill.checked(["engine"], log)
+            self.assertEqual(log.read_bytes(), b"partial output")
+            evidence = json.loads(log.with_suffix(".process.json").read_text())
+            self.assertEqual(evidence["status"], "timeout")
+            self.assertIsNone(evidence["returncode"])
+            self.assertEqual(evidence["timeout_seconds"], 120)
+            self.assertIn("before", evidence)
+            self.assertIn("after", evidence)
+
+    def test_setup_failure_hashes_engine_and_native_extension_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            engine = project / "godot"
+            engine.write_bytes(b"engine binary")
+            extension = project / "addons/webrtc/lib"
+            extension.mkdir(parents=True)
+            library = extension / "native.so"
+            library.write_bytes(b"native binary")
+            (extension / "unrelated.gd").write_text("ignored")
+            log = project / "import.log"
+            with (
+                patch.object(
+                    drill.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess([str(engine)], -11, stdout=b"crashed"),
+                ),
+                self.assertRaisesRegex(RuntimeError, "exit=-11"),
+            ):
+                drill.checked([str(engine), "--path", str(project)], log)
+            evidence = json.loads(log.with_suffix(".process.json").read_text())
+            self.assertEqual(
+                evidence["failure_file_sha256"],
+                {
+                    str(engine): hashlib.sha256(b"engine binary").hexdigest(),
+                    str(library): hashlib.sha256(b"native binary").hexdigest(),
+                },
+            )
+
+    def test_setup_launch_failure_retains_unavailable_observations(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "import.log"
+            with (
+                patch.object(drill.subprocess, "run", side_effect=FileNotFoundError("no engine")),
+                patch.object(drill.shutil, "disk_usage", side_effect=OSError),
+                patch.object(drill.os, "getloadavg", side_effect=OSError, create=True),
+                patch.object(Path, "read_text", side_effect=OSError),
+                self.assertRaises(FileNotFoundError),
+            ):
+                drill.checked([str(Path(temporary) / "missing-engine")], log)
+            evidence = json.loads(log.with_suffix(".process.json").read_text())
+            self.assertEqual(evidence["status"], "launch_failed")
+            self.assertIsNone(evidence["returncode"])
+            self.assertIn("no engine", evidence["launch_error"])
+            self.assertEqual(evidence["before"], evidence["after"])
+            self.assertTrue(all(value is None for value in evidence["before"].values()))
+            self.assertTrue(
+                all(value is None for value in evidence["failure_file_sha256"].values())
+            )
+            self.assertEqual(log.read_bytes(), b"")
 
     def test_marker_timing_distinguishes_queued_from_dequeued(self) -> None:
         observation = drill.RelayObservation()
@@ -532,7 +657,7 @@ class RetirementMatrixTests(unittest.TestCase):
                 process.poll.return_value = 0
                 server = Mock(server_port=12345)
                 with (
-                    patch.object(drill, "ThreadingHTTPServer", return_value=server),
+                    patch.object(drill, "RelayServer", return_value=server),
                     patch.object(drill.threading, "Thread"),
                     patch.object(drill, "sync_playwright", return_value=playwright),
                     patch.object(drill, "wait_web_startup"),
