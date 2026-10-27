@@ -520,8 +520,12 @@ The runner checks native and Web Godot with both offer roles. Each pairing
 rebuilds its link for a second generation and checks reliable and unreliable
 probe bytes in both directions. Each seat then streams 128 reliable snapshot
 chunks of about 1 KiB. Each chunk carries its generation, sender and sequence;
-receivers compare its exact UTF-8 bytes. A 32-packet acknowledgment window
-bounds the stream. Both seats start a second snapshot with four chunks before
+receivers compare its exact UTF-8 bytes. A 32-packet acknowledgment window and
+a default 48 KiB outstanding-byte window bound the stream. The byte window counts each full encoded snapshot chunk.
+Consumption credit releases bytes after exact validation. Four partial chunks
+use the same byte limit and return one reliable consumption credit per chunk.
+Both directions must return all partial credit before channel retirement.
+Both seats start a second snapshot with four chunks before
 the reference seat closes its reliable channel after sending one more packet.
 Godot must remove the link before its local reset. The next generation must
 pass the same checks with fresh bytes.
@@ -594,8 +598,9 @@ and matching channel metadata. It does not simulate packet loss.
 
 The default `--credit-transport http` returns consumption credit through the
 signaling relay. Use `--credit-transport webrtc` to return the same credit over
-the reliable gameplay channel. Both keep the same 32-chunk window, snapshot
-bytes, position cadence and generation/closure checks. For example:
+the reliable gameplay channel. Both keep the same 32-chunk and 48 KiB limits,
+snapshot bytes, position cadence and generation/closure checks. Partial-transfer
+credit always uses the reliable gameplay channel. For example:
 
 ```bash
 python scripts/check-webrtc-reference.py --safe-receive --mixed-traffic \
@@ -644,8 +649,9 @@ python scripts/check-webrtc-reference.py --runtime web --offerer reference \
 Godot phase and progress records retain `receive_pause`: elapsed pause time,
 consumed chunks, queued reliable and unreliable packet counts, and resume
 state. A gameplay pass requires unchanged consumption during the pause, at
-least 24 queued reliable packets, and queued unreliable packets when mixed
-traffic is requested. All bytes, metadata, final credit, partial transfers,
+least the configured window's required queued reliable packets, and queued
+unreliable packets when mixed traffic is requested. All bytes, metadata, final
+credit, partial transfers,
 remote closure and next-generation recovery must still pass. Reference records
 retain `max_credit_wait_ms` to compare the known reader pause with HTTP waits.
 Add `--credit-transport http --http-credit-delay-ms 4000` to hold one
@@ -685,7 +691,12 @@ the Godot main thread.
 Add these flags to the reference command above. Compare the same schedule with
 `--snapshot-body-bytes 4096` and then with
 `--snapshot-window-bytes 16512`. Use a fresh output directory for each run.
-Repeat with `--credit-transport http` and `webrtc`. Add
+Repeat with `--credit-transport http` and `webrtc`. The default bulk window is
+49,152 bytes, leaving space beside bulk traffic in Godot's default 64 KiB
+channel buffer. The 32-packet cap still applies. This is application pacing;
+it does not enlarge the engine buffer. Add `--snapshot-window-bytes 0` to
+reproduce the earlier packet-only workload. Keep that failure separate from
+the paced result. Add
 `--slow-reference-receiver` to check fresh heartbeat round trips during a
 reference consumer pause while the Godot reader keeps its chosen schedule.
 Keep `--require-gameplay` enabled. A control that loses a reliable chunk or
@@ -704,6 +715,32 @@ uses the explicit 1500 ms pause. Budget gameplay bytes against receive capacity
 and measured drain cadence. Passing a paced control establishes that control's
 behavior; the historical active-reader loss (#442), delayed echoes (#440), and
 three-seat credit stall (#396) each need their own matched reproduction.
+
+A 16 KiB body control also exposed unpaced partial chunks: all full snapshots
+completed, then four partial chunks overflowed the Web channel buffer. Partial
+chunks now wait for exact consumption credit within the chosen byte window.
+Phase records include `partial_sent`, `partial_received`,
+`partial_acknowledged`, `outstanding_partial_bytes`,
+`peak_outstanding_partial_bytes` and `partial_credit_wait_age_ms`. A successful
+phase requires four acknowledged partial chunks, zero remaining bytes, and a
+peak within the byte window. The interrupted transfer and fresh-link checks
+still follow that partial exchange. No receive assertion or deadline changes.
+
+The 48 KiB window holds two 16 KiB chunks. A Web HTTP-credit control with
+that body size reached the unchanged deadline with zero receive-buffer drops:
+Godot consumed all 128 incoming chunks, sent 118, and received credit for 116.
+Marker POSTs took about 100 ms each. The matched WebRTC-credit control completed
+both generations. Treat this as a credit-turnover limit; pacing preserves
+bytes but does not promise completion within a chosen deadline. Keep larger
+HTTP workloads as explicit qualification controls.
+
+For game code, count encoded bytes per destination and channel. Reserve buffer
+space for control traffic and packet framing. Release credit only after the
+receiver validates and consumes a chunk. Keep reading and echoing heartbeats
+while bulk sends wait for credit; outbound `buffered_amount` alone cannot show
+remote receive capacity. Reset all credit with the physical link. A receipt
+from an earlier generation must never release the new link's bytes. The
+reference sender is a runnable example of this application-owned contract.
 
 ### Slow browser reference consumer
 

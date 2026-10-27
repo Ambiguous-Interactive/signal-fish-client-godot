@@ -429,7 +429,7 @@ class ReferenceEvidenceTests(unittest.TestCase):
                 assess.assert_not_called()
 
     def test_snapshot_cli_accepts_windows_below_eight_chunks(self) -> None:
-        for capacity in (4128, 8256, 16512, 28896, 33024):
+        for capacity in (None, 0, 4128, 8256, 16512, 28896, 33024):
             with (
                 self.subTest(capacity=capacity),
                 tempfile.TemporaryDirectory() as folder,
@@ -451,8 +451,11 @@ class ReferenceEvidenceTests(unittest.TestCase):
                         folder,
                         "--snapshot-body-bytes",
                         "4096",
-                        "--snapshot-window-bytes",
-                        str(capacity),
+                        *(
+                            ["--snapshot-window-bytes", str(capacity)]
+                            if capacity is not None
+                            else []
+                        ),
                     ],
                 ),
                 patch.object(
@@ -462,7 +465,10 @@ class ReferenceEvidenceTests(unittest.TestCase):
             ):
                 reference.main()
                 self.assertEqual(assess.call_count, 1)
-                self.assertEqual(assess.call_args.args[0].snapshot_window_bytes, capacity)
+                self.assertEqual(
+                    assess.call_args.args[0].snapshot_window_bytes,
+                    49152 if capacity is None else capacity,
+                )
 
     def test_byte_window_requires_matched_workload_and_complete_credit(self) -> None:
         phase = {
@@ -488,6 +494,109 @@ class ReferenceEvidenceTests(unittest.TestCase):
             missing = dict(phase)
             del missing[field]
             self.assertFalse(reference.snapshot_flow_passed(missing, 4096, 49152))
+
+    def test_partial_transfer_must_fit_byte_window_and_return_all_credit(self) -> None:
+        phase = {
+            "partial_acknowledged": 4,
+            "outstanding_partial_bytes": 0,
+            "peak_outstanding_partial_bytes": 32810,
+        }
+        self.assertTrue(reference.partial_flow_passed(phase, 16384, 49152))
+        for key, values in {
+            "partial_acknowledged": [None, True, 4.0, 3, 5],
+            "outstanding_partial_bytes": [None, False, 0.0, -1, 1],
+            "peak_outstanding_partial_bytes": [None, True, 32810.0, 16384, 49153],
+        }.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    self.assertFalse(
+                        reference.partial_flow_passed({**phase, key: value}, 16384, 49152)
+                    )
+        self.assertFalse(reference.partial_flow_passed({}, 16384, 49152))
+
+    def test_reference_partial_sender_waits_for_consumption_credit(self) -> None:
+        harness = r"""
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+const source = readFileSync(0, "utf8").split("\n").slice(1).join("\n");
+const fault = process.argv[1];
+let clock = 1, hooks, ready = false, fed = false;
+const pending = [];
+const context = {
+  window: {}, AbortController,
+  performance: { now: () => clock },
+  console: { log() {}, error() {} },
+  setTimeout: (resolve) => setImmediate(() => {
+    clock += 20;
+    if (hooks && !fed) {
+      fed = true;
+      for (let i = 0; i < 128; i++)
+        hooks.onChannelMessage("godot", "generation", "reliable",
+          `snapshot:1:godot:${i}:` + "0123456789abcdef".repeat(1024));
+    }
+    while (pending.length && pending[0].at <= clock) {
+      const {count} = pending.shift();
+      if (fault === "missing") continue;
+      hooks.onChannelMessage("godot", "generation", fault === "mode" ? "unreliable" : "reliable",
+        `partial-credit:1:godot:reference:${fault === "future" ? 5 : count}`);
+      if (fault === "duplicate")
+        hooks.onChannelMessage("godot", "generation", "reliable",
+          `partial-credit:1:godot:reference:${count}`);
+    }
+    resolve();
+  }),
+  Engine: class {
+    constructor(_native, callbacks) { hooks = callbacks; }
+    async pairWith() { return null; }
+    channel() { return { readyState: "open", send(text) {
+      const sequence = Number(text.split(":")[3]);
+      if (text.startsWith("snapshot:") && (sequence + 1) % (fault === "unpaced" ? 8 : 2) === 0)
+        queueMicrotask(() => hooks.onChannelMessage("godot", "generation", "reliable",
+          `credit:1:godot:reference:${sequence + 1}`));
+      if (text.startsWith("partial:"))
+        pending.push({at: clock + 200, count: sequence + 1});
+    }}; }
+    diagnosticSnapshot() { return {}; }
+    removePeer() {}
+  },
+  fetch: async (_url, options) => ({ ok: true, json: async () => {
+    if (options.method === "POST" || ready) return [];
+    ready = true;
+    return [{ marker: "ready-1" }];
+  }}),
+};
+runInNewContext(source, context);
+await context.window.runReference(1, false, false, "webrtc", false,
+  "reliable", "reference", false, null, false, 16384, fault === "unpaced" ? 0 : 49152);
+console.log(JSON.stringify({error: context.window.referenceError, ...context.window.referenceProgress()}));
+"""
+        source = (SCRIPT.parents[1] / "tests/smoke/webrtc_reference.js").read_text()
+        for fault in ("none", "unpaced", "duplicate", "future", "mode", "missing"):
+            with self.subTest(fault=fault):
+                result = subprocess.run(  # noqa: S603
+                    ["node", "--input-type=module", "-e", harness, fault],  # noqa: S607
+                    input=source,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                    timeout=5,
+                )
+                phase = json.loads(result.stdout)
+                if fault in ("duplicate", "future", "mode"):
+                    self.assertIn("partial consumption credit differs", phase["error"])
+                elif fault == "missing":
+                    self.assertEqual(phase["partial_sent"], 2)
+                    self.assertEqual(phase["partial_acknowledged"], 0)
+                    self.assertGreater(phase["outstanding_partial_bytes"], 0)
+                    self.assertGreater(phase["partial_credit_wait_age_ms"], 1000)
+                    self.assertLessEqual(phase["peak_outstanding_partial_bytes"], 49152)
+                else:
+                    self.assertEqual(phase["partial_sent"], 4)
+                    self.assertEqual(phase["partial_acknowledged"], 4)
+                    self.assertEqual(phase["outstanding_partial_bytes"], 0)
+                    self.assertEqual(
+                        phase["peak_outstanding_partial_bytes"] > 49152, fault == "unpaced"
+                    )
 
     def test_binary_evidence_requires_exact_reliable_and_distinct_mode_receipts(self) -> None:
         phase = {
