@@ -349,7 +349,10 @@ def setup_identities(command: list[str]) -> dict[str, str | None]:
     for path in paths:
         identities[str(path)] = None
         with contextlib.suppress(OSError), path.open("rb") as source:
-            identities[str(path)] = hashlib.file_digest(source, "sha256").hexdigest()
+            digest = hashlib.sha256()
+            while chunk := source.read(65536):
+                digest.update(chunk)
+            identities[str(path)] = digest.hexdigest()
     return identities
 
 

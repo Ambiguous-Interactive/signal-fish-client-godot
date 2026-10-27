@@ -120,7 +120,7 @@ class RelayObservationTests(unittest.TestCase):
             self.assertIn("before", evidence)
             self.assertIn("after", evidence)
 
-    def test_setup_failure_hashes_engine_and_native_extension_files(self) -> None:
+    def test_setup_failure_hashes_files_without_python311_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary)
             engine = project / "godot"
@@ -128,10 +128,12 @@ class RelayObservationTests(unittest.TestCase):
             extension = project / "addons/webrtc/lib"
             extension.mkdir(parents=True)
             library = extension / "native.so"
-            library.write_bytes(b"native binary")
+            library_bytes = bytes(range(256)) * 1025
+            library.write_bytes(library_bytes)
             (extension / "unrelated.gd").write_text("ignored")
             log = project / "import.log"
             with (
+                patch.dict(drill.hashlib.__dict__),
                 patch.object(
                     drill.subprocess,
                     "run",
@@ -139,13 +141,17 @@ class RelayObservationTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(RuntimeError, "exit=-11"),
             ):
+                drill.hashlib.__dict__.pop("file_digest", None)
                 drill.checked([str(engine), "--path", str(project)], log)
             evidence = json.loads(log.with_suffix(".process.json").read_text())
+            self.assertEqual(log.read_bytes(), b"crashed")
+            self.assertEqual(evidence["returncode"], -11)
+            self.assertEqual(evidence["status"], "exited")
             self.assertEqual(
                 evidence["failure_file_sha256"],
                 {
                     str(engine): hashlib.sha256(b"engine binary").hexdigest(),
-                    str(library): hashlib.sha256(b"native binary").hexdigest(),
+                    str(library): hashlib.sha256(library_bytes).hexdigest(),
                 },
             )
 
