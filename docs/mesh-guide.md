@@ -174,6 +174,8 @@ Build the opt-in probe in a checkout of that server revision:
 mkdir -p /path/to/server/clients/native/examples
 cp tests/smoke/webrtc_native_reference.rs \
   /path/to/server/clients/native/examples/godot_qualification.rs
+cargo test --manifest-path /path/to/server/clients/native/Cargo.toml \
+  --example godot_qualification
 cargo build --manifest-path /path/to/server/clients/native/Cargo.toml \
   --example godot_qualification
 python scripts/check-webrtc-reference.py \
@@ -189,7 +191,11 @@ pass through the native Rust Engine. This control bridge adds scheduling delay;
 use its results to assess correctness. Adjacent packet sends share commands
 of up to 256 packets. Signaling, snapshot, close and removal commands retain
 their order after earlier packets. A failed batch stops at its first failed
-send. `assessment.json` records the backend,
+send. One owned send task keeps running while the probe drains incoming events
+or awaits channel metadata. Later commands wait until that send completes. Channel closure cancels a pending
+send. Receive rejection also cancels it and retires the peer. Dropping the
+pending send aborts its task. Terminal event handling waits for cancellation. The example tests cover held sends, command order,
+shared native mutex waits, write errors and cancellation. `assessment.json` records the backend,
 source revision and probe binary hash. `native-reference.jsonl` retains commands'
 results and native callbacks. `native_snapshots` retains Engine receipt counters
 before removal, including failure cleanup. The driver waits for cleanup before
@@ -388,7 +394,11 @@ Missing phases still fail the assessment.
 Each entry includes per-packet intervals, matched sample counts, maxima and
 trace overflow. `bridge_queue_ms` measures enqueue to HTTP dispatch;
 `command_ms` measures dispatch to command completion; `native_rtt_ms` measures
-native send to native receipt. `application_rtt_ms` measures reference enqueue
+native send to receipt emission. `native_channel_rtt_ms` ends at the Engine's
+channel read; `native_event_queue_ms` measures channel read to probe emission.
+Both use the native clock and `received_us` from the JSONL packet event.
+They separate event-loop delay from the channel round trip. Rebuild the probe
+to collect these fields. `application_rtt_ms` measures reference enqueue
 to echo handling. `godot_echo_ms` measures Godot receive to echo submission.
 `native_callback_rtt_ms` spans browser delivery of the native send and receipt
 events. It includes bridge scheduling. Each interval uses one clock.
