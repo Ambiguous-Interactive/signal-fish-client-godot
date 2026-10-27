@@ -726,6 +726,14 @@ phase requires four acknowledged partial chunks, zero remaining bytes, and a
 peak within the byte window. The interrupted transfer and fresh-link checks
 still follow that partial exchange. No receive assertion or deadline changes.
 
+The 48 KiB window holds two 16 KiB chunks. A Web HTTP-credit control with
+that body size reached the unchanged deadline with zero receive-buffer drops:
+Godot consumed all 128 incoming chunks, sent 118, and received credit for 116.
+Marker POSTs took about 100 ms each. The matched WebRTC-credit control completed
+both generations. Treat this as a credit-turnover limit; pacing preserves
+bytes but does not promise completion within a chosen deadline. Keep larger
+HTTP workloads as explicit qualification controls.
+
 For game code, count encoded bytes per destination and channel. Reserve buffer
 space for control traffic and packet framing. Release credit only after the
 receiver validates and consumes a chunk. Keep reading and echoing heartbeats
