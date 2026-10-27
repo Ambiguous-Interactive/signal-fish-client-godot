@@ -4,7 +4,9 @@
 import argparse
 import contextlib
 import functools
+import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -156,7 +158,14 @@ class CreditDelay:
         }
 
 
+class RelayServer(ThreadingHTTPServer):
+    # Concurrent seats can each open six browser connections before accept resumes.
+    request_queue_size = 128
+
+
 class RelayHandler(SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    disable_nagle_algorithm = True
     queues: ClassVar[list[list[object]]] = [[], []]
     lock = threading.Lock()
     observation = RelayObservation()
@@ -311,15 +320,78 @@ def engine_failed(output: str) -> bool:
     )
 
 
+def setup_resources(directory: Path) -> dict[str, object]:
+    snapshot: dict[str, object] = {"disk_free_bytes": None, "load_average": None, "memory_kb": None}
+    with contextlib.suppress(OSError):
+        snapshot["disk_free_bytes"] = shutil.disk_usage(directory).free
+    with contextlib.suppress(OSError, AttributeError):
+        snapshot["load_average"] = list(os.getloadavg())
+    with contextlib.suppress(OSError, ValueError):
+        snapshot["memory_kb"] = {
+            key: int(value.split()[0])
+            for line in Path("/proc/meminfo").read_text().splitlines()
+            for key, value in [line.split(":", 1)]
+            if key in ("MemAvailable", "MemFree", "SwapFree")
+        }
+    return snapshot
+
+
+def setup_identities(command: list[str]) -> dict[str, str | None]:
+    paths = [Path(shutil.which(command[0]) or command[0])]
+    if "--path" in command:
+        project = Path(command[command.index("--path") + 1])
+        paths.extend(
+            path
+            for path in (project / "addons").rglob("*")
+            if path.suffix in (".gdextension", ".so", ".dll", ".dylib")
+        )
+    identities: dict[str, str | None] = {}
+    for path in paths:
+        identities[str(path)] = None
+        with contextlib.suppress(OSError), path.open("rb") as source:
+            digest = hashlib.sha256()
+            while chunk := source.read(65536):
+                digest.update(chunk)
+            identities[str(path)] = digest.hexdigest()
+    return identities
+
+
 def checked(command: list[str], log: Path) -> None:
-    result = subprocess.run(  # noqa: S603
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=120,
-    )
-    log.write_bytes(result.stdout)
-    engine_error = engine_failed(result.stdout.decode(errors="replace"))
+    started = time.monotonic()
+    evidence: dict[str, object] = {
+        "before": setup_resources(log.parent),
+        "returncode": None,
+        "status": "launch_failed",
+        "timeout_seconds": 120,
+    }
+    output = b""
+    try:
+        result = subprocess.run(  # noqa: S603
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=120,
+        )
+        output = result.stdout
+        evidence.update(status="exited", returncode=result.returncode)
+    except subprocess.TimeoutExpired as exc:
+        output = exc.output or b""
+        evidence["status"] = "timeout"
+        raise
+    except OSError as exc:
+        evidence["launch_error"] = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        evidence.update(
+            elapsed_ms=round((time.monotonic() - started) * 1000),
+            after=setup_resources(log.parent),
+            engine_error=engine_failed(output.decode(errors="replace")),
+        )
+        log.write_bytes(output)
+        if evidence["returncode"] != 0 or evidence["engine_error"]:
+            evidence["failure_file_sha256"] = setup_identities(command)
+        log.with_suffix(".process.json").write_text(json.dumps(evidence, indent=2))
+    engine_error = evidence["engine_error"]
     if result.returncode or engine_error:
         raise RuntimeError(
             f"Command failed: exit={result.returncode}, engine_error={engine_error}; see {log}"
@@ -550,7 +622,7 @@ def run_seats(
         credit_delay = CreditDelay(args.http_credit_delay_ms)
 
     handler = functools.partial(TrialRelayHandler, directory=str(web / "build/web"))
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = RelayServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     url = f"http://127.0.0.1:{server.server_port}"

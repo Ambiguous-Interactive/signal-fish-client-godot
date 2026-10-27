@@ -30,6 +30,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       stream stall using matched HTTP/WebRTC credit runs, independent gameplay
       and reference-consumer pause controls,
       with request, relay, engine and transport timings (#396; see `docs/mesh-guide.md`).
+- [ ] Capture the next native import failure with setup resource samples and
+      file identities, then retain its crash report or backtrace (#447).
 
 Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:

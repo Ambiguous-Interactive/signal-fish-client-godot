@@ -1739,7 +1739,7 @@ console.log("cleanup settled");
 
             with (
                 patch.object(reference, "prepare", return_value=Path(temporary)),
-                patch.object(reference, "ThreadingHTTPServer", return_value=server),
+                patch.object(reference.interop, "RelayServer", return_value=server),
                 patch.object(threading.Thread, "start"),
                 patch.object(
                     reference.native_reference, "NativeReference", side_effect=spawn_backend
