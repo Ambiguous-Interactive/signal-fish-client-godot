@@ -2255,6 +2255,52 @@ console.log("cleanup settled");
             [{"phase": 1, "received": []}],
         )
 
+    def test_native_bridge_drains_output_while_writing_a_large_command(self) -> None:
+        import sys
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            probe = directory / "probe"
+            probe.write_text(
+                "#!" + sys.executable + "\n"
+                "import sys,json\n"
+                "while first := sys.stdin.read(1):\n"
+                " for sequence in range(128):\n"
+                "  print(json.dumps({'event':'binary','sequence':sequence,"
+                "'data_base64':'A'*8192}),flush=True)\n"
+                " value=json.loads(first+sys.stdin.readline())\n"
+                " print(json.dumps({'id':value['id'],'result':len(value['text'])}),flush=True)\n"
+            )
+            probe.chmod(0o700)
+            bridge = reference.native_reference.NativeReference(probe, directory)
+            results: list[object] = []
+
+            def send() -> None:
+                try:
+                    for _ in range(2):
+                        results.append(bridge.command({"op": "send", "text": "x" * 1048576}))
+                except Exception as exc:
+                    results.append(exc)
+
+            writer = threading.Thread(target=send, daemon=True)
+            writer.start()
+            try:
+                writer.join(timeout=5)
+                self.assertFalse(writer.is_alive(), "native command and event pipes deadlocked")
+                self.assertEqual(results, [1048576, 1048576])
+                events = bridge.drain()
+                self.assertEqual([event["sequence"] for event in events], list(range(128)) * 2)
+                snapshot = bridge.timing_snapshot()
+                self.assertEqual(snapshot["output_lines"], 258)
+                records = cast(list[dict[str, object]], snapshot["records"])
+                stages = [record["stage"] for record in records]
+                self.assertLess(stages.index("output"), stages.index("written"))
+            finally:
+                bridge.close()
+                writer.join(timeout=5)
+            self.assertFalse(writer.is_alive())
+            self.assertFalse(bridge.reader.is_alive())
+
     def test_native_bridge_timing_correlates_commands_and_output_without_payloads(self) -> None:
         import sys
 
@@ -2274,12 +2320,14 @@ console.log("cleanup settled");
                 self.assertEqual(len(events), 1)
                 snapshot = bridge.timing_snapshot()
                 records = cast(list[dict[str, object]], snapshot["records"])
-                self.assertEqual(
+                self.assertEqual(records[0]["stage"], "command")
+                self.assertEqual(records[-1]["stage"], "reply")
+                self.assertCountEqual(
                     [record["stage"] for record in records],
-                    ["command", "output", "output", "reply"],
+                    ["command", "written", "output", "output", "reply"],
                 )
-                self.assertEqual([records[i]["id"] for i in (0, 2, 3)], [1, 1, 1])
-                self.assertEqual([records[i]["line"] for i in (1, 2)], [1, 2])
+                self.assertEqual([r["id"] for r in records if r.get("id")], [1, 1, 1, 1])
+                self.assertEqual([r["line"] for r in records if "line" in r], [1, 2])
                 times = [record["us"] for record in records]
                 self.assertEqual(times, sorted(times))
                 self.assertNotIn("opaque-body", json.dumps(snapshot))
@@ -2287,7 +2335,7 @@ console.log("cleanup settled");
                 for _ in range(10010):
                     bridge._trace("test")
                 self.assertEqual(len(bridge.timing_snapshot()["records"]), 10000)
-                self.assertEqual(bridge.timing_snapshot()["dropped"], 14)
+                self.assertEqual(bridge.timing_snapshot()["dropped"], 15)
             finally:
                 bridge.close()
 

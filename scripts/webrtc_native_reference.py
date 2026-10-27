@@ -103,34 +103,37 @@ class NativeReference:
                 self.condition.notify_all()
 
     def command(self, value: dict[str, object]) -> object:
-        with self.command_lock, self.condition:
-            self.next_id += 1
-            command_id = self.next_id
-            if self.process.stdin is None:
-                raise RuntimeError("native probe input pipe missing")
-            self._trace(
-                "command",
-                id=command_id,
-                op=value.get("op"),
-                label=value.get("label"),
-                packets=len(cast(list[object], value["packets"]))
-                if isinstance(value.get("packets"), list)
-                else None,
-            )
+        with self.command_lock:
+            with self.condition:
+                self.next_id += 1
+                command_id = self.next_id
+                if self.process.stdin is None:
+                    raise RuntimeError("native probe input pipe missing")
+                self._trace(
+                    "command",
+                    id=command_id,
+                    op=value.get("op"),
+                    label=value.get("label"),
+                    packets=len(cast(list[object], value["packets"]))
+                    if isinstance(value.get("packets"), list)
+                    else None,
+                )
             self.process.stdin.write(json.dumps({**value, "id": command_id}) + "\n")
             self.process.stdin.flush()
-            if not self.condition.wait_for(
-                lambda: command_id in self.replies or bool(self.error), timeout=10
-            ):
-                self._trace("timeout", id=command_id)
-                raise RuntimeError("native probe command timed out")
-            if command_id not in self.replies:
-                raise RuntimeError(self.error)
-            reply = self.replies.pop(command_id)
-            self._trace("reply", id=command_id, failed="error" in reply)
-            if "error" in reply:
-                raise RuntimeError(str(reply["error"]))
-            return reply["result"]
+            with self.condition:
+                self._trace("written", id=command_id)
+                if not self.condition.wait_for(
+                    lambda: command_id in self.replies or bool(self.error), timeout=10
+                ):
+                    self._trace("timeout", id=command_id)
+                    raise RuntimeError("native probe command timed out")
+                if command_id not in self.replies:
+                    raise RuntimeError(self.error)
+                reply = self.replies.pop(command_id)
+                self._trace("reply", id=command_id, failed="error" in reply)
+                if "error" in reply:
+                    raise RuntimeError(str(reply["error"]))
+                return reply["result"]
 
     def drain(self) -> list[dict[str, object]]:
         with self.condition:
