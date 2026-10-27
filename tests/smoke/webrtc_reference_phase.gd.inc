@@ -1,6 +1,9 @@
 # gdlint: disable=max-returns
 var _reference_startup_sent := 0
 var _reference_startup_received := 0
+var _reference_startup_acknowledged := 0
+var _reference_startup_credit := false
+var _reference_snapshot_startup_credit := -1
 var _reference_binary_sent: Array[int] = [0, 0, 0]
 var _reference_binary_sequences: Array = [[], [], []]
 var _reference_ordered_received: Array[int] = []
@@ -43,6 +46,8 @@ func _run_phase(phase: int) -> bool:
 	_phase = phase
 	_reference_startup_sent = 0
 	_reference_startup_received = 0
+	_reference_startup_acknowledged = 0
+	_reference_snapshot_startup_credit = -1
 	_reference_binary_sent.assign([0, 0, 0])
 	_reference_binary_sequences = [[], [], []]
 	_reference_ordered_received.clear()
@@ -85,6 +90,7 @@ func _run_phase(phase: int) -> bool:
 		"dropped": 0,
 	}
 	var window_bytes: int = _reference_options.get("snapshot_window_bytes", 0)
+	_reference_startup_credit = _reference_options.get("startup_burst", false) and window_bytes > 0
 	var body_bytes: int = _reference_options.get("snapshot_body_bytes", 1024)
 	_reference_credit_stride = 8
 	if window_bytes:
@@ -335,6 +341,8 @@ func _reference_packets() -> void:
 		var acknowledged := _reference_acknowledged
 		peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_RELIABLE)
 		for _batch: int in 4:
+			if _reference_startup_credit and _reference_startup_acknowledged != 32:
+				break
 			if _reference_snapshot_sent >= 128 or _reference_snapshot_sent - acknowledged >= 32:
 				break
 			var bytes := _reference_chunk("godot", _reference_snapshot_sent, false)
@@ -344,6 +352,8 @@ func _reference_packets() -> void:
 			if peer.call("put_packet", bytes) != OK:
 				_fail("reference snapshot send failed")
 				return
+			if _reference_snapshot_sent == 0:
+				_reference_snapshot_startup_credit = _reference_startup_acknowledged
 			_reference_snapshot_sent += 1
 			_reference_outstanding_bytes += bytes.size()
 			_reference_peak_outstanding_bytes = maxi(
@@ -457,7 +467,10 @@ func _reference_packets() -> void:
 			and identity_fields[0] in ["snapshot", "partial", "heartbeat", "startup", "position"]
 		):
 			timing["packet"] = ":".join(identity_fields.slice(0, 4))
-		elif identity_fields.size() == 5 and identity_fields[0] in ["credit", "partial-credit"]:
+		elif (
+			identity_fields.size() == 5
+			and identity_fields[0] in ["credit", "partial-credit", "startup-credit"]
+		):
 			timing["packet"] = text
 		elif identity_fields.size() == 4 and identity_fields[0] == "ordered":
 			timing["packet"] = text
@@ -488,6 +501,27 @@ func _reference_packets() -> void:
 				)
 				return
 			_reference_startup_received += 1
+			if _reference_startup_credit and _reference_startup_received == 32:
+				peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_RELIABLE)
+				var credit := ("startup-credit:%d:godot:reference:32" % _phase).to_utf8_buffer()
+				if peer.call("put_packet", credit) != OK:
+					_fail("reference startup credit send failed")
+					return
+			continue
+		if text.begins_with("startup-credit:"):
+			if (
+				not _reference_startup_credit
+				or _reference_startup_acknowledged != 0
+				or _reference_startup_sent != 32
+				or packet.error != OK
+				or packet.peer_id != MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+				or packet.channel != 0
+				or packet.transfer_mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+				or text != "startup-credit:%d:reference:godot:32" % _phase
+			):
+				_fail("reference startup consumption credit differs")
+				return
+			_reference_startup_acknowledged = 32
 			continue
 		if text.begins_with("ordered:"):
 			var fields := text.split(":")
@@ -846,6 +880,9 @@ func _reference_evidence() -> Dictionary:
 		"startup_burst": _reference_options.get("startup_burst", false),
 		"startup_sent": _reference_startup_sent,
 		"startup_received": _reference_startup_received,
+		"startup_credit": _reference_startup_credit,
+		"startup_acknowledged": _reference_startup_acknowledged,
+		"snapshot_startup_credit": _reference_snapshot_startup_credit,
 		"native_profile": _reference_options.get("native_profile", false),
 		"binary_traffic": _reference_options.get("binary_traffic", false),
 		"binary_sent": _reference_binary_sent.duplicate(),

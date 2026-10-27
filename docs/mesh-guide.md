@@ -257,14 +257,29 @@ Its strict initial-probe check failed while all reliable receipts passed.
 Enabled tracing adds scheduling and I/O overhead. This explains that captured
 packet; the older #458 history still lacks a packet-level trace. Keep finite packet loss separate from reliable loss.
 
-Add `--startup-burst` to send 32 reliable packets per seat and generation
-without consumption credit. The native probe sends directly at reliable-channel
+Add `--startup-burst` to send 32 reliable packets per seat and generation.
+The native probe sends directly at reliable-channel
 open, before reporting that open to the browser coordinator. Godot sends when
 its mesh is ready. Both receivers require exact phase, sender, sequence, bytes
 and reliable mode. `startup_sent` and `startup_received` must each be 32 on
 both seats. The normal snapshots, mode checks, retirement and recovery still
 run. This control qualifies immediate native sends and ready-mesh Godot sends;
 it does not send from Godot before its mesh becomes ready.
+
+With a byte window, each sender waits for exact consumption credit for all
+32 startup packets before sending snapshots. Initial probes and heartbeat
+sends, reads and echoes keep running during that wait. Reports require
+`startup_credit=true`, `startup_acknowledged=32` and
+`snapshot_startup_credit=32` on both seats in each generation. Duplicate,
+wrong-mode and wrong-phase credits fail the run. Credit resets on rejoin.
+
+This prevents the 32 KiB startup burst from overlapping a separate 48 KiB
+snapshot window in the default 64 KiB Web receive buffer. Startup packets
+still form one immediate burst; the receive buffer must hold that burst
+plus control traffic and framing. `--snapshot-window-bytes 0` keeps the
+original packet-only workload with no startup credit. Retain its verdict
+separately when comparing receive loss (#442), heartbeat delays (#440) and
+credit progress (#396).
 
 Each generation sends 128 reliable snapshot chunks, four partial-transfer chunks,
 32 unordered positions and eight ordered probes per seat. Every receipt must

@@ -85,7 +85,7 @@
             const probe =
               /^(godot|reference):(1|2):(reliable|unreliable)$/.exec(prefix);
             const credit =
-              /^(credit|partial-credit):(1|2):(godot|reference):(godot|reference):(\d+)$/.exec(
+              /^(credit|partial-credit|startup-credit):(1|2):(godot|reference):(godot|reference):(\d+)$/.exec(
                 prefix,
               );
             received.callbacks.push({
