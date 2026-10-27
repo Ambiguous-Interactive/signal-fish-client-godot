@@ -449,6 +449,71 @@ class CreditDelayTests(unittest.TestCase):
 
 
 class ObservationTests(unittest.TestCase):
+    def test_credit_packet_report_matches_exact_peer_count_and_local_phase(self) -> None:
+        for transport in ("http", "webrtc"):
+            with self.subTest(transport=transport):
+                issued = {"direction": "issued", "seat": 0, "count": 8, "tick_ms": 110, "error": 0}
+                received = {
+                    "direction": "received",
+                    "seat": 2,
+                    "count": 8,
+                    "tick_ms": 9010,
+                    "error": 0,
+                }
+                source = {
+                    "phase": 1,
+                    "credit_transport": transport,
+                    "sent_by_target": {"2": 16},
+                    "acknowledged_by_target": {"2": 8},
+                    "credit_events": [received],
+                }
+                receiver = {
+                    "phase": 1,
+                    "credit_events": [
+                        {**issued, "seat": 1},
+                        {**issued, "count": 24},
+                        issued,
+                    ],
+                }
+                seats = [
+                    {"seat": 0, "last_progress": source},
+                    {"seat": 2, "last_progress": receiver},
+                ]
+                packets = drill.multi_peer_credit_diagnostics(seats, {})[0]["credit_packets"]
+                self.assertEqual(
+                    packets,
+                    [
+                        {"count": 8, "receiver_issue": issued, "sender_receipt": received},
+                        {"count": 16, "receiver_issue": None, "sender_receipt": None},
+                    ],
+                )
+                failed = {**issued, "count": 16, "error": 1}
+                cast(list[dict[str, object]], receiver["credit_events"]).append(failed)
+                packets = drill.multi_peer_credit_diagnostics(seats, {})[0]["credit_packets"]
+                self.assertEqual(packets[1]["receiver_issue"], failed)
+                self.assertIsNone(packets[1]["sender_receipt"])
+                receiver["phase"] = 2
+                packets = drill.multi_peer_credit_diagnostics(seats, {})[0]["credit_packets"]
+                self.assertTrue(all(item["receiver_issue"] is None for item in packets))
+
+    def test_credit_packet_report_keeps_missing_traces_unknown_and_bounded(self) -> None:
+        for sent in (None, 0, 7, 8, 1000000):
+            with self.subTest(sent=sent):
+                seats = [
+                    {
+                        "seat": 0,
+                        "last_progress": {
+                            "phase": 1,
+                            "sent_by_target": {"2": sent},
+                            "credit_events": None,
+                        },
+                    }
+                ]
+                packets = drill.multi_peer_credit_diagnostics(seats, {})[0]["credit_packets"]
+                self.assertEqual(len(packets), min(sent // 8, 8) if type(sent) is int else 0)
+                self.assertTrue(all(item["receiver_issue"] is None for item in packets))
+                self.assertTrue(all(item["sender_receipt"] is None for item in packets))
+
     def test_credit_report_joins_each_directed_window_without_guessing_missing_stages(self) -> None:
         sender = {
             "phase": 1,

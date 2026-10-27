@@ -351,6 +351,17 @@ receive capacity at failure. `godot_buffer_drop_messages` counts the engine's
 local receive-buffer drop messages in the Godot log. A snapshot sequence gap
 and a local drop are separate observations; retain both with the full log.
 
+Web assessments retain `godot_browser_callbacks` through channel closure.
+Each of at most 32 channels keeps 1024 callback times, byte counts and known
+snapshot/heartbeat identities. `dropped` counts omitted trace records. Opaque
+packets keep a null identity. `diagnostics.snapshot_receive_phases` matches
+snapshot sequences against Godot's bounded `receive_timings`, including the
+packet that failed validation. Compare `first_callback_not_read` with
+`first_read_after_gap` and the validated prefix. A callback proves delivery
+to browser JavaScript. An unread callback can still be queued or cached;
+combine a sequence hole with the engine drop log before locating local loss.
+Native assessments have no browser callback evidence.
+
 Each import or export log has a `.process.json` file beside it. It records
 exit status, elapsed time, timeout limit and host disk, load and memory samples
 before and after setup. Timeouts keep partial engine output. Failed setup also
@@ -373,6 +384,13 @@ native send to native receipt. `application_rtt_ms` measures reference enqueue
 to echo handling. `godot_echo_ms` measures Godot receive to echo submission.
 `native_callback_rtt_ms` spans browser delivery of the native send and receipt
 events. It includes bridge scheduling. Each interval uses one clock.
+
+`intervals_ms` adds minimum, p50, p95 and maximum latency with the worst
+sequence. Per-packet `observed_stages` and `unobserved_stages` identify missing
+boundary evidence. Missing stages can reflect an unavailable backend or trace
+limit. `pause_heartbeats` separates the old backlog from packets sent during
+the receive pause. Only `new_echoes_at_resume` counts new round trips completed
+by resume. Cohort latency summaries can include echoes completed later.
 
 Missing, nonfinite or reversed timestamps produce `null`. Compare sample
 counts and overflow before comparing maxima. A short measured native round
@@ -1244,7 +1262,11 @@ each phase and directed link. It compares sent and acknowledged chunks with
 the receiver's consumed chunks and credit counts. A full HTTP credit window
 also records the expected consumption marker, matching completed or inflight
 POST, relay queue/dequeue timing and sender marker observation. WebRTC credit
-rows keep their own counts without HTTP attribution. Missing history is null.
+rows keep their own counts without HTTP attribution. `credit_packets` matches
+each eight-chunk credit with the receiver's issue record and the sender's
+receipt record. WebRTC issue records include the `put_packet` error; HTTP
+issue records show queue submission. A successful issue does not prove receipt.
+Both seats retain at most 32 events per phase. Missing history is null.
 Seat tick values use separate clocks and observation times; do not subtract
 them or treat a later receiver observation as proof of what the sender knew
 at its deadline. These rows preserve evidence without assigning a cause.

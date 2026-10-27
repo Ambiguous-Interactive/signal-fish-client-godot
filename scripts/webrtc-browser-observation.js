@@ -4,6 +4,12 @@
   let created = 0;
   let closed = 0;
   let sampling = false;
+  const callbackChannels = [];
+  window.webrtcCallbackSnapshot = () =>
+    callbackChannels.map((channel) => ({
+      ...channel,
+      callbacks: channel.callbacks.slice(),
+    }));
   window.RTCPeerConnection = new Proxy(EnginePeer, {
     construct(target, args, newTarget) {
       const peer = Reflect.construct(target, args, newTarget);
@@ -14,6 +20,7 @@
       peer.createDataChannel = function (label, options) {
         const channel = Reflect.apply(createChannel, this, [label, options]);
         const received = {
+          peer: id,
           id: channel.id,
           label: channel.label,
           packets: 0,
@@ -22,6 +29,8 @@
           dropped: 0,
         };
         observedChannels.push(received);
+        callbackChannels.push(received);
+        if (callbackChannels.length > 32) callbackChannels.shift();
         channel.addEventListener("message", (event) => {
           const bytes =
             typeof event.data === "string"
@@ -29,9 +38,25 @@
               : (event.data.byteLength ?? event.data.size);
           received.packets++;
           received.bytes += bytes;
-          if (received.callbacks.length < 1024)
-            received.callbacks.push({ ms: performance.now(), bytes });
-          else received.dropped++;
+          if (received.callbacks.length < 1024) {
+            const prefix =
+              event.data instanceof ArrayBuffer
+                ? new TextDecoder().decode(
+                    new Uint8Array(event.data, 0, Math.min(96, bytes)),
+                  )
+                : typeof event.data === "string"
+                  ? event.data.slice(0, 96)
+                  : "";
+            const match =
+              /^(snapshot|partial|heartbeat):(1|2):(godot|reference):(\d+):/.exec(
+                prefix,
+              );
+            received.callbacks.push({
+              ms: performance.now(),
+              bytes,
+              packet: match ? match.slice(1).join(":") : null,
+            });
+          } else received.dropped++;
         });
         console.log(
           "WEBRTC_BROWSER_CHANNEL " +

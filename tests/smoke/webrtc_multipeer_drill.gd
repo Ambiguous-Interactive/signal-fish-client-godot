@@ -16,6 +16,7 @@ var _http_credit_hold_proof: Dictionary = {}
 var _credit_transport := "http"
 var _credits_sent: Dictionary = {}
 var _credits_received: Dictionary = {}
+var _credit_events: Array[Dictionary] = []
 var _rpc_multi_proof: Dictionary = {}
 var _rpc_multi_reader_paused := false
 var _rpc_multi_reader_resumed := false
@@ -291,6 +292,7 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 				):
 					_fail("multi-peer consumption credit bytes, sequence or metadata differ")
 					return false
+				_record_credit("received", seat, count)
 				_acked[seat] = count
 				_credits_received[seat] += 1
 				_credit_updated[seat] = Time.get_ticks_msec()
@@ -315,9 +317,13 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 				else:
 					_safe.set_target_peer(sender)
 					_safe.transfer_mode = MultiplayerPeer.TRANSFER_MODE_RELIABLE
-					if _safe.put_packet(_credit_bytes(phase, _seat, seat, consumed)) != OK:
+					var error := _safe.put_packet(_credit_bytes(phase, _seat, seat, consumed))
+					_record_credit("issued", seat, consumed, error)
+					if error != OK:
 						_fail("multi-peer consumption credit send failed")
 						return false
+				if _credit_transport == "http":
+					_record_credit("issued", seat, consumed)
 				_credits_sent[seat] += 1
 		for seat: int in targets:
 			var acknowledged: int = _acked[seat]
@@ -327,6 +333,7 @@ func _traffic(phase: int, targets: Array[int]) -> bool:
 				and _markers.has(_ack_marker(phase, seat, acknowledged + WINDOW))
 			):
 				acknowledged += WINDOW
+				_record_credit("received", seat, acknowledged)
 				_credits_received[seat] += 1
 			if acknowledged != _acked[seat]:
 				_credit_updated[seat] = Time.get_ticks_msec()
@@ -499,6 +506,7 @@ func _reset_transfer_counts(targets: Array[int]) -> void:
 	_credit_updated.clear()
 	_credits_sent.clear()
 	_credits_received.clear()
+	_credit_events.clear()
 	_paused_proof.clear()
 	_last_packet.clear()
 	_reader_resumed = false
@@ -511,6 +519,19 @@ func _reset_transfer_counts(targets: Array[int]) -> void:
 		_credits_received[seat] = 0
 		_peak_outstanding[seat] = 0
 		_credit_updated[seat] = Time.get_ticks_msec()
+
+
+func _record_credit(direction: String, seat: int, count: int, error: int = OK) -> void:
+	if _credit_events.size() < 32:
+		_credit_events.append(
+			{
+				"direction": direction,
+				"seat": seat,
+				"count": count,
+				"tick_ms": Time.get_ticks_msec(),
+				"error": error
+			}
+		)
 
 
 func _credit_bytes(phase: int, sender: int, target: int, count: int) -> PackedByteArray:
@@ -687,6 +708,7 @@ func _snapshot() -> Dictionary:
 	snapshot["credits_sent_by_target"] = _credits_sent
 	snapshot["http_credit_hold_proof"] = _http_credit_hold_proof
 	snapshot["credits_received_by_target"] = _credits_received
+	snapshot["credit_events"] = _credit_events
 	snapshot["rpc_independent_pair_proof"] = _rpc_multi_proof
 	snapshot["rpc_reader_paused"] = _rpc_multi_reader_paused
 	snapshot["rpc_reader_resumed"] = _rpc_multi_reader_resumed

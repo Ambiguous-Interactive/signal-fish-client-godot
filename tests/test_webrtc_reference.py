@@ -24,6 +24,62 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_snapshot_boundary_retains_callback_and_read_hole(self) -> None:
+        callbacks = [
+            {
+                "callbacks": [
+                    {"packet": f"snapshot:1:reference:{sequence}", "bytes": 4120}
+                    for sequence in range(5)
+                ],
+                "dropped": 0,
+            }
+        ]
+        godot = {
+            "snapshot_received": 2,
+            "receive_timings_dropped": 0,
+            "receive_timings": [
+                {"packet": f"snapshot:1:reference:{sequence}", "bytes": 4120}
+                for sequence in (0, 1, 4)
+            ],
+        }
+        before = copy.deepcopy((godot, callbacks))
+        result = reference.snapshot_receive_diagnostics(godot, callbacks, 1)
+        self.assertEqual(result["callback_not_read_sequences"], [2, 3])
+        self.assertEqual(result["first_read_after_gap"], 4)
+        self.assertEqual(result["browser_callback_snapshot_bytes"], 20600)
+        self.assertEqual(result["script_read_snapshot_bytes"], 12360)
+        self.assertEqual((godot, callbacks), before)
+        self.assertEqual(
+            reference.snapshot_receive_diagnostics(godot, callbacks, 2)[
+                "browser_callback_sequences"
+            ],
+            [],
+        )
+
+    def test_snapshot_boundary_keeps_missing_or_truncated_evidence_explicit(self) -> None:
+        result = reference.snapshot_receive_diagnostics({}, [], 1)
+        self.assertIsNone(result["first_callback_not_read"])
+        self.assertIsNone(result["first_read_after_gap"])
+        self.assertIsNone(result["script_trace_dropped"])
+        result = reference.snapshot_receive_diagnostics(
+            {"receive_timings_dropped": 3},
+            [
+                {
+                    "dropped": 5,
+                    "callbacks": [
+                        {"packet": "snapshot:1:reference:128"},
+                        {"packet": "snapshot:1:reference:-1"},
+                        {"packet": "snapshot:1:reference:²"},
+                        {"packet": "heartbeat:1:reference:0"},
+                    ],
+                }
+            ],
+            1,
+        )
+        self.assertEqual(result["browser_callback_sequences"], [])
+        self.assertEqual(result["callback_trace_dropped"], 5)
+        self.assertEqual(result["script_trace_dropped"], 3)
+
     def test_failure_summary_retains_local_drops_and_exact_failure(self) -> None:
         failure = {
             "phase": 1,
@@ -94,6 +150,116 @@ class ReferenceEvidenceTests(unittest.TestCase):
         self.assertEqual(result["max_ms"]["godot_echo_ms"], 1)
         self.assertEqual(result["packets"][1]["native_rtt_ms"], None)
         self.assertEqual(result["packets"][1]["application_rtt_ms"], None)
+
+    def test_heartbeat_pause_separates_old_backlog_from_new_round_trips(self) -> None:
+        pause = {
+            "heartbeat_sent": 2,
+            "heartbeat_received": 0,
+            "heartbeat_sent_at_resume": 15,
+            "heartbeat_received_at_resume": 2,
+        }
+        phase = {
+            "phase": 1,
+            "receive_pause": pause,
+            "heartbeat_timings": [
+                {"sequence": 0, "enqueue_ms": 0, "echo_ms": 1520},
+                {"sequence": 1, "enqueue_ms": 100, "echo_ms": 1520},
+                {"sequence": 2, "enqueue_ms": 200, "echo_ms": 1600},
+                {"sequence": 3, "enqueue_ms": 300},
+            ],
+            "snapshot": {
+                "packet_timings": [
+                    {
+                        "marker": "heartbeat:1:reference:2",
+                        "enqueue_ms": 100000,
+                        "dispatch_ms": 101300,
+                        "complete_ms": 101320,
+                    }
+                ]
+            },
+        }
+        before = copy.deepcopy(phase)
+        result = reference.heartbeat_diagnostics({}, phase)
+        proof = result["pause_heartbeats"]
+        self.assertEqual(proof["pre_pause_backlog"], 2)
+        self.assertEqual(proof["pre_pause_backlog_remaining_at_resume"], 0)
+        self.assertEqual(proof["sent_during_pause"], 13)
+        self.assertEqual(proof["new_echoes_at_resume"], 0)
+        self.assertEqual(proof["new_echo_sequences_at_resume"], [])
+        # Later final echoes do not establish an echo during the pause.
+        self.assertEqual(
+            proof["intervals_ms"]["sent_during_pause"]["application_rtt_ms"]["count"], 1
+        )
+        self.assertEqual(
+            result["intervals_ms"]["bridge_queue_ms"],
+            {
+                "count": 1,
+                "min_ms": 1300,
+                "p50_ms": 1300,
+                "p95_ms": 1300,
+                "max_ms": 1300,
+                "max_sequence": 2,
+            },
+        )
+        packet = result["packets"][2]
+        self.assertIn("bridge_dispatch", packet["observed_stages"])
+        self.assertIn("native_send", packet["unobserved_stages"])
+        self.assertIn("godot_receive", packet["unobserved_stages"])
+        self.assertEqual(phase, before)
+        pause["heartbeat_received_at_resume"] = 4
+        proof = reference.heartbeat_diagnostics({}, phase)["pause_heartbeats"]
+        self.assertEqual(proof["new_echoes_at_resume"], 2)
+        self.assertEqual(proof["new_echo_sequences_at_resume"], [2, 3])
+
+    def test_heartbeat_distributions_keep_nearest_rank_and_missing_samples(self) -> None:
+        rows: list[dict[str, object]] = [
+            {"sequence": index, "duration": index} for index in range(20)
+        ]
+        rows.append({"sequence": 20, "duration": None})
+        self.assertEqual(
+            reference.timing_distribution(rows, "duration"),
+            {
+                "count": 20,
+                "min_ms": 0,
+                "p50_ms": 9,
+                "p95_ms": 18,
+                "max_ms": 19,
+                "max_sequence": 19,
+            },
+        )
+        empty = reference.timing_distribution([], "duration")
+        self.assertEqual(empty["count"], 0)
+        for key in ("min_ms", "p50_ms", "p95_ms", "max_ms", "max_sequence"):
+            self.assertIsNone(empty[key])
+        for pause in (
+            {},
+            {
+                "heartbeat_sent": True,
+                "heartbeat_received": 0,
+                "heartbeat_sent_at_resume": 3,
+                "heartbeat_received_at_resume": 1,
+            },
+            {
+                "heartbeat_sent": 3,
+                "heartbeat_received": 4,
+                "heartbeat_sent_at_resume": 5,
+                "heartbeat_received_at_resume": 4,
+            },
+            {
+                "heartbeat_sent": 2,
+                "heartbeat_received": 0,
+                "heartbeat_sent_at_resume": 3,
+                "heartbeat_received_at_resume": 4,
+            },
+            {
+                "heartbeat_sent": 2,
+                "heartbeat_received": 1,
+                "heartbeat_sent_at_resume": 3,
+                "heartbeat_received_at_resume": 0,
+            },
+        ):
+            with self.subTest(pause=pause):
+                self.assertIsNone(reference.heartbeat_pause_diagnostics([], pause, ("duration",)))
 
     def test_incomplete_run_uses_terminal_phase_and_failure_echoes(self) -> None:
         phase = {

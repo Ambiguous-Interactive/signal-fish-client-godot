@@ -582,6 +582,24 @@ def multi_peer_credit_diagnostics(
             {},
         )
 
+    def credit_event(
+        record: dict[str, object], direction: str, peer: int, count: int
+    ) -> dict[str, object] | None:
+        events = record.get("credit_events")
+        if not isinstance(events, list):
+            return None
+        return next(
+            (
+                event
+                for event in events
+                if isinstance(event, dict)
+                and event.get("direction") == direction
+                and event.get("seat") == peer
+                and event.get("count") == count
+            ),
+            None,
+        )
+
     rows: list[dict[str, object]] = []
     for (phase, sender), source in sorted(snapshots.items()):
         for target, sent in mapping(source, "sent_by_target").items():
@@ -613,6 +631,16 @@ def multi_peer_credit_diagnostics(
                     target
                 ),
                 "window_wait_ms": mapping(source, "credit_wait_age_ms_by_target").get(target),
+                "credit_packets": [
+                    {
+                        "count": count,
+                        "receiver_issue": credit_event(receiver, "issued", sender, count),
+                        "sender_receipt": credit_event(source, "received", int(target), count),
+                    }
+                    for count in range(8, min(sent, 64) + 1, 8)
+                ]
+                if type(sent) is int
+                else [],
             }
             if (
                 transport == "http"
