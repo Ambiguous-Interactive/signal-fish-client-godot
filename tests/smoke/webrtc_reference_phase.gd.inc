@@ -380,17 +380,14 @@ func _reference_packets() -> void:
 		)
 		if packet == null:
 			break
+		var timing := {
+			"ms": Time.get_ticks_msec(),
+			"bytes": packet.data.size(),
+			"mode": packet.transfer_mode,
+			"packet": null,
+		}
 		if _reference_receive_timings.size() < 1024:
-			(
-				_reference_receive_timings
-				. append(
-					{
-						"ms": Time.get_ticks_msec(),
-						"bytes": packet.data.size(),
-						"mode": packet.transfer_mode,
-					}
-				)
-			)
+			_reference_receive_timings.append(timing)
 		else:
 			_reference_receive_timings_dropped += 1
 		if _reference_options.get("binary_traffic", false):
@@ -400,6 +397,9 @@ func _reference_packets() -> void:
 			if binary_result > 0:
 				continue
 		var text := packet.data.get_string_from_utf8()
+		var identity_fields := text.split(":", true, 4)
+		if identity_fields.size() == 5 and identity_fields[0] in ["snapshot", "partial", "heartbeat"]:
+			timing["packet"] = ":".join(identity_fields.slice(0, 4))
 		if text.begins_with("startup:"):
 			var expected := (
 				(

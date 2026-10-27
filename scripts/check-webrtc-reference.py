@@ -128,6 +128,65 @@ def diagnostic_interval(start: object, end: object, scale: int = 1) -> float | N
     return round((cast(float, end) - cast(float, start)) / scale, 3)
 
 
+def timing_distribution(rows: list[dict[str, object]], key: str) -> dict[str, object]:
+    samples = sorted(
+        (cast(float, row[key]), cast(int, row["sequence"]))
+        for row in rows
+        if row.get(key) is not None
+    )
+    count = len(samples)
+    return {
+        "count": count,
+        "min_ms": samples[0][0] if samples else None,
+        "p50_ms": samples[math.ceil(count * 0.5) - 1][0] if samples else None,
+        "p95_ms": samples[math.ceil(count * 0.95) - 1][0] if samples else None,
+        "max_ms": samples[-1][0] if samples else None,
+        "max_sequence": samples[-1][1] if samples else None,
+    }
+
+
+def heartbeat_pause_diagnostics(
+    rows: list[dict[str, object]], pause: dict[str, object], metrics: tuple[str, ...]
+) -> dict[str, object] | None:
+    values = [
+        pause.get(key)
+        for key in (
+            "heartbeat_sent",
+            "heartbeat_received",
+            "heartbeat_sent_at_resume",
+            "heartbeat_received_at_resume",
+        )
+    ]
+    if not all(type(value) is int for value in values):
+        return None
+    sent, received, resumed_sent, resumed_received = cast(list[int], values)
+    if (
+        not 0 <= received <= sent <= resumed_sent <= 128
+        or not received <= resumed_received <= resumed_sent
+    ):
+        return None
+    return {
+        "pre_pause_backlog": sent - received,
+        "pre_pause_backlog_remaining_at_resume": max(0, sent - resumed_received),
+        "sent_during_pause": resumed_sent - sent,
+        "new_echoes_at_resume": max(0, resumed_received - sent),
+        "new_echo_sequences_at_resume": list(range(sent, resumed_received)),
+        "interval_scope": "Sequence cohorts use pause counters. Completed intervals may end after resume.",
+        "intervals_ms": {
+            cohort: {
+                key: timing_distribution(
+                    [row for row in rows if low <= cast(int, row["sequence"]) < high], key
+                )
+                for key in metrics
+            }
+            for cohort, low, high in (
+                ("pre_pause_backlog", received, sent),
+                ("sent_during_pause", sent, resumed_sent),
+            )
+        },
+    }
+
+
 def heartbeat_diagnostics(
     godot: dict[str, object], reference: dict[str, object]
 ) -> dict[str, object]:
@@ -150,9 +209,29 @@ def heartbeat_diagnostics(
         sent = indexes["native_sent"].get(marker, {})
         received = indexes["native_heartbeat_received"].get(marker, {})
         echo = echoes.get(sequence, {})
+        stages = {
+            "application_enqueue": timing.get("enqueue_ms"),
+            "bridge_dispatch": command.get("dispatch_ms"),
+            "command_complete": command.get("complete_ms"),
+            "native_send": sent.get("probe_us"),
+            "godot_receive": echo.get("receive_ms"),
+            "godot_echo": echo.get("echo_ms"),
+            "native_receive": received.get("probe_us"),
+            "application_echo": timing.get("echo_ms"),
+        }
         rows.append(
             {
                 "sequence": sequence,
+                "observed_stages": [
+                    key
+                    for key, value in stages.items()
+                    if diagnostic_interval(value, value) is not None
+                ],
+                "unobserved_stages": [
+                    key
+                    for key, value in stages.items()
+                    if diagnostic_interval(value, value) is None
+                ],
                 "application_rtt_ms": diagnostic_interval(
                     timing.get("enqueue_ms"), timing.get("echo_ms")
                 ),
@@ -198,7 +277,69 @@ def heartbeat_diagnostics(
             key: max((cast(float, row[key]) for row in rows if row[key] is not None), default=None)
             for key in metrics
         },
+        "intervals_ms": {key: timing_distribution(rows, key) for key in metrics},
+        "pause_heartbeats": heartbeat_pause_diagnostics(
+            rows, diagnostic_mapping(reference.get("receive_pause")), metrics
+        ),
         "packets": rows,
+    }
+
+
+def snapshot_receive_diagnostics(
+    godot: dict[str, object], callbacks: list[dict[str, object]], phase: object
+) -> dict[str, object]:
+    prefix = f"snapshot:{phase}:reference:"
+    reads = diagnostic_records(godot.get("receive_timings"))
+
+    def packets(records: list[dict[str, object]]) -> dict[int, dict[str, object]]:
+        result: dict[int, dict[str, object]] = {}
+        for record in records:
+            identity = record.get("packet")
+            if not isinstance(identity, str) or not identity.startswith(prefix):
+                continue
+            suffix = identity.removeprefix(prefix)
+            if suffix.isascii() and suffix.isdecimal() and 0 <= int(suffix) < 128:
+                result[int(suffix)] = record
+        return result
+
+    browser = packets(
+        [record for channel in callbacks for record in diagnostic_records(channel.get("callbacks"))]
+    )
+    script = packets(reads)
+    unread = sorted(browser.keys() - script.keys())
+    validated = godot.get("snapshot_received")
+    return {
+        "phase": phase,
+        "validated_prefix_packets": validated,
+        "browser_callback_sequences": sorted(browser),
+        "script_read_sequences": sorted(script),
+        "callback_not_read_sequences": unread,
+        "first_callback_not_read": unread[0] if unread else None,
+        "first_read_after_gap": next(
+            (
+                sequence
+                for sequence in sorted(script)
+                if type(validated) is int and sequence > validated
+            ),
+            None,
+        ),
+        "browser_callback_snapshot_bytes": sum(
+            cast(int, record["bytes"])
+            for record in browser.values()
+            if type(record.get("bytes")) is int
+        ),
+        "script_read_snapshot_bytes": sum(
+            cast(int, record["bytes"])
+            for record in script.values()
+            if type(record.get("bytes")) is int
+        ),
+        "callback_trace_dropped": sum(
+            cast(int, channel["dropped"])
+            for channel in callbacks
+            if type(channel.get("dropped")) is int
+        ),
+        "script_trace_dropped": godot.get("receive_timings_dropped"),
+        "limits": "Callbacks and reads use separate clocks. Unread callbacks can be queued, cached, or dropped. Missing traces do not establish loss.",
     }
 
 
@@ -251,6 +392,12 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
         "godot_buffer_drop_messages": output.count("Buffer full! Dropping data."),
         "reference_error": ref.get("error"),
         "driver_error": report.get("driver_error"),
+        "snapshot_receive_phases": [
+            snapshot_receive_diagnostics(
+                item, diagnostic_records(report.get("godot_browser_callbacks")), phase
+            )
+            for phase, item in local.items()
+        ],
         "heartbeat_phases": [
             heartbeat_diagnostics(local.get(item.get("phase"), {}), item)
             for item in reference_phases
@@ -1067,6 +1214,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 args=["--no-sandbox", "--enable-unsafe-swiftshader"],
             )
             reference: Page | None = None
+            page: Page | None = None
             try:
                 reference = browser.new_page()
                 watch_page(reference, reference_messages)
@@ -1165,6 +1313,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     log.flush()
                     output = (directory / "godot.log").read_text()
                 else:
+                    if page is None:
+                        raise RuntimeError("Godot browser page was not created")
                     driver_error = wait_for_godot(page, messages)
                     output = "\n".join(messages)
                     log.write(output)
@@ -1240,6 +1390,13 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     }
                 )
             finally:
+                if page is not None:
+                    try:
+                        report["godot_browser_callbacks"] = page.evaluate(
+                            "window.webrtcCallbackSnapshot?.() ?? null"
+                        )
+                    except Exception as exc:
+                        report["godot_browser_callbacks_error"] = str(exc)
                 if reference is not None:
                     try:
                         report["reference_terminal"] = reference.evaluate(
