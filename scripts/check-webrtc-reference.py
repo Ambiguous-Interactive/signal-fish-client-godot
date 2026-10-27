@@ -199,6 +199,9 @@ def heartbeat_diagnostics(
     echoes = {
         item.get("sequence"): item for item in diagnostic_records(godot.get("heartbeat_timings"))
     }
+    consumer = {
+        item.get("packet"): item for item in diagnostic_records(reference.get("receive_timings"))
+    }
     rows: list[dict[str, object]] = []
     for timing in diagnostic_records(reference.get("heartbeat_timings"))[:128]:
         sequence = timing.get("sequence")
@@ -209,6 +212,7 @@ def heartbeat_diagnostics(
         sent = indexes["native_sent"].get(marker, {})
         received = indexes["native_heartbeat_received"].get(marker, {})
         echo = echoes.get(sequence, {})
+        consumed = consumer.get(marker, {})
         stages = {
             "application_enqueue": timing.get("enqueue_ms"),
             "bridge_dispatch": command.get("dispatch_ms"),
@@ -217,6 +221,8 @@ def heartbeat_diagnostics(
             "godot_receive": echo.get("receive_ms"),
             "godot_echo": echo.get("echo_ms"),
             "native_receive": received.get("probe_us"),
+            "reference_callback": consumed.get("callback_ms"),
+            "reference_drain": consumed.get("drain_ms"),
             "application_echo": timing.get("echo_ms"),
         }
         rows.append(
@@ -248,6 +254,9 @@ def heartbeat_diagnostics(
                 "native_callback_rtt_ms": diagnostic_interval(
                     sent.get("callback_ms"), received.get("callback_ms")
                 ),
+                "reference_consumer_ms": diagnostic_interval(
+                    consumed.get("callback_ms"), consumed.get("drain_ms")
+                ),
                 "command_failed": "failed_ms" in command,
             }
         )
@@ -258,6 +267,7 @@ def heartbeat_diagnostics(
         "native_rtt_ms",
         "godot_echo_ms",
         "native_callback_rtt_ms",
+        "reference_consumer_ms",
     )
     return {
         "phase": phase,
@@ -1032,8 +1042,10 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
     return project
 
 
-def receive_schedule_passed(phase: dict[str, object], batch: int, interval: int) -> bool:
-    if batch == 32 and interval == 0:
+def receive_schedule_passed(
+    phase: dict[str, object], batch: int, interval: int, *, required: bool = False
+) -> bool:
+    if not required and batch == 32 and interval == 0:
         return True
     schedule = diagnostic_mapping(phase.get("receive_schedule"))
     raw_drains = schedule.get("drains")
@@ -1061,6 +1073,41 @@ def receive_schedule_passed(phase: dict[str, object], batch: int, interval: int)
         ):
             return False
         previous = at
+    return True
+
+
+def reference_receive_schedule_passed(phase: dict[str, object], batch: int, interval: int) -> bool:
+    if batch == 0:
+        return True
+    schedule = diagnostic_mapping(phase.get("receive_schedule"))
+    raw_timings = phase.get("receive_timings")
+    timings = diagnostic_records(raw_timings)
+    if (
+        not receive_schedule_passed(phase, batch, interval, required=True)
+        or any(
+            type(schedule.get(key)) is not int or schedule[key] != 0
+            for key in ("queued_packets", "queued_bytes")
+        )
+        or type(phase.get("receive_timings_dropped")) is not int
+        or phase["receive_timings_dropped"] != 0
+        or not isinstance(raw_timings, list)
+        or not timings
+        or len(timings) != len(raw_timings)
+        or sum(cast(int, item["reads"]) for item in diagnostic_records(schedule.get("drains")))
+        != len(timings)
+    ):
+        return False
+    previous = None
+    for item in timings:
+        callback, consumed = item.get("callback_ms"), item.get("drain_ms")
+        if (
+            type(callback) is not int
+            or type(consumed) is not int
+            or not 0 <= callback <= consumed
+            or (previous is not None and consumed < previous)
+        ):
+            return False
+        previous = consumed
     return True
 
 
@@ -1117,6 +1164,11 @@ def gameplay_phase_checks(
             godot,
             getattr(args, "receive_batch_packets", 32),
             getattr(args, "receive_interval_ms", 0),
+        ),
+        "reference_receive_schedule": reference_receive_schedule_passed(
+            ref,
+            getattr(args, "reference_receive_batch_packets", 0),
+            getattr(args, "reference_receive_interval_ms", 0),
         ),
         "heartbeat_totals": heartbeat_phase_passed(godot, ref, args.mixed_traffic),
         "retirement": retirement_passed(
@@ -1263,6 +1315,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "channel_in_buffer_kb": getattr(args, "channel_in_buffer_kb", 0),
         "receive_batch_packets": getattr(args, "receive_batch_packets", 32),
         "receive_interval_ms": getattr(args, "receive_interval_ms", 0),
+        "reference_receive_batch_packets": getattr(args, "reference_receive_batch_packets", 0),
+        "reference_receive_interval_ms": getattr(args, "reference_receive_interval_ms", 0),
         "receive_empty_binary": getattr(args, "receive_empty_binary", False),
         "binary_traffic": getattr(args, "binary_traffic", False),
         "empty_binary": getattr(args, "empty_binary", False),
@@ -1327,7 +1381,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         ],
                     )
                 reference.evaluate(
-                    "([seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup, bodyBytes, windowBytes]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup, bodyBytes, windowBytes); }",
+                    "([seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup, bodyBytes, windowBytes, refBatch, refInterval]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup, bodyBytes, windowBytes, refBatch, refInterval); }",
                     [
                         1 if web else 0,
                         args.godot_offer,
@@ -1346,6 +1400,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         getattr(args, "startup_burst", False),
                         getattr(args, "snapshot_body_bytes", 1024),
                         getattr(args, "snapshot_window_bytes", 0),
+                        getattr(args, "reference_receive_batch_packets", 0),
+                        getattr(args, "reference_receive_interval_ms", 0),
                     ],
                 )
                 hold_proof: dict[str, object] = {}
@@ -1608,6 +1664,18 @@ def main() -> None:
         default=0,
         help="Minimum interval between Godot gameplay drains, 0-1000 ms; signaling keeps polling",
     )
+    parser.add_argument(
+        "--reference-receive-batch-packets",
+        type=int,
+        default=0,
+        help="Reference application packets per drain, 1-256; 0 keeps immediate callbacks",
+    )
+    parser.add_argument(
+        "--reference-receive-interval-ms",
+        type=int,
+        default=0,
+        help="Minimum reference application drain interval, 0-1000 ms; transport keeps polling",
+    )
     parser.add_argument("--chromium")
     parser.add_argument(
         "--safe-receive", action="store_true", help="Read through the RPC-safe peer"
@@ -1664,6 +1732,12 @@ def main() -> None:
         parser.error("--receive-batch-packets must be 1-256")
     if not 0 <= args.receive_interval_ms <= 1000:
         parser.error("--receive-interval-ms must be 0-1000")
+    if not 0 <= args.reference_receive_batch_packets <= 256:
+        parser.error("--reference-receive-batch-packets must be 0-256")
+    if not 0 <= args.reference_receive_interval_ms <= 1000:
+        parser.error("--reference-receive-interval-ms must be 0-1000")
+    if args.reference_receive_interval_ms and not args.reference_receive_batch_packets:
+        parser.error("--reference-receive-interval-ms needs --reference-receive-batch-packets")
     if args.channel_in_buffer_kb < 0 or args.channel_in_buffer_kb > 16384:
         parser.error("--channel-in-buffer-kb must be 0-16384")
     if not 16 <= args.snapshot_body_bytes <= 16384 or args.snapshot_body_bytes % 16:

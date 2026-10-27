@@ -16,6 +16,8 @@ window.runReference = async function (
   startupBurst = false,
   snapshotBodyBytes = 1024,
   snapshotWindowBytes = 49152,
+  receiveBatchPackets = 0,
+  receiveIntervalMs = 0,
 ) {
   const seat = 1 - godotSeat;
   const creditStride = snapshotWindowBytes
@@ -270,6 +272,19 @@ window.runReference = async function (
         received.push(label);
         return true;
       };
+      const pendingReads = [];
+      const receiveTimings = [];
+      let receiveTimingsDropped = 0;
+      let queuedBytes = 0;
+      let lastDrain = -1;
+      const receiveSchedule = {
+        batch_packets: receiveBatchPackets,
+        interval_ms: receiveIntervalMs,
+        peak_queued_packets: 0,
+        peak_queued_bytes: 0,
+        drains: [],
+        dropped: 0,
+      };
       const thisCallbacks = {
         onLocalCandidate: (_peer, _generation, candidate) => {
           if (!window.referenceError)
@@ -347,7 +362,75 @@ window.runReference = async function (
           return consume(label, text);
         },
       };
-      engine = new Engine(false, thisCallbacks);
+      const deliver = (binary, args) =>
+        binary
+          ? thisCallbacks.onChannelBinaryMessage(...args)
+          : thisCallbacks.onChannelMessage(...args);
+      const receive = (binary, args) => {
+        if (window.referenceError) return;
+        if (!receiveBatchPackets) return deliver(binary, args);
+        if (pendingReads.length >= 256) {
+          window.referenceError ??=
+            "reference scheduled receive queue exceeded 256 packets";
+          return;
+        }
+        const data = args[3];
+        const bytes = binary
+          ? data.byteLength
+          : new TextEncoder().encode(data).length;
+        pendingReads.push({
+          binary,
+          args,
+          bytes,
+          callback_ms: Math.floor(performance.now()),
+        });
+        queuedBytes += bytes;
+        receiveSchedule.peak_queued_packets = Math.max(
+          receiveSchedule.peak_queued_packets,
+          pendingReads.length,
+        );
+        receiveSchedule.peak_queued_bytes = Math.max(
+          receiveSchedule.peak_queued_bytes,
+          queuedBytes,
+        );
+      };
+      const drain = () => {
+        if (!receiveBatchPackets) return;
+        const now = Math.floor(performance.now());
+        if (lastDrain >= 0 && now - lastDrain < receiveIntervalMs) return;
+        lastDrain = now;
+        const sample = { ms: now, reads: 0 };
+        if (receiveSchedule.drains.length < 1024)
+          receiveSchedule.drains.push(sample);
+        else receiveSchedule.dropped++;
+        while (
+          sample.reads < receiveBatchPackets &&
+          pendingReads.length &&
+          !window.referenceError
+        ) {
+          const item = pendingReads.shift();
+          queuedBytes -= item.bytes;
+          sample.reads++;
+          if (receiveTimings.length < 1024) {
+            const text = item.binary
+              ? new TextDecoder().decode(item.args[3])
+              : item.args[3];
+            receiveTimings.push({
+              callback_ms: item.callback_ms,
+              drain_ms: Math.floor(performance.now()),
+              bytes: item.bytes,
+              label: item.args[2],
+              packet: text.split(":").slice(0, 4).join(":"),
+            });
+          } else receiveTimingsDropped++;
+          deliver(item.binary, item.args);
+        }
+      };
+      engine = new Engine(false, {
+        ...thisCallbacks,
+        onChannelMessage: (...args) => receive(false, args),
+        onChannelBinaryMessage: (...args) => receive(true, args),
+      });
       engine.startupPhase = startupBurst ? phase : 0;
       const evidence = () => ({
         phase,
@@ -358,6 +441,14 @@ window.runReference = async function (
         slow_reference_receiver: slowReferenceReceiver,
         receive_pause: { ...receivePause },
         queued_application_packets: queued.length,
+        receive_schedule: {
+          ...receiveSchedule,
+          queued_packets: pendingReads.length,
+          queued_bytes: queuedBytes,
+          drains: receiveSchedule.drains.map((entry) => ({ ...entry })),
+        },
+        receive_timings: receiveTimings.map((entry) => ({ ...entry })),
+        receive_timings_dropped: receiveTimingsDropped,
         heartbeat_sent: heartbeatSent,
         heartbeat_received: heartbeatReceived,
         signaling_pending: signalingTask !== null,
@@ -500,6 +591,8 @@ window.runReference = async function (
       window.referenceProgress = evidence;
       try {
         while (!retired && performance.now() - started < 14000) {
+          if (window.referenceError) throw new Error(window.referenceError);
+          drain();
           if (window.referenceError) throw new Error(window.referenceError);
           if (
             pauseStarted &&
