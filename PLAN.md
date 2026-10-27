@@ -33,7 +33,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       zero-byte script sends: #437; original Chromium 156 receive loss: #442;
       capture heartbeat pause failures with packet interval summaries: #440).
 - [ ] Repair the Web reliable receive boundary using first-drop callback/read
-      timelines and matched byte-window controls (#442). Reproduce the historical
+      timelines and matched byte-window controls (#442). Compare startup
+      consumption credit with the original packet-only and no-startup workloads.
+      Reproduce the historical
       heartbeat pause failure and compare shared-clock read latency with native
       emission and application drain delays (#440). Keep every reliable receipt
       and the original deadlines.

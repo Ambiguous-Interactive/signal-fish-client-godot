@@ -427,7 +427,7 @@ def browser_read_diagnostics(
 ) -> dict[str, object]:
     pattern = re.compile(
         rf"(?:snapshot|partial|heartbeat|startup):{phase}:reference:[0-9]+"
-        rf"|(?:credit|partial-credit):{phase}:reference:godot:[0-9]+"
+        rf"|(?:credit|partial-credit|startup-credit):{phase}:reference:godot:[0-9]+"
         rf"|reference:{phase}:reliable"
     )
 
@@ -458,6 +458,7 @@ def browser_read_diagnostics(
             "startup",
             "credit",
             "partial-credit",
+            "startup-credit",
             "reference",
         )
     }
@@ -695,6 +696,11 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
     )
     state = failure or progress
     queue_fields = (
+        "startup_sent",
+        "startup_received",
+        "startup_credit",
+        "startup_acknowledged",
+        "snapshot_startup_credit",
         "snapshot_sent",
         "snapshot_received",
         "snapshot_acknowledged",
@@ -789,9 +795,20 @@ def binary_payloads(
     return result
 
 
-def startup_phase_passed(godot: dict[str, object], ref: dict[str, object], requested: bool) -> bool:
+def startup_phase_passed(
+    godot: dict[str, object], ref: dict[str, object], requested: bool, window_bytes: int = 0
+) -> bool:
+    credited = requested and window_bytes > 0
     return all(
         phase.get("startup_burst", False) is requested
+        and phase.get("startup_credit", False) is credited
+        and (
+            not credited
+            or all(
+                type(phase.get(key)) is int and phase[key] == 32
+                for key in ("startup_acknowledged", "snapshot_startup_credit")
+            )
+        )
         and (
             not requested
             or all(
@@ -1494,7 +1511,12 @@ def gameplay_phase_checks(
             )
             for phase in (godot, ref)
         ),
-        "startup": startup_phase_passed(godot, ref, getattr(args, "startup_burst", False)),
+        "startup": startup_phase_passed(
+            godot,
+            ref,
+            getattr(args, "startup_burst", False),
+            getattr(args, "snapshot_window_bytes", 0),
+        ),
         "godot_binary": binary_phase_passed(
             godot,
             getattr(args, "binary_traffic", False),

@@ -892,13 +892,22 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
         self.assertFalse(all(checks.values()))
 
     def test_observation_timeout_retains_last_progress_without_inventing_failure(self) -> None:
+        queue = {
+            "snapshot_acknowledged": 56,
+            "credit_wait_age_ms": 890,
+            "startup_sent": 32,
+            "startup_received": 32,
+            "startup_credit": True,
+            "startup_acknowledged": 0,
+            "snapshot_startup_credit": -1,
+        }
         report = {
             "driver_error": "TimeoutError: reference completion",
             "godot_evidence": {
                 "last_progress": {
                     "phase": 1,
                     "max_stage_frame_gap_ms": 107,
-                    "reference": {"snapshot_acknowledged": 56, "credit_wait_age_ms": 890},
+                    "reference": queue,
                 }
             },
         }
@@ -906,6 +915,8 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
         self.assertIsNone(result["godot_failure"]["reason"])
         self.assertEqual(result["godot_progress"]["max_stage_frame_gap_ms"], 107)
         self.assertEqual(result["godot_queue"]["snapshot_acknowledged"], 56)
+        for key, value in queue.items():
+            self.assertEqual(result["godot_queue"][key], value)
         self.assertEqual(result["driver_error"], report["driver_error"])
 
     def test_snapshot_cli_rejects_sizes_that_cannot_return_credit(self) -> None:
@@ -1186,6 +1197,26 @@ console.log(JSON.stringify({error: context.window.referenceError, ...context.win
             del broken[field]
             self.assertFalse(reference.startup_phase_passed(broken, good, True))
         self.assertFalse(reference.startup_phase_passed(good, good, False))
+
+    def test_paced_startup_requires_consumption_credit_before_first_snapshot(self) -> None:
+        good = {
+            "startup_burst": True,
+            "startup_sent": 32,
+            "startup_received": 32,
+            "startup_credit": True,
+            "startup_acknowledged": 32,
+            "snapshot_startup_credit": 32,
+        }
+        self.assertTrue(reference.startup_phase_passed(good, good, True, 49152))
+        self.assertFalse(reference.startup_phase_passed(good, good, True, 0))
+        for field in ("startup_credit", "startup_acknowledged", "snapshot_startup_credit"):
+            for value in (None, False, 0, 31, 33, 32.0):
+                broken = {**good, field: value}
+                self.assertFalse(reference.startup_phase_passed(broken, good, True, 49152))
+                self.assertFalse(reference.startup_phase_passed(good, broken, True, 49152))
+            broken = dict(good)
+            del broken[field]
+            self.assertFalse(reference.startup_phase_passed(broken, good, True, 49152))
 
     def test_inbound_empty_control_keeps_godot_sends_nonempty(self) -> None:
         payloads = reference.binary_payloads(receive_empty=True)

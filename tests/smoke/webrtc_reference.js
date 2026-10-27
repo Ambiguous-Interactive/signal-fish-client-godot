@@ -20,6 +20,7 @@ window.runReference = async function (
   receiveIntervalMs = 0,
 ) {
   const seat = 1 - godotSeat;
+  const startupCredit = startupBurst && snapshotWindowBytes > 0;
   const creditStride = snapshotWindowBytes
     ? [8, 4, 2, 1].find(
         (count) => count * (snapshotBodyBytes + 32) <= snapshotWindowBytes,
@@ -48,6 +49,8 @@ window.runReference = async function (
       let sent = false;
       let snapshotSent = 0;
       let startupReceived = 0;
+      let startupAck = 0;
+      let snapshotStartupCredit = -1;
       let orderedSent = 0;
       const binarySent = [0, 0, 0];
       const binarySequences = [[], [], []];
@@ -136,6 +139,24 @@ window.runReference = async function (
             return false;
           }
           startupReceived++;
+          if (startupCredit && startupReceived === 32)
+            engine
+              .channel("godot", "reliable")
+              .send(`startup-credit:${phase}:reference:godot:32`);
+          return true;
+        }
+        if (text.startsWith("startup-credit:")) {
+          if (
+            !startupCredit ||
+            startupAck !== 0 ||
+            label !== "reliable" ||
+            text !== `startup-credit:${phase}:godot:reference:32`
+          ) {
+            window.referenceError ??=
+              "reference startup consumption credit differs";
+            return false;
+          }
+          startupAck = 32;
           return true;
         }
         if (text.startsWith("ordered:")) {
@@ -338,7 +359,7 @@ window.runReference = async function (
           }
           const text = new TextDecoder("utf-8", { fatal: true }).decode(data);
           if (
-            !/^(startup:|godot:|snapshot:|partial:|partial-credit:|position:|ordered:|heartbeat:|credit:|retirement:|retired:)/.test(
+            !/^(startup:|startup-credit:|godot:|snapshot:|partial:|partial-credit:|position:|ordered:|heartbeat:|credit:|retirement:|retired:)/.test(
               text,
             )
           )
@@ -478,6 +499,9 @@ window.runReference = async function (
         transfer_ms: transferMs,
         sent,
         native_profile: engine.nativeProfile === true,
+        startup_credit: startupCredit,
+        startup_acknowledged: startupAck,
+        snapshot_startup_credit: snapshotStartupCredit,
         binary_traffic: binaryPackets !== undefined,
         binary_sent: binarySent.slice(),
         binary_sequences: binarySequences.map((sequences) => sequences.slice()),
@@ -698,6 +722,7 @@ window.runReference = async function (
             for (
               let batch = 0;
               batch < 4 &&
+              (!startupCredit || startupAck === 32) &&
               snapshotSent < 128 &&
               snapshotSent - snapshotAck < 32;
               batch++
@@ -709,6 +734,7 @@ window.runReference = async function (
               )
                 break;
               reliable.send(data);
+              if (snapshotSent === 0) snapshotStartupCredit = startupAck;
               snapshotSent++;
               outstandingBytes += data.length;
               peakOutstandingBytes = Math.max(

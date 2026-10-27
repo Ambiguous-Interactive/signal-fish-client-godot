@@ -202,11 +202,167 @@ async function testSmallSnapshotWindows() {
   console.log("Small snapshot window tests passed");
 }
 
+async function testStartupCredit() {
+  for (const kind of [
+    "valid",
+    "absent",
+    "stale-phase",
+    "wrong-mode",
+    "duplicate",
+    "packet-only",
+  ]) {
+    let clock = 0;
+    let hooks;
+    let paired = false;
+    let creditDelivered = false;
+    let startupDelivered = false;
+    const sent = [];
+    const context = {
+      window: {},
+      TextEncoder,
+      TextDecoder,
+      AbortController,
+      performance: { now: () => clock },
+      console: { log() {}, error() {} },
+      setTimeout: (callback) =>
+        setImmediate(() => {
+          clock += 20;
+          if (paired && !startupDelivered) {
+            startupDelivered = true;
+            for (let sequence = 0; sequence < 32; sequence++) {
+              hooks.onChannelBinaryMessage(
+                "godot",
+                1,
+                "reliable",
+                new TextEncoder().encode(
+                  `startup:1:godot:${sequence}:` +
+                    "0123456789abcdef".repeat(64),
+                ),
+              );
+            }
+          }
+          if (
+            paired &&
+            clock >= 1000 &&
+            !creditDelivered &&
+            kind !== "absent" &&
+            kind !== "packet-only"
+          ) {
+            if (kind === "valid")
+              assert.equal(
+                sent.filter((item) => item.text.startsWith("snapshot:")).length,
+                0,
+                "snapshots must wait for startup consumption credit",
+              );
+            creditDelivered = true;
+            const text = `startup-credit:${kind === "stale-phase" ? 2 : 1}:godot:reference:32`;
+            hooks.onChannelBinaryMessage(
+              "godot",
+              1,
+              kind === "wrong-mode" ? "unreliable" : "reliable",
+              new TextEncoder().encode(text),
+            );
+            if (kind === "duplicate")
+              hooks.onChannelMessage("godot", 1, "reliable", text);
+          }
+          callback();
+        }),
+      Engine: class {
+        nativeProfile = true;
+        constructor(_verbose, callbacks) {
+          hooks = callbacks;
+        }
+        async pairWith() {
+          paired = true;
+          return null;
+        }
+        channel() {
+          return {
+            readyState: "open",
+            send(text) {
+              sent.push({ text, clock });
+              if (text.startsWith("heartbeat:"))
+                queueMicrotask(() =>
+                  hooks.onChannelMessage("godot", 1, "reliable", text),
+                );
+            },
+          };
+        }
+        diagnosticSnapshot() {
+          return { startup_sent: 32 };
+        }
+        async removePeer() {}
+      },
+      fetch: async (_url, options) => ({
+        ok: true,
+        json: async () =>
+          options?.method === "POST" ? [] : [{ marker: "ready-1" }],
+      }),
+    };
+    vm.runInNewContext(
+      fs
+        .readFileSync("tests/smoke/webrtc_reference.js", "utf8")
+        .replace(/^import .*;\n/, ""),
+      context,
+    );
+    await context.window.runReference(
+      0,
+      true,
+      true,
+      "webrtc",
+      false,
+      "reliable",
+      "reference",
+      false,
+      null,
+      true,
+      4096,
+      kind === "packet-only" ? 0 : 49152,
+    );
+    const snapshots = sent.filter((item) => item.text.startsWith("snapshot:"));
+    const heartbeats = sent.filter(
+      (item) => item.text.startsWith("heartbeat:") && item.clock < 1000,
+    );
+    assert.ok(heartbeats.length >= 5, kind);
+    assert.ok(
+      context.window.referenceProgress().heartbeat_received >=
+        heartbeats.length,
+      kind,
+    );
+    const credits = sent.filter((item) =>
+      item.text.startsWith("startup-credit:"),
+    );
+    assert.equal(credits.length, kind === "packet-only" ? 0 : 1, kind);
+    if (credits.length)
+      assert.equal(credits[0].text, "startup-credit:1:reference:godot:32");
+    if (kind === "valid") {
+      assert.ok(snapshots.length > 0);
+      assert.ok(snapshots.every((item) => item.clock >= 1000));
+      assert.equal(
+        context.window.referenceProgress().snapshot_startup_credit,
+        32,
+      );
+    } else if (kind === "packet-only") {
+      assert.ok(snapshots.some((item) => item.clock < 1000));
+      assert.equal(context.window.referenceProgress().startup_credit, false);
+    } else {
+      assert.equal(snapshots.length, 0, kind);
+      if (kind !== "absent")
+        assert.match(
+          context.window.referenceError,
+          /startup consumption credit differs/,
+        );
+    }
+  }
+  console.log("Startup consumption credit tests passed");
+}
+
 async function main() {
   await require("./test_webrtc_native_reference.cjs")();
   await require("./test_webrtc_http_request.cjs")();
   await testReferenceFirstFailure();
   await testSmallSnapshotWindows();
+  await testStartupCredit();
   let sample;
   const output = [];
   const errors = [];
@@ -359,6 +515,7 @@ async function main() {
     "snapshot:1:reference:7:",
     "heartbeat:1:reference:3:",
     "credit:1:reference:godot:8",
+    "startup-credit:1:reference:godot:32",
     "partial-credit:2:reference:godot:4",
   ]) {
     traced.receive({ data: new TextEncoder().encode(packet).buffer });
@@ -390,6 +547,7 @@ async function main() {
       "snapshot:1:reference:7",
       "heartbeat:1:reference:3",
       "credit:1:reference:godot:8",
+      "startup-credit:1:reference:godot:32",
       "partial-credit:2:reference:godot:4",
     ],
   );
