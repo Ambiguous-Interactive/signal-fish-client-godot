@@ -44,6 +44,14 @@ async fn next_action<T>(
     }
 }
 
+fn cancel_send(pending: &mut Option<PendingSend>, error: &str) {
+    if let Some(cancelled) = pending.take() {
+        if let Some(id) = cancelled.id {
+            emit(json!({"id":id, "error":error}));
+        }
+    }
+}
+
 fn prepare_send(engine: &Engine, peer: PlayerId, value: &Value) -> anyhow::Result<SendFuture> {
     let batch = value["op"] == "send_batch";
     let packets = if batch {
@@ -171,11 +179,7 @@ async fn main() -> anyhow::Result<()> {
                         receive_failure = Some(format!("native receive rejected: generation={generation} channel={label}"));
                         emit(json!({"event":"receive_rejected", "generation":generation, "label":label}));
                     }
-                    if let Some(cancelled) = pending.take() {
-                        if let Some(id) = cancelled.id {
-                            emit(json!({"id":id, "error":receive_failure}));
-                        }
-                    }
+                    cancel_send(&mut pending, receive_failure.as_deref().unwrap());
                     let _ = engine.remove_peer(peer).await;
                     continue;
                 }
@@ -213,7 +217,10 @@ async fn main() -> anyhow::Result<()> {
                         emit(json!({"event":"binary", "generation":generation, "label":label,"data_base64":STANDARD.encode(data), "received_us":received_at.into_std().saturating_duration_since(*START.get().unwrap()).as_micros() as u64}));
                         drop(queue_permit);
                     }
-                    EngineEvent::ChannelClosed {label,..} => emit(json!({"event":"closed", "generation":generation, "label":label})),
+                    EngineEvent::ChannelClosed {label,..} => {
+                        cancel_send(&mut pending, &format!("native channel closed during send: generation={generation} channel={label}"));
+                        emit(json!({"event":"closed", "generation":generation, "label":label}));
+                    }
                     _ => {}
                 }
             }
@@ -279,7 +286,8 @@ mod tests {
         });
         callbacks.send(()).unwrap();
         assert!(matches!(next_action(&mut input, &mut events, &mut pending).await, Some(Action::Event(()))));
-        assert_eq!(pending.take().unwrap().id, Some(json!(9)));
+        cancel_send(&mut pending, "receive rejected");
+        assert!(pending.is_none());
         assert!(release.send(()).is_err());
     }
 }

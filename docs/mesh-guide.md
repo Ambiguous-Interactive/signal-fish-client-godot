@@ -192,8 +192,8 @@ use its results to assess correctness. Adjacent packet sends share commands
 of up to 256 packets. Signaling, snapshot, close and removal commands retain
 their order after earlier packets. A failed batch stops at its first failed
 send. The probe drains incoming events while a packet send waits. Later
-commands wait until that send completes. Receive rejection cancels the send
-and retires the peer. The example tests cover held sends, command order,
+commands wait until that send completes. Channel closure cancels a pending
+send. Receive rejection also cancels it and retires the peer. The example tests cover held sends, command order,
 write errors and cancellation. `assessment.json` records the backend,
 source revision and probe binary hash. `native-reference.jsonl` retains commands'
 results and native callbacks. `native_snapshots` retains Engine receipt counters
