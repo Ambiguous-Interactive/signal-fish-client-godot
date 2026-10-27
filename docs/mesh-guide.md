@@ -667,13 +667,22 @@ bytes, sender, channel and mode before echoing it. The reference checks each
 echo in order. Both seats must report matching heartbeat totals before remote
 closure. Queued reliable packet counts include these heartbeats.
 
-The reference runs one HTTP exchange at a time beside the gameplay loop.
-A held GET no longer stops gameplay sends. With mixed traffic and an HTTP
+The reference runs one HTTP receive task and one FIFO send task beside the
+gameplay loop. A held credit POST leaves the opposite credit receive path
+active. A held GET leaves outgoing markers and gameplay sends active.
+`signaling_receive_pending`, `signaling_send_pending` and `outgoing_signals`
+record the two tasks and queued sends. With mixed traffic and an HTTP
 hold of at least 1,500 ms, `signaling_hold_progress` must show new heartbeat
 echoes across a one-second interval while the held request stays active and
 snapshot credit stays fixed. Echoes must include a heartbeat sent after the
 first sample. This separates fresh WebRTC gameplay from HTTP credit progress.
 Requests are canceled and settled before the next generation starts.
+
+A local Godot 4.7.2 native/Web control held one credit POST response for four
+seconds. The old shared exchange paused opposite-direction snapshot sends for
+about four seconds. Independent tasks kept the largest observed gap below
+74 ms native and 214 ms Web. Both controls retained every reliable chunk.
+Historical stall and heartbeat histories still need their own reproduction.
 
 These opt-in local controls keep the existing deadlines. They do not simulate
 WebRTC network delay or establish the cause of #396.

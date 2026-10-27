@@ -107,7 +107,8 @@ window.runReference = async function (
         `heartbeat:${phase}:reference:${sequence}:` +
         "0123456789abcdef".repeat(4);
       const controller = new AbortController();
-      let signalingTask = null;
+      let receiveTask = null;
+      let sendTask = null;
       let signalingError = null;
       let started = performance.now();
       let nextProgress = 0;
@@ -451,7 +452,10 @@ window.runReference = async function (
         receive_timings_dropped: receiveTimingsDropped,
         heartbeat_sent: heartbeatSent,
         heartbeat_received: heartbeatReceived,
-        signaling_pending: signalingTask !== null,
+        signaling_pending: receiveTask !== null || sendTask !== null,
+        signaling_receive_pending: receiveTask !== null,
+        signaling_send_pending: sendTask !== null,
+        outgoing_signals: outgoing.length,
         mixed_traffic: mixedTraffic,
         credit_transport: creditTransport,
         max_credit_wait_ms: maxCreditWaitMs,
@@ -513,7 +517,7 @@ window.runReference = async function (
         });
         if (!response.ok) throw new Error(`relay POST ${response.status}`);
       };
-      const exchange = async () => {
+      const receiveSignals = async () => {
         const response = await fetch(`/signal/${seat}`, {
           signal: controller.signal,
         });
@@ -585,6 +589,8 @@ window.runReference = async function (
               await engine.handleRemoteCandidate("godot", payload.IceCandidate);
           }
         }
+      };
+      const sendSignals = async () => {
         while (outgoing.length && !window.referenceError)
           await sendSignal({ generation, ...outgoing.shift() });
       };
@@ -636,14 +642,24 @@ window.runReference = async function (
             );
           }
           if (signalingError) throw signalingError;
-          if (signalingTask === null) {
-            signalingTask = exchange()
+          if (receiveTask === null) {
+            receiveTask = receiveSignals()
               .catch((error) => {
                 if (!controller.signal.aborted || error?.name !== "AbortError")
-                  signalingError = error;
+                  signalingError ??= error;
               })
               .finally(() => {
-                signalingTask = null;
+                receiveTask = null;
+              });
+          }
+          if (sendTask === null && outgoing.length) {
+            sendTask = sendSignals()
+              .catch((error) => {
+                if (!controller.signal.aborted || error?.name !== "AbortError")
+                  signalingError ??= error;
+              })
+              .finally(() => {
+                sendTask = null;
               });
           }
           if (
@@ -775,7 +791,7 @@ window.runReference = async function (
           outgoing_signals: outgoing.length,
         };
         controller.abort();
-        await signalingTask;
+        await Promise.all([receiveTask, sendTask]);
       }
       if (signalingError && !retired) throw signalingError;
       if (!retired) throw new Error(`phase ${phase} missing Godot teardown`);
