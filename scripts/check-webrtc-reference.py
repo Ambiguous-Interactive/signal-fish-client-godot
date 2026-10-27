@@ -371,8 +371,9 @@ def browser_read_diagnostics(
     pause: dict[str, object] | None = None,
 ) -> dict[str, object]:
     pattern = re.compile(
-        rf"(?:snapshot|partial|heartbeat):{phase}:reference:[0-9]+"
+        rf"(?:snapshot|partial|heartbeat|startup):{phase}:reference:[0-9]+"
         rf"|(?:credit|partial-credit):{phase}:reference:godot:[0-9]+"
+        rf"|reference:{phase}:reliable"
     )
 
     def index(records: list[dict[str, object]]) -> dict[str, list[dict[str, object]]]:
@@ -394,7 +395,16 @@ def browser_read_diagnostics(
     invalid = []
     events: list[tuple[float, int]] = []
     latencies: dict[str, list[dict[str, object]]] = {
-        kind: [] for kind in ("snapshot", "partial", "heartbeat", "credit", "partial-credit")
+        kind: []
+        for kind in (
+            "snapshot",
+            "partial",
+            "heartbeat",
+            "startup",
+            "credit",
+            "partial-credit",
+            "reference",
+        )
     }
     for marker, rows in browser.items():
         callback = rows[0]
@@ -426,9 +436,17 @@ def browser_read_diagnostics(
             invalid.append(marker)
             continue
         events.append((cast(float, read["browser_ms"]), -size))
-        latencies[marker.split(":")[0]].append(
-            {"sequence": int(marker.split(":")[-1]), "callback_to_read_ms": latency}
-        )
+        kind = marker.split(":")[0]
+        echo_latency = diagnostic_interval(read.get("browser_ms"), read.get("echo_browser_ms"))
+        sample: dict[str, object] = {
+            "sequence": 0 if kind == "reference" else int(marker.split(":")[-1]),
+            "callback_to_read_ms": latency,
+            "read_to_echo_ms": echo_latency,
+            "callback_to_echo_ms": diagnostic_interval(at, read.get("echo_browser_ms"))
+            if echo_latency is not None
+            else None,
+        }
+        latencies[kind].append(sample)
     unmatched = sorted(script.keys() - browser.keys())
     dropped = sum(
         cast(int, channel["dropped"])
@@ -474,8 +492,14 @@ def browser_read_diagnostics(
             for kind, rows in latencies.items()
         },
         "pause_heartbeats": heartbeat_pause_diagnostics(
-            latencies["heartbeat"], pause or {}, ("callback_to_read_ms",)
+            latencies["heartbeat"],
+            pause or {},
+            ("callback_to_read_ms", "read_to_echo_ms", "callback_to_echo_ms"),
         ),
+        "heartbeat_echo_latency_ms": {
+            key: timing_distribution(latencies["heartbeat"], key)
+            for key in ("read_to_echo_ms", "callback_to_echo_ms")
+        },
         "unread_packets": sorted(browser.keys() - script.keys()),
         "unmatched_script_packets": unmatched,
         "invalid_intervals": sorted(invalid),
@@ -489,7 +513,99 @@ def browser_read_diagnostics(
         else None,
         "script_trace_dropped": script_dropped,
         "channel_in_buffer_kb": godot.get("channel_in_buffer_kb"),
-        "limits": "Tracks reliable snapshot, partial, heartbeat and credit payloads only. Unread bytes can be queued, cached or dropped. This is not engine ring occupancy; framing and other packets are excluded. Instrumentation adds a synchronous browser clock read per script read.",
+        "limits": "Tracks reliable snapshot, partial, startup, initial probe, heartbeat and credit payloads only. Unread bytes can be queued, cached or dropped. This is not engine ring occupancy; framing and other packets are excluded. Instrumentation reads the browser clock after script reads and heartbeat echo sends. Echo send completion does not prove remote receipt.",
+    }
+
+
+def packet_delivery_diagnostics(
+    godot: dict[str, object],
+    reference: dict[str, object],
+    callbacks: list[dict[str, object]],
+    phase: object,
+) -> dict[str, object]:
+    pattern = re.compile(
+        rf"(?:snapshot|partial|heartbeat|startup|position|ordered):{phase}:reference:[0-9]+"
+        rf"|reference:{phase}:(?:reliable|unreliable)"
+    )
+    snapshot = diagnostic_mapping(reference.get("snapshot"))
+    stages: dict[str, dict[str, list[dict[str, object]]]] = {}
+    sources = {
+        "command": diagnostic_records(snapshot.get("packet_timings")),
+        "native_send": diagnostic_records(snapshot.get("native_sent")),
+        "browser_callback": [
+            {**row, "label": channel.get("label"), "peer": channel.get("peer")}
+            for channel in callbacks
+            for row in diagnostic_records(channel.get("callbacks"))
+        ],
+        "script_read": diagnostic_records(godot.get("receive_timings")),
+    }
+    for stage, records in sources.items():
+        for row in records:
+            marker = row.get("marker" if stage in ("command", "native_send") else "packet")
+            if isinstance(marker, str) and pattern.fullmatch(marker):
+                stages.setdefault(marker, {}).setdefault(stage, []).append(row)
+    for label in ("reliable", "unreliable"):
+        stages.setdefault(f"reference:{phase}:{label}", {})
+    packets = []
+    for marker, evidence in sorted(stages.items()):
+        kind = marker.split(":")[0]
+        label = (
+            marker.split(":")[-1]
+            if kind == "reference"
+            else {"position": "unreliable", "ordered": "ordered"}.get(kind, "reliable")
+        )
+        mode = {"unreliable": 0, "ordered": 1, "reliable": 2}[label]
+        mismatches = [
+            stage
+            for stage, rows in evidence.items()
+            if any(
+                (type(row.get("mode")) is not int or row["mode"] != mode)
+                if stage == "script_read"
+                else row.get("label") != label
+                for row in rows
+            )
+        ]
+        packets.append(
+            {
+                "packet": marker,
+                "kind": "initial_probe" if kind == "reference" else kind,
+                "expected_label": label,
+                "expected_mode": mode,
+                "stages": evidence,
+                "unobserved_stages": [stage for stage in sources if stage not in evidence],
+                "duplicate_stages": [stage for stage, rows in evidence.items() if len(rows) > 1],
+                "metadata_mismatch_stages": mismatches,
+            }
+        )
+    return {
+        "phase": phase,
+        "packets": packets,
+        "sent_not_read": [
+            row["packet"]
+            for row in packets
+            if "native_send" in diagnostic_mapping(row["stages"])
+            and "script_read" not in diagnostic_mapping(row["stages"])
+        ],
+        "callback_not_read": [
+            row["packet"]
+            for row in packets
+            if "browser_callback" in diagnostic_mapping(row["stages"])
+            and "script_read" not in diagnostic_mapping(row["stages"])
+        ],
+        "trace_overflow": {
+            "command": snapshot.get("timings_dropped"),
+            "native_send": snapshot.get("native_sent_dropped"),
+            "script_read": godot.get("receive_timings_dropped"),
+            "browser_channels": [
+                {
+                    "peer": channel.get("peer"),
+                    "label": channel.get("label"),
+                    "dropped": channel.get("dropped"),
+                }
+                for channel in callbacks
+            ],
+        },
+        "limits": "Stages have separate clocks. Native send is an enqueue observation, not SCTP transmission or acknowledgement. Unobserved stages and sent packets without reads do not prove loss or expiry. Duplicates and metadata mismatches remain explicit. Payload validation and strict gameplay verdicts remain separate.",
     }
 
 
@@ -576,6 +692,15 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
             heartbeat_diagnostics(local.get(item.get("phase"), {}), item)
             for item in reference_phases
         ],
+        "packet_delivery_phases": [
+            packet_delivery_diagnostics(
+                item,
+                next((ref for ref in reference_phases if ref.get("phase") == phase), {}),
+                diagnostic_records(report.get("godot_browser_callbacks")),
+                phase,
+            )
+            for phase, item in local.items()
+        ],
         "limits": "Intervals use one clock each. Missing samples are null. Buffer messages establish local drops; queue counts and completed sends do not prove receipt or a root cause.",
     }
 
@@ -653,6 +778,10 @@ def binary_phase_passed(
     return True
 
 
+def initial_probes_passed(phase: dict[str, object]) -> bool:
+    return phase.get("received") in (["reliable", "unreliable"], ["unreliable", "reliable"])
+
+
 def gameplay_phase_passed(
     phase: dict[str, object],
     *,
@@ -664,12 +793,7 @@ def gameplay_phase_passed(
 ) -> bool:
     return (
         phase.get("sent") is True
-        and (
-            phase.get("received")
-            in (["reliable"], ["reliable", "unreliable"], ["unreliable", "reliable"])
-            if native_profile
-            else phase.get("received") in (["reliable", "unreliable"], ["unreliable", "reliable"])
-        )
+        and initial_probes_passed(phase)
         and phase.get("snapshot_sent") == 128
         and phase.get("snapshot_received") == 128
         and phase.get("partial_sent") == 4
@@ -1282,6 +1406,7 @@ def gameplay_phase_checks(
     return {
         "http_backend": not getattr(args, "web_http_fetch", False)
         or godot.get("web_http_fetch") is web,
+        "initial_probes": initial_probes_passed(godot) and initial_probes_passed(ref),
         "godot_gameplay": gameplay_phase_passed(
             godot,
             mixed_traffic=args.mixed_traffic,

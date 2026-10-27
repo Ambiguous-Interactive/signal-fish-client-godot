@@ -454,13 +454,14 @@ func _reference_packets() -> void:
 		var identity_fields := text.split(":", true, 4)
 		if (
 			identity_fields.size() == 5
-			and identity_fields[0] in ["snapshot", "partial", "heartbeat"]
+			and identity_fields[0] in ["snapshot", "partial", "heartbeat", "startup", "position"]
 		):
 			timing["packet"] = ":".join(identity_fields.slice(0, 4))
-		elif (
-			identity_fields.size() == 5
-			and identity_fields[0] in ["credit", "partial-credit"]
-		):
+		elif identity_fields.size() == 5 and identity_fields[0] in ["credit", "partial-credit"]:
+			timing["packet"] = text
+		elif identity_fields.size() == 4 and identity_fields[0] == "ordered":
+			timing["packet"] = text
+		elif identity_fields.size() == 3 and identity_fields[0] in ["reference", "godot"]:
 			timing["packet"] = text
 		if text.begins_with("startup:"):
 			var expected := (
@@ -543,6 +544,8 @@ func _reference_packets() -> void:
 				_fail("reference heartbeat echo failed")
 				return
 			_reference_heartbeat_timings[-1]["echo_ms"] = Time.get_ticks_msec()
+			if OS.has_feature("web"):
+				timing["echo_browser_ms"] = JavaScriptBridge.eval("performance.now()")
 			continue
 		if text.begins_with("partial-credit:"):
 			var fields := text.split(":")

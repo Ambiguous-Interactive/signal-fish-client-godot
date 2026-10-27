@@ -243,6 +243,91 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
                 self.assertEqual(error.exception.code, 2)
                 prepare.assert_not_called()
 
+    def test_packet_delivery_keeps_missing_probes_modes_and_duplicate_stages(self) -> None:
+        probe = "reference:2:unreliable"
+        position = "position:2:reference:0"
+        ordered = "ordered:2:reference:1"
+        callbacks = [
+            {
+                "peer": 2,
+                "label": "unreliable",
+                "dropped": 0,
+                "callbacks": [{"packet": position, "ms": 30, "bytes": 90}],
+            }
+        ]
+        godot = {
+            "receive_timings_dropped": 0,
+            "receive_timings": [
+                {"packet": position, "mode": 0, "ms": 90000, "bytes": 90},
+                {"packet": ordered, "mode": 2, "bytes": 24},
+            ],
+        }
+        ref = {
+            "snapshot": {
+                "timings_dropped": 0,
+                "native_sent_dropped": 0,
+                "packet_timings": [
+                    {"marker": probe, "label": "unreliable", "enqueue_ms": 10, "complete_ms": 20}
+                ],
+                "native_sent": [
+                    {"marker": probe, "label": "unreliable", "probe_us": 100},
+                    {"marker": ordered, "label": "ordered", "probe_us": 110},
+                    {"marker": ordered, "label": "ordered", "probe_us": 120},
+                    {"marker": "reference:1:unreliable", "label": "unreliable"},
+                ],
+            }
+        }
+        before = copy.deepcopy((godot, ref, callbacks))
+        result = reference.packet_delivery_diagnostics(godot, ref, callbacks, 2)
+        packets = {row["packet"]: row for row in result["packets"]}
+        self.assertEqual(result["sent_not_read"], [probe])
+        self.assertEqual(result["callback_not_read"], [])
+        self.assertEqual(packets[probe]["unobserved_stages"], ["browser_callback", "script_read"])
+        self.assertEqual(packets[probe]["expected_mode"], 0)
+        self.assertEqual(packets[ordered]["duplicate_stages"], ["native_send"])
+        self.assertEqual(packets[ordered]["metadata_mismatch_stages"], ["script_read"])
+        self.assertEqual(packets[position]["metadata_mismatch_stages"], [])
+        self.assertNotIn("reference:1:unreliable", packets)
+        self.assertEqual((godot, ref, callbacks), before)
+        missing = reference.packet_delivery_diagnostics({}, {}, [], 1)
+        self.assertEqual(len(missing["packets"]), 2)
+        self.assertTrue(all(len(row["unobserved_stages"]) == 4 for row in missing["packets"]))
+        self.assertIsNone(missing["trace_overflow"]["native_send"])
+
+    def test_browser_backlog_includes_startup_and_initial_reliable_probe(self) -> None:
+        callbacks = [
+            {
+                "label": "reliable",
+                "dropped": 0,
+                "callbacks": [
+                    {"packet": "startup:1:reference:0", "bytes": 1046, "ms": 10},
+                    {"packet": "reference:1:reliable", "bytes": 20, "ms": 11},
+                    {"packet": "heartbeat:1:reference:0", "bytes": 90, "ms": 12},
+                ],
+            }
+        ]
+        godot = {
+            "receive_timings_dropped": 0,
+            "receive_timings": [
+                {
+                    "packet": "heartbeat:1:reference:0",
+                    "bytes": 90,
+                    "mode": 2,
+                    "browser_ms": 20,
+                    "echo_browser_ms": 23,
+                },
+            ],
+        }
+        result = reference.browser_read_diagnostics(godot, callbacks, 1)
+        self.assertEqual(result["peak_tracked_unread_payload_bytes"], 1156)
+        self.assertEqual(result["terminal_tracked_unread_payload_bytes"], 1066)
+        self.assertEqual(result["heartbeat_echo_latency_ms"]["read_to_echo_ms"]["max_ms"], 3)
+        self.assertEqual(result["heartbeat_echo_latency_ms"]["callback_to_echo_ms"]["max_ms"], 11)
+        cast(list[dict[str, object]], godot["receive_timings"])[0]["echo_browser_ms"] = 19
+        result = reference.browser_read_diagnostics(godot, callbacks, 1)
+        self.assertEqual(result["heartbeat_echo_latency_ms"]["read_to_echo_ms"]["count"], 0)
+        self.assertEqual(result["heartbeat_echo_latency_ms"]["callback_to_echo_ms"]["count"], 0)
+
     def test_browser_read_boundary_uses_one_clock_and_keeps_holes(self) -> None:
         def packet(kind: str, sequence: int) -> str:
             return f"{kind}:1:reference:{sequence}"
@@ -1115,10 +1200,10 @@ console.log(JSON.stringify({error: context.window.referenceError, ...context.win
                 broken[1]["channels"][1][key] = value
                 self.assertFalse(reference.godot_native_contracts_passed(broken, web))
 
-    def test_native_gameplay_keeps_reliable_delivery_strict(self) -> None:
+    def test_native_gameplay_keeps_initial_probes_and_reliable_delivery_strict(self) -> None:
         phase = {
             "sent": True,
-            "received": ["reliable"],
+            "received": ["reliable", "unreliable"],
             "snapshot_sent": 128,
             "snapshot_received": 128,
             "partial_sent": 4,
@@ -1144,6 +1229,9 @@ console.log(JSON.stringify({error: context.window.referenceError, ...context.win
             ("snapshot_acknowledged", 127),
             ("partial_received", 3),
             ("received", ["unreliable"]),
+            ("received", ["reliable"]),
+            ("received", []),
+            ("received", ["reliable", "reliable"]),
             ("remote_closed", False),
             ("positions_received", 0),
             ("ordered_sequences", []),
