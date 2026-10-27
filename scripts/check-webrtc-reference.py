@@ -665,6 +665,120 @@ def packet_delivery_diagnostics(
     }
 
 
+def initial_probe_diagnostics(
+    godot: dict[str, object],
+    reference: dict[str, object],
+    evidence: dict[str, object],
+    phase: object,
+) -> dict[str, object]:
+    samples = diagnostic_records(evidence.get("samples"))
+    identity_fields = ("message_id", "stream_id", "stream_generation", "sequence_number")
+    probes = []
+    for stream, label in ((1, "reliable"), (3, "unreliable")):
+        marker = f"reference:{phase}:{label}"
+        enqueues = [
+            row for row in samples if row.get("stage") == "send" and row.get("marker") == marker
+        ]
+        receipts = godot.get("received")
+        received = label in receipts if isinstance(receipts, list) else None
+        identity: dict[str, object] = {}
+        matches = []
+        if len(enqueues) == 1:
+            enqueue = enqueues[0]
+            snapshot = diagnostic_mapping(enqueue.get("snapshot"))
+            candidate = diagnostic_mapping(
+                diagnostic_mapping(snapshot.get("sctp")).get("last_enqueued_message")
+            )
+            generation, at = enqueue.get("generation"), enqueue.get("probe_us")
+            native_generation = diagnostic_mapping(reference.get("snapshot")).get("generation")
+            valid = (
+                type(evidence.get("dropped")) is int
+                and evidence["dropped"] == 0
+                and type(native_generation) is int
+                and native_generation == generation
+                and type(generation) is int
+                and generation > 0
+                and type(snapshot.get("generation")) is int
+                and snapshot["generation"] == generation
+                and snapshot.get("sctp_error") is None
+                and type(at) is int
+                and at >= 0
+                and enqueue.get("label") == label
+                and all(
+                    type(candidate.get(key)) is int and cast(int, candidate[key]) >= 0
+                    for key in identity_fields
+                )
+                and candidate.get("stream_id") == stream
+                and candidate.get("unordered") is (label == "unreliable")
+                and candidate.get("reliability")
+                == ("reliable" if label == "reliable" else "lifetime")
+            )
+            if valid:
+                identity = candidate
+                for row in samples:
+                    later = diagnostic_mapping(row.get("snapshot"))
+                    if (
+                        type(row.get("generation")) is not int
+                        or row["generation"] != generation
+                        or type(later.get("generation")) is not int
+                        or later["generation"] != generation
+                        or later.get("sctp_error") is not None
+                        or type(row.get("probe_us")) is not int
+                        or cast(int, row["probe_us"]) < cast(int, at)
+                    ):
+                        continue
+                    stats = diagnostic_mapping(later.get("sctp"))
+                    for field in ("first_abandoned_message", "last_abandoned_message"):
+                        abandoned = diagnostic_mapping(stats.get(field))
+                        if (
+                            all(
+                                type(abandoned.get(key)) is int and abandoned[key] == identity[key]
+                                for key in identity_fields
+                            )
+                            and abandoned.get("unordered") is identity["unordered"]
+                            and abandoned.get("reliability") == identity["reliability"]
+                            and type(abandoned.get("transmission_selected")) is bool
+                        ):
+                            matches.append(
+                                {
+                                    "line": row.get("line"),
+                                    "stage": row.get("stage"),
+                                    "probe_us": row["probe_us"],
+                                    "field": field,
+                                    "transmission_selected": abandoned["transmission_selected"],
+                                }
+                            )
+        selected = {match["transmission_selected"] for match in matches}
+        result = "receipt_observed" if received else "unresolved"
+        if matches:
+            if received or len(selected) != 1 or label == "reliable":
+                result = "conflicting_evidence"
+            else:
+                result = (
+                    "abandoned_after_selection" if True in selected else "expired_before_selection"
+                )
+        probes.append(
+            {
+                "packet": marker,
+                "received": received,
+                "enqueue_observations": len(enqueues),
+                "generation": enqueues[0].get("generation") if len(enqueues) == 1 else None,
+                "identity": identity or None,
+                "abandonment_matches": matches,
+                "sender_result": result,
+            }
+        )
+    return {
+        "phase": phase,
+        "strict_initial_probes_passed": initial_probes_passed(godot)
+        and initial_probes_passed(reference),
+        "godot_to_native_received": reference.get("received"),
+        "native_to_godot": probes,
+        "samples_dropped": evidence.get("dropped"),
+        "limits": "Only matching association, stream incarnation and message identities establish abandonment. False transmission_selected proves no fragment selection. True does not prove emission or receipt. First/last samples omit intermediate abandonments; absent matches remain unresolved. Strict receipt checks stay separate.",
+    }
+
+
 def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, object]:
     bridge = native_bridge_packet_diagnostics(diagnostic_mapping(report.get("native_timing")))
     evidence = diagnostic_mapping(report.get("godot_evidence"))
@@ -679,8 +793,13 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
     ):
         reference_phases = [*reference_phases, terminal]
     local = {item.get("phase"): item for item in godot_phases}
+    completed_phases = set(local)
     for item in (progress, failure):
-        if item and isinstance(item.get("reference"), dict):
+        if (
+            item
+            and item.get("phase") not in completed_phases
+            and isinstance(item.get("reference"), dict)
+        ):
             local[item.get("phase")] = diagnostic_mapping(item["reference"])
     state_fields = (
         "phase",
@@ -755,6 +874,17 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
             for item in reference_phases
         ],
         "native_bridge_packets": bridge,
+        "initial_probe_phases": [
+            initial_probe_diagnostics(
+                local.get(item.get("phase"), {}),
+                item,
+                diagnostic_mapping(
+                    diagnostic_mapping(report.get("native_timing")).get("sender_evidence")
+                ),
+                item.get("phase"),
+            )
+            for item in reference_phases
+        ],
         "packet_delivery_phases": [
             packet_delivery_diagnostics(
                 item,
