@@ -363,7 +363,27 @@ async function main() {
   ]) {
     traced.receive({ data: new TextEncoder().encode(packet).buffer });
   }
-  const captured = context.window.webrtcCallbackSnapshot().at(-1);
+  const finitePackets = [
+    "reference:1:unreliable",
+    "reference:1:reliable",
+    "ordered:2:reference:7",
+    "position:2:reference:3:body",
+    "startup:2:reference:31:body",
+  ];
+  const finiteTrace = peer.createDataChannel("unreliable", {
+    id: 3,
+    ordered: false,
+  });
+  for (const packet of finitePackets)
+    finiteTrace.receive({ data: new TextEncoder().encode(packet).buffer });
+  assert.deepEqual(
+    Array.from(
+      context.window.webrtcCallbackSnapshot().at(-1).callbacks,
+      (row) => row.packet,
+    ),
+    finitePackets.map((packet) => packet.replace(/:body$/, "")),
+  );
+  const captured = context.window.webrtcCallbackSnapshot().at(-2);
   assert.deepEqual(
     Array.from(captured.callbacks, (row) => row.packet),
     [
@@ -374,6 +394,7 @@ async function main() {
     ],
   );
   assert.ok(captured.callbacks.every((row) => Number.isFinite(row.ms)));
+  traced.receive({ data: "partial-credit:2:reference:godot:4" });
   context.console.error("ERROR: Buffer full! Dropping data.", "preserved");
   const drop = context.window.webrtcDropSnapshot();
   assert.equal(drop.records.length, 1);

@@ -367,7 +367,8 @@ and a local drop are separate observations; retain both with the full log.
 
 Web assessments retain `godot_browser_callbacks` through channel closure.
 Each of at most 32 channels keeps 1024 callback times, byte counts and known
-snapshot, heartbeat and credit identities. `dropped` counts omitted trace records. Opaque
+snapshot, heartbeat, startup, position, ordered, initial probe and credit
+identities. `dropped` counts omitted trace records. Opaque
 packets keep a null identity. `diagnostics.snapshot_receive_phases` matches
 snapshot sequences against Godot's bounded `receive_timings`, including the
 packet that failed validation. Compare `first_callback_not_read` with
@@ -383,8 +384,13 @@ and credits. `pause_heartbeats` separates the old heartbeat backlog from packets
 sent during the reference pause. Completed read intervals may end after resume.
 They measure callback to script delivery, including any cached packet wait. The synchronous clock read adds probe overhead.
 
+`heartbeat_echo_latency_ms` separates read-to-echo from callback-to-echo time
+on the same browser clock. The echo timestamp follows a successful send call;
+it does not prove remote receipt. The pause summary includes these intervals.
+
 `peak_tracked_unread_payload_bytes` and `terminal_tracked_unread_payload_bytes`
-count tracked reliable payload bytes with no script read yet. These include
+count tracked reliable payload bytes with no script read yet, including startup
+packets and the initial reliable probe. These include
 queued, cached and dropped bytes; other packets and engine framing are excluded.
 They do not measure ring occupancy. Compare the raw callback and read timelines
 with `channel_in_buffer_kb` and the first sequence gap. Duplicate identities,
@@ -400,6 +406,22 @@ in that phase. `tracked_unread_payload_bytes_at_first_drop` gives the tracked
 backlog at that instant. Later callbacks can raise the terminal backlog after
 validation has stopped. `drop_trace_dropped` counts omitted error records.
 The preceding callback alone does not prove which engine write failed.
+
+`diagnostics.packet_delivery_phases` retains command, native send enqueue,
+browser callback and script read records for each known incoming packet.
+Initial reliable and unreliable probes remain listed when every stage is absent.
+Use `sent_not_read`, `callback_not_read`, `duplicate_stages` and
+`metadata_mismatch_stages` to separate a missing initial probe from snapshot,
+position or ordered traffic (#458). Trace overflow and unobserved stages remain
+explicit. Native enqueue does not prove SCTP transmission or expiry. The stage
+clocks differ; compare intervals only within one clock. Exact payload and
+gameplay checks still determine the verdict.
+
+`phase_checks.initial_probes` requires both initial labels on both seats,
+including the native reference profile. A missing unreliable probe fails final
+qualification even when snapshots and later position packets arrive. The
+native drill can still finish reliable traffic and teardown to retain that
+evidence. Finite traffic gaps remain separate from reliable loss.
 
 Each import or export log has a `.process.json` file beside it. It records
 exit status, elapsed time, timeout limit and host disk, load and memory samples

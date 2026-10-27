@@ -76,9 +76,14 @@
                   ? event.data.slice(0, 96)
                   : "";
             const match =
-              /^(snapshot|partial|heartbeat):(1|2):(godot|reference):(\d+):/.exec(
+              /^(snapshot|partial|heartbeat|startup|position):(1|2):(godot|reference):(\d+):/.exec(
                 prefix,
               );
+            const finite = /^(ordered):(1|2):(godot|reference):(\d+)$/.exec(
+              prefix,
+            );
+            const probe =
+              /^(godot|reference):(1|2):(reliable|unreliable)$/.exec(prefix);
             const credit =
               /^(credit|partial-credit):(1|2):(godot|reference):(godot|reference):(\d+)$/.exec(
                 prefix,
@@ -86,7 +91,9 @@
             received.callbacks.push({
               ms: performance.now(),
               bytes,
-              packet: (match ?? credit)?.slice(1).join(":") ?? null,
+              packet:
+                (match ?? finite ?? probe ?? credit)?.slice(1).join(":") ??
+                null,
             });
           } else received.dropped++;
           precedingCallback = {
