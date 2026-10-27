@@ -343,7 +343,12 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
                 {"marker": "heartbeat:1:reference:0", "probe_us": 10000, "callback_ms": 355}
             ],
             "native_heartbeat_received": [
-                {"marker": "heartbeat:1:reference:0", "probe_us": 14000, "callback_ms": 365}
+                {
+                    "marker": "heartbeat:1:reference:0",
+                    "probe_us": 14000,
+                    "received_us": 11000,
+                    "callback_ms": 365,
+                }
             ],
             "timings_dropped": 0,
             "native_sent_dropped": 0,
@@ -372,6 +377,9 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
         )
         self.assertEqual(result["matched_samples"]["native_rtt_ms"], 1)
         self.assertEqual(result["max_ms"]["native_rtt_ms"], 4)
+        self.assertEqual(result["max_ms"]["native_channel_rtt_ms"], 1)
+        self.assertEqual(result["max_ms"]["native_event_queue_ms"], 3)
+        self.assertIsNone(result["packets"][1]["native_event_queue_ms"])
         self.assertEqual(result["max_ms"]["bridge_queue_ms"], 200)
         self.assertEqual(result["max_ms"]["application_rtt_ms"], 280)
         self.assertEqual(result["max_ms"]["godot_echo_ms"], 1)

@@ -188,6 +188,7 @@ export class Engine {
       this.heartbeatReceived.push({
         marker: text.split(":").slice(0, 4).join(":"),
         probe_us: event.probe_us,
+        received_us: event.received_us,
         callback_ms: performance.now(),
       });
     else this.heartbeatReceivedDropped++;

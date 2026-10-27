@@ -221,6 +221,7 @@ def heartbeat_diagnostics(
             "godot_receive": echo.get("receive_ms"),
             "godot_echo": echo.get("echo_ms"),
             "native_receive": received.get("probe_us"),
+            "native_channel_receive": received.get("received_us"),
             "reference_callback": consumed.get("callback_ms"),
             "reference_drain": consumed.get("drain_ms"),
             "application_echo": timing.get("echo_ms"),
@@ -250,6 +251,12 @@ def heartbeat_diagnostics(
                 "native_rtt_ms": diagnostic_interval(
                     sent.get("probe_us"), received.get("probe_us"), 1000
                 ),
+                "native_event_queue_ms": diagnostic_interval(
+                    received.get("received_us"), received.get("probe_us"), 1000
+                ),
+                "native_channel_rtt_ms": diagnostic_interval(
+                    sent.get("probe_us"), received.get("received_us"), 1000
+                ),
                 "godot_echo_ms": diagnostic_interval(echo.get("receive_ms"), echo.get("echo_ms")),
                 "native_callback_rtt_ms": diagnostic_interval(
                     sent.get("callback_ms"), received.get("callback_ms")
@@ -265,6 +272,8 @@ def heartbeat_diagnostics(
         "bridge_queue_ms",
         "command_ms",
         "native_rtt_ms",
+        "native_event_queue_ms",
+        "native_channel_rtt_ms",
         "godot_echo_ms",
         "native_callback_rtt_ms",
         "reference_consumer_ms",

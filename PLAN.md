@@ -29,7 +29,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       zero-byte script sends: #437; original Chromium 156 receive loss: #442;
       capture heartbeat pause failures with packet interval summaries: #440).
 - [ ] Reproduce the original active-reader Web loss and heartbeat pause histories
-      with the paced full/partial sender and the explicit packet-only control
+      with the paced full/partial sender and the explicit packet-only control.
+      Separate channel-read, probe-emission and application drain delays
       (#442, #440). Retain all exact receipts and unchanged deadlines.
 - [ ] Compare the three-seat held-credit control with the captured native/browser
       stream stall using matched HTTP/WebRTC credit runs, independent gameplay

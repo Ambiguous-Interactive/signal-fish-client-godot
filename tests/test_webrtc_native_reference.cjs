@@ -95,6 +95,7 @@ module.exports = async function testNativeReference() {
       label: "reliable",
       data_base64: btoa(`heartbeat:1:reference:${index}:body`),
       probe_us: 1234 + index,
+      received_us: 1000 + index,
     });
   }
   const heartbeatTrace = engine.diagnosticSnapshot();
@@ -104,6 +105,7 @@ module.exports = async function testNativeReference() {
     "heartbeat:1:reference:1",
   );
   assert.equal(heartbeatTrace.native_heartbeat_received[0].probe_us, 1235);
+  assert.equal(heartbeatTrace.native_heartbeat_received[0].received_us, 1001);
   assert.equal(
     typeof heartbeatTrace.native_heartbeat_received[0].callback_ms,
     "number",
