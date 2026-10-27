@@ -7,6 +7,7 @@ var _reference_ordered_received: Array[int] = []
 var _reference_ordered_sent := 0
 var _reference_heartbeats := 0
 var _reference_acknowledged := 0
+var _reference_credit_stride := 8
 var _reference_peak_outstanding := 0
 var _reference_positions_sent := 0
 var _reference_positions_received: Dictionary = {}
@@ -64,6 +65,14 @@ func _run_phase(phase: int) -> bool:
 	_reference_options = JSON.parse_string(
 		FileAccess.get_file_as_string("res://reference-options.json")
 	)
+	var window_bytes: int = _reference_options.get("snapshot_window_bytes", 0)
+	var body_bytes: int = _reference_options.get("snapshot_body_bytes", 1024)
+	_reference_credit_stride = 8
+	if window_bytes:
+		for count: int in [8, 4, 2, 1]:
+			if count * (body_bytes + 32) <= window_bytes:
+				_reference_credit_stride = count
+				break
 	_safe_receive = _reference_options["safe_receive"]
 	_channel_receive = not _safe_receive
 	var plan := SessionScript.SessionPlanInfo.new()
@@ -300,7 +309,7 @@ func _reference_packets() -> void:
 				_fail("reference probe send failed")
 	if _reference_sent and _mesh._count_connected_peers() == 1:
 		if _reference_options["credit_transport"] == "http":
-			for count: int in range(8, 129, 8):
+			for count: int in range(_reference_credit_stride, 129, _reference_credit_stride):
 				if _markers.has("snapshot-ack-%d-%d" % [_phase, count]):
 					_reference_accept_credit(count)
 		var acknowledged := _reference_acknowledged
@@ -485,7 +494,7 @@ func _reference_packets() -> void:
 				or text != "credit:%d:reference:godot:%d" % [_phase, count]
 				or count <= _reference_acknowledged
 				or count > _reference_snapshot_sent
-				or count % 8 != 0
+				or (count != 128 and count % _reference_credit_stride != 0)
 			):
 				_fail("reference consumption credit differs")
 				return
@@ -536,7 +545,10 @@ func _reference_packets() -> void:
 				_reference_partial_received += 1
 			else:
 				_reference_snapshot_received += 1
-				if _reference_snapshot_received % 8 == 0:
+				if (
+					_reference_snapshot_received == 128
+					or _reference_snapshot_received % _reference_credit_stride == 0
+				):
 					if _reference_options["credit_transport"] == "http":
 						_pending.append(
 							{
@@ -596,8 +608,12 @@ func _reference_pause_reads(peer: Object) -> bool:
 	)
 	var reliable: Object = channels[0]
 	var unreliable: Object = channels[2]
-	_reference_receive_pause["queued_reliable"] = reliable.call("get_available_packet_count")
-	_reference_receive_pause["queued_unreliable"] = unreliable.call("get_available_packet_count")
+	_reference_receive_pause["queued_reliable"] = _channel_packet_count(
+		reliable, MultiplayerPeer.TRANSFER_MODE_RELIABLE, id
+	)
+	_reference_receive_pause["queued_unreliable"] = _channel_packet_count(
+		unreliable, MultiplayerPeer.TRANSFER_MODE_UNRELIABLE, id
+	)
 	if _reference_receive_pause["elapsed_ms"] < 1500:
 		return true
 	_reference_receive_pause["received_at_resume"] = _reference_snapshot_received
@@ -715,13 +731,16 @@ func _reference_evidence() -> Dictionary:
 	var id := MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
 	if peer != null and peer.call("has_peer", id):
 		var info: Dictionary = peer.call("get_peer", id)
-		for channel: WebRTCDataChannel in info["channels"]:
+		var channels: Array = info["channels"]
+		for index: int in channels.size():
+			var channel: WebRTCDataChannel = channels[index]
+			var mode: int = [2, 1, 0][index]
 			(
 				channel_queues
 				. append(
 					{
 						"label": channel.get_label(),
-						"available_packets": channel.get_available_packet_count(),
+						"available_packets": _channel_packet_count(channel, mode, id),
 						"buffered_amount": channel.get_buffered_amount(),
 					}
 				)

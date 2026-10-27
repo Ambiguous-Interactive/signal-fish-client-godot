@@ -184,7 +184,7 @@ class ReferenceEvidenceTests(unittest.TestCase):
             ["--snapshot-body-bytes", "17"],
             ["--snapshot-body-bytes", "16400"],
             ["--snapshot-window-bytes", "-1"],
-            ["--snapshot-body-bytes", "4096", "--snapshot-window-bytes", "32768"],
+            ["--snapshot-body-bytes", "4096", "--snapshot-window-bytes", "4127"],
         ):
             with (
                 self.subTest(arguments=arguments),
@@ -196,6 +196,42 @@ class ReferenceEvidenceTests(unittest.TestCase):
                     reference.main()
                 self.assertEqual(error.exception.code, 2)
                 assess.assert_not_called()
+
+    def test_snapshot_cli_accepts_windows_below_eight_chunks(self) -> None:
+        for capacity in (4128, 8256, 16512, 28896, 33024):
+            with (
+                self.subTest(capacity=capacity),
+                tempfile.TemporaryDirectory() as folder,
+                patch(
+                    "sys.argv",
+                    [
+                        "check-webrtc-reference.py",
+                        "--native-extension",
+                        "/missing",
+                        "--reference-assets",
+                        "/missing",
+                        "--reference-revision",
+                        "test",
+                        "--runtime",
+                        "web",
+                        "--offerer",
+                        "reference",
+                        "--output",
+                        folder,
+                        "--snapshot-body-bytes",
+                        "4096",
+                        "--snapshot-window-bytes",
+                        str(capacity),
+                    ],
+                ),
+                patch.object(
+                    reference, "assess", return_value={"assessment_complete": True}
+                ) as assess,
+                patch("builtins.print"),
+            ):
+                reference.main()
+                self.assertEqual(assess.call_count, 1)
+                self.assertEqual(assess.call_args.args[0].snapshot_window_bytes, capacity)
 
     def test_byte_window_requires_matched_workload_and_complete_credit(self) -> None:
         phase = {

@@ -18,6 +18,11 @@ window.runReference = async function (
   snapshotWindowBytes = 0,
 ) {
   const seat = 1 - godotSeat;
+  const creditStride = snapshotWindowBytes
+    ? [8, 4, 2, 1].find(
+        (count) => count * (snapshotBodyBytes + 32) <= snapshotWindowBytes,
+      )
+    : 8;
   const post = async (message) => {
     const response = await fetch(`/signal/${godotSeat}`, {
       method: "POST",
@@ -162,7 +167,7 @@ window.runReference = async function (
             !Number.isInteger(count) ||
             count <= snapshotAck ||
             count > snapshotSent ||
-            count % 8 !== 0
+            (count !== 128 && count % creditStride !== 0)
           ) {
             window.referenceError ??= "reference consumption credit differs";
             return false;
@@ -211,7 +216,10 @@ window.runReference = async function (
                 resumed: false,
               });
             }
-            if (snapshotReceived % 8 === 0) {
+            if (
+              snapshotReceived === 128 ||
+              snapshotReceived % creditStride === 0
+            ) {
               if (creditTransport === "http")
                 outgoing.push({
                   marker: `snapshot-ack-${phase}-${snapshotReceived}`,

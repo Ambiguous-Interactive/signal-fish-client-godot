@@ -449,6 +449,129 @@ class CreditDelayTests(unittest.TestCase):
 
 
 class ObservationTests(unittest.TestCase):
+    def test_credit_report_joins_each_directed_window_without_guessing_missing_stages(self) -> None:
+        sender = {
+            "phase": 1,
+            "tick_ms": 15000,
+            "credit_transport": "http",
+            "sent_by_target": {"2": 64},
+            "acknowledged_by_target": {"2": 56},
+            "credits_received_by_target": {"2": 7},
+            "credit_wait_age_ms_by_target": {"2": 1200},
+            "markers": [],
+        }
+        receiver = {
+            "phase": 1,
+            "tick_ms": 14300,
+            "received_by_seat_and_mode": {"0": [32, 32, 64]},
+            "credits_sent_by_target": {"0": 8},
+            "sending_marker": "consumed-1-2-64",
+            "sending_to": 0,
+            "send_inflight_ms": 700,
+        }
+        seats = [{"seat": 0, "diagnostic": sender}, {"seat": 2, "last_progress": receiver}]
+        row = drill.multi_peer_credit_diagnostics(seats, {})[0]
+        self.assertEqual(row["receiver_consumed_chunks"], 64)
+        self.assertEqual(row["receiver_credits_sent"], 8)
+        self.assertEqual(row["sender_credits_received"], 7)
+        self.assertEqual(row["window_wait_ms"], 1200)
+        self.assertEqual(row["sender_tick_ms"], 15000)
+        self.assertEqual(row["receiver_tick_ms"], 14300)
+        self.assertEqual(
+            row["http_credit"],
+            {
+                "marker": "consumed-1-2-64",
+                "post": None,
+                "post_inflight_ms": 700,
+                "relay_pending_age_ms": None,
+                "relay_dequeue_queue_ms": None,
+                "relay_dequeue_age_ms": None,
+                "sender_marker_observed": False,
+            },
+        )
+        post = {"marker": "consumed-1-2-64", "to": 0, "elapsed_ms": 90, "http_code": 200}
+        receiver.update(marker_posts=[post], sending_marker="other", sending_to=1)
+        for relay, expected in (
+            (
+                {"pending_markers": [{"marker": "consumed-1-2-64", "seat": 0, "age_ms": 500}]},
+                {"relay_pending_age_ms": 500, "relay_dequeue_queue_ms": None},
+            ),
+            (
+                {
+                    "recent_dequeues": [
+                        {"marker": "consumed-1-2-64", "seat": 0, "queue_ms": 100, "age_ms": 400},
+                        {"marker": "consumed-1-2-64", "seat": 1, "queue_ms": 999, "age_ms": 1},
+                    ]
+                },
+                {"relay_pending_age_ms": None, "relay_dequeue_queue_ms": 100},
+            ),
+        ):
+            with self.subTest(relay=relay):
+                credit = drill.multi_peer_credit_diagnostics(seats, relay)[0]["http_credit"]
+                self.assertEqual(credit["post"], post)
+                self.assertIsNone(credit["post_inflight_ms"])
+                for key, value in expected.items():
+                    self.assertEqual(credit[key], value)
+
+    def test_credit_report_keeps_phases_and_transports_separate(self) -> None:
+        phase = {
+            "phase": 1,
+            "credit_transport": "webrtc",
+            "sent_by_target": {"2": 8},
+            "acknowledged_by_target": {"2": 0},
+        }
+        seats = [
+            {"seat": 0, "last_progress": phase},
+            {
+                "seat": 2,
+                "last_progress": {
+                    "phase": 2,
+                    "received_by_seat_and_mode": {"0": [32, 32, 64]},
+                    "credits_sent_by_target": {"0": 8},
+                },
+            },
+        ]
+        row = drill.multi_peer_credit_diagnostics(seats, {})[0]
+        self.assertEqual(row["transport"], "webrtc")
+        self.assertNotIn("http_credit", row)
+        self.assertIsNone(row["receiver_consumed_chunks"])
+        self.assertIsNone(row["receiver_credits_sent"])
+        phase["credit_transport"] = "http"
+        phase["acknowledged_by_target"] = {"2": 8}
+        self.assertNotIn("http_credit", drill.multi_peer_credit_diagnostics(seats, {})[0])
+        self.assertEqual(drill.multi_peer_credit_diagnostics([{"seat": 0}], {}), [])
+
+    def test_credit_report_uses_latest_local_tick_without_comparing_seat_clocks(self) -> None:
+        def snapshot(tick: int, count: int) -> dict[str, object]:
+            return {
+                "phase": 1,
+                "tick_ms": tick,
+                "sent_by_target": {"2": count},
+                "acknowledged_by_target": {"2": count},
+            }
+
+        seats = [
+            {
+                "seat": 0,
+                "multi_peer_phases": [snapshot(1000, 64)],
+                "last_progress": snapshot(900, 56),
+                "diagnostic": snapshot(950, 56),
+            },
+            {
+                "seat": 2,
+                "last_progress": {
+                    "phase": 1,
+                    "tick_ms": 100,
+                    "received_by_seat_and_mode": {"0": [32, 32, 64]},
+                },
+            },
+        ]
+        row = drill.multi_peer_credit_diagnostics(seats, {})[0]
+        self.assertEqual(row["sent_chunks"], 64)
+        self.assertEqual(row["receiver_consumed_chunks"], 64)
+        self.assertEqual(row["sender_tick_ms"], 1000)
+        self.assertEqual(row["receiver_tick_ms"], 100)
+
     def test_browser_terminals(self) -> None:
         for terminal in (
             "WEBRTC_INTEROP_PASS seat=1",

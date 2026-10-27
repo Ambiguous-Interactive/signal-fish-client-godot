@@ -248,10 +248,13 @@ binary probes keep their own sizes. The default snapshot body remains 1024 bytes
 
 For a separate pacing control, add `--snapshot-window-bytes 49152`. Both seats
 also cap unacknowledged snapshot bytes, including the application prefix.
-Credits still follow each eight consumed chunks. The byte window must hold
-eight chunks plus their headers. The CLI rejects smaller windows to prevent
-a credit deadlock. This limit covers snapshot bytes; account for other traffic
-when choosing a window for your game.
+The byte window must hold one chunk plus a 32-byte header allowance. For
+smaller windows, consumption credits follow each 1, 2 or 4 chunks; windows
+that hold eight chunks keep the existing eight-chunk cadence. The batch always
+fits the window. With 4 KiB bodies, use 4128, 16512 or 28896 bytes to test
+one-, four- or seven-chunk capacities. All runs still send 128 chunks in each
+direction and generation. This limit covers snapshot bytes; account for other
+traffic when choosing a window for your game.
 
 Use `--slow-receiver` to pause Godot reads for 1500 ms. Use
 `--slow-reference-receiver` to pause reference snapshot consumption while
@@ -260,6 +263,18 @@ the queue depth that fits its smaller window. The original packet-window
 pause still requires at least 24 queued chunks. Every run still requires all
 reliable chunks and credits, exact metadata, retirement and fresh-link recovery.
 A paced pass does not qualify the original workload.
+
+Godot 4.7.2 native/Web controls with 4 KiB bodies pass one-, four-, seven-
+and eight-chunk WebRTC windows through fresh links. HTTP credit passes the
+four-, seven- and eight-chunk controls; the one-chunk Web HTTP run reaches
+the unchanged deadline without a local buffer-drop or exact-byte failure.
+Treat that stop-and-wait timing limit separately from reliable packet loss.
+With Chromium 156, one-chunk WebRTC service rejoin and seven-chunk HTTP credit
+holds pass on both seats. Four-chunk reference-consumer pauses also pass,
+including new heartbeat round trips during each pause. A one-chunk pause can
+queue no position sample because positions follow each fourth snapshot;
+that strict pause control remains a failure even when every snapshot and
+heartbeat arrives.
 
 Use `--channel-in-buffer-kb 256` in a separate capacity control to set
 `network/limits/webrtc/max_channel_in_buffer_kb` before engine import. The
@@ -281,6 +296,13 @@ passed. A matched Chromium 154 Godot-offer Web control reproduced the same
 native/Web Godot 4.7.2 preserved every snapshot through rejoin in both offer
 roles, with the same 4 KiB bodies, 32-packet window and 1500 ms reader pause.
 The original #442 history used Chromium 156 and remains open.
+
+A fresh Chromium 156 active-reader service control passes both generations.
+Its paused-reader control reproduces 17 local drops and the sequence 23-to-40
+hole. A four-chunk byte window preserves every snapshot, position queue proof,
+retirement and service rejoin with the same reader pause. The queue proof
+counts the safe reader's selected unread packet; omitting it caused a false
+failure in the earlier four-chunk control.
 
 Phase records include `snapshot_body_bytes`, `snapshot_window_bytes`,
 `outstanding_snapshot_bytes` and `peak_outstanding_snapshot_bytes`. A pass must
@@ -400,6 +422,20 @@ Godot 4.3 raw native/Web controls passed both offer roles and fresh
 generations with empty receipts in all three modes. The strict native safe-peer
 control failed at a zero-byte read with `ERR_UNAVAILABLE`.
 Do not infer send support from a successful receive control.
+
+Run the engine boundary alone, without a network or extension:
+
+```bash
+godot --headless --path . --script tests/smoke/packet_peer_empty_probe.gd
+```
+
+The probe sends empty and nonempty arrays through a scripted
+`MultiplayerPeerExtension`, then reads an empty packet followed by a nonempty
+packet. `PACKET_PEER_EMPTY` reports send callback counts and receive errors.
+It exits 1 while either empty-packet boundary fails. Native Godot 4.3, 4.4.1
+and 4.7.2 return `OK` with zero empty-send callbacks and consume the empty
+receive with `ERR_UNAVAILABLE`; the nonempty controls pass. This isolates the
+script API boundary in #437. It does not qualify WebRTC delivery.
 
 ## ICE candidate formats
 
@@ -558,6 +594,11 @@ probe send and ends when both full snapshots and outgoing snapshot credit
 are complete; it excludes partial snapshots, closure and recovery barriers.
 `assessment.json.godot_evidence` keeps the last progress and failure snapshot,
 including the same counts under `reference`.
+
+Per-channel queued counts include the safe reader's selected unread packet.
+Reading diagnostics can select a packet without consuming it. These logical
+counts cover both the engine queue and that selected packet; they do not
+measure raw engine buffer occupancy. `buffered_amount` measures outgoing bytes.
 
 Compare repeated HTTP and WebRTC credit runs with the same engine and receiver.
 Fresh gameplay progress during an HTTP credit wait helps isolate relay or HTTP
@@ -1197,6 +1238,16 @@ before attributing a delay. These timings alone do not prove marker consumption.
 Relay histories retain at most 128 pending markers and 128 dequeues. Totals
 cover the full trial; `evicted_pending_records` reports missing detail, and
 `queue_ms` is null when its enqueue record was evicted.
+
+Three-seat `seats.json.credit_diagnostics` joins the latest observation for
+each phase and directed link. It compares sent and acknowledged chunks with
+the receiver's consumed chunks and credit counts. A full HTTP credit window
+also records the expected consumption marker, matching completed or inflight
+POST, relay queue/dequeue timing and sender marker observation. WebRTC credit
+rows keep their own counts without HTTP attribution. Missing history is null.
+Seat tick values use separate clocks and observation times; do not subtract
+them or treat a later receiver observation as proof of what the sender knew
+at its deadline. These rows preserve evidence without assigning a cause.
 
 These samples run outside Godot's frame loop. In a controlled stopped-frame
 run, the engine heartbeat aged over 14 seconds while browser stats stayed

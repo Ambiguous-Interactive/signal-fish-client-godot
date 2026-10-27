@@ -1427,10 +1427,9 @@ def main() -> None:
     if not 16 <= args.snapshot_body_bytes <= 16384 or args.snapshot_body_bytes % 16:
         parser.error("--snapshot-body-bytes must be 16-16384 and a multiple of 16")
     if args.snapshot_window_bytes < 0 or (
-        args.snapshot_window_bytes
-        and args.snapshot_window_bytes < 8 * (args.snapshot_body_bytes + 32)
+        args.snapshot_window_bytes and args.snapshot_window_bytes < args.snapshot_body_bytes + 32
     ):
-        parser.error("--snapshot-window-bytes must be 0 or hold eight chunks including headers")
+        parser.error("--snapshot-window-bytes must be 0 or hold one chunk including its header")
     if args.queued_retirement and not args.safe_receive:
         parser.error("--queued-retirement requires --safe-receive")
     if args.service_rejoin and (not args.service_url or not args.safe_receive):

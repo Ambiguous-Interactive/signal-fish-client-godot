@@ -79,9 +79,133 @@ async function testReferenceFirstFailure() {
   console.log("Reference first-failure tests passed");
 }
 
+async function testSmallSnapshotWindows() {
+  for (const [slots, stride] of [
+    [1, 1],
+    [2, 2],
+    [4, 4],
+    [7, 4],
+    [8, 8],
+  ]) {
+    for (const transport of ["http", "webrtc"]) {
+      let clock = 1;
+      let hooks;
+      let ready = false;
+      const acknowledgements = [];
+      const pending = [];
+      const context = {
+        window: {},
+        AbortController,
+        performance: { now: () => clock },
+        console: { log() {}, error() {} },
+        setTimeout: (callback) =>
+          setImmediate(() => {
+            clock += 20;
+            callback();
+          }),
+        Engine: class {
+          constructor(_verbose, callbacks) {
+            hooks = callbacks;
+          }
+          async pairWith() {
+            return null;
+          }
+          channel() {
+            return {
+              readyState: "open",
+              send(text) {
+                if (text.startsWith("snapshot:")) {
+                  const sequence = Number(text.split(":")[3]);
+                  queueMicrotask(() => {
+                    hooks.onChannelMessage(
+                      "godot",
+                      1,
+                      "reliable",
+                      `snapshot:1:godot:${sequence}:` +
+                        "0123456789abcdef".repeat(64),
+                    );
+                    const count = sequence + 1;
+                    if (count % stride === 0 || count === 128) {
+                      if (transport === "webrtc")
+                        hooks.onChannelMessage(
+                          "godot",
+                          1,
+                          "reliable",
+                          `credit:1:godot:reference:${count}`,
+                        );
+                      else pending.push({ marker: `snapshot-ack-1-${count}` });
+                    }
+                  });
+                } else if (text.startsWith("credit:"))
+                  acknowledgements.push(Number(text.split(":").at(-1)));
+              },
+            };
+          }
+          diagnosticSnapshot() {
+            return {};
+          }
+          async removePeer() {}
+        },
+        fetch: async (_url, options) => {
+          if (options?.method === "POST") {
+            const marker = JSON.parse(options.body).marker;
+            if (marker?.startsWith("snapshot-ack-"))
+              acknowledgements.push(Number(marker.split("-").at(-1)));
+          }
+          return {
+            ok: true,
+            json: async () => {
+              if (options?.method === "POST") return [];
+              if (!ready) {
+                ready = true;
+                return [{ marker: "ready-1" }];
+              }
+              return pending.splice(0);
+            },
+          };
+        },
+      };
+      vm.runInNewContext(
+        fs
+          .readFileSync("tests/smoke/webrtc_reference.js", "utf8")
+          .replace(/^import .*;\n/, ""),
+        context,
+      );
+      await context.window.runReference(
+        1,
+        false,
+        false,
+        transport,
+        false,
+        "reliable",
+        "reference",
+        false,
+        null,
+        false,
+        1024,
+        slots * 1056,
+      );
+      const evidence = context.window.referenceProgress();
+      assert.equal(evidence.snapshot_sent, 128, `${slots} slots ${transport}`);
+      assert.equal(evidence.snapshot_received, 128);
+      assert.equal(evidence.snapshot_acknowledged, 128);
+      assert.equal(evidence.outstanding_snapshot_bytes, 0);
+      assert.ok(evidence.peak_outstanding_snapshot_bytes <= slots * 1056);
+      const expected = [];
+      for (let count = stride; count < 128; count += stride)
+        expected.push(count);
+      expected.push(128);
+      assert.deepEqual(acknowledgements, expected);
+      assert.match(context.window.referenceError, /missing Godot teardown/);
+    }
+  }
+  console.log("Small snapshot window tests passed");
+}
+
 async function main() {
   await require("./test_webrtc_native_reference.cjs")();
   await testReferenceFirstFailure();
+  await testSmallSnapshotWindows();
   let sample;
   const output = [];
   const channels = [];
