@@ -319,8 +319,11 @@ def checked(command: list[str], log: Path) -> None:
         timeout=120,
     )
     log.write_bytes(result.stdout)
-    if result.returncode or engine_failed(result.stdout.decode(errors="replace")):
-        raise RuntimeError(f"Command failed; see {log}")
+    engine_error = engine_failed(result.stdout.decode(errors="replace"))
+    if result.returncode or engine_error:
+        raise RuntimeError(
+            f"Command failed: exit={result.returncode}, engine_error={engine_error}; see {log}"
+        )
 
 
 def finite_lifetimes(contracts: list[dict[str, object]], *, unset: int = -1) -> bool:

@@ -24,6 +24,151 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_failure_summary_retains_local_drops_and_exact_failure(self) -> None:
+        failure = {
+            "phase": 1,
+            "reason": "reference snapshot differs: expected_sequence=23 received_sequence=40 bytes=4120 mode=2",
+            "reference": {
+                "snapshot_received": 23,
+                "channel_in_buffer_kb": 64,
+                "channel_queues": [{"label": "reliable", "available_packets": 5}],
+            },
+        }
+        report = {
+            "godot_evidence": {"diagnostic": failure, "last_stage": "reference observation"},
+            "reference": {"error": "channel closed"},
+            "driver_error": "",
+            "assessment_complete": False,
+        }
+        before = copy.deepcopy(report)
+        result = reference.gameplay_diagnostics(report, "Buffer full! Dropping data.\n" * 17)
+        self.assertEqual(result["godot_buffer_drop_messages"], 17)
+        self.assertEqual(result["godot_failure"]["reason"], failure["reason"])
+        self.assertEqual(result["godot_queue"]["snapshot_received"], 23)
+        self.assertEqual(result["godot_queue"]["channel_in_buffer_kb"], 64)
+        self.assertEqual(report, before)
+
+    def test_heartbeat_summary_joins_each_phase_without_crossing_clocks(self) -> None:
+        snapshot = {
+            "packet_timings": [
+                {
+                    "marker": "heartbeat:1:reference:0",
+                    "enqueue_ms": 100,
+                    "dispatch_ms": 300,
+                    "complete_ms": 350,
+                },
+                {
+                    "marker": "heartbeat:2:reference:0",
+                    "enqueue_ms": 1,
+                    "dispatch_ms": 2,
+                    "complete_ms": 3,
+                },
+            ],
+            "native_sent": [
+                {"marker": "heartbeat:1:reference:0", "probe_us": 10000, "callback_ms": 355}
+            ],
+            "native_heartbeat_received": [
+                {"marker": "heartbeat:1:reference:0", "probe_us": 14000, "callback_ms": 365}
+            ],
+            "timings_dropped": 0,
+            "native_sent_dropped": 0,
+            "native_heartbeat_received_dropped": 0,
+        }
+        phase = {
+            "phase": 1,
+            "heartbeat_sent": 2,
+            "heartbeat_received": 1,
+            "heartbeat_timings": [
+                {"sequence": 0, "enqueue_ms": 90, "echo_ms": 370},
+                {"sequence": 1, "enqueue_ms": 380},
+            ],
+            "snapshot": snapshot,
+        }
+        result = reference.heartbeat_diagnostics(
+            {"heartbeat_timings": [{"sequence": 0, "receive_ms": 900000, "echo_ms": 900001}]}, phase
+        )
+        self.assertEqual(result["matched_samples"]["native_rtt_ms"], 1)
+        self.assertEqual(result["max_ms"]["native_rtt_ms"], 4)
+        self.assertEqual(result["max_ms"]["bridge_queue_ms"], 200)
+        self.assertEqual(result["max_ms"]["application_rtt_ms"], 280)
+        self.assertEqual(result["max_ms"]["godot_echo_ms"], 1)
+        self.assertEqual(result["packets"][1]["native_rtt_ms"], None)
+        self.assertEqual(result["packets"][1]["application_rtt_ms"], None)
+
+    def test_incomplete_run_uses_terminal_phase_and_failure_echoes(self) -> None:
+        phase = {
+            "phase": 1,
+            "heartbeat_sent": 1,
+            "heartbeat_received": 0,
+            "heartbeat_timings": [{"sequence": 0, "enqueue_ms": 7}],
+        }
+        report = {
+            "reference": {"phases": []},
+            "reference_terminal": phase,
+            "godot_evidence": {
+                "diagnostic": {
+                    "phase": 1,
+                    "reference": {
+                        "heartbeat_timings": [{"sequence": 0, "receive_ms": 100, "echo_ms": 103}]
+                    },
+                }
+            },
+        }
+        result = reference.gameplay_diagnostics(report, "")
+        self.assertEqual(result["heartbeat_phases"][0]["max_ms"]["godot_echo_ms"], 3)
+        self.assertIsNone(result["heartbeat_phases"][0]["max_ms"]["native_rtt_ms"])
+        report["reference"] = {"phases": [phase]}
+        self.assertEqual(len(reference.gameplay_diagnostics(report, "")["heartbeat_phases"]), 1)
+        self.assertEqual(reference.gameplay_diagnostics({}, "")["heartbeat_phases"], [])
+
+    def test_timing_summary_keeps_invalid_or_missing_samples_unknown(self) -> None:
+        for start, end in (
+            (None, 1),
+            (True, 2),
+            (1, False),
+            (4, 3),
+            (0, float("nan")),
+            (0, float("inf")),
+        ):
+            with self.subTest(start=start, end=end):
+                self.assertIsNone(reference.diagnostic_interval(start, end))
+        self.assertEqual(reference.diagnostic_interval(0, 0), 0)
+        phase = {
+            "phase": 1,
+            "heartbeat_timings": [{"sequence": 0}],
+            "snapshot": {"timings_dropped": 4},
+        }
+        result = reference.heartbeat_diagnostics({}, phase)
+        self.assertEqual(result["trace_overflow"]["timings_dropped"], 4)
+        self.assertIsNone(result["max_ms"]["bridge_queue_ms"])
+
+    def test_named_checks_report_late_failures_after_gameplay_failure(self) -> None:
+        args = argparse.Namespace(mixed_traffic=True, credit_transport="webrtc", safe_receive=True)
+        checks = reference.gameplay_phase_checks({}, {}, args, 24, True)
+        self.assertFalse(checks["godot_gameplay"])
+        self.assertFalse(checks["reference_gameplay"])
+        self.assertFalse(checks["heartbeat_totals"])
+        self.assertFalse(checks["retirement"])
+        self.assertFalse(checks["receiver_identity"])
+        self.assertFalse(all(checks.values()))
+
+    def test_observation_timeout_retains_last_progress_without_inventing_failure(self) -> None:
+        report = {
+            "driver_error": "TimeoutError: reference completion",
+            "godot_evidence": {
+                "last_progress": {
+                    "phase": 1,
+                    "max_stage_frame_gap_ms": 107,
+                    "reference": {"snapshot_acknowledged": 56, "credit_wait_age_ms": 890},
+                }
+            },
+        }
+        result = reference.gameplay_diagnostics(report, "")
+        self.assertIsNone(result["godot_failure"]["reason"])
+        self.assertEqual(result["godot_progress"]["max_stage_frame_gap_ms"], 107)
+        self.assertEqual(result["godot_queue"]["snapshot_acknowledged"], 56)
+        self.assertEqual(result["driver_error"], report["driver_error"])
+
     def test_snapshot_cli_rejects_sizes_that_cannot_return_credit(self) -> None:
         base = [
             "check-webrtc-reference.py",
@@ -955,6 +1100,8 @@ console.log(JSON.stringify({error, evidence: context.window.referenceServiceEvid
             self.assertEqual(len(results), 5)
             self.assertFalse(results[1]["assessment_complete"])
             self.assertIn("project preparation failed", results[2]["driver_error"])
+            self.assertEqual(results[2]["diagnostics"]["driver_error"], results[2]["driver_error"])
+            self.assertEqual(results[2]["diagnostics"]["heartbeat_phases"], [])
             self.assertEqual(results[2]["closing_channel"], "unreliable")
             self.assertTrue(results[-1]["gameplay_passed"])
 

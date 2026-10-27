@@ -311,6 +311,39 @@ Compare intervals within each clock. Command completion bounds send completion;
 it does not prove remote receipt. These traces help investigate #440 while
 preserving its new-round-trip-during-pause requirement.
 
+### Read a failed reference assessment
+
+`assessment.json` includes `diagnostics` even when the driver fails. Start with
+`godot_failure.reason`, `last_stage` and `last_ready`. `godot_progress` keeps
+the last observed frame gap and polling state when a driver timeout leaves
+no Godot failure. Setup errors retain the process exit code and engine-error
+flag with the import or export log path. `godot_queue` retains
+snapshot progress, unacknowledged bytes, channel queue counts and configured
+receive capacity at failure. `godot_buffer_drop_messages` counts the engine's
+local receive-buffer drop messages in the Godot log. A snapshot sequence gap
+and a local drop are separate observations; retain both with the full log.
+
+`phase_checks` names each gameplay check for completed phase pairs. Every
+check runs even if an earlier check fails. A false `reference_pause` with true
+`heartbeat_totals` means final receipts alone did not prove a new round trip
+within the pause. Overall completion and gameplay verdicts remain strict.
+Missing phases still fail the assessment.
+
+`diagnostics.heartbeat_phases` joins heartbeat records by phase and sequence.
+Each entry includes per-packet intervals, matched sample counts, maxima and
+trace overflow. `bridge_queue_ms` measures enqueue to HTTP dispatch;
+`command_ms` measures dispatch to command completion; `native_rtt_ms` measures
+native send to native receipt. `application_rtt_ms` measures reference enqueue
+to echo handling. `godot_echo_ms` measures Godot receive to echo submission.
+`native_callback_rtt_ms` spans browser delivery of the native send and receipt
+events. It includes bridge scheduling. Each interval uses one clock.
+
+Missing, nonfinite or reversed timestamps produce `null`. Compare sample
+counts and overflow before comparing maxima. A short measured native round
+trip with a long command interval can help locate a probe delay. These
+measurements do not identify the cause of an uncaptured failure. Keep the
+original #396, #440 and #442 histories separate from induced controls.
+
 ### Exact binary gameplay
 
 The probe targets the native Engine binary event API at 67725d6. Build it
