@@ -376,6 +376,12 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
         "snapshot_sent",
         "snapshot_received",
         "snapshot_acknowledged",
+        "partial_sent",
+        "partial_received",
+        "partial_acknowledged",
+        "partial_credit_wait_age_ms",
+        "outstanding_partial_bytes",
+        "peak_outstanding_partial_bytes",
         "peak_outstanding_snapshot_bytes",
         "outstanding_snapshot_bytes",
         "channel_in_buffer_kb",
@@ -531,6 +537,19 @@ def snapshot_flow_passed(phase: dict[str, object], body_bytes: int, window_bytes
         and phase["outstanding_snapshot_bytes"] == 0
         and type(peak) is int
         and body_bytes < peak <= 32 * (body_bytes + 32)
+        and (not window_bytes or peak <= window_bytes)
+    )
+
+
+def partial_flow_passed(phase: dict[str, object], body_bytes: int, window_bytes: int) -> bool:
+    peak = phase.get("peak_outstanding_partial_bytes")
+    return (
+        type(phase.get("partial_acknowledged")) is int
+        and phase["partial_acknowledged"] == 4
+        and type(phase.get("outstanding_partial_bytes")) is int
+        and phase["outstanding_partial_bytes"] == 0
+        and type(peak) is int
+        and body_bytes < peak <= 4 * (body_bytes + 32)
         and (not window_bytes or peak <= window_bytes)
     )
 
@@ -1075,6 +1094,14 @@ def gameplay_phase_checks(
             )
             for phase in (godot, ref)
         ),
+        "partial_flow": all(
+            partial_flow_passed(
+                phase,
+                getattr(args, "snapshot_body_bytes", 1024),
+                getattr(args, "snapshot_window_bytes", 0),
+            )
+            for phase in (godot, ref)
+        ),
         "startup": startup_phase_passed(godot, ref, getattr(args, "startup_burst", False)),
         "godot_binary": binary_phase_passed(
             godot,
@@ -1566,8 +1593,8 @@ def main() -> None:
     parser.add_argument(
         "--snapshot-window-bytes",
         type=int,
-        default=0,
-        help="Additional outstanding snapshot byte limit; 0 keeps the packet window",
+        default=49152,
+        help="Outstanding snapshot/partial byte limit (default 49152); 0 reproduces packet-only pacing",
     )
     parser.add_argument(
         "--receive-batch-packets",

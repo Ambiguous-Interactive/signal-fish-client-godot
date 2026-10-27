@@ -15,7 +15,7 @@ window.runReference = async function (
   binaryPayloads = null,
   startupBurst = false,
   snapshotBodyBytes = 1024,
-  snapshotWindowBytes = 0,
+  snapshotWindowBytes = 49152,
 ) {
   const seat = 1 - godotSeat;
   const creditStride = snapshotWindowBytes
@@ -80,6 +80,10 @@ window.runReference = async function (
         }
       };
       let partialSent = 0;
+      let partialAck = 0;
+      let partialCreditUpdated = 0;
+      let partialBytes = 0;
+      let peakPartialBytes = 0;
       let partialReceived = 0;
       const chunk = (sender, sequence, partial = false) =>
         `${partial ? "partial" : "snapshot"}:${phase}:${sender}:${sequence}:` +
@@ -158,6 +162,23 @@ window.runReference = async function (
           heartbeatReceived++;
           return true;
         }
+        if (text.startsWith("partial-credit:")) {
+          const count = Number(text.split(":").at(-1));
+          if (
+            label !== "reliable" ||
+            text !== `partial-credit:${phase}:godot:reference:${count}` ||
+            count !== partialAck + 1 ||
+            count > partialSent
+          ) {
+            window.referenceError ??=
+              "reference partial consumption credit differs";
+            return false;
+          }
+          partialBytes -= chunk("reference", partialAck, true).length;
+          partialAck = count;
+          partialCreditUpdated = performance.now();
+          return true;
+        }
         if (text.startsWith("credit:")) {
           const count = Number(text.split(":").at(-1));
           if (
@@ -203,8 +224,14 @@ window.runReference = async function (
             window.referenceError ??= `reference snapshot bytes or sequence differ: phase=${phase} label=${label} expected_sequence=${sequence} received_sequence=${text.split(":")[3]} expected_bytes=${chunk("godot", sequence, partial).length} received_bytes=${text.length}`;
             return false;
           }
-          if (partial) partialReceived++;
-          else {
+          if (partial) {
+            partialReceived++;
+            engine
+              .channel("godot", "reliable")
+              .send(
+                `partial-credit:${phase}:reference:godot:${partialReceived}`,
+              );
+          } else {
             snapshotReceived++;
             if (slowReferenceReceiver && snapshotReceived === 8) {
               pauseStarted = performance.now();
@@ -287,7 +314,7 @@ window.runReference = async function (
           }
           const text = new TextDecoder("utf-8", { fatal: true }).decode(data);
           if (
-            !/^(startup:|godot:|snapshot:|partial:|position:|ordered:|heartbeat:|credit:|retirement:|retired:)/.test(
+            !/^(startup:|godot:|snapshot:|partial:|partial-credit:|position:|ordered:|heartbeat:|credit:|retirement:|retired:)/.test(
               text,
             )
           )
@@ -362,6 +389,13 @@ window.runReference = async function (
         snapshot_sent: snapshotSent,
         snapshot_received: snapshotReceived,
         partial_sent: partialSent,
+        partial_acknowledged: partialAck,
+        partial_credit_wait_age_ms:
+          partialSent > partialAck
+            ? Math.round(performance.now() - partialCreditUpdated)
+            : 0,
+        outstanding_partial_bytes: partialBytes,
+        peak_outstanding_partial_bytes: peakPartialBytes,
         partial_received: partialReceived,
         received: received.slice(),
         remote_closed: remoteClosed,
@@ -583,11 +617,23 @@ window.runReference = async function (
             if (
               snapshotReceived === 128 &&
               snapshotAck === 128 &&
-              partialSent === 0
+              partialSent < 4
             ) {
-              transferMs = Math.round(performance.now() - transferStarted);
-              for (; partialSent < 4; partialSent++)
-                reliable.send(chunk("reference", partialSent, true));
+              if (transferMs < 0)
+                transferMs = Math.round(performance.now() - transferStarted);
+              while (partialSent < 4) {
+                const data = chunk("reference", partialSent, true);
+                if (
+                  snapshotWindowBytes &&
+                  partialBytes + data.length > snapshotWindowBytes
+                )
+                  break;
+                if (partialSent === 0) partialCreditUpdated = performance.now();
+                reliable.send(data);
+                partialSent++;
+                partialBytes += data.length;
+                peakPartialBytes = Math.max(peakPartialBytes, partialBytes);
+              }
             }
           }
           if (paired && !observed && performance.now() - started >= 6000) {
@@ -614,7 +660,8 @@ window.runReference = async function (
           if (
             closeRequested &&
             !closeQueued &&
-            heartbeatReceived === heartbeatSent
+            heartbeatReceived === heartbeatSent &&
+            partialAck === 4
           ) {
             closeQueued = true;
             if (queuedRetirement)

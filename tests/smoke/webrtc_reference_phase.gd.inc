@@ -22,6 +22,10 @@ var _reference_receive_timings: Array[Dictionary] = []
 var _reference_receive_timings_dropped := 0
 var _reference_snapshot_sent := 0
 var _reference_snapshot_received := 0
+var _reference_partial_credit_updated := 0
+var _reference_partial_acknowledged := 0
+var _reference_partial_outstanding_bytes := 0
+var _reference_partial_peak_bytes := 0
 var _reference_partial_sent := 0
 var _reference_partial_received := 0
 var _reference_received: Dictionary = {}
@@ -59,6 +63,10 @@ func _run_phase(phase: int) -> bool:
 	_reference_receive_timings_dropped = 0
 	_reference_snapshot_sent = 0
 	_reference_snapshot_received = 0
+	_reference_partial_credit_updated = 0
+	_reference_partial_acknowledged = 0
+	_reference_partial_outstanding_bytes = 0
+	_reference_partial_peak_bytes = 0
 	_reference_partial_sent = 0
 	_reference_partial_received = 0
 	_reference_received.clear()
@@ -261,6 +269,7 @@ func _reference_gameplay_complete() -> bool:
 		and _reference_snapshot_sent == 128
 		and _reference_partial_sent == 4
 		and _reference_partial_received == 4
+		and _reference_partial_acknowledged == 4
 		and (
 			_reference_received.has("reliable")
 			if _reference_options.get("native_profile", false)
@@ -373,14 +382,25 @@ func _reference_packets() -> void:
 		if (
 			acknowledged == 128
 			and _reference_snapshot_received == 128
-			and _reference_partial_sent == 0
+			and _reference_partial_sent < 4
 		):
-			_reference_transfer_ms = Time.get_ticks_msec() - _reference_transfer_started
-			for sequence: int in 4:
-				if peer.call("put_packet", _reference_chunk("godot", sequence, true)) != OK:
+			if _reference_transfer_ms < 0:
+				_reference_transfer_ms = Time.get_ticks_msec() - _reference_transfer_started
+			while _reference_partial_sent < 4:
+				var bytes := _reference_chunk("godot", _reference_partial_sent, true)
+				var limit: int = _reference_options.get("snapshot_window_bytes", 0)
+				if limit > 0 and _reference_partial_outstanding_bytes + bytes.size() > limit:
+					break
+				if _reference_partial_sent == 0:
+					_reference_partial_credit_updated = Time.get_ticks_msec()
+				if peer.call("put_packet", bytes) != OK:
 					_fail("reference partial snapshot send failed")
 					return
 				_reference_partial_sent += 1
+				_reference_partial_outstanding_bytes += bytes.size()
+				_reference_partial_peak_bytes = maxi(
+					_reference_partial_peak_bytes, _reference_partial_outstanding_bytes
+				)
 	if not _reference_sent or _mesh._count_connected_peers() != 1:
 		return
 	if _reference_pause_reads(peer):
@@ -517,6 +537,26 @@ func _reference_packets() -> void:
 				return
 			_reference_heartbeat_timings[-1]["echo_ms"] = Time.get_ticks_msec()
 			continue
+		if text.begins_with("partial-credit:"):
+			var fields := text.split(":")
+			var count := int(fields[4]) if fields.size() == 5 else -1
+			if (
+				packet.error != OK
+				or packet.peer_id != MeshScript.uuid_to_peer_id(PLAYERS[1 - _seat])
+				or packet.channel != 0
+				or packet.transfer_mode != MultiplayerPeer.TRANSFER_MODE_RELIABLE
+				or text != "partial-credit:%d:reference:godot:%d" % [_phase, count]
+				or count != _reference_partial_acknowledged + 1
+				or count > _reference_partial_sent
+			):
+				_fail("reference partial consumption credit differs")
+				return
+			_reference_partial_outstanding_bytes -= (
+				_reference_chunk("godot", _reference_partial_acknowledged, true).size()
+			)
+			_reference_partial_acknowledged = count
+			_reference_partial_credit_updated = Time.get_ticks_msec()
+			continue
 		if text.begins_with("credit:"):
 			var fields := text.split(":")
 			var count := int(fields[4]) if fields.size() == 5 else -1
@@ -578,6 +618,14 @@ func _reference_packets() -> void:
 				return
 			if partial:
 				_reference_partial_received += 1
+				peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_RELIABLE)
+				var credit := (
+					("partial-credit:%d:godot:reference:%d" % [_phase, _reference_partial_received])
+					. to_utf8_buffer()
+				)
+				if peer.call("put_packet", credit) != OK:
+					_fail("reference partial credit send failed")
+					return
 			else:
 				_reference_snapshot_received += 1
 				if (
@@ -797,6 +845,17 @@ func _reference_evidence() -> Dictionary:
 		"heartbeat_received": _reference_heartbeats,
 		"mixed_traffic": _reference_options.get("mixed_traffic", false),
 		"credit_transport": _reference_options.get("credit_transport", "http"),
+		"partial_sent": _reference_partial_sent,
+		"partial_received": _reference_partial_received,
+		"partial_acknowledged": _reference_partial_acknowledged,
+		"partial_credit_wait_age_ms":
+		(
+			Time.get_ticks_msec() - _reference_partial_credit_updated
+			if _reference_partial_sent > _reference_partial_acknowledged
+			else 0
+		),
+		"outstanding_partial_bytes": _reference_partial_outstanding_bytes,
+		"peak_outstanding_partial_bytes": _reference_partial_peak_bytes,
 		"snapshot_body_bytes": body_bytes,
 		"snapshot_window_bytes": window_bytes,
 		"outstanding_snapshot_bytes": _reference_outstanding_bytes,
