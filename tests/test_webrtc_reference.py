@@ -243,6 +243,136 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
                 self.assertEqual(error.exception.code, 2)
                 prepare.assert_not_called()
 
+    def test_browser_read_boundary_uses_one_clock_and_keeps_holes(self) -> None:
+        def packet(kind: str, sequence: int) -> str:
+            return f"{kind}:1:reference:{sequence}"
+
+        callbacks = [
+            {
+                "label": "reliable",
+                "dropped": 0,
+                "callbacks": [
+                    {"packet": packet("snapshot", 0), "bytes": 4100, "ms": 10},
+                    {"packet": packet("snapshot", 1), "bytes": 4100, "ms": 11},
+                    {"packet": packet("heartbeat", 0), "bytes": 90, "ms": 12},
+                    {"packet": "credit:1:reference:godot:8", "bytes": 28, "ms": 13},
+                    {"packet": "snapshot:2:reference:0", "bytes": 4100, "ms": 99},
+                ],
+            }
+        ]
+        godot = {
+            "receive_timings_dropped": 0,
+            "receive_timings": [
+                {
+                    "packet": packet("snapshot", 0),
+                    "bytes": 4100,
+                    "mode": 2,
+                    "browser_ms": 20,
+                    "ms": 1000000,
+                },
+                {
+                    "packet": packet("heartbeat", 0),
+                    "bytes": 90,
+                    "mode": 2,
+                    "browser_ms": 21,
+                    "ms": 1000001,
+                },
+                {"packet": "credit:1:reference:godot:8", "bytes": 28, "mode": 2, "browser_ms": 22},
+            ],
+        }
+        before = copy.deepcopy((godot, callbacks))
+        result = reference.browser_read_diagnostics(godot, callbacks, 1)
+        self.assertTrue(result["available"])
+        self.assertEqual(result["unread_packets"], [packet("snapshot", 1)])
+        self.assertEqual(result["peak_tracked_unread_payload_bytes"], 8318)
+        self.assertEqual(result["terminal_tracked_unread_payload_bytes"], 4100)
+        self.assertEqual(result["latency_ms"]["snapshot"]["max_ms"], 10)
+        self.assertEqual(result["latency_ms"]["heartbeat"]["max_ms"], 9)
+        self.assertEqual(result["latency_ms"]["credit"]["max_ms"], 9)
+        self.assertEqual(result["invalid_intervals"], [])
+        self.assertEqual((godot, callbacks), before)
+        drops = {
+            "records": [
+                {"ms": 9, "preceding_callback": {"packet": "snapshot:2:reference:0"}},
+                {"ms": 12, "preceding_callback": {"packet": packet("snapshot", 1)}},
+            ],
+            "dropped": 0,
+        }
+        result = reference.browser_read_diagnostics(godot, callbacks, 1, drops)
+        self.assertEqual(result["first_tracked_buffer_drop"]["ms"], 12)
+        self.assertEqual(result["tracked_unread_payload_bytes_at_first_drop"], 8290)
+        self.assertEqual(result["terminal_tracked_unread_payload_bytes"], 4100)
+        pause = {
+            "heartbeat_sent": 0,
+            "heartbeat_received": 0,
+            "heartbeat_sent_at_resume": 1,
+            "heartbeat_received_at_resume": 1,
+        }
+        result = reference.browser_read_diagnostics(godot, callbacks, 1, drops, pause)
+        cohort = result["pause_heartbeats"]
+        self.assertEqual(cohort["new_echoes_at_resume"], 1)
+        self.assertEqual(
+            cohort["intervals_ms"]["sent_during_pause"]["callback_to_read_ms"]["max_ms"], 9
+        )
+
+    def test_browser_read_boundary_keeps_incomplete_evidence_explicit(self) -> None:
+        self.assertFalse(reference.browser_read_diagnostics({}, [], 1)["available"])
+        marker = "heartbeat:1:reference:0"
+        for row in (
+            {"bytes": 90},
+            {"bytes": 90, "mode": 2, "browser_ms": 9},
+            {"bytes": 91, "mode": 2, "browser_ms": 11},
+            {"bytes": 90, "mode": 2, "browser_ms": float("nan")},
+            {"bytes": 90, "mode": 2, "browser_ms": True},
+        ):
+            with self.subTest(row=row):
+                result = reference.browser_read_diagnostics(
+                    {
+                        "receive_timings_dropped": 3,
+                        "receive_timings": [{"packet": marker, "mode": 2, **row}],
+                    },
+                    [
+                        {
+                            "label": "reliable",
+                            "dropped": 5,
+                            "callbacks": [
+                                {"packet": marker, "bytes": 90, "ms": 10},
+                            ],
+                        }
+                    ],
+                    1,
+                )
+                self.assertEqual(result["invalid_intervals"], [marker])
+                self.assertEqual(result["latency_ms"]["heartbeat"]["count"], 0)
+                self.assertEqual(result["callback_trace_dropped"], 5)
+                self.assertEqual(result["script_trace_dropped"], 3)
+                self.assertIsNone(result["peak_tracked_unread_payload_bytes"])
+
+    def test_browser_read_boundary_rejects_ambiguous_or_incomplete_traces(self) -> None:
+        marker = "snapshot:1:reference:0"
+        callback = {"packet": marker, "bytes": 4100, "ms": 10}
+        read = {"packet": marker, "bytes": 4100, "mode": 2, "browser_ms": 20}
+        for label, rows, reads, dropped in (
+            ("unreliable", [callback], [read], 0),
+            ("reliable", [callback, callback], [read], 0),
+            ("reliable", [callback], [read, read], 0),
+            ("reliable", [callback], [{**read, "mode": 0}], 0),
+            ("reliable", [callback], [read], None),
+            ("reliable", [], [read], 0),
+        ):
+            with self.subTest(label=label, callbacks=len(rows), reads=reads, dropped=dropped):
+                result = reference.browser_read_diagnostics(
+                    {"receive_timings_dropped": 0, "receive_timings": reads},
+                    [{"label": label, "dropped": dropped, "callbacks": rows}],
+                    1,
+                )
+                self.assertIsNone(result["peak_tracked_unread_payload_bytes"])
+                self.assertIsNone(result["terminal_tracked_unread_payload_bytes"])
+                if not rows:
+                    self.assertEqual(result["unmatched_script_packets"], [marker])
+                elif dropped is not None:
+                    self.assertEqual(result["invalid_intervals"], [marker])
+
     def test_snapshot_boundary_retains_callback_and_read_hole(self) -> None:
         callbacks = [
             {

@@ -442,6 +442,8 @@ func _reference_packets() -> void:
 			_reference_receive_timings.append(timing)
 		else:
 			_reference_receive_timings_dropped += 1
+		if OS.has_feature("web"):
+			timing["browser_ms"] = JavaScriptBridge.eval("performance.now()")
 		if _reference_options.get("binary_traffic", false):
 			var binary_result := _reference_accept_binary(packet)
 			if binary_result < 0:
@@ -455,6 +457,11 @@ func _reference_packets() -> void:
 			and identity_fields[0] in ["snapshot", "partial", "heartbeat"]
 		):
 			timing["packet"] = ":".join(identity_fields.slice(0, 4))
+		elif (
+			identity_fields.size() == 5
+			and identity_fields[0] in ["credit", "partial-credit"]
+		):
+			timing["packet"] = text
 		if text.begins_with("startup:"):
 			var expected := (
 				(

@@ -208,6 +208,7 @@ async function main() {
   await testSmallSnapshotWindows();
   let sample;
   const output = [];
+  const errors = [];
   const channels = [];
   const timers = new Map();
   let nextTimer = 0;
@@ -278,6 +279,8 @@ async function main() {
     window: { RTCPeerConnection: Peer },
     performance,
     TextEncoder,
+    TextDecoder,
+    ArrayBuffer,
     setInterval(callback, period) {
       assert.equal(period, 1000);
       sample = callback;
@@ -291,6 +294,9 @@ async function main() {
       timers.delete(id);
     },
     console: {
+      error(...args) {
+        errors.push(args);
+      },
       log(line) {
         if (line.startsWith("WEBRTC_BROWSER_CHANNEL ")) {
           channels.push(
@@ -347,6 +353,48 @@ async function main() {
   assert.equal(output.at(-1).peers[0].callbacks[0].callbacks.length, 1024);
   assert.equal(output.at(-1).peers[0].callbacks[0].dropped, 3);
   assert.equal(output.at(-1).peers[0].callbacks[0].packets, 1027);
+  const traced = peer.createDataChannel("reliable", { id: 1, ordered: true });
+  for (const packet of [
+    "snapshot:1:reference:7:",
+    "heartbeat:1:reference:3:",
+    "credit:1:reference:godot:8",
+    "partial-credit:2:reference:godot:4",
+  ]) {
+    traced.receive({ data: new TextEncoder().encode(packet).buffer });
+  }
+  const captured = context.window.webrtcCallbackSnapshot().at(-1);
+  assert.deepEqual(
+    Array.from(captured.callbacks, (row) => row.packet),
+    [
+      "snapshot:1:reference:7",
+      "heartbeat:1:reference:3",
+      "credit:1:reference:godot:8",
+      "partial-credit:2:reference:godot:4",
+    ],
+  );
+  assert.ok(captured.callbacks.every((row) => Number.isFinite(row.ms)));
+  context.console.error("ERROR: Buffer full! Dropping data.", "preserved");
+  const drop = context.window.webrtcDropSnapshot();
+  assert.equal(drop.records.length, 1);
+  assert.equal(
+    drop.records[0].preceding_callback.packet,
+    "partial-credit:2:reference:godot:4",
+  );
+  assert.equal(drop.records[0].preceding_callback.label, "reliable");
+  assert.ok(drop.records[0].ms >= drop.records[0].preceding_callback.ms);
+  assert.deepEqual(errors[0], [
+    "ERROR: Buffer full! Dropping data.",
+    "preserved",
+  ]);
+  drop.records[0].preceding_callback.packet = "mutated copy";
+  assert.equal(
+    context.window.webrtcDropSnapshot().records[0].preceding_callback.packet,
+    "partial-credit:2:reference:godot:4",
+  );
+  for (let i = 0; i < 130; i++)
+    context.console.error("Buffer full! Dropping data.");
+  assert.equal(context.window.webrtcDropSnapshot().records.length, 128);
+  assert.equal(context.window.webrtcDropSnapshot().dropped, 3);
   peer.fail = true;
   await sample();
   assert.match(output.at(-1).peers[0].error, /sample unavailable/);

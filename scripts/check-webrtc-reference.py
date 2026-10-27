@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import re
 import shutil
 import subprocess
 import tempfile
@@ -362,6 +363,136 @@ def snapshot_receive_diagnostics(
     }
 
 
+def browser_read_diagnostics(
+    godot: dict[str, object],
+    callbacks: list[dict[str, object]],
+    phase: object,
+    drops: dict[str, object] | None = None,
+    pause: dict[str, object] | None = None,
+) -> dict[str, object]:
+    pattern = re.compile(
+        rf"(?:snapshot|partial|heartbeat):{phase}:reference:[0-9]+"
+        rf"|(?:credit|partial-credit):{phase}:reference:godot:[0-9]+"
+    )
+
+    def index(records: list[dict[str, object]]) -> dict[str, list[dict[str, object]]]:
+        result: dict[str, list[dict[str, object]]] = {}
+        for row in records:
+            marker = row.get("packet")
+            if isinstance(marker, str) and pattern.fullmatch(marker):
+                result.setdefault(marker, []).append(row)
+        return result
+
+    browser = index(
+        [
+            {**row, "label": channel.get("label")}
+            for channel in callbacks
+            for row in diagnostic_records(channel.get("callbacks"))
+        ]
+    )
+    script = index(diagnostic_records(godot.get("receive_timings")))
+    invalid = []
+    events: list[tuple[float, int]] = []
+    latencies: dict[str, list[dict[str, object]]] = {
+        kind: [] for kind in ("snapshot", "partial", "heartbeat", "credit", "partial-credit")
+    }
+    for marker, rows in browser.items():
+        callback = rows[0]
+        read_rows = script.get(marker, [])
+        size = callback.get("bytes")
+        at = callback.get("ms")
+        if (
+            len(rows) != 1
+            or callback.get("label") != "reliable"
+            or len(read_rows) > 1
+            or type(size) is not int
+            or size < 0
+            or diagnostic_interval(at, at) is None
+        ):
+            invalid.append(marker)
+            continue
+        events.append((cast(float, at), size))
+        if not read_rows:
+            continue
+        read = read_rows[0]
+        latency = diagnostic_interval(at, read.get("browser_ms"))
+        if (
+            latency is None
+            or type(read.get("bytes")) is not int
+            or read["bytes"] != size
+            or type(read.get("mode")) is not int
+            or read["mode"] != 2
+        ):
+            invalid.append(marker)
+            continue
+        events.append((cast(float, read["browser_ms"]), -size))
+        latencies[marker.split(":")[0]].append(
+            {"sequence": int(marker.split(":")[-1]), "callback_to_read_ms": latency}
+        )
+    unmatched = sorted(script.keys() - browser.keys())
+    dropped = sum(
+        cast(int, channel["dropped"])
+        for channel in callbacks
+        if type(channel.get("dropped")) is int
+    )
+    script_dropped = godot.get("receive_timings_dropped")
+    occupancy_valid = (
+        bool(browser)
+        and type(script_dropped) is int
+        and script_dropped == 0
+        and all(
+            type(channel.get("dropped")) is int and channel["dropped"] == 0 for channel in callbacks
+        )
+        and not (invalid or unmatched)
+    )
+    first_drop = next(
+        (
+            drop
+            for drop in diagnostic_records((drops or {}).get("records"))
+            if isinstance(diagnostic_mapping(drop.get("preceding_callback")).get("packet"), str)
+            and pattern.fullmatch(
+                cast(str, diagnostic_mapping(drop.get("preceding_callback"))["packet"])
+            )
+            and diagnostic_interval(drop.get("ms"), drop.get("ms")) is not None
+        ),
+        None,
+    )
+    at_drop = None
+    if first_drop is not None and occupancy_valid:
+        at_drop = sum(delta for at, delta in events if at <= cast(float, first_drop["ms"]))
+    pending = peak = 0
+    # Equal timestamps keep arrivals before reads, giving the conservative peak.
+    for _, delta in sorted(events, key=lambda event: (event[0], -event[1])):
+        pending += delta
+        peak = max(peak, pending)
+    return {
+        "phase": phase,
+        "available": bool(browser),
+        "clock": "browser performance.now; script read timestamps are sampled after get_packet",
+        "latency_ms": {
+            kind: timing_distribution(rows, "callback_to_read_ms")
+            for kind, rows in latencies.items()
+        },
+        "pause_heartbeats": heartbeat_pause_diagnostics(
+            latencies["heartbeat"], pause or {}, ("callback_to_read_ms",)
+        ),
+        "unread_packets": sorted(browser.keys() - script.keys()),
+        "unmatched_script_packets": unmatched,
+        "invalid_intervals": sorted(invalid),
+        "peak_tracked_unread_payload_bytes": peak if occupancy_valid else None,
+        "terminal_tracked_unread_payload_bytes": pending if occupancy_valid else None,
+        "first_tracked_buffer_drop": first_drop,
+        "drop_trace_dropped": (drops or {}).get("dropped"),
+        "tracked_unread_payload_bytes_at_first_drop": at_drop,
+        "callback_trace_dropped": dropped
+        if all(type(channel.get("dropped")) is int for channel in callbacks)
+        else None,
+        "script_trace_dropped": script_dropped,
+        "channel_in_buffer_kb": godot.get("channel_in_buffer_kb"),
+        "limits": "Tracks reliable snapshot, partial, heartbeat and credit payloads only. Unread bytes can be queued, cached or dropped. This is not engine ring occupancy; framing and other packets are excluded. Instrumentation adds a synchronous browser clock read per script read.",
+    }
+
+
 def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, object]:
     evidence = diagnostic_mapping(report.get("godot_evidence"))
     failure = diagnostic_mapping(evidence.get("diagnostic"))
@@ -421,6 +552,23 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
         "snapshot_receive_phases": [
             snapshot_receive_diagnostics(
                 item, diagnostic_records(report.get("godot_browser_callbacks")), phase
+            )
+            for phase, item in local.items()
+        ],
+        "browser_read_phases": [
+            browser_read_diagnostics(
+                item,
+                diagnostic_records(report.get("godot_browser_callbacks")),
+                phase,
+                diagnostic_mapping(report.get("godot_browser_drops")),
+                next(
+                    (
+                        diagnostic_mapping(ref.get("receive_pause"))
+                        for ref in reference_phases
+                        if ref.get("phase") == phase
+                    ),
+                    {},
+                ),
             )
             for phase, item in local.items()
         ],
@@ -1528,6 +1676,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     try:
                         report["godot_browser_callbacks"] = page.evaluate(
                             "window.webrtcCallbackSnapshot?.() ?? null"
+                        )
+                        report["godot_browser_drops"] = page.evaluate(
+                            "window.webrtcDropSnapshot?.() ?? null"
                         )
                     except Exception as exc:
                         report["godot_browser_callbacks_error"] = str(exc)
