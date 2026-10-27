@@ -5,6 +5,34 @@
   let closed = 0;
   let sampling = false;
   const callbackChannels = [];
+  const drops = [];
+  let dropsOmitted = 0;
+  let precedingCallback = null;
+  const reportError = console.error;
+  console.error = function (...args) {
+    if (
+      args.some((value) =>
+        String(value).includes("Buffer full! Dropping data."),
+      )
+    ) {
+      if (drops.length < 128)
+        drops.push({
+          ms: performance.now(),
+          preceding_callback: precedingCallback,
+        });
+      else dropsOmitted++;
+    }
+    return Reflect.apply(reportError, this, args);
+  };
+  window.webrtcDropSnapshot = () => ({
+    records: drops.map((drop) => ({
+      ...drop,
+      preceding_callback: drop.preceding_callback
+        ? { ...drop.preceding_callback }
+        : null,
+    })),
+    dropped: dropsOmitted,
+  });
   window.webrtcCallbackSnapshot = () =>
     callbackChannels.map((channel) => ({
       ...channel,
@@ -51,12 +79,22 @@
               /^(snapshot|partial|heartbeat):(1|2):(godot|reference):(\d+):/.exec(
                 prefix,
               );
+            const credit =
+              /^(credit|partial-credit):(1|2):(godot|reference):(godot|reference):(\d+)$/.exec(
+                prefix,
+              );
             received.callbacks.push({
               ms: performance.now(),
               bytes,
-              packet: match ? match.slice(1).join(":") : null,
+              packet: (match ?? credit)?.slice(1).join(":") ?? null,
             });
           } else received.dropped++;
+          precedingCallback = {
+            peer: id,
+            label: channel.label,
+            ...(received.callbacks.at(-1) ?? {}),
+          };
+          if (received.dropped) precedingCallback = null;
         });
         console.log(
           "WEBRTC_BROWSER_CHANNEL " +
