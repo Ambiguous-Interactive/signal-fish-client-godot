@@ -1,11 +1,35 @@
 """JSONL control bridge for the opt-in native reference Engine drill."""
 
+import base64
+import binascii
 import json
+import re
 import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import cast
+
+
+def packet_marker(value: dict[str, object]) -> str | None:
+    text = value.get("marker", value.get("text"))
+    if not isinstance(text, str) and isinstance(value.get("data_base64"), str):
+        try:
+            text = base64.b64decode(cast(str, value["data_base64"])[:160], validate=True).decode(
+                "ascii", errors="replace"
+            )
+        except (ValueError, binascii.Error):
+            return None
+    if not isinstance(text, str):
+        return None
+    marker = ":".join(text.split(":")[:4])
+    return (
+        marker
+        if re.fullmatch(
+            r"heartbeat:[12]:reference:[0-9]+|reference:[12]:(?:reliable|unreliable)", marker
+        )
+        else None
+    )
 
 
 class NativeReference:
@@ -89,6 +113,7 @@ class NativeReference:
                         probe_us=value.get("probe_us"),
                         generation=value.get("generation"),
                         label=value.get("label"),
+                        marker=packet_marker(value),
                     )
                     if "id" in value:
                         self.replies[cast(int, value["id"])] = value
@@ -117,6 +142,11 @@ class NativeReference:
                     packets=len(cast(list[object], value["packets"]))
                     if isinstance(value.get("packets"), list)
                     else None,
+                    markers=[
+                        {"marker": marker, "label": packet.get("label")}
+                        for packet in cast(list[dict[str, object]], value.get("packets", [value]))
+                        if (marker := packet_marker(packet)) is not None
+                    ],
                 )
             self.process.stdin.write(json.dumps({**value, "id": command_id}) + "\n")
             self.process.stdin.flush()
@@ -140,6 +170,17 @@ class NativeReference:
             if self.error:
                 raise RuntimeError(self.error)
             events, self.events = self.events, []
+            for event in events:
+                marker = packet_marker(event)
+                if marker is not None or event.get("event") == "closed":
+                    self._trace(
+                        "delivery",
+                        event=event.get("event"),
+                        generation=event.get("generation"),
+                        label=event.get("label"),
+                        probe_us=event.get("probe_us"),
+                        marker=marker,
+                    )
             return events
 
     def close(self) -> None:

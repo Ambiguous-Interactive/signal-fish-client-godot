@@ -2,7 +2,169 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
+async function testRetirementCollection() {
+  for (const closeSeat of ["godot", "reference"]) {
+    for (const closeKind of [
+      "valid",
+      "absent",
+      "wrong-channel",
+      "deadline",
+      "cleanup",
+    ]) {
+      let clock = 0;
+      let active;
+      let currentPhase = 0;
+      let ready = false;
+      let retiringAt = null;
+      const phases = [];
+      const context = {
+        window: {},
+        AbortController: class extends AbortController {
+          abort() {
+            if (closeKind === "cleanup") {
+              clock += 20;
+              active.callbacks.onChannelClosed(
+                "godot",
+                currentPhase,
+                "reliable",
+                "timeout cleanup",
+              );
+            }
+            super.abort();
+          }
+        },
+        performance: { now: () => clock },
+        console: { log() {}, error() {} },
+        setTimeout: (callback) =>
+          setImmediate(() => {
+            clock += 20;
+            if (
+              closeKind !== "absent" &&
+              closeKind !== "cleanup" &&
+              retiringAt !== null &&
+              (closeKind === "deadline"
+                ? clock >= 14000
+                : clock - retiringAt >= 100)
+            ) {
+              retiringAt = null;
+              active.callbacks.onChannelClosed(
+                "godot",
+                currentPhase,
+                closeKind !== "wrong-channel" || closeSeat === "reference"
+                  ? "ordered"
+                  : "unknown",
+                "delayed",
+              );
+              if (closeSeat === "reference" && closeKind !== "wrong-channel")
+                active.callbacks.onChannelClosed(
+                  "godot",
+                  currentPhase,
+                  "reliable",
+                  "delayed",
+                );
+            }
+            callback();
+          }),
+        Engine: class {
+          nativeProfile = true;
+          paired = false;
+          constructor(_verbose, callbacks) {
+            this.callbacks = callbacks;
+            active = this;
+            currentPhase++;
+            ready = false;
+          }
+          async pairWith() {
+            this.paired = true;
+            return null;
+          }
+          channel() {
+            return null;
+          }
+          diagnosticSnapshot() {
+            return {};
+          }
+          async removePeer() {
+            this.paired = false;
+            phases.push(
+              context.window.referenceResults
+                .at(-1)
+                ?.retirement.closed_labels.slice(),
+            );
+          }
+          isPaired() {
+            return this.paired;
+          }
+        },
+        fetch: async (_url, options) => ({
+          ok: true,
+          json: async () => {
+            if (options?.method === "POST") return [];
+            if (!ready) {
+              ready = true;
+              return [{ marker: `ready-${currentPhase}` }];
+            }
+            if (
+              context.window.referenceResults.length === currentPhase &&
+              retiringAt === null
+            ) {
+              retiringAt = clock;
+              return [{ marker: `retired-${currentPhase}` }];
+            }
+            return [];
+          },
+        }),
+      };
+      vm.runInNewContext(
+        fs
+          .readFileSync("tests/smoke/webrtc_reference.js", "utf8")
+          .replace(/^import .*;\n/, ""),
+        context,
+      );
+      await context.window.runReference(
+        0,
+        true,
+        false,
+        "http",
+        false,
+        "reliable",
+        closeSeat,
+      );
+      if (closeKind === "valid") {
+        assert.equal(context.window.referenceError, null);
+        assert.equal(context.window.referenceDone, true);
+        assert.equal(context.window.referenceResults.length, 2);
+        for (const result of context.window.referenceResults) {
+          assert.ok(result.retirement.closed_labels.includes("ordered"));
+          if (closeSeat === "reference")
+            assert.ok(result.retirement.closed_labels.includes("reliable"));
+        }
+        assert.ok(phases[0].length > 0);
+      } else {
+        assert.match(
+          context.window.referenceError,
+          /missing reference channel-close callback/,
+        );
+        assert.equal(context.window.referenceDone, undefined);
+        assert.ok(context.window.referenceTerminal.elapsed_ms >= 14000);
+        assert.equal(currentPhase, 1);
+        if (closeKind === "cleanup")
+          assert.equal(
+            context.window.referenceTerminal.retirement.closed_labels.length,
+            0,
+          );
+        if (closeKind === "deadline")
+          assert.ok(
+            context.window.referenceTerminal.retirement.closed_labels.length >
+              0,
+          );
+      }
+    }
+  }
+}
+
 module.exports = async function testNativeReference() {
+  await testRetirementCollection();
   const operations = [];
   const releaseSignals = [];
   const context = {
@@ -165,6 +327,27 @@ module.exports = async function testNativeReference() {
       }),
     /Invalid character/,
   );
+  engine.dispatch({
+    event: "closed",
+    generation: 1,
+    label: "reliable",
+    probe_us: 10,
+  });
+  assert.equal(engine.diagnosticSnapshot().native_closed.length, 0);
+  engine.dispatch({
+    event: "closed",
+    generation: 2,
+    label: "reliable",
+    probe_us: 20,
+  });
+  const closeTrace = engine.diagnosticSnapshot().native_closed;
+  assert.equal(closeTrace.length, 1);
+  assert.equal(closeTrace[0].label, "reliable");
+  assert.equal(closeTrace[0].generation, 2);
+  assert.equal(closeTrace[0].probe_us, 20);
+  assert.equal(typeof closeTrace[0].callback_ms, "number");
+  closeTrace[0].label = "mutated copy";
+  assert.equal(engine.diagnosticSnapshot().native_closed[0].label, "reliable");
   assert.throws(() => channel.sendBinary([0, 255]), /needs Uint8Array/);
   channel.send("first");
   for (const data of payloads) channel.sendBinary(data);
@@ -211,6 +394,13 @@ module.exports = async function testNativeReference() {
     label: "reliable",
     data_base64: "",
   });
+  engine.dispatch({
+    event: "closed",
+    generation: 2,
+    label: "unreliable",
+    probe_us: 30,
+  });
+  assert.equal(engine.diagnosticSnapshot().native_closed.length, 1);
   assert.equal(received.length, beforeRetired);
 
   const boundaryStart = operations.length;

@@ -17,11 +17,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Locate the missing initial unreliable probe after loaded native rejoin
-      using exact enqueue, SCTP transmit/abandon, ingress and read evidence
-      (#458). Keep its strict verdict separate from reliable snapshot loss.
-- [ ] Match native close emission to bridge callbacks before recording
-      retirement evidence (#461).
+- [ ] Compare newly traced pending expiry of the initial unreliable probe
+      with transmitted probe gaps and remote-network controls (#458).
+      Keep strict initial-probe failures separate from reliable snapshot loss;
+      the historical untraced packet's cause remains open.
 - [ ] Clarify the empty-packet script API contract upstream before qualifying
       zero-byte mesh sends and safe-peer receives (#437).
 - [ ] Complete upstream engine metadata repair and remote-network qualification

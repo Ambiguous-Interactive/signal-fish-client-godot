@@ -24,6 +24,115 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_bridge_packet_intervals_keep_clocks_and_missing_receipts_separate(self) -> None:
+        marker = "heartbeat:1:reference:3"
+        records = [
+            {
+                "stage": "command",
+                "id": 7,
+                "us": 1000,
+                "markers": [{"marker": marker, "label": "reliable"}],
+            },
+            {"stage": "written", "id": 7, "us": 4000},
+            {"stage": "output", "event": "sent", "marker": marker, "probe_us": 9000000, "us": 5000},
+            {"stage": "reply", "id": 7, "us": 6000},
+            {
+                "stage": "output",
+                "event": "binary",
+                "marker": marker,
+                "probe_us": 9100000,
+                "us": 7000,
+            },
+            {
+                "stage": "delivery",
+                "event": "binary",
+                "marker": marker,
+                "probe_us": 9100000,
+                "us": 19000,
+            },
+        ]
+        for fault in ("none", "missing", "duplicate", "reversed"):
+            with self.subTest(fault=fault):
+                changed = copy.deepcopy(records)
+                if fault == "missing":
+                    changed.pop()
+                elif fault == "duplicate":
+                    changed.append(changed[-2])
+                elif fault == "reversed":
+                    changed[-1]["us"] = 6500
+                result = reference.native_bridge_packet_diagnostics(
+                    {"records": changed, "dropped": 2}
+                )
+                packet = result["packets"][0]
+                self.assertEqual(packet["pipe_write_ms"], 3)
+                self.assertEqual(packet["command_reply_ms"], 5)
+                self.assertEqual(packet["reader_to_delivery_ms"], 12 if fault == "none" else None)
+                self.assertEqual(
+                    len(packet["native_receive_outputs"]), 2 if fault == "duplicate" else 1
+                )
+                self.assertEqual(result["trace_overflow"], 2)
+        self.assertEqual(reference.native_bridge_packet_diagnostics({})["packets"], [])
+
+    def test_bridge_packet_identity_covers_text_and_binary(self) -> None:
+        import base64
+
+        marker = reference.native_reference.packet_marker
+        for text in ("heartbeat:1:reference:0:body", "reference:2:unreliable"):
+            expected = ":".join(text.split(":")[:4])
+            self.assertEqual(marker({"text": text}), expected)
+            self.assertEqual(
+                marker({"data_base64": base64.b64encode(text.encode()).decode()}), expected
+            )
+        for value in (
+            {"text": "opaque-body"},
+            {"data_base64": "%%%"},
+            {"text": "heartbeat:3:reference:0:body"},
+        ):
+            self.assertIsNone(marker(value))
+
+    def test_bridge_batch_retains_packet_identity_through_event_delivery(self) -> None:
+        import sys
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            probe = directory / "probe"
+            probe.write_text(
+                "#!" + sys.executable + "\n"
+                "import sys,json,base64\n"
+                "for line in sys.stdin:\n"
+                " v=json.loads(line)\n"
+                " for packet in v['packets']:\n"
+                "  text=packet['text']\n"
+                "  print(json.dumps({'event':'sent','generation':2,'label':packet['label'],"
+                "'marker':':'.join(text.split(':')[:4]),'probe_us':1}),flush=True)\n"
+                "  print(json.dumps({'event':'binary','generation':2,'label':packet['label'],"
+                "'data_base64':base64.b64encode(text.encode()).decode(),'probe_us':2}),flush=True)\n"
+                " print(json.dumps({'id':v['id'],'result':None}),flush=True)\n"
+            )
+            probe.chmod(0o700)
+            bridge = reference.native_reference.NativeReference(probe, directory)
+            packets = [
+                {"op": "send", "label": "reliable", "text": "heartbeat:1:reference:0:opaque-body"},
+                {"op": "send", "label": "unreliable", "text": "reference:1:unreliable"},
+            ]
+            try:
+                bridge.command({"op": "send_batch", "packets": packets})
+                self.assertEqual(len(bridge.drain()), 4)
+                timing = bridge.timing_snapshot()
+                result = reference.native_bridge_packet_diagnostics(timing)
+                self.assertEqual(len(result["packets"]), 2)
+                for packet, expected in zip(result["packets"], packets, strict=True):
+                    self.assertEqual(packet["label"], expected["label"])
+                    self.assertEqual(packet["command_id"], 1)
+                    self.assertGreaterEqual(packet["pipe_write_ms"], 0)
+                    self.assertGreaterEqual(packet["reader_to_delivery_ms"], 0)
+                    self.assertEqual(len(packet["native_send_outputs"]), 1)
+                    self.assertEqual(len(packet["native_receive_outputs"]), 1)
+                    self.assertEqual(len(packet["deliveries"]), 1)
+                self.assertNotIn("opaque-body", json.dumps(timing))
+            finally:
+                bridge.close()
+
     def test_reference_consumer_drains_in_order_with_an_independent_budget(self) -> None:
         harness = r"""
 import { readFileSync } from "node:fs";

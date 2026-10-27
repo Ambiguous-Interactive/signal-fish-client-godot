@@ -92,6 +92,8 @@ export class Engine {
     this.channels = new Map();
     this.heartbeatReceived = [];
     this.heartbeatReceivedDropped = 0;
+    this.closedTimings = [];
+    this.closedTimingsDropped = 0;
     this.sentTimings = [];
     this.sentTimingsDropped = 0;
     this.startupPhase = 0;
@@ -159,6 +161,8 @@ export class Engine {
       timings_dropped: timingsDropped,
       native_heartbeat_received: this.heartbeatReceived.slice(),
       native_heartbeat_received_dropped: this.heartbeatReceivedDropped,
+      native_closed: this.closedTimings.map((entry) => ({ ...entry })),
+      native_closed_dropped: this.closedTimingsDropped,
       native_sent: this.sentTimings.slice(),
       native_sent_dropped: this.sentTimingsDropped,
       channels: Object.fromEntries(
@@ -245,6 +249,14 @@ export class Engine {
         this.startupSent = event.count;
         break;
       case "closed":
+        if (this.closedTimings.length < 128)
+          this.closedTimings.push({
+            label: event.label,
+            generation: event.generation,
+            probe_us: event.probe_us,
+            callback_ms: performance.now(),
+          });
+        else this.closedTimingsDropped++;
         if (this.channels.has(event.label))
           this.channels.get(event.label).readyState = "closed";
         this.callbacks.onChannelClosed(...args, event.label, "native callback");

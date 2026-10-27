@@ -214,6 +214,49 @@ including failures before the six-second observation. The original observation
 stays separate. Read failures include the engine error, sender, mode, channel
 and byte count.
 
+`diagnostics.native_bridge_packets` joins initial probes and heartbeats to
+their command IDs, native output and HTTP event collection. `pipe_write_ms`
+measures command issue to pipe flush. `command_reply_ms` ends at reply delivery.
+`reader_to_delivery_ms` measures native output observation to HTTP collection;
+browser dispatch happens later. Missing or duplicate receipts leave this
+interval unset. Batch commands share command times. Packet markers retain
+phase and sequence; packet bodies stay in the existing JSONL artifact.
+
+The reference collector waits for actual required channel-close callbacks
+within the original phase deadline before recording retirement. A remove
+reply alone cannot complete this check. Native snapshots retain `native_closed`
+records with generation, label, native emission time and browser dispatch time.
+Delayed callbacks remain separate from missing callbacks (#461).
+
+Set `SF_REFERENCE_TRACE` to a tracing filter when running the native probe to
+retain opt-in transport logs in `native-reference.stderr`. Trace timestamps use
+the same `probe_us` origin as JSONL events. Available transport detail depends
+on the reference build. Keep the exact source, binary hash and any local trace
+patches with the run; an enqueue trace alone cannot prove packet expiry (#458).
+
+For packet-level SCTP controls at reference commit
+`67725d677ff0fdb662d041af9b175d8a6d08c75f`, apply the optional trace patch
+before building the probe:
+
+```sh
+git -C /path/to/server apply /path/to/client/tests/smoke/webrtc_sctp_trace.patch
+SF_REFERENCE_TRACE=godot_packet=trace python scripts/check-webrtc-reference.py \
+  --native-reference-probe /path/to/probe --native-extension /path/to/webrtc_native \
+  --reference-revision 67725d677ff0fdb662d041af9b175d8a6d08c75f \
+  --runtime native --offerer godot --safe-receive --mixed-traffic \
+  --startup-burst --credit-transport webrtc --require-gameplay \
+  --output /tmp/reference-sctp
+```
+
+The patch records packetization, transmit selection and pending/inflight
+abandonment with stream, message and bounded packet identity. Transmit
+selection is an SCTP boundary; it does not prove remote ingress. A loaded
+Godot 4.3 service-rejoin control captured the phase-2 initial unreliable probe
+being abandoned while pending, with `nsent=0`, 3.867 ms after packetization.
+Its strict initial-probe check failed while all reliable receipts passed.
+Enabled tracing adds scheduling and I/O overhead. This explains that captured
+packet; the older #458 history still lacks a packet-level trace. Keep finite packet loss separate from reliable loss.
+
 Add `--startup-burst` to send 32 reliable packets per seat and generation
 without consumption credit. The native probe sends directly at reliable-channel
 open, before reporting that open to the browser coordinator. Godot sends when
