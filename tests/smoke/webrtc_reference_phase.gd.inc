@@ -28,6 +28,8 @@ var _reference_received: Dictionary = {}
 var _reference_options: Dictionary = {}
 var _reference_receive_pause: Dictionary = {}
 var _reference_retirement: Dictionary = {}
+var _reference_receive_schedule: Dictionary = {}
+var _reference_last_drain := -1
 var _reference_receiver: MultiplayerPeer
 
 
@@ -65,6 +67,15 @@ func _run_phase(phase: int) -> bool:
 	_reference_options = JSON.parse_string(
 		FileAccess.get_file_as_string("res://reference-options.json")
 	)
+	_reference_last_drain = -1
+	_reference_receive_schedule = {
+		"batch_packets": _reference_options.get("receive_batch_packets", 32),
+		"interval_ms": _reference_options.get("receive_interval_ms", 0),
+		"skipped": 0,
+		"max_gap_ms": 0,
+		"drains": [],
+		"dropped": 0,
+	}
 	var window_bytes: int = _reference_options.get("snapshot_window_bytes", 0)
 	var body_bytes: int = _reference_options.get("snapshot_body_bytes", 1024)
 	_reference_credit_stride = 8
@@ -370,7 +381,27 @@ func _reference_packets() -> void:
 					_fail("reference partial snapshot send failed")
 					return
 				_reference_partial_sent += 1
-	for _read: int in 32:
+	if not _reference_sent or _mesh._count_connected_peers() != 1:
+		return
+	if _reference_pause_reads(peer):
+		return
+	var now := Time.get_ticks_msec()
+	var interval: int = _reference_receive_schedule["interval_ms"]
+	if _reference_last_drain >= 0 and now - _reference_last_drain < interval:
+		_reference_receive_schedule["skipped"] += 1
+		return
+	if _reference_last_drain >= 0:
+		var max_gap: int = _reference_receive_schedule["max_gap_ms"]
+		_reference_receive_schedule["max_gap_ms"] = maxi(max_gap, now - _reference_last_drain)
+	_reference_last_drain = now
+	var drain := {"ms": now, "reads": 0}
+	var drains: Array = _reference_receive_schedule["drains"]
+	if drains.size() < 1024:
+		drains.append(drain)
+	else:
+		_reference_receive_schedule["dropped"] += 1
+	var batch: int = _reference_receive_schedule["batch_packets"]
+	for _read: int in batch:
 		if _reference_pause_reads(peer):
 			return
 		if _safe_receive and _mesh.get_safe_multiplayer_peer().get_available_packet_count() == 0:
@@ -380,6 +411,7 @@ func _reference_packets() -> void:
 		)
 		if packet == null:
 			break
+		drain["reads"] += 1
 		var timing := {
 			"ms": Time.get_ticks_msec(),
 			"bytes": packet.data.size(),
@@ -398,7 +430,10 @@ func _reference_packets() -> void:
 				continue
 		var text := packet.data.get_string_from_utf8()
 		var identity_fields := text.split(":", true, 4)
-		if identity_fields.size() == 5 and identity_fields[0] in ["snapshot", "partial", "heartbeat"]:
+		if (
+			identity_fields.size() == 5
+			and identity_fields[0] in ["snapshot", "partial", "heartbeat"]
+		):
 			timing["packet"] = ":".join(identity_fields.slice(0, 4))
 		if text.begins_with("startup:"):
 			var expected := (
@@ -769,6 +804,7 @@ func _reference_evidence() -> Dictionary:
 		"heartbeat_timings": _reference_heartbeat_timings.duplicate(true),
 		"receive_timings": _reference_receive_timings.duplicate(true),
 		"receive_timings_dropped": _reference_receive_timings_dropped,
+		"receive_schedule": _reference_receive_schedule.duplicate(true),
 		"snapshot_sent": _reference_snapshot_sent,
 		"snapshot_received": _reference_snapshot_received,
 		"snapshot_acknowledged": _reference_acknowledged,

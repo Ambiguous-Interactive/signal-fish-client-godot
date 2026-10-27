@@ -672,6 +672,39 @@ Requests are canceled and settled before the next generation starts.
 These opt-in local controls keep the existing deadlines. They do not simulate
 WebRTC network delay or establish the cause of #396.
 
+### Active Godot reader budgets
+
+Use `--receive-batch-packets 1` to limit each Godot gameplay drain to one
+packet. Use `--receive-interval-ms 250` to allow drains every 250 ms or later.
+The defaults remain 32 packets per drain and no extra interval. These controls
+keep engine polling, signaling and outgoing sends active. They apply to all
+incoming gameplay packets, including heartbeats and consumption credits.
+They model application read scheduling; they do not delay the network or block
+the Godot main thread.
+
+Add these flags to the reference command above. Compare the same schedule with
+`--snapshot-body-bytes 4096` and then with
+`--snapshot-window-bytes 16512`. Use a fresh output directory for each run.
+Repeat with `--credit-transport http` and `webrtc`. Add
+`--slow-reference-receiver` to check fresh heartbeat round trips during a
+reference consumer pause while the Godot reader keeps its chosen schedule.
+Keep `--require-gameplay` enabled. A control that loses a reliable chunk or
+misses the heartbeat pause proof must fail.
+
+Each Godot phase and failure record retains `receive_schedule`: requested
+batch size and interval, skipped drain calls, the largest observed drain gap,
+and up to 1024 drain start times with actual packet counts. Custom schedules
+require complete evidence with no drain above the packet budget and no start
+earlier than the requested interval. The original deadlines and exact receipt
+requirements still apply. A small byte window can reduce throughput enough to
+hit a deadline with a slow reader; choose controls that expose that outcome.
+
+A slow active reader can fill the engine receive buffer even when it never
+uses the explicit 1500 ms pause. Budget gameplay bytes against receive capacity
+and measured drain cadence. Passing a paced control establishes that control's
+behavior; the historical active-reader loss (#442), delayed echoes (#440), and
+three-seat credit stall (#396) each need their own matched reproduction.
+
 ### Slow browser reference consumer
 
 Use `--slow-reference-receiver --mixed-traffic` with the Web/reference-offer

@@ -381,6 +381,7 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
         "channel_in_buffer_kb",
         "channel_queues",
         "credit_wait_age_ms",
+        "receive_schedule",
     )
     queue = diagnostic_mapping(state.get("reference"))
     return {
@@ -978,6 +979,8 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
                 "startup_burst": getattr(args, "startup_burst", False),
                 "snapshot_body_bytes": getattr(args, "snapshot_body_bytes", 1024),
                 "snapshot_window_bytes": getattr(args, "snapshot_window_bytes", 0),
+                "receive_batch_packets": getattr(args, "receive_batch_packets", 32),
+                "receive_interval_ms": getattr(args, "receive_interval_ms", 0),
                 "receive_empty_binary": getattr(args, "receive_empty_binary", False),
                 "binary_traffic": getattr(args, "binary_traffic", False),
                 "binary_payloads": binary_payloads(
@@ -1008,6 +1011,38 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
             directory / "export.log",
         )
     return project
+
+
+def receive_schedule_passed(phase: dict[str, object], batch: int, interval: int) -> bool:
+    if batch == 32 and interval == 0:
+        return True
+    schedule = diagnostic_mapping(phase.get("receive_schedule"))
+    raw_drains = schedule.get("drains")
+    if not isinstance(raw_drains, list):
+        return False
+    drains = diagnostic_records(raw_drains)
+    previous = None
+    if (
+        schedule.get("batch_packets") != batch
+        or schedule.get("interval_ms") != interval
+        or type(schedule.get("dropped")) is not int
+        or schedule["dropped"] != 0
+        or not drains
+        or len(drains) != len(raw_drains)
+    ):
+        return False
+    for drain in drains:
+        at, reads = drain.get("ms"), drain.get("reads")
+        if (
+            type(at) is not int
+            or type(reads) is not int
+            or not 0 <= reads <= batch
+            or at < 0
+            or (previous is not None and at - previous < interval)
+        ):
+            return False
+        previous = at
+    return True
 
 
 def gameplay_phase_checks(
@@ -1050,6 +1085,11 @@ def gameplay_phase_checks(
         "receive_capacity": (
             not getattr(args, "channel_in_buffer_kb", 0)
             or godot.get("channel_in_buffer_kb") == args.channel_in_buffer_kb
+        ),
+        "receive_schedule": receive_schedule_passed(
+            godot,
+            getattr(args, "receive_batch_packets", 32),
+            getattr(args, "receive_interval_ms", 0),
         ),
         "heartbeat_totals": heartbeat_phase_passed(godot, ref, args.mixed_traffic),
         "retirement": retirement_passed(
@@ -1194,6 +1234,8 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "snapshot_body_bytes": getattr(args, "snapshot_body_bytes", 1024),
         "snapshot_window_bytes": getattr(args, "snapshot_window_bytes", 0),
         "channel_in_buffer_kb": getattr(args, "channel_in_buffer_kb", 0),
+        "receive_batch_packets": getattr(args, "receive_batch_packets", 32),
+        "receive_interval_ms": getattr(args, "receive_interval_ms", 0),
         "receive_empty_binary": getattr(args, "receive_empty_binary", False),
         "binary_traffic": getattr(args, "binary_traffic", False),
         "empty_binary": getattr(args, "empty_binary", False),
@@ -1527,6 +1569,18 @@ def main() -> None:
         default=0,
         help="Additional outstanding snapshot byte limit; 0 keeps the packet window",
     )
+    parser.add_argument(
+        "--receive-batch-packets",
+        type=int,
+        default=32,
+        help="Maximum Godot gameplay packets read per drain, 1-256",
+    )
+    parser.add_argument(
+        "--receive-interval-ms",
+        type=int,
+        default=0,
+        help="Minimum interval between Godot gameplay drains, 0-1000 ms; signaling keeps polling",
+    )
     parser.add_argument("--chromium")
     parser.add_argument(
         "--safe-receive", action="store_true", help="Read through the RPC-safe peer"
@@ -1579,6 +1633,10 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if not 1 <= args.receive_batch_packets <= 256:
+        parser.error("--receive-batch-packets must be 1-256")
+    if not 0 <= args.receive_interval_ms <= 1000:
+        parser.error("--receive-interval-ms must be 0-1000")
     if args.channel_in_buffer_kb < 0 or args.channel_in_buffer_kb > 16384:
         parser.error("--channel-in-buffer-kb must be 0-16384")
     if not 16 <= args.snapshot_body_bytes <= 16384 or args.snapshot_body_bytes % 16:
