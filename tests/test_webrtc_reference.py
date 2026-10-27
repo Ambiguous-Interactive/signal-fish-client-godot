@@ -1973,6 +1973,113 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
                 )
             )
 
+    def test_reference_receives_credit_while_its_outgoing_post_is_held(self) -> None:
+        harness = r"""
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+const source = readFileSync(0, "utf8").split("\n").slice(1).join("\n");
+const failure = process.argv[1];
+let rejectPost, releasePost;
+let clock = 1, hooks, fed = false, ready = false, held = false, credited = false;
+let sent = 0, getsWhileHeld = 0, aborted = 0;
+const active = {GET: 0, POST: 0}, peak = {GET: 0, POST: 0};
+const posted = [];
+const context = {
+  window: {}, AbortController, DOMException, TextDecoder, TextEncoder,
+  performance: { now: () => clock },
+  console: { log() {}, error() {} },
+  setTimeout: resolve => setImmediate(() => {
+    clock += 20;
+    if (failure === "release" && held && clock >= 600) releasePost?.();
+    if (failure === "post" && held && clock >= 600) rejectPost?.(new Error("relay POST 503"));
+    if (!fed && ready) {
+      fed = true;
+      for (let i = 0; i < 16; i++) hooks.onChannelMessage("godot", "generation", "reliable",
+        `snapshot:1:godot:${i}:` + "0123456789abcdef".repeat(64));
+    }
+    resolve();
+  }),
+  Engine: class {
+    constructor(_native, callbacks) { hooks = callbacks; }
+    async pairWith() { return null; }
+    channel() { return { readyState: "open", send(text) {
+      if (text.startsWith("snapshot:")) sent++;
+    }}; }
+    diagnosticSnapshot() { return {}; }
+    removePeer() {}
+  },
+  fetch: async (_url, options) => {
+    const method = options.method ?? "GET";
+    peak[method] = Math.max(peak[method], ++active[method]);
+    try {
+      let messages = [];
+      if (method === "POST") {
+        const marker = JSON.parse(options.body).marker;
+        posted.push(marker);
+        if (marker === "snapshot-ack-1-8") {
+          held = true;
+          let onAbort;
+          await new Promise((resolve, reject) => {
+            releasePost = resolve;
+            rejectPost = reject;
+            onAbort = () => {
+              aborted++;
+              reject(new DOMException("cleanup cancellation", "AbortError"));
+            };
+            options.signal.addEventListener("abort", onAbort);
+          }).finally(() => options.signal.removeEventListener("abort", onAbort));
+        }
+      } else if (!ready) {
+        ready = true;
+        messages = [{marker: "ready-1"}];
+      } else if (held) {
+        getsWhileHeld++;
+        if (failure === "get" && clock >= 600) throw new Error("relay GET 503");
+        if (sent === 32 && !credited) {
+          credited = true;
+          messages = [{marker: "snapshot-ack-1-32"}];
+        }
+      }
+      return {ok:true, json:async () => messages};
+    } finally { active[method]--; }
+  },
+};
+runInNewContext(source, context);
+await context.window.runReference(1, false, false, "http", false,
+  "reliable", "reference", false, null, false, 1024, 0);
+console.log(JSON.stringify({sent, credited, getsWhileHeld, aborted, active, peak, posted,
+  error:context.window.referenceError, settled:context.window.referenceSettled}));
+"""
+        source = (SCRIPT.parents[1] / "tests/smoke/webrtc_reference.js").read_text()
+        for failure in ("none", "get", "post", "release"):
+            with self.subTest(failure=failure):
+                result = subprocess.run(  # noqa: S603
+                    ["node", "--input-type=module", "-e", harness, failure],  # noqa: S607
+                    input=source,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                    timeout=5,
+                )
+                proof = json.loads(result.stdout)
+                self.assertEqual(proof["sent"], 64)
+                self.assertTrue(proof["credited"])
+                self.assertGreater(proof["getsWhileHeld"], 1)
+                self.assertEqual(proof["peak"], {"GET": 1, "POST": 1})
+                self.assertEqual(proof["active"], {"GET": 0, "POST": 0})
+                self.assertEqual(proof["aborted"], 0 if failure in ("post", "release") else 1)
+                expected_posts = ["ready-1", "snapshot-ack-1-8"]
+                if failure == "release":
+                    expected_posts.extend(["snapshot-ack-1-16", "observed-1"])
+                self.assertEqual(proof["posted"], expected_posts)
+                self.assertTrue(proof["settled"])
+                self.assertEqual(
+                    proof["error"],
+                    "Error: phase 1 missing Godot teardown"
+                    if failure in ("none", "release")
+                    else f"Error: relay {failure.upper()} 503",
+                )
+
     def test_phase_timeout_keeps_its_reason_and_genuine_signaling_errors(self) -> None:
         harness = r"""
 import { readFileSync } from "node:fs";

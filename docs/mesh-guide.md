@@ -304,6 +304,14 @@ retirement and service rejoin with the same reader pause. The queue proof
 counts the safe reader's selected unread packet; omitting it caused a false
 failure in the earlier four-chunk control.
 
+A later Chromium 156 active-reader service run, with Godot offering, logged
+five buffer drops. The reliable reader expected sequence 107 and read 112.
+Browser callbacks contain all five missing chunks with complete traces.
+Callbacks 92-111 delivered 82,420 snapshot bytes within 11 ms to the default
+64 KiB channel buffer. The largest Godot frame gap was 127 ms. Byte limits
+also apply to games that drain every frame. The original nine-drop history
+still needs its own attribution.
+
 Phase records include `snapshot_body_bytes`, `snapshot_window_bytes`,
 `outstanding_snapshot_bytes` and `peak_outstanding_snapshot_bytes`. A pass must
 match the requested sizes, stay within the window and finish with zero
@@ -667,13 +675,22 @@ bytes, sender, channel and mode before echoing it. The reference checks each
 echo in order. Both seats must report matching heartbeat totals before remote
 closure. Queued reliable packet counts include these heartbeats.
 
-The reference runs one HTTP exchange at a time beside the gameplay loop.
-A held GET no longer stops gameplay sends. With mixed traffic and an HTTP
+The reference runs one HTTP receive task and one FIFO send task beside the
+gameplay loop. A held credit POST leaves the opposite credit receive path
+active. A held GET leaves outgoing markers and gameplay sends active.
+`signaling_receive_pending`, `signaling_send_pending` and `outgoing_signals`
+record the two tasks and queued sends. With mixed traffic and an HTTP
 hold of at least 1,500 ms, `signaling_hold_progress` must show new heartbeat
 echoes across a one-second interval while the held request stays active and
 snapshot credit stays fixed. Echoes must include a heartbeat sent after the
 first sample. This separates fresh WebRTC gameplay from HTTP credit progress.
 Requests are canceled and settled before the next generation starts.
+
+A local Godot 4.7.2 native/Web control held one credit POST response for four
+seconds. The old shared exchange paused opposite-direction snapshot sends for
+about four seconds. Independent tasks kept the largest observed gap below
+74 ms native and 214 ms Web. Both controls retained every reliable chunk.
+Historical stall and heartbeat histories still need their own reproduction.
 
 These opt-in local controls keep the existing deadlines. They do not simulate
 WebRTC network delay or establish the cause of #396.
@@ -726,6 +743,11 @@ this queue delay from the native round trip and command bridge. The separate
 1500 ms pause still defers snapshot validation after scheduled reads.
 Qualification requires an empty scheduled queue, complete timing records and
 the requested drain budget. The queue fails above 256 packets. Each generation starts fresh.
+
+One-second application drains on both seats passed native/Web service rejoin
+under four CPU workers. Native heartbeat round trips reached about one second
+and reference queue waits reached 661 ms. Each pause still proved 4-7 new
+echoes. Use the sent-after-pause sequence cohort to assess that proof.
 
 A slow active reader can fill the engine receive buffer even when it never
 uses the explicit 1500 ms pause. Budget gameplay bytes against receive capacity
