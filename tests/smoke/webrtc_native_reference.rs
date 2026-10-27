@@ -22,7 +22,13 @@ type SendFuture = Pin<Box<dyn Future<Output = anyhow::Result<Value>> + Send>>;
 struct PendingSend {
     id: Option<Value>,
     generation: Value,
-    future: SendFuture,
+    future: tokio::task::JoinHandle<anyhow::Result<Value>>,
+}
+
+impl Drop for PendingSend {
+    fn drop(&mut self) {
+        self.future.abort();
+    }
 }
 
 enum Action<T> {
@@ -39,14 +45,16 @@ async fn next_action<T>(
     tokio::select! {
         Some(line) = input.recv(), if pending.is_none() => Some(Action::Command(line)),
         Some(event) = events.recv() => Some(Action::Event(event)),
-        result = async { pending.as_mut().unwrap().future.as_mut().await }, if pending.is_some() => Some(Action::Sent(result)),
+        result = async { (&mut pending.as_mut().unwrap().future).await.unwrap_or_else(|error| Err(error.into())) }, if pending.is_some() => Some(Action::Sent(result)),
         else => None,
     }
 }
 
-fn cancel_send(pending: &mut Option<PendingSend>, error: &str) {
-    if let Some(cancelled) = pending.take() {
-        if let Some(id) = cancelled.id {
+async fn cancel_send(pending: &mut Option<PendingSend>, error: &str) {
+    if let Some(mut cancelled) = pending.take() {
+        cancelled.future.abort();
+        let _ = (&mut cancelled.future).await;
+        if let Some(id) = cancelled.id.take() {
             emit(json!({"id":id, "error":error}));
         }
     }
@@ -142,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
                             pending = Some(PendingSend {
                                 id: Some(id.clone()),
                                 generation: engine.diagnostic_snapshot(peer)["generation"].clone(),
-                                future: prepare_send(&engine, peer, &value)?,
+                                future: tokio::spawn(prepare_send(&engine, peer, &value)?),
                             });
                             Ok(Value::Null)
                         }
@@ -162,8 +170,8 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             Action::Sent(result) => {
-                let finished = pending.take().unwrap();
-                if let Some(id) = finished.id {
+                let mut finished = pending.take().unwrap();
+                if let Some(id) = finished.id.take() {
                     match result {
                         Ok(result) => emit(json!({"id":id, "result":result})),
                         Err(error) => emit(json!({"id":id, "error":error.to_string()})),
@@ -179,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
                         receive_failure = Some(format!("native receive rejected: generation={generation} channel={label}"));
                         emit(json!({"event":"receive_rejected", "generation":generation, "label":label}));
                     }
-                    cancel_send(&mut pending, receive_failure.as_deref().unwrap());
+                    cancel_send(&mut pending, receive_failure.as_deref().unwrap()).await;
                     let _ = engine.remove_peer(peer).await;
                     continue;
                 }
@@ -199,7 +207,7 @@ async fn main() -> anyhow::Result<()> {
                             pending = Some(PendingSend {
                                 id: None,
                                 generation: json!(generation),
-                                future: prepare_send(&engine, peer, &json!({"op":"send_batch", "packets":packets}))?,
+                                future: tokio::spawn(prepare_send(&engine, peer, &json!({"op":"send_batch", "packets":packets}))?),
                             });
                         }
                         emit(json!({"event":"open", "generation":generation, "label":label,
@@ -218,7 +226,7 @@ async fn main() -> anyhow::Result<()> {
                         drop(queue_permit);
                     }
                     EngineEvent::ChannelClosed {label,..} => {
-                        cancel_send(&mut pending, &format!("native channel closed during send: generation={generation} channel={label}"));
+                        cancel_send(&mut pending, &format!("native channel closed during send: generation={generation} channel={label}")).await;
                         emit(json!({"event":"closed", "generation":generation, "label":label}));
                     }
                     _ => {}
@@ -243,7 +251,7 @@ mod tests {
         let mut pending = Some(PendingSend {
             id: Some(json!(7)),
             generation: json!(1),
-            future: Box::pin(async move { held.await?; Ok(json!(32)) }),
+            future: tokio::spawn(async move { held.await?; Ok(json!(32)) }),
         });
         commands.send("snapshot".into()).unwrap();
         commands.send("remove".into()).unwrap();
@@ -256,7 +264,7 @@ mod tests {
         release.send(()).unwrap();
         let action = next_action(&mut input, &mut events, &mut pending).await;
         assert!(matches!(action, Some(Action::Sent(Ok(value))) if value == json!(32)));
-        assert_eq!(pending.take().unwrap().id, Some(json!(7)));
+        assert_eq!(pending.take().unwrap().id.clone(), Some(json!(7)));
         for expected in ["snapshot", "remove"] {
             assert!(matches!(next_action(&mut input, &mut events, &mut pending).await,
                 Some(Action::Command(value)) if value == expected));
@@ -267,13 +275,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sender_progresses_while_event_handler_waits_for_native_mutex() {
+        let mutex = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let guard = mutex.lock().await;
+        let sender_mutex = mutex.clone();
+        let (queued, mut notified) = oneshot::channel();
+        let mut pending = Some(PendingSend {
+            id: Some(json!(10)),
+            generation: json!(1),
+            future: tokio::spawn(async move {
+                queued.send(()).unwrap();
+                let _guard = sender_mutex.lock().await;
+                Ok(Value::Null)
+            }),
+        });
+        tokio::select! {
+            _ = &mut pending.as_mut().unwrap().future => panic!("send passed the held mutex"),
+            _ = &mut notified => {},
+        }
+        drop(guard);
+        let metadata = timeout(Duration::from_secs(1), mutex.lock()).await.unwrap();
+        drop(metadata);
+        let (_commands, mut input) = mpsc::unbounded_channel();
+        let (_callbacks, mut events) = mpsc::unbounded_channel::<()>();
+        assert!(matches!(next_action(&mut input, &mut events, &mut pending).await, Some(Action::Sent(Ok(Value::Null)))));
+    }
+
+    #[tokio::test]
     async fn failed_sends_report_errors_and_cancellation_drops_the_future() {
         let (_commands, mut input) = mpsc::unbounded_channel();
         let (callbacks, mut events) = mpsc::unbounded_channel::<()>();
         let mut pending = Some(PendingSend {
             id: Some(json!(8)),
             generation: json!(1),
-            future: Box::pin(async { anyhow::bail!("write failed") }),
+            future: tokio::spawn(async { anyhow::bail!("write failed") }),
         });
         let action = next_action(&mut input, &mut events, &mut pending).await;
         assert!(matches!(action, Some(Action::Sent(Err(error))) if error.to_string() == "write failed"));
@@ -282,12 +317,21 @@ mod tests {
         pending = Some(PendingSend {
             id: Some(json!(9)),
             generation: json!(1),
-            future: Box::pin(async move { held.await?; Ok(Value::Null) }),
+            future: tokio::spawn(async move { held.await?; Ok(Value::Null) }),
         });
         callbacks.send(()).unwrap();
         assert!(matches!(next_action(&mut input, &mut events, &mut pending).await, Some(Action::Event(()))));
-        cancel_send(&mut pending, "receive rejected");
+        cancel_send(&mut pending, "receive rejected").await;
         assert!(pending.is_none());
+        assert!(release.send(()).is_err());
+        let (mut release, held) = oneshot::channel::<()>();
+        let owned = PendingSend {
+            id: None,
+            generation: json!(1),
+            future: tokio::spawn(async move { held.await?; Ok(Value::Null) }),
+        };
+        drop(owned);
+        timeout(Duration::from_secs(1), release.closed()).await.unwrap();
         assert!(release.send(()).is_err());
     }
 }

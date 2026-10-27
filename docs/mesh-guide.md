@@ -191,10 +191,11 @@ pass through the native Rust Engine. This control bridge adds scheduling delay;
 use its results to assess correctness. Adjacent packet sends share commands
 of up to 256 packets. Signaling, snapshot, close and removal commands retain
 their order after earlier packets. A failed batch stops at its first failed
-send. The probe drains incoming events while a packet send waits. Later
-commands wait until that send completes. Channel closure cancels a pending
-send. Receive rejection also cancels it and retires the peer. The example tests cover held sends, command order,
-write errors and cancellation. `assessment.json` records the backend,
+send. One owned send task keeps running while the probe drains incoming events
+or awaits channel metadata. Later commands wait until that send completes. Channel closure cancels a pending
+send. Receive rejection also cancels it and retires the peer. Dropping the
+pending send aborts its task. Terminal event handling waits for cancellation. The example tests cover held sends, command order,
+shared native mutex waits, write errors and cancellation. `assessment.json` records the backend,
 source revision and probe binary hash. `native-reference.jsonl` retains commands'
 results and native callbacks. `native_snapshots` retains Engine receipt counters
 before removal, including failure cleanup. The driver waits for cleanup before
