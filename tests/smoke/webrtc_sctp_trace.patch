@@ -1,0 +1,51 @@
+diff --git a/third_party/rtc-sctp/Cargo.toml b/third_party/rtc-sctp/Cargo.toml
+index 10218b1..feb1711 100644
+--- a/third_party/rtc-sctp/Cargo.toml
++++ b/third_party/rtc-sctp/Cargo.toml
+@@ -71,3 +71,6 @@ unsafe_code = "forbid"
+ level = "warn"
+ priority = 0
+ check-cfg = ["cfg(fuzzing)"]
++
++[dependencies.tracing]
++version = "0.1.44"
+diff --git a/third_party/rtc-sctp/src/association/mod.rs b/third_party/rtc-sctp/src/association/mod.rs
+index 439cbf9..2ab81a9 100644
+--- a/third_party/rtc-sctp/src/association/mod.rs
++++ b/third_party/rtc-sctp/src/association/mod.rs
+@@ -3495,6 +3495,7 @@ impl Association {
+                 .first()
+                 .is_some_and(|c| !c.beginning_fragment || !c.unordered);
+         for mut c in tail {
++            tracing::trace!(target: "godot_packet", stage="abandon_pending", side=?self.side, stream=c.stream_identifier, stream_generation=c.stream_generation, message=?c.message_id, tsn=c.tsn, nsent=c.nsent, bytes=c.user_data.len(), marker=%String::from_utf8_lossy(&c.user_data[..c.user_data.len().min(96)]), reliability=?c.reliability);
+             if assign_tsns {
+                 c.tsn = self.generate_next_tsn();
+                 inflight.push(c.tsn);
+@@ -3511,6 +3512,7 @@ impl Association {
+         }
+         for tsn in inflight {
+             if let Some(c) = self.inflight_queue.get_mut(tsn) {
++                tracing::trace!(target: "godot_packet", stage="abandon_inflight", side=?self.side, stream=c.stream_identifier, stream_generation=c.stream_generation, message=?c.message_id, tsn=c.tsn, nsent=c.nsent, bytes=c.user_data.len(), marker=%String::from_utf8_lossy(&c.user_data[..c.user_data.len().min(96)]), reliability=?c.reliability);
+                 changed |= !c.abandoned();
+                 c.mark_abandoned();
+                 let (si, generation, ppi) =
+@@ -3992,6 +3994,7 @@ impl Association {
+                 c.ending_fragment
+             );
+ 
++            tracing::trace!(target: "godot_packet", stage="transmit_selection", side=?self.side, stream=c.stream_identifier, stream_generation=c.stream_generation, message=?c.message_id, tsn=c.tsn, nsent=c.nsent, bytes=c.user_data.len(), marker=%String::from_utf8_lossy(&c.user_data[..c.user_data.len().min(96)]), reliability=?c.reliability);
+             self.inflight_queue.push_no_check(c.clone());
+ 
+             Some(c)
+diff --git a/third_party/rtc-sctp/src/association/stream.rs b/third_party/rtc-sctp/src/association/stream.rs
+index 7b94148..2998457 100644
+--- a/third_party/rtc-sctp/src/association/stream.rs
++++ b/third_party/rtc-sctp/src/association/stream.rs
+@@ -731,6 +731,7 @@ impl StreamState {
+                 ..Default::default()
+             };
+ 
++            tracing::trace!(target: "godot_packet", stage="packetize", stream=self.stream_identifier, stream_generation=self.generation, side=?self.side, ssn=self.sequence_number, ppi=ppi as u32, beginning=chunk.beginning_fragment, ending=chunk.ending_fragment, bytes=fragment_size, marker=%String::from_utf8_lossy(&chunk.user_data[..chunk.user_data.len().min(96)]), reliability=?chunk.reliability);
+             chunks.push(chunk);
+ 
+             remaining -= fragment_size;

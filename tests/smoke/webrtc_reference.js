@@ -98,6 +98,14 @@ window.runReference = async function (
       let retired = false;
       const queued = [];
       const closedLabels = [];
+      const retirementClosed = () =>
+        closedLabels.some((label) =>
+          (engine.nativeProfile
+            ? ["reliable", "ordered", "unreliable"]
+            : ["reliable", "unreliable"]
+          ).includes(label),
+        ) &&
+        (closingSeat === "godot" || closedLabels.includes(closingChannel));
       const receivePause = {};
       let pauseStarted = 0;
       let heartbeatSent = 0;
@@ -595,9 +603,17 @@ window.runReference = async function (
           await sendSignal({ generation, ...outgoing.shift() });
       };
       window.referenceProgress = evidence;
+      let retirementCollected = false;
       try {
-        while (!retired && performance.now() - started < 14000) {
+        while (
+          (!retired || !retirementClosed()) &&
+          performance.now() - started < 14000
+        ) {
           if (window.referenceError) throw new Error(window.referenceError);
+          if (retired) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            continue;
+          }
           drain();
           if (window.referenceError) throw new Error(window.referenceError);
           if (
@@ -782,6 +798,8 @@ window.runReference = async function (
           if (window.referenceError) throw new Error(window.referenceError);
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
+        retirementCollected =
+          retirementClosed() && performance.now() - started < 14000;
       } finally {
         window.referenceTerminal = {
           ...evidence(),
@@ -795,6 +813,10 @@ window.runReference = async function (
       }
       if (signalingError && !retired) throw signalingError;
       if (!retired) throw new Error(`phase ${phase} missing Godot teardown`);
+      if (!retirementCollected)
+        throw new Error(
+          `phase ${phase} missing reference channel-close callback`,
+        );
       Object.assign(window.referenceResults.at(-1), evidence());
       console.log(
         "WEBRTC_REFERENCE_PHASE " +

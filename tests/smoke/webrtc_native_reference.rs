@@ -11,6 +11,14 @@ use tokio::sync::mpsc;
 
 static START: OnceLock<Instant> = OnceLock::new();
 
+struct ProbeTimer;
+
+impl tracing_subscriber::fmt::time::FormatTime for ProbeTimer {
+    fn format_time(&self, writer: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        write!(writer, "probe_us={}", START.get_or_init(Instant::now).elapsed().as_micros())
+    }
+}
+
 fn emit(mut value: Value) {
     value["probe_us"] = json!(START.get_or_init(Instant::now).elapsed().as_micros() as u64);
     println!("{value}");
@@ -108,6 +116,15 @@ fn rejected_receive(engine: &Engine, peer: PlayerId) -> Option<String> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     START.get_or_init(Instant::now);
+    if let Ok(filter) = std::env::var("SF_REFERENCE_TRACE") {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::try_new(filter)?)
+            .with_timer(ProbeTimer)
+            .with_writer(std::io::stderr)
+            .with_ansi(false)
+            .try_init()
+            .map_err(|error| anyhow::anyhow!("native trace setup: {error}"))?;
+    }
     let peer: PlayerId = "10000000-0000-0000-0000-000000000001".parse()?;
     let (events_tx, mut events) = mpsc::unbounded_channel();
     let (input_tx, mut input) = mpsc::unbounded_channel();

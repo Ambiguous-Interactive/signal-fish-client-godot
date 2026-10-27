@@ -188,8 +188,57 @@ def heartbeat_pause_diagnostics(
     }
 
 
+def native_bridge_packet_diagnostics(timing: dict[str, object]) -> dict[str, object]:
+    records = diagnostic_records(timing.get("records"))
+    commands = {row.get("id"): row for row in records if row.get("stage") == "command"}
+    written = {row.get("id"): row for row in records if row.get("stage") == "written"}
+    replies = {row.get("id"): row for row in records if row.get("stage") == "reply"}
+    outputs: dict[object, list[dict[str, object]]] = {}
+    delivered: dict[object, list[dict[str, object]]] = {}
+    for row in records:
+        if row.get("stage") == "output":
+            outputs.setdefault(row.get("marker"), []).append(row)
+        elif row.get("stage") == "delivery" and row.get("event") in ("message", "binary"):
+            delivered.setdefault(row.get("marker"), []).append(row)
+    packets = []
+    for command_id, command in commands.items():
+        for packet in diagnostic_records(command.get("markers")):
+            marker = packet.get("marker")
+            output = outputs.get(marker, [])
+            sends = [row for row in output if row.get("event") == "sent"]
+            receives = [row for row in output if row.get("event") in ("message", "binary")]
+            deliveries = delivered.get(marker, [])
+            receipt = receives[0] if len(receives) == 1 else {}
+            delivery = deliveries[0] if len(deliveries) == 1 else {}
+            packets.append(
+                {
+                    **packet,
+                    "command_id": command_id,
+                    "pipe_write_ms": diagnostic_interval(
+                        command.get("us"), written.get(command_id, {}).get("us"), 1000
+                    ),
+                    "command_reply_ms": diagnostic_interval(
+                        command.get("us"), replies.get(command_id, {}).get("us"), 1000
+                    ),
+                    "reader_to_delivery_ms": diagnostic_interval(
+                        receipt.get("us"), delivery.get("us"), 1000
+                    ),
+                    "native_send_outputs": sends,
+                    "native_receive_outputs": receives,
+                    "deliveries": deliveries,
+                }
+            )
+    return {
+        "packets": packets,
+        "trace_overflow": timing.get("dropped"),
+        "limits": "Intervals use only the bridge host clock. Delivery ends at HTTP event collection, before browser dispatch. Command replies can cover a packet batch. Missing or duplicate receive observations have no queue interval. Native enqueue is separate from SCTP transmission.",
+    }
+
+
 def heartbeat_diagnostics(
-    godot: dict[str, object], reference: dict[str, object]
+    godot: dict[str, object],
+    reference: dict[str, object],
+    bridge: dict[str, object] | None = None,
 ) -> dict[str, object]:
     phase = reference.get("phase")
     snapshot = diagnostic_mapping(reference.get("snapshot"))
@@ -302,6 +351,12 @@ def heartbeat_diagnostics(
             rows, diagnostic_mapping(reference.get("receive_pause")), metrics
         ),
         "packets": rows,
+        "bridge_packets": [
+            packet
+            for packet in diagnostic_records((bridge or {}).get("packets"))
+            if isinstance(packet.get("marker"), str)
+            and cast(str, packet["marker"]).startswith(f"heartbeat:{phase}:reference:")
+        ],
     }
 
 
@@ -610,6 +665,7 @@ def packet_delivery_diagnostics(
 
 
 def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, object]:
+    bridge = native_bridge_packet_diagnostics(diagnostic_mapping(report.get("native_timing")))
     evidence = diagnostic_mapping(report.get("godot_evidence"))
     failure = diagnostic_mapping(evidence.get("diagnostic"))
     progress = diagnostic_mapping(evidence.get("last_progress"))
@@ -689,9 +745,10 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
             for phase, item in local.items()
         ],
         "heartbeat_phases": [
-            heartbeat_diagnostics(local.get(item.get("phase"), {}), item)
+            heartbeat_diagnostics(local.get(item.get("phase"), {}), item, bridge)
             for item in reference_phases
         ],
+        "native_bridge_packets": bridge,
         "packet_delivery_phases": [
             packet_delivery_diagnostics(
                 item,
