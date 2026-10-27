@@ -25,6 +25,27 @@ SPEC.loader.exec_module(drill)
 
 
 class RelayObservationTests(unittest.TestCase):
+    def test_setup_failure_retains_process_exit_and_engine_error_separately(self) -> None:
+        for code, output, engine_error in (
+            (-11, b"normal output", False),
+            (0, b"SCRIPT ERROR: broken", True),
+            (7, b"", False),
+        ):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as temporary:
+                log = Path(temporary) / "import.log"
+                with (
+                    patch.object(
+                        drill.subprocess,
+                        "run",
+                        return_value=subprocess.CompletedProcess(["engine"], code, stdout=output),
+                    ),
+                    self.assertRaisesRegex(
+                        RuntimeError, f"exit={code}, engine_error={engine_error}"
+                    ),
+                ):
+                    drill.checked(["engine"], log)
+                self.assertEqual(log.read_bytes(), output)
+
     def test_marker_timing_distinguishes_queued_from_dequeued(self) -> None:
         observation = drill.RelayObservation()
         first = {"marker": "consumed-1-2-8"}

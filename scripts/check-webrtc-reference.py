@@ -6,6 +6,7 @@ import functools
 import hashlib
 import importlib.util
 import json
+import math
 import shutil
 import subprocess
 import tempfile
@@ -104,6 +105,159 @@ def phase_evidence(output: str) -> list[object]:
             except json.JSONDecodeError:
                 continue
     return phases
+
+
+def diagnostic_records(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def diagnostic_mapping(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def diagnostic_interval(start: object, end: object, scale: int = 1) -> float | None:
+    if (
+        type(start) not in (int, float)
+        or type(end) not in (int, float)
+        or not math.isfinite(cast(float, start))
+        or not math.isfinite(cast(float, end))
+        or cast(float, end) < cast(float, start)
+    ):
+        return None
+    return round((cast(float, end) - cast(float, start)) / scale, 3)
+
+
+def heartbeat_diagnostics(
+    godot: dict[str, object], reference: dict[str, object]
+) -> dict[str, object]:
+    phase = reference.get("phase")
+    snapshot = diagnostic_mapping(reference.get("snapshot"))
+    indexes = {
+        key: {item.get("marker"): item for item in diagnostic_records(snapshot.get(key))}
+        for key in ("packet_timings", "native_sent", "native_heartbeat_received")
+    }
+    echoes = {
+        item.get("sequence"): item for item in diagnostic_records(godot.get("heartbeat_timings"))
+    }
+    rows: list[dict[str, object]] = []
+    for timing in diagnostic_records(reference.get("heartbeat_timings"))[:128]:
+        sequence = timing.get("sequence")
+        if type(sequence) is not int or not 0 <= sequence < 128:
+            continue
+        marker = f"heartbeat:{phase}:reference:{sequence}"
+        command = indexes["packet_timings"].get(marker, {})
+        sent = indexes["native_sent"].get(marker, {})
+        received = indexes["native_heartbeat_received"].get(marker, {})
+        echo = echoes.get(sequence, {})
+        rows.append(
+            {
+                "sequence": sequence,
+                "application_rtt_ms": diagnostic_interval(
+                    timing.get("enqueue_ms"), timing.get("echo_ms")
+                ),
+                "bridge_queue_ms": diagnostic_interval(
+                    command.get("enqueue_ms"), command.get("dispatch_ms")
+                ),
+                "command_ms": diagnostic_interval(
+                    command.get("dispatch_ms"), command.get("complete_ms")
+                ),
+                "native_rtt_ms": diagnostic_interval(
+                    sent.get("probe_us"), received.get("probe_us"), 1000
+                ),
+                "godot_echo_ms": diagnostic_interval(echo.get("receive_ms"), echo.get("echo_ms")),
+                "native_callback_rtt_ms": diagnostic_interval(
+                    sent.get("callback_ms"), received.get("callback_ms")
+                ),
+                "command_failed": "failed_ms" in command,
+            }
+        )
+    metrics = (
+        "application_rtt_ms",
+        "bridge_queue_ms",
+        "command_ms",
+        "native_rtt_ms",
+        "godot_echo_ms",
+        "native_callback_rtt_ms",
+    )
+    return {
+        "phase": phase,
+        "heartbeat_sent": reference.get("heartbeat_sent"),
+        "heartbeat_received": reference.get("heartbeat_received"),
+        "pause": reference.get("receive_pause"),
+        "trace_overflow": {
+            key: snapshot.get(key)
+            for key in (
+                "timings_dropped",
+                "native_sent_dropped",
+                "native_heartbeat_received_dropped",
+            )
+        },
+        "matched_samples": {key: sum(row[key] is not None for row in rows) for key in metrics},
+        "max_ms": {
+            key: max((cast(float, row[key]) for row in rows if row[key] is not None), default=None)
+            for key in metrics
+        },
+        "packets": rows,
+    }
+
+
+def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, object]:
+    evidence = diagnostic_mapping(report.get("godot_evidence"))
+    failure = diagnostic_mapping(evidence.get("diagnostic"))
+    progress = diagnostic_mapping(evidence.get("last_progress"))
+    godot_phases = diagnostic_records(report.get("godot_phases"))
+    ref = diagnostic_mapping(report.get("reference"))
+    reference_phases = diagnostic_records(ref.get("phases"))
+    terminal = diagnostic_mapping(report.get("reference_terminal"))
+    if terminal and not any(
+        item.get("phase") == terminal.get("phase") for item in reference_phases
+    ):
+        reference_phases = [*reference_phases, terminal]
+    local = {item.get("phase"): item for item in godot_phases}
+    for item in (progress, failure):
+        if item and isinstance(item.get("reference"), dict):
+            local[item.get("phase")] = diagnostic_mapping(item["reference"])
+    state_fields = (
+        "phase",
+        "reason",
+        "stage",
+        "max_stage_frame_gap_ms",
+        "receive_inflight_ms",
+        "pending_signals",
+        "queued_packets",
+        "last_marker_sent",
+        "last_marker_received",
+        "peers",
+    )
+    state = failure or progress
+    queue_fields = (
+        "snapshot_sent",
+        "snapshot_received",
+        "snapshot_acknowledged",
+        "peak_outstanding_snapshot_bytes",
+        "outstanding_snapshot_bytes",
+        "channel_in_buffer_kb",
+        "channel_queues",
+        "credit_wait_age_ms",
+    )
+    queue = diagnostic_mapping(state.get("reference"))
+    return {
+        "godot_failure": {key: failure.get(key) for key in state_fields},
+        "godot_progress": {key: progress.get(key) for key in state_fields},
+        "last_stage": evidence.get("last_stage"),
+        "last_ready": evidence.get("last_ready"),
+        "godot_queue": {key: queue.get(key) for key in queue_fields},
+        "godot_buffer_drop_messages": output.count("Buffer full! Dropping data."),
+        "reference_error": ref.get("error"),
+        "driver_error": report.get("driver_error"),
+        "heartbeat_phases": [
+            heartbeat_diagnostics(local.get(item.get("phase"), {}), item)
+            for item in reference_phases
+        ],
+        "limits": "Intervals use one clock each. Missing samples are null. Buffer messages establish local drops; queue counts and completed sends do not prove receipt or a root cause.",
+    }
 
 
 def binary_payloads(
@@ -710,6 +864,66 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
     return project
 
 
+def gameplay_phase_checks(
+    godot: dict[str, object],
+    ref: dict[str, object],
+    args: argparse.Namespace,
+    minimum_queued: int,
+    native_profile: bool,
+) -> dict[str, bool]:
+    return {
+        "godot_gameplay": gameplay_phase_passed(
+            godot,
+            mixed_traffic=args.mixed_traffic,
+            credit_transport=args.credit_transport,
+            slow_receiver=getattr(args, "slow_receiver", False),
+            minimum_queued=minimum_queued,
+            native_profile=native_profile,
+        ),
+        "reference_gameplay": gameplay_phase_passed(
+            ref,
+            mixed_traffic=args.mixed_traffic,
+            credit_transport=args.credit_transport,
+            native_profile=native_profile,
+        ),
+        "snapshot_flow": all(
+            snapshot_flow_passed(
+                phase,
+                getattr(args, "snapshot_body_bytes", 1024),
+                getattr(args, "snapshot_window_bytes", 0),
+            )
+            for phase in (godot, ref)
+        ),
+        "startup": startup_phase_passed(godot, ref, getattr(args, "startup_burst", False)),
+        "godot_binary": binary_phase_passed(
+            godot,
+            getattr(args, "binary_traffic", False),
+            require_empty=getattr(args, "receive_empty_binary", False),
+        ),
+        "reference_binary": binary_phase_passed(ref, getattr(args, "binary_traffic", False)),
+        "receive_capacity": (
+            not getattr(args, "channel_in_buffer_kb", 0)
+            or godot.get("channel_in_buffer_kb") == args.channel_in_buffer_kb
+        ),
+        "heartbeat_totals": heartbeat_phase_passed(godot, ref, args.mixed_traffic),
+        "retirement": retirement_passed(
+            godot,
+            ref,
+            getattr(args, "closing_channel", "reliable"),
+            getattr(args, "closing_seat", "reference"),
+            args.safe_receive,
+            native_profile=native_profile,
+        ),
+        "queued_retirement": queued_retirement_passed(
+            godot, ref, getattr(args, "queued_retirement", False)
+        ),
+        "reference_pause": reference_receive_pause_passed(
+            ref, getattr(args, "slow_reference_receiver", False), minimum_queued
+        ),
+        "receiver_identity": (not args.safe_receive or godot.get("same_receiver") is True),
+    }
+
+
 def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str, object]:
     directory.mkdir(parents=True)
     project = prepare(args, directory, web=web)
@@ -993,6 +1207,10 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 body_bytes = getattr(args, "snapshot_body_bytes", 1024)
                 window_bytes = getattr(args, "snapshot_window_bytes", 0)
                 minimum_queued = min(24, window_bytes // (body_bytes + 32)) if window_bytes else 24
+                phase_checks = [
+                    gameplay_phase_checks(godot, ref, args, minimum_queued, backend is not None)
+                    for godot, ref in zip(phases, result["phases"], strict=False)
+                ]
                 gameplay = (
                     complete
                     and (
@@ -1005,59 +1223,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         )
                         or signaling_hold_passed(hold_proof)
                     )
-                    and all(
-                        gameplay_phase_passed(
-                            godot,
-                            mixed_traffic=args.mixed_traffic,
-                            credit_transport=args.credit_transport,
-                            slow_receiver=getattr(args, "slow_receiver", False),
-                            minimum_queued=minimum_queued,
-                            native_profile=backend is not None,
-                        )
-                        and gameplay_phase_passed(
-                            ref,
-                            mixed_traffic=args.mixed_traffic,
-                            credit_transport=args.credit_transport,
-                            native_profile=backend is not None,
-                        )
-                        and all(
-                            snapshot_flow_passed(
-                                phase,
-                                getattr(args, "snapshot_body_bytes", 1024),
-                                getattr(args, "snapshot_window_bytes", 0),
-                            )
-                            for phase in (godot, ref)
-                        )
-                        and startup_phase_passed(godot, ref, getattr(args, "startup_burst", False))
-                        and binary_phase_passed(
-                            godot,
-                            getattr(args, "binary_traffic", False),
-                            require_empty=getattr(args, "receive_empty_binary", False),
-                        )
-                        and binary_phase_passed(ref, getattr(args, "binary_traffic", False))
-                        and (
-                            not getattr(args, "channel_in_buffer_kb", 0)
-                            or godot.get("channel_in_buffer_kb") == args.channel_in_buffer_kb
-                        )
-                        and heartbeat_phase_passed(godot, ref, args.mixed_traffic)
-                        and retirement_passed(
-                            godot,
-                            ref,
-                            getattr(args, "closing_channel", "reliable"),
-                            getattr(args, "closing_seat", "reference"),
-                            args.safe_receive,
-                            native_profile=backend is not None,
-                        )
-                        and queued_retirement_passed(
-                            godot, ref, getattr(args, "queued_retirement", False)
-                        )
-                        and reference_receive_pause_passed(
-                            ref, getattr(args, "slow_reference_receiver", False), minimum_queued
-                        )
-                        and (not args.safe_receive or godot.get("same_receiver") is True)
-                        for godot, ref in zip(phases, result["phases"], strict=True)
-                    )
+                    and all(all(checks.values()) for checks in phase_checks)
                 )
+
                 report.update(
                     {
                         "service_passed": service_passed,
@@ -1066,6 +1234,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         "assessment_complete": complete,
                         "driver_error": driver_error,
                         "gameplay_passed": gameplay,
+                        "phase_checks": phase_checks,
                         "browser": browser.version,
                         "godot_phases": phases,
                         "reference": result,
@@ -1123,6 +1292,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         )
         report["godot_errors"] = [line for line in messages if page_failed([line])]
         report["reference_errors"] = [line for line in reference_messages if page_failed([line])]
+        report["diagnostics"] = gameplay_diagnostics(report, output)
         (directory / "reference.log").write_text("\n".join(reference_messages))
         (directory / "assessment.json").write_text(json.dumps(report, indent=2) + "\n")
     if not report.get("assessment_complete"):
@@ -1342,6 +1512,7 @@ def main() -> None:
                             "closing_seat": seat,
                             "closing_channel": channel,
                         }
+                        result["diagnostics"] = gameplay_diagnostics(result, "")
                         folder.mkdir(parents=True, exist_ok=True)
                         report_path.write_text(json.dumps(result, indent=2) + "\n")
                 results.append(result)
