@@ -675,6 +675,18 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
         self.assertEqual(result["trace_overflow"]["timings_dropped"], 4)
         self.assertIsNone(result["max_ms"]["bridge_queue_ms"])
 
+    def test_fetch_control_requires_the_observed_http_backend(self) -> None:
+        args = argparse.Namespace(
+            mixed_traffic=True, credit_transport="http", safe_receive=True, web_http_fetch=True
+        )
+        for web in (False, True):
+            for observed in (None, False, True, 1, 0):
+                with self.subTest(web=web, observed=observed):
+                    checks = reference.gameplay_phase_checks(
+                        {"web_http_fetch": observed}, {}, args, 24, True, web=web
+                    )
+                    self.assertEqual(checks["http_backend"], observed is web)
+
     def test_named_checks_report_late_failures_after_gameplay_failure(self) -> None:
         args = argparse.Namespace(mixed_traffic=True, credit_transport="webrtc", safe_receive=True)
         checks = reference.gameplay_phase_checks({}, {}, args, 24, True)
@@ -1231,6 +1243,7 @@ console.log(JSON.stringify({error: context.window.referenceError, ...context.win
                     channel_in_buffer_kb=capacity,
                     receive_batch_packets=4,
                     receive_interval_ms=200,
+                    web_http_fetch=bool(capacity),
                 )
                 with patch.object(reference.interop, "checked") as checked:
                     project = reference.prepare(args, Path(temporary), web=True)
@@ -1242,6 +1255,9 @@ console.log(JSON.stringify({error: context.window.referenceError, ...context.win
                 options = json.loads((project / "reference-options.json").read_text())
                 self.assertEqual(options["receive_batch_packets"], 4)
                 self.assertEqual(options["receive_interval_ms"], 200)
+                source = (project / "tests/smoke/webrtc_interop_drill.gd").read_text()
+                self.assertEqual("_setup_http(true)" in source, bool(capacity))
+                self.assertTrue((project / "tests/smoke/webrtc_http_request.gd").is_file())
                 self.assertEqual(checked.call_count, 2)
 
     def test_service_rejoin_requires_same_room_receiver_and_new_generation(self) -> None:

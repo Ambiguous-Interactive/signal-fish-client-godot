@@ -837,6 +837,7 @@ func _reference_evidence() -> Dictionary:
 			)
 	return {
 		"channel_queues": channel_queues,
+		"web_http_fetch": OS.has_feature("web") and _inbox.use_fetch,
 		"channel_in_buffer_kb":
 		ProjectSettings.get_setting("network/limits/webrtc/max_channel_in_buffer_kb"),
 		"startup_burst": _reference_options.get("startup_burst", false),

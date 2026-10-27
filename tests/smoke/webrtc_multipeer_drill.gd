@@ -88,12 +88,7 @@ func _ready() -> void:
 	_hub_seat = 3 - _closing_seat - _remote_seat
 	if not _check_lifetime_controls():
 		return
-	_inbox = HTTPRequest.new()
-	_outbox = HTTPRequest.new()
-	add_child(_inbox)
-	add_child(_outbox)
-	_inbox.request_completed.connect(_on_inbox)
-	_outbox.request_completed.connect(_on_outbox)
+	_setup_http()
 	var client := RoutedClient.new()
 	client._player_id = ROSTER[_seat]
 	client._room_id = "20000000-0000-0000-0000-000000000001"
