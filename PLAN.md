@@ -34,10 +34,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Compare the three-seat held-credit control with the captured native/browser
       stream stall using matched HTTP/WebRTC credit runs, independent gameplay
       and reference-consumer pause controls,
-      with request, relay, engine and transport timings plus matched active-reader
-      drain schedules (#396; see `docs/mesh-guide.md`). Include the captured
-      two-chunk 16 KiB HTTP credit-turnover limit before changing pacing or
-      deadlines.
+      with request, relay, engine and transport timings plus matched Godot and
+      reference application drain schedules (#396; see `docs/mesh-guide.md`).
+      Include the captured two-chunk 16 KiB HTTP credit-turnover limit before
+      changing pacing or deadlines.
 - [ ] Capture the next native import failure with setup resource samples and
       file identities, then retain its crash report or backtrace (#447).
 

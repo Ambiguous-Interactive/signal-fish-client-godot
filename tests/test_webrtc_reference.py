@@ -24,6 +24,155 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_reference_consumer_drains_in_order_with_an_independent_budget(self) -> None:
+        harness = r"""
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+const source = readFileSync(0, "utf8").split("\n").slice(1).join("\n");
+const fault = process.argv[1];
+let clock = 1, hooks, fed = false, ready = false;
+const context = {
+  window: {}, AbortController, TextDecoder, TextEncoder,
+  performance: { now: () => clock },
+  console: { log() {}, error() {} },
+  setTimeout: (resolve) => setImmediate(() => {
+    clock += 20;
+    if (!fed && hooks) {
+      fed = true;
+      for (let i = 0; i < (fault === "overflow" ? 257 : 12); i++) {
+        const text = `snapshot:1:godot:${i}:` + "0123456789abcdef".repeat(64);
+        if (i % 2) hooks.onChannelBinaryMessage("godot", "generation",
+          fault === "mode" && i === 7 ? "unreliable" : "reliable", new TextEncoder().encode(text));
+        else hooks.onChannelMessage("godot", "generation", "reliable",
+          fault === "bytes" && i === 6 ? text + "changed" : text);
+      }
+    }
+    resolve();
+  }),
+  Engine: class {
+    constructor(_native, callbacks) { hooks = callbacks; }
+    async pairWith() { return null; }
+    channel() { return { readyState: "open", send() {} }; }
+    diagnosticSnapshot() { return {}; }
+    removePeer() {}
+  },
+  fetch: async (_url, options) => ({ ok: true, json: async () => {
+    if (options.method === "POST" || ready) return [];
+    ready = true;
+    return [{ marker: "ready-1" }];
+  }}),
+};
+runInNewContext(source, context);
+await context.window.runReference(1, false, false, "webrtc", false,
+  "reliable", "reference", false, null, false, 1024, 49152, 4, 200);
+console.log(JSON.stringify({error:context.window.referenceError, ...context.window.referenceProgress()}));
+"""
+        source = (SCRIPT.parents[1] / "tests/smoke/webrtc_reference.js").read_text()
+        for fault in ("none", "bytes", "mode", "overflow"):
+            with self.subTest(fault=fault):
+                result = subprocess.run(  # noqa: S603
+                    ["node", "--input-type=module", "-e", harness, fault],  # noqa: S607
+                    input=source,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                    timeout=5,
+                )
+                phase = json.loads(result.stdout)
+                schedule = phase["receive_schedule"]
+                self.assertEqual(schedule["batch_packets"], 4)
+                self.assertEqual(schedule["interval_ms"], 200)
+                self.assertEqual(schedule["dropped"], 0)
+                self.assertTrue(all(d["reads"] <= 4 for d in schedule["drains"]))
+                self.assertTrue(
+                    all(
+                        b["ms"] - a["ms"] >= 200
+                        for a, b in zip(schedule["drains"], schedule["drains"][1:], strict=False)
+                    )
+                )
+                if fault == "overflow":
+                    self.assertIn("queue exceeded", phase["error"])
+                    self.assertEqual(schedule["peak_queued_packets"], 256)
+                elif fault in ("bytes", "mode"):
+                    self.assertIn("bytes or", phase["error"])
+                    self.assertEqual(phase["snapshot_received"], 6 if fault == "bytes" else 7)
+                else:
+                    self.assertEqual(phase["snapshot_received"], 12)
+                    self.assertEqual(schedule["queued_packets"], 0)
+                    self.assertEqual(schedule["queued_bytes"], 0)
+                    self.assertEqual(len(phase["receive_timings"]), 12)
+                    self.assertEqual(
+                        [t["packet"] for t in phase["receive_timings"]],
+                        [f"snapshot:1:godot:{i}" for i in range(12)],
+                    )
+                    self.assertEqual(sum(d["reads"] for d in schedule["drains"]), 12)
+                    self.assertTrue(
+                        any(
+                            t["drain_ms"] - t["callback_ms"] >= 200
+                            for t in phase["receive_timings"]
+                        )
+                    )
+
+    def test_reference_consumer_evidence_requires_complete_drains_and_empty_queue(self) -> None:
+        phase: dict[str, object] = {
+            "receive_schedule": {
+                "batch_packets": 32,
+                "interval_ms": 0,
+                "dropped": 0,
+                "queued_packets": 0,
+                "queued_bytes": 0,
+                "drains": [{"ms": 20, "reads": 1}],
+            },
+            "receive_timings_dropped": 0,
+            "receive_timings": [{"callback_ms": 10, "drain_ms": 20}],
+        }
+        self.assertTrue(reference.reference_receive_schedule_passed(phase, 32, 0))
+        self.assertTrue(reference.reference_receive_schedule_passed({}, 0, 0))
+        schedule_faults: tuple[tuple[str, object], ...] = (
+            ("drains", []),
+            ("drains", [{"ms": 20, "reads": 33}]),
+            ("drains", [{"ms": 20, "reads": 2}]),
+            ("dropped", 1),
+            ("queued_packets", 1),
+            ("queued_bytes", 1),
+            ("queued_packets", False),
+        )
+        for key, value in schedule_faults:
+            with self.subTest(key=key, value=value):
+                broken = {
+                    **phase,
+                    "receive_schedule": {
+                        **cast(dict[str, object], phase["receive_schedule"]),
+                        key: value,
+                    },
+                }
+                self.assertFalse(reference.reference_receive_schedule_passed(broken, 32, 0))
+        timing_faults: tuple[tuple[str, object], ...] = (
+            ("receive_timings_dropped", 1),
+            ("receive_timings_dropped", False),
+            ("receive_timings", []),
+            ("receive_timings", [None]),
+            ("receive_timings", [{"callback_ms": 10, "drain_ms": 20}, None]),
+            ("receive_timings", [{"callback_ms": 21, "drain_ms": 20}]),
+            ("receive_timings", [{"callback_ms": False, "drain_ms": 20}]),
+        )
+        for key, value in timing_faults:
+            with self.subTest(key=key, value=value):
+                self.assertFalse(
+                    reference.reference_receive_schedule_passed({**phase, key: value}, 32, 0)
+                )
+        self.assertFalse(reference.reference_receive_schedule_passed({}, 32, 0))
+        args = argparse.Namespace(
+            mixed_traffic=True,
+            credit_transport="webrtc",
+            safe_receive=True,
+            reference_receive_batch_packets=32,
+            reference_receive_interval_ms=0,
+        )
+        self.assertFalse(
+            reference.gameplay_phase_checks({}, {}, args, 4, True)["reference_receive_schedule"]
+        )
+
     def test_receive_schedule_requires_observed_packet_budget_and_interval(self) -> None:
         schedule = {
             "batch_packets": 4,
@@ -77,6 +226,11 @@ class ReferenceEvidenceTests(unittest.TestCase):
             ("--receive-batch-packets", "257"),
             ("--receive-interval-ms", "-1"),
             ("--receive-interval-ms", "1001"),
+            ("--reference-receive-batch-packets", "-1"),
+            ("--reference-receive-batch-packets", "257"),
+            ("--reference-receive-interval-ms", "-1"),
+            ("--reference-receive-interval-ms", "1001"),
+            ("--reference-receive-interval-ms", "100"),
         ):
             with (
                 self.subTest(flag=flag, value=value),
@@ -204,6 +358,14 @@ class ReferenceEvidenceTests(unittest.TestCase):
                 {"sequence": 1, "enqueue_ms": 380},
             ],
             "snapshot": snapshot,
+            "receive_timings": [
+                {
+                    "packet": "heartbeat:1:reference:0",
+                    "callback_ms": 1000365,
+                    "drain_ms": 1000430,
+                },
+                {"packet": "heartbeat:2:reference:0", "callback_ms": 2, "drain_ms": 3},
+            ],
         }
         result = reference.heartbeat_diagnostics(
             {"heartbeat_timings": [{"sequence": 0, "receive_ms": 900000, "echo_ms": 900001}]}, phase
@@ -213,6 +375,8 @@ class ReferenceEvidenceTests(unittest.TestCase):
         self.assertEqual(result["max_ms"]["bridge_queue_ms"], 200)
         self.assertEqual(result["max_ms"]["application_rtt_ms"], 280)
         self.assertEqual(result["max_ms"]["godot_echo_ms"], 1)
+        self.assertEqual(result["max_ms"]["reference_consumer_ms"], 65)
+        self.assertIsNone(result["packets"][1]["reference_consumer_ms"])
         self.assertEqual(result["packets"][1]["native_rtt_ms"], None)
         self.assertEqual(result["packets"][1]["application_rtt_ms"], None)
 

@@ -710,6 +710,23 @@ earlier than the requested interval. The original deadlines and exact receipt
 requirements still apply. A small byte window can reduce throughput enough to
 hit a deadline with a slow reader; choose controls that expose that outcome.
 
+Use `--reference-receive-batch-packets 32` and
+`--reference-receive-interval-ms 250` to match the reference application drain
+to the Godot example. The reference default remains immediate callback
+consumption. Set either seat's budget independently. The reference queue sits
+after Engine callbacks; it measures application scheduling after transport
+receipt. It does not change native Engine reads or the Godot channel buffer.
+All application packets share its FIFO, including binary packets, heartbeats
+and credits. Signaling and transport callbacks remain active.
+
+Reference `receive_schedule` records each drain, current and peak queued bytes
+and packets. `receive_timings` records callback and scheduled drain times on the
+same clock. Heartbeat diagnostics include `reference_consumer_ms` to separate
+this queue delay from the native round trip and command bridge. The separate
+1500 ms pause still defers snapshot validation after scheduled reads.
+Qualification requires an empty scheduled queue, complete timing records and
+the requested drain budget. The queue fails above 256 packets. Each generation starts fresh.
+
 A slow active reader can fill the engine receive buffer even when it never
 uses the explicit 1500 ms pause. Budget gameplay bytes against receive capacity
 and measured drain cadence. Passing a paced control establishes that control's
