@@ -509,13 +509,24 @@ def service_evidence(output: str) -> list[dict[str, object]]:
 
 
 def service_session_passed(
-    godot: list[dict[str, object]], ref: list[dict[str, object]], *, rejoin: bool = False
+    godot: list[dict[str, object]],
+    ref: list[dict[str, object]],
+    *,
+    rejoin: bool = False,
+    godot_offer: bool = False,
 ) -> bool:
     if [phase.get("phase") for phase in godot] != [1, 2] or [
         phase.get("phase") for phase in ref
     ] != [1, 2]:
         return False
     for local, remote in zip(godot, ref, strict=True):
+        if (
+            type(local.get("initiate")) is not bool
+            or type(remote.get("initiate")) is not bool
+            or local["initiate"] == remote["initiate"]
+            or ((not rejoin or local is godot[0]) and local["initiate"] != godot_offer)
+        ):
+            return False
         for key in ("room_id", "generation"):
             if (
                 not isinstance(local.get(key), str)
@@ -634,6 +645,13 @@ def service_source(source: str) -> str:
 def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
     project = directory / "project"
     interop.prepare(project, None if web else args.native_extension, ROOT)
+    capacity = getattr(args, "channel_in_buffer_kb", 0)
+    if capacity:
+        settings = project / "project.godot"
+        settings.write_text(
+            settings.read_text()
+            + f"\n[network]\nlimits/webrtc/max_channel_in_buffer_kb={capacity}\n"
+        )
     script = project / "tests/smoke/webrtc_interop_drill.gd"
     source = script.read_text()
     fragment = (ROOT / "tests/smoke/webrtc_reference_phase.gd.inc").read_text()
@@ -815,6 +833,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "startup_burst": getattr(args, "startup_burst", False),
         "snapshot_body_bytes": getattr(args, "snapshot_body_bytes", 1024),
         "snapshot_window_bytes": getattr(args, "snapshot_window_bytes", 0),
+        "channel_in_buffer_kb": getattr(args, "channel_in_buffer_kb", 0),
         "receive_empty_binary": getattr(args, "receive_empty_binary", False),
         "binary_traffic": getattr(args, "binary_traffic", False),
         "empty_binary": getattr(args, "empty_binary", False),
@@ -869,11 +888,12 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 report["reference_started_after_godot_ready"] = True
                 if getattr(args, "service_url", ""):
                     reference.evaluate(
-                        "([url, app, rejoin]) => window.configureReferenceService(url, app, rejoin)",
+                        "([url, app, rejoin, offer]) => window.configureReferenceService(url, app, rejoin, offer)",
                         [
                             args.service_url,
                             args.service_app_id,
                             getattr(args, "service_rejoin", False),
+                            args.godot_offer,
                         ],
                     )
                 reference.evaluate(
@@ -945,7 +965,10 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                 service_passed = not getattr(args, "service_url", "") or (
                     Handler.rejected_http_signals == 0
                     and service_session_passed(
-                        service_godot, service_ref, rejoin=getattr(args, "service_rejoin", False)
+                        service_godot,
+                        service_ref,
+                        rejoin=getattr(args, "service_rejoin", False),
+                        godot_offer=args.godot_offer,
                     )
                 )
                 complete = (
@@ -1012,6 +1035,10 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                             require_empty=getattr(args, "receive_empty_binary", False),
                         )
                         and binary_phase_passed(ref, getattr(args, "binary_traffic", False))
+                        and (
+                            not getattr(args, "channel_in_buffer_kb", 0)
+                            or godot.get("channel_in_buffer_kb") == args.channel_in_buffer_kb
+                        )
                         and heartbeat_phase_passed(godot, ref, args.mixed_traffic)
                         and retirement_passed(
                             godot,
@@ -1108,6 +1135,12 @@ def main() -> None:
     parser.add_argument("--godot", default="godot")
     parser.add_argument("--service-url", default="", help="Use real v3 service rooms and signaling")
     parser.add_argument("--service-app-id", default="godot-reference")
+    parser.add_argument(
+        "--channel-in-buffer-kb",
+        type=int,
+        default=0,
+        help="Override Godot channel receive capacity in the prepared project (0 keeps engine defaults)",
+    )
     parser.add_argument(
         "--service-rejoin", action="store_true", help="Rejoin the same running service room"
     )
@@ -1220,6 +1253,8 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if args.channel_in_buffer_kb < 0 or args.channel_in_buffer_kb > 16384:
+        parser.error("--channel-in-buffer-kb must be 0-16384")
     if not 16 <= args.snapshot_body_bytes <= 16384 or args.snapshot_body_bytes % 16:
         parser.error("--snapshot-body-bytes must be 16-16384 and a multiple of 16")
     if args.snapshot_window_bytes < 0 or (
@@ -1239,8 +1274,6 @@ def main() -> None:
         parser.error(
             "--service-rejoin uses room departure, then reference reliable-channel closure"
         )
-    if args.service_url and args.offerer != "reference":
-        parser.error("--service-url requires --offerer reference")
     if args.slow_reference_receiver and (not args.mixed_traffic or args.slow_receiver):
         parser.error("--slow-reference-receiver needs --mixed-traffic and an active Godot reader")
     if not 0 <= args.http_credit_delay_ms <= 8000:

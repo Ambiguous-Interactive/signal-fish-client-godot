@@ -386,7 +386,7 @@ window.runReference = async function (
         });
         if (!response.ok) throw new Error(`relay GET ${response.status}`);
         const messages = await response.json();
-        if (service) messages.push(...service.drain());
+        if (service) messages.push(...service.drain(paired));
         for (const message of messages) {
           if (window.referenceError) return;
           if (message.marker === `ready-${phase}` && !paired) {

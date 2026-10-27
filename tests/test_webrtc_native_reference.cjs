@@ -88,6 +88,27 @@ module.exports = async function testNativeReference() {
     text: "exact\0bytes",
   });
   assert.equal(received.at(-1).at(-1), "exact\0bytes");
+  for (let index = 0; index < 130; index++) {
+    engine.dispatch({
+      event: "binary",
+      generation: index === 0 ? 1 : 2,
+      label: "reliable",
+      data_base64: btoa(`heartbeat:1:reference:${index}:body`),
+      probe_us: 1234 + index,
+    });
+  }
+  const heartbeatTrace = engine.diagnosticSnapshot();
+  assert.equal(heartbeatTrace.native_heartbeat_received.length, 128);
+  assert.equal(
+    heartbeatTrace.native_heartbeat_received[0].marker,
+    "heartbeat:1:reference:1",
+  );
+  assert.equal(heartbeatTrace.native_heartbeat_received[0].probe_us, 1235);
+  assert.equal(
+    typeof heartbeatTrace.native_heartbeat_received[0].callback_ms,
+    "number",
+  );
+  assert.equal(heartbeatTrace.native_heartbeat_received_dropped, 1);
   const channel = engine.channel("godot", "reliable");
   const payloads = [
     new Uint8Array(),
