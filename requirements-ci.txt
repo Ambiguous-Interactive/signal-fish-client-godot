@@ -1,4 +1,4 @@
 gdtoolkit==4.5.0
 mypy==2.4.0
 PyYAML==6.0.3
-types-PyYAML==6.0.12.20250809
+types-PyYAML==6.0.12.20260906

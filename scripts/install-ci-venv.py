@@ -5,7 +5,7 @@ import argparse
 import subprocess
 import sys
 
-UV_VERSION = "0.12.19"
+UV_VERSION = "0.13.6"
 
 
 def main() -> None:

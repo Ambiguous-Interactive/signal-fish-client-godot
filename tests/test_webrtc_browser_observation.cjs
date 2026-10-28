@@ -541,7 +541,24 @@ async function main() {
       ]);
     }
   }
+  let resourceCallback;
+  let pendingResources = [];
   const context = {
+    URL,
+    PerformanceObserver: class {
+      constructor(callback) {
+        resourceCallback = callback;
+      }
+      observe(options) {
+        assert.equal(options.type, "resource");
+        assert.equal(options.buffered, true);
+      }
+      takeRecords() {
+        const records = pendingResources;
+        pendingResources = [];
+        return records;
+      }
+    },
     window: { RTCPeerConnection: Peer },
     performance,
     TextEncoder,
@@ -578,6 +595,31 @@ async function main() {
     fs.readFileSync("scripts/webrtc-browser-observation.js", "utf8"),
     context,
   );
+  const resource = (path, start) => ({
+    name: `http://drill.test${path}`,
+    startTime: start,
+    responseStart: start + 2,
+    responseEnd: start + 5,
+    initiatorType: "fetch",
+  });
+  resourceCallback({
+    getEntries: () => [resource("/index.wasm", 0), resource("/signal/1", 10)],
+  });
+  pendingResources = [resource("/signal/0", 20)];
+  let http = context.window.webrtcHttpSnapshot();
+  assert.equal(http.records.length, 2);
+  assert.equal(http.records[0].seat, "1");
+  assert.equal(http.records[0].response_end_ms, 15);
+  assert.equal(http.records[1].seat, "0");
+  http.records[0].seat = "mutated";
+  assert.equal(context.window.webrtcHttpSnapshot().records[0].seat, "1");
+  resourceCallback({
+    getEntries: () =>
+      Array.from({ length: 4100 }, (_, i) => resource("/signal/1", i + 30)),
+  });
+  http = context.window.webrtcHttpSnapshot();
+  assert.equal(http.records.length, 4096);
+  assert.equal(http.dropped, 6);
   assert.equal(context.window.RTCPeerConnection.marker, 42);
   const peer = new context.window.RTCPeerConnection();
   assert.ok(peer instanceof Peer);

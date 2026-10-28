@@ -967,6 +967,22 @@ and marker observation times. It does not add receive capacity or qualify the
 original reliable loss (#442). Run packet-only and byte-window histories
 separately. The default HTTPRequest history keeps its own verdict.
 
+Reference assessments include `diagnostics.http_requests`. Each marker request
+records its HTTPClient states, process frames and browser-clock start and
+completion. A unique matching browser resource splits that duration into
+`submit_ms`, `response_ms` and `completion_ms`. Missing or ambiguous matches
+keep null intervals. Native requests keep their state and frame evidence.
+`marker_overflow`, `states_omitted` and `resources_dropped` expose trace limits.
+Periodic progress omits the full history; terminal and failure records retain it.
+
+Godot's [HTTPRequest update](https://github.com/godotengine/godot/blob/ed1daf0bf/scene/main/http_request.cpp#L550)
+runs once per process frame. Its [Web HTTPClient](https://github.com/godotengine/godot/blob/ed1daf0bf/platform/web/http_client_web.cpp#L210)
+advances connection, request and body states through later polls. A short
+browser response can therefore take several more frames to reach script code.
+Compare those intervals with heartbeat and credit progress before attributing
+a bulk timeout to WebRTC delivery. Resource timing measures the HTTP path;
+it does not identify SCTP loss or prove a remote gameplay receipt.
+
 For game code, count encoded bytes per destination and channel. Reserve buffer
 space for control traffic and packet framing. Release credit only after the
 receiver validates and consumes a chunk. Keep reading and echoing heartbeats

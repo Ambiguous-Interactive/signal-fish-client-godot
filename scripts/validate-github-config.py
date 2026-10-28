@@ -86,11 +86,11 @@ def _construct_mapping(
 ) -> dict[object, object]:
     mapping: dict[object, object] = {}
     for key_node, value_node in node.value:
-        key = loader.construct_object(key_node, deep=deep)  # type: ignore[no-untyped-call]
+        key = loader.construct_object(key_node, deep=deep)
         if key in mapping:
             line = key_node.start_mark.line + 1
             raise ConfigError(f"duplicate YAML key {key!r} at line {line}")
-        mapping[key] = loader.construct_object(value_node, deep=deep)  # type: ignore[no-untyped-call]
+        mapping[key] = loader.construct_object(value_node, deep=deep)
     return mapping
 
 

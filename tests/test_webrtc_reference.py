@@ -24,6 +24,51 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_http_request_stage_intervals_require_one_browser_resource(self) -> None:
+        record = {
+            "seat": "1",
+            "markers": ["snapshot-ack-1-8"],
+            "started": {"browser_ms": 100, "tick_ms": 900, "frame": 5},
+            "completed": {"browser_ms": 200, "tick_ms": 1000, "frame": 11},
+            "states": [{"status": 2, "browser_ms": 101}],
+        }
+        resource = {"seat": "1", "start_ms": 120, "response_end_ms": 140}
+        for resources, matches in (([resource], 1), ([], 0), ([resource, resource], 2)):
+            with self.subTest(matches=matches):
+                state = {"http_inbox": {"marker_requests": [record], "marker_overflow": 3}}
+                result = reference.http_request_diagnostics(
+                    state, {"records": resources, "dropped": 2}
+                )
+                inbox = result["clients"]["http_inbox"]
+                row = inbox["requests"][0]
+                self.assertEqual(row["resource_matches"], matches)
+                self.assertEqual(row["submit_ms"], 20 if matches == 1 else None)
+                self.assertEqual(row["response_ms"], 20 if matches == 1 else None)
+                self.assertEqual(row["completion_ms"], 60 if matches == 1 else None)
+                self.assertEqual(row["total_ms"], 100)
+                self.assertEqual(row["frames"], 6)
+                self.assertEqual(inbox["marker_overflow"], 3)
+                self.assertEqual(result["resources_dropped"], 2)
+                self.assertEqual(row["states"], record["states"])
+        for altered in (
+            {"seat": "0", "start_ms": 120, "response_end_ms": 140},
+            {"seat": "1", "start_ms": 90, "response_end_ms": 140},
+            {"seat": "1", "start_ms": 120, "response_end_ms": 210},
+            {"seat": "1", "start_ms": 150, "response_end_ms": 140},
+            {"seat": "1", "start_ms": True, "response_end_ms": 140},
+        ):
+            result = reference.http_request_diagnostics(
+                {"http_inbox": {"marker_requests": [record]}}, {"records": [altered]}
+            )
+            self.assertEqual(result["clients"]["http_inbox"]["requests"][0]["resource_matches"], 0)
+        cast(dict[str, object], record["started"])["browser_ms"] = None
+        result = reference.http_request_diagnostics(
+            {"http_outbox": {"marker_requests": [record]}}, {"records": [resource]}
+        )
+        row = result["clients"]["http_outbox"]["requests"][0]
+        self.assertIsNone(row["total_ms"])
+        self.assertIsNone(row["completion_ms"])
+
     def test_position_cadence_requires_complete_independent_sends(self) -> None:
         good = {
             "position_interval_ms": 100,
