@@ -1,22 +1,78 @@
 --- a/thirdparty/libdatachannel/src/impl/sctptransport.cpp
 +++ b/thirdparty/libdatachannel/src/impl/sctptransport.cpp
-@@ -435,7 +435,8 @@
+@@ -320,8 +320,7 @@
+ 
+ 	// Before unregistering incoming() from the lower layer, we need to make sure the thread from
+ 	// lower layers is not blocked in incoming() by the WrittenOnce condition.
+-	mWrittenOnce = true;
+-	mWrittenCondition.notify_all();
++	cancelInitWait();
+ 
+ 	unregisterIncoming();
+ 
+@@ -336,8 +335,9 @@
+ }
+ 
+ void SctpTransport::start() {
+-	registerIncoming();
+ 	connect();
++	if (!mInitCancelled)
++		registerIncoming();
+ }
+ 
+ void SctpTransport::stop() { close(); }
+@@ -356,7 +356,14 @@
+ void SctpTransport::connect() {
+ 	PLOG_DEBUG << "SCTP connecting (local port=" << mPorts.local
+ 	           << ", remote port=" << mPorts.remote << ")";
+-	changeState(State::Connecting);
++	if (mInitCancelled)
++		return;
++	if (!changeStateIf(State::Disconnected, State::Connecting))
++		return;
++	if (mInitCancelled) {
++		changeStateIf(State::Connecting, State::Failed);
++		return;
++	}
+ 
+ 	auto local = getSockAddrConn(mPorts.local);
+ 	if (usrsctp_bind(mSock, reinterpret_cast<struct sockaddr *>(&local), sizeof(local)))
+@@ -424,7 +431,9 @@
+ void SctpTransport::close() {
+ 	diagnostics::lifecycle("sctp_close", 0, diagnosticId, 0, 0, int(state()));
+ 	mSendQueue.stop();
+-	if (state() == State::Connected) {
++	if (state() == State::Disconnected) {
++		cancelInitWait();
++	} else if (state() == State::Connected) {
+ 		mProcessor.enqueue(&SctpTransport::flush, shared_from_this());
+ 	} else if (state() == State::Connecting) {
+ 		PLOG_DEBUG << "SCTP early shutdown";
+@@ -435,7 +444,9 @@
  				PLOG_WARNING << "SCTP shutdown failed, errno=" << errno;
  			}
  		}
 -		changeState(State::Failed);
++		cancelInitWait();
 +		if (!changeStateIf(State::Connecting, State::Failed))
 +			disconnect();
  		mWrittenCondition.notify_all();
  	}
  }
-@@ -443,6 +444,29 @@
- unsigned int SctpTransport::maxStream() const {
- 	unsigned int streamsCount = mNegotiatedStreamsCount.value_or(MAX_SCTP_STREAMS_COUNT);
+@@ -445,25 +456,55 @@
  	return streamsCount > 0 ? streamsCount - 1 : 0;
+ }
+ 
++void SctpTransport::cancelInitWait() {
++	{
++		std::lock_guard lock(mInitMutex);
++		mInitCancelled = true;
++	}
++	mWrittenCondition.notify_all();
 +}
 +
 +void SctpTransport::disconnect(const sctp_assoc_change *association) {
++	cancelInitWait();
 +	// A lower-transport EOF can race the association notification.
 +	for (;;) {
 +		const auto previous = state();
@@ -37,21 +93,43 @@
 +		mWrittenCondition.notify_all();
 +		return;
 +	}
- }
- 
++}
++
  void SctpTransport::incoming(message_ptr message) {
-@@ -459,9 +483,7 @@
- 
- 	if (!message) {
- 		diagnostics::lifecycle("sctp_incoming_null", 0, diagnosticId, 0, 0, int(state()));
++	if (!message) {
++		diagnostics::lifecycle("sctp_incoming_null", 0, diagnosticId, 0, 0, int(state()));
++		disconnect();
++		return;
++	}
++
+ 	// There could be a race condition here where we receive the remote INIT before the local one is
+ 	// sent, which would result in the connection being aborted. Therefore, we need to wait for data
+ 	// to be sent on our side (i.e. the local INIT) before proceeding.
+ 	if (!mWrittenOnce) { // test the atomic boolean is not set first to prevent a lock contention
+-		std::unique_lock lock(mWriteMutex);
+-		mWrittenCondition.wait(lock, [&]() { return mWrittenOnce || state() == State::Failed; });
+-	}
+-
+-	if (state() == State::Failed)
+-		return;
+-
+-	if (!message) {
+-		diagnostics::lifecycle("sctp_incoming_null", 0, diagnosticId, 0, 0, int(state()));
 -		PLOG_INFO << "SCTP disconnected";
 -		changeState(State::Disconnected);
 -		recv(nullptr);
-+		disconnect();
- 		return;
- 	}
+-		return;
+-	}
++		std::unique_lock lock(mInitMutex);
++		mWrittenCondition.wait(lock, [&]() { return mWrittenOnce || mInitCancelled; });
++	}
++
++	if (mInitCancelled || state() == State::Failed || state() == State::Disconnected)
++		return;
  
-@@ -590,8 +612,7 @@
+ 	PLOG_VERBOSE << "Incoming size=" << message->size();
+ 
+@@ -590,8 +631,7 @@
  				PLOG_VERBOSE << "SCTP already shut down";
  			} else {
  				PLOG_WARNING << "SCTP shutdown failed, errno=" << errno;
@@ -61,7 +139,27 @@
  			}
  		}
  	}
-@@ -873,18 +894,11 @@
+@@ -767,13 +807,18 @@
+                                uint8_t /*set_df*/) noexcept {
+ 	try {
+ 		std::unique_lock lock(mWriteMutex);
++		if (mInitCancelled)
++			return -1;
+ 		PLOG_VERBOSE << "Handle write, len=" << len;
+ 
+ 		if (!outgoing(make_message(data, data + len)))
+ 			return -1;
+ 
+ 		mWritten = true;
+-		mWrittenOnce = true;
++		{
++			std::lock_guard lock(mInitMutex);
++			mWrittenOnce = true;
++		}
+ 		mWrittenCondition.notify_all();
+ 
+ 	} catch (const std::exception &e) {
+@@ -873,18 +918,11 @@
  			mNegotiatedStreamsCount.emplace(
  			    std::min(sac.sac_inbound_streams, sac.sac_outbound_streams));
  
@@ -86,14 +184,24 @@
  		break;
 --- a/thirdparty/libdatachannel/src/impl/sctptransport.hpp
 +++ b/thirdparty/libdatachannel/src/impl/sctptransport.hpp
-@@ -79,6 +79,7 @@
+@@ -79,6 +79,8 @@
  
  	void connect();
  	void shutdown();
++	void cancelInitWait();
 +	void disconnect(const sctp_assoc_change *association = nullptr);
  	void incoming(message_ptr message) override;
  	bool outgoing(message_ptr message) override;
  
+@@ -114,6 +116,8 @@
+ 	amount_callback mBufferedAmountCallback;
+ 
+ 	std::mutex mWriteMutex;
++	std::mutex mInitMutex;
++	std::atomic<bool> mInitCancelled = false;
+ 	std::condition_variable mWrittenCondition;
+ 	std::atomic<bool> mWritten = false;     // written outside lock
+ 	std::atomic<bool> mWrittenOnce = false; // same
 --- a/thirdparty/libdatachannel/src/impl/transport.cpp
 +++ b/thirdparty/libdatachannel/src/impl/transport.cpp
 @@ -88,11 +88,23 @@

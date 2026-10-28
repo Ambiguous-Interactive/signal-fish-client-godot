@@ -1,0 +1,17 @@
+--- a/tools/cmake.py
++++ b/tools/cmake.py
+@@ -165,7 +165,13 @@
+     if len(cmake_targets) > 0:
+         cmake_env.Append(CMAKEBUILDFLAGS=["-t"] + [t for t in cmake_targets])
+     cmake_env["CMAKE_INSTALL"] = install
+-    return cmake_env.CMake(builder_targets, builder_sources)
++    targets = cmake_env.CMake(builder_targets, builder_sources)
++    # CMake owns nested source dependencies and must check them on every build.
++    cmake_env.AlwaysBuild(targets)
++    cmake_env.NoCache(targets)
++    # Keep CMake outputs so its incremental builder can reuse unchanged files.
++    cmake_env.Precious(targets)
++    return targets
+ 
+ 
+ def options(opts):

@@ -17,9 +17,11 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Qualify idempotent native SCTP terminal-notification handling (#474;
-      see `docs/mesh-guide.md`). Coordinate upstream review of the experimental
-      repair and compare remote-network controls with the retained failures.
+- [ ] Qualify native SCTP startup cancellation and terminal handling upstream
+      and on remote networks (#474; see `docs/mesh-guide.md`). Preserve the
+      retained startup and teardown failures.
+- [ ] Qualify the native incremental-build repair on other build targets and
+      coordinate upstream review (#479; see `docs/mesh-guide.md`).
 
 - [ ] Compare uniquely enqueued initial probe expiry with transmitted gaps and
       remote-network controls (#458; see `docs/mesh-guide.md`). Keep strict
@@ -55,10 +57,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       Include the captured two-chunk 16 KiB HTTP credit-turnover limit with
       independent reference receive/send tasks before changing pacing or
       deadlines.
-- [ ] Reproduce the missing Web finite tail with before/after SCTP enqueue
-      boundaries and retirement callback identities (#471). Compare remote
-      controls; preserve the failed 4 KiB/100 ms reader history and strict
-      retirement checks.
+- [ ] Compare uniquely traced finite-tail expiry with remote controls (#471).
+      Keep the historical phase-1 tail open; preserve the failed 4 KiB/100 ms
+      reader history and strict retirement checks.
 - [ ] Symbolicate the retained cold-import crash at engine PC `0x19a9bd8`
       (#447), then isolate extension initialization and editor shutdown. Keep
       the original/patched-extension failures and warm/no-extension controls.
