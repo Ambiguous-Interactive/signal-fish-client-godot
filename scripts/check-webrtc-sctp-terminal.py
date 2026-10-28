@@ -65,6 +65,9 @@ def run(
         stream.write(shlex.join(command) + "\n")
         stream.flush()
         environment = os.environ.copy()
+        if command[0] == "git":
+            for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
+                environment.pop(name, None)
         environment.update(env or {})
         environment["SF_NATIVE_LIFECYCLE"] = "0"
         try:
