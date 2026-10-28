@@ -44,6 +44,7 @@ class DriverTimeline:
             line.startswith(
                 (
                     "WEBRTC_LIFECYCLE ",
+                    "SF_NATIVE_LIFECYCLE ",
                     "WEBRTC_INTEROP_FAIL ",
                     "WEBRTC_INTEROP_PASS ",
                     "WEBRTC_MULTIPEER_PHASE ",
@@ -100,6 +101,144 @@ def capture_native_output(
     finally:
         if process.stdout is not None:
             process.stdout.close()
+
+
+def native_lifecycle_evidence(output: str, limit: int = 4096) -> dict[str, object]:
+    events: list[dict[str, object]] = []
+    invalid: list[int] = []
+    issues: list[str] = []
+    omitted = 0
+    observed = 0
+    previous_sequence = 0
+    previous_time = -1
+    peer_instances: dict[int, int] = {}
+    sctp_peers: dict[int, int] = {}
+    seen_sctp: set[int] = set()
+    kinds = {
+        "peer_bind",
+        "channel_bind",
+        "peer_close_begin",
+        "peer_close_end",
+        "channel_close",
+        "sctp_bind",
+        "sctp_close",
+        "sctp_notification",
+        "sctp_failure",
+        "impl_peer_close",
+        "impl_peer_remote_close",
+        "impl_peer_close_transports",
+        "sctp_close_stream",
+        "sctp_incoming_null",
+    }
+    numeric = (
+        "sequence",
+        "native_us",
+        "native_entry_us",
+        "peer",
+        "sctp",
+        "godot_instance",
+        "channel_instance",
+        "state",
+        "notification",
+        "association",
+        "association_state",
+        "error",
+        "stream",
+    )
+    for line_number, line in enumerate(output.splitlines(), 1):
+        if "SF_NATIVE_LIFECYCLE " not in line:
+            continue
+        observed += 1
+        if observed > limit:
+            omitted += 1
+            continue
+        try:
+            row = json.loads(line.removeprefix("SF_NATIVE_LIFECYCLE "))
+            if (
+                not isinstance(row, dict)
+                or row.get("event") not in kinds
+                or any(type(row.get(key)) is not int for key in numeric)
+                or row["sequence"] < 1
+                or not 0 <= row["native_entry_us"] <= row["native_us"]
+                or any(
+                    not 0 <= row[key] < (1 << 64)
+                    for key in ("peer", "sctp", "godot_instance", "channel_instance")
+                )
+                or (
+                    row["event"] in ("sctp_notification", "sctp_failure")
+                    and any(
+                        row[key] < 0
+                        for key in ("notification", "association_state", "error", "association")
+                    )
+                )
+            ):
+                raise ValueError("invalid native lifecycle row")
+        except (ValueError, TypeError):
+            if len(invalid) < limit:
+                invalid.append(line_number)
+            continue
+        if row["sequence"] != previous_sequence + 1 and "sequence gap or reordering" not in issues:
+            issues.append("sequence gap or reordering")
+        if row["native_us"] < previous_time and "native clock regressed" not in issues:
+            issues.append("native clock regressed")
+        previous_sequence = row["sequence"]
+        previous_time = row["native_us"]
+        peer, sctp = row["peer"], row["sctp"]
+        if row["event"] == "peer_bind":
+            instance = row["godot_instance"]
+            if peer == 0 or instance == 0 or peer_instances.get(peer, instance) != instance:
+                if "invalid peer binding" not in issues:
+                    issues.append("invalid peer binding")
+            else:
+                peer_instances[peer] = instance
+        if row["event"] == "sctp_bind":
+            if sctp == 0 or peer == 0 or sctp_peers.get(sctp, peer) != peer:
+                if "invalid SCTP binding" not in issues:
+                    issues.append("invalid SCTP binding")
+            else:
+                sctp_peers[sctp] = peer
+        if sctp:
+            seen_sctp.add(sctp)
+        events.append(row)
+    for row in events:
+        peer, sctp = cast(int, row["peer"]), cast(int, row["sctp"])
+        instance = cast(int, row["godot_instance"])
+        kind = cast(str, row["event"])
+        if (
+            (kind.startswith("sctp_") and sctp == 0)
+            or (kind.startswith(("peer_", "impl_peer_")) and peer == 0)
+            or (kind in ("channel_bind", "channel_close") and row["channel_instance"] == 0)
+            or (peer and sctp and sctp_peers.get(sctp, peer) != peer)
+            or (peer and instance and peer_instances.get(peer, instance) != instance)
+        ) and "contradictory event identity" not in issues:
+            issues.append("contradictory event identity")
+    links = [
+        {
+            "sctp": sctp,
+            "peer": sctp_peers.get(sctp),
+            "godot_instance": peer_instances.get(sctp_peers.get(sctp, 0)),
+        }
+        for sctp in sorted(seen_sctp)
+    ]
+    for link in links:
+        instance = link["godot_instance"]
+        link["script_connection_instance"] = (
+            instance - (1 << 64) if instance is not None and instance >= (1 << 63) else instance
+        )
+    for row in events:
+        for key in ("godot_instance", "channel_instance"):
+            instance = cast(int, row[key])
+            row["script_" + key] = instance - (1 << 64) if instance >= (1 << 63) else instance
+    return {
+        "clock": "native process steady_clock microseconds; independent of driver and remote clocks",
+        "observed_records": observed,
+        "events": events,
+        "omitted_records": omitted,
+        "invalid_line_numbers": invalid,
+        "issues": issues,
+        "associations": links,
+        "unbound_sctp": [link["sctp"] for link in links if link["godot_instance"] is None],
+    }
 
 
 class RelayObservation:
@@ -1091,6 +1230,10 @@ def run_seats(
             )
             (directory / "browser.log").write_text("\n".join(messages))
             native_output = (directory / "native.log").read_text(errors="replace")
+            native_lifecycle = native_lifecycle_evidence(native_output)
+            (directory / "native-lifecycle.json").write_text(
+                json.dumps(native_lifecycle, indent=2) + "\n"
+            )
             expected_case = retirement_case if args.multi_peer else None
             seat_results = [
                 seat_evidence(
@@ -1149,6 +1292,7 @@ def run_seats(
                 "http_post_delay": TrialRelayHandler.post_delay.snapshot(),
                 "driver_error": driver_error,
                 "driver_timeline": "driver-timeline.json",
+                "native_lifecycle": "native-lifecycle.json",
                 "browser_version": browser_version,
                 "browser_observation": browser_observation,
                 "browser_2_observation": browser_2_observation,

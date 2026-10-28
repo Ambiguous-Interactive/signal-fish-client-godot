@@ -1651,6 +1651,52 @@ They do not establish a native SCTP callback time or cross-seat causal order.
 Join each seat's physical identities, local `tick_us` boundaries and barrier
 markers before classifying a failure as final closure or an active-link fault.
 
+For native callback evidence (#474), build the optional trace extension from
+[webrtc-native 1.2.2-stable](https://github.com/godotengine/webrtc-native/tree/62135fc034cbdc5aee177136e526e3ead3cc563a).
+Its pinned libdatachannel revision is `6b1e2e620f1e37f0eafeee702eaea0043cb305fd`.
+Initialize all submodules before applying the combined patch from the clone root:
+
+```bash
+git submodule update --init --recursive
+git apply /path/to/client/tests/smoke/webrtc_native_lifecycle_trace.patch
+scons platform=linux arch=arm64 target=template_debug build_profile=build_profile.json -j4
+SF_NATIVE_LIFECYCLE=1 python /path/to/client/scripts/check-webrtc-interop.py \
+  --multi-peer --slow-receiver --retirement-case 0 --credit-transport webrtc \
+  --native-extension bin/extension/addons/webrtc_native \
+  --godot /path/to/godot --output /tmp/native-lifecycle-case0
+```
+
+Use the build tools and platform options required by the extension. The patch
+leaves gameplay and engine error handling in place. Set `SF_NATIVE_LIFECYCLE=1`
+to emit records; the patched build also supports a trace-disabled control.
+Compare the original extension with matching tools, source and workload. Keep
+all failures and record source, patch and binary hashes.
+
+`native-lifecycle.json` retains native records and joins unique peer and SCTP
+transport IDs to Godot connection instances. Channel bindings retain instance
+and stream IDs. `script_connection_instance` and the records' `script_*`
+fields preserve Godot's signed 64-bit script view of native unsigned object
+IDs. Use those fields when joining script lifecycle records. Notifications retain the SCTP association ID, notification
+state/error and prior transport state. Explicit local peer/channel closures,
+remote-close callbacks and lower-transport disconnects have separate records.
+Native records use one bounded output write to keep concurrent stdout from
+splitting their fields. The driver reports malformed lines, sequence gaps,
+conflicting identities, unbound transports and omitted records. Raw `native.log` retains all output.
+Missing trace records provide no native callback evidence.
+
+`native_entry_us` samples the process steady clock at the trace call;
+`native_us` samples it under the trace output mutex. Their difference includes
+instrumentation contention. Arguments such as prior state are sampled before
+the call. These times describe instrumentation inside the native function.
+They do not measure OS notification arrival or establish order with browser
+clocks. A later notification after local close does not establish its cause.
+Keep the strict engine-error verdict and exact gameplay checks.
+
+Two traced HTTP cases identify native errors on a retiring first-generation
+link during a concurrent lower-transport disconnect (#474). All exact gameplay
+checks complete; the strict runs still fail. Native terminal-state handling
+needs upstream assessment.
+
 WebRTC credits carry the phase, sender, destination and cumulative consumed
 count. Reads check exact bytes, reliable mode, channel zero, the next eight-chunk
 boundary and the sender's outstanding count. Credits share the reliable channel
