@@ -832,6 +832,181 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
             cohort["intervals_ms"]["sent_during_pause"]["callback_to_read_ms"]["max_ms"], 9
         )
 
+    def test_browser_drop_attribution_separates_dropped_and_pending_packets(self) -> None:
+        lost = "snapshot:1:reference:0"
+        pending = "snapshot:1:reference:1"
+        callback = {"packet": lost, "bytes": 8200, "ms": 10}
+        callbacks = [
+            {
+                "peer": 7,
+                "id": 1,
+                "label": "reliable",
+                "dropped": 0,
+                "callbacks": [callback, {"packet": pending, "bytes": 4101, "ms": 12}],
+            }
+        ]
+        drops = {
+            "records": [
+                {
+                    "ms": 11,
+                    "callback_scope": "engine_onmessage",
+                    "preceding_callback": {"peer": 7, "id": 1, "label": "reliable", **callback},
+                }
+            ],
+            "dropped": 0,
+        }
+        godot = {"receive_timings_dropped": 0, "receive_timings": []}
+        before = copy.deepcopy((godot, callbacks, drops))
+        result = reference.browser_read_diagnostics(godot, callbacks, 1, drops)
+        self.assertEqual(result["matched_buffer_drop_packets"], [lost])
+        self.assertEqual(result["unread_without_matched_drop_packets"], [pending])
+        self.assertEqual(result["unresolved_buffer_drop_records"], [])
+        self.assertEqual(result["terminal_tracked_unread_payload_bytes"], 12301)
+        self.assertEqual(
+            result["terminal_tracked_unread_payload_bytes_excluding_matched_drops"], 4101
+        )
+        self.assertEqual(result["peak_tracked_unread_payload_bytes_excluding_matched_drops"], 4101)
+        self.assertEqual((godot, callbacks, drops), before)
+
+    def test_browser_drop_attribution_requires_unique_physical_callback(self) -> None:
+        marker = "heartbeat:1:reference:0"
+        callback = {"packet": marker, "bytes": 90, "ms": 10}
+        channel = {"peer": 7, "id": 1, "label": "reliable", "dropped": 0, "callbacks": [callback]}
+        drop = {
+            "ms": 11,
+            "callback_scope": "engine_onmessage",
+            "preceding_callback": {"peer": 7, "id": 1, "label": "reliable", **callback},
+        }
+        for change in (
+            {"peer": 8},
+            {"id": 3},
+            {"id": True},
+            {"label": "unreliable"},
+            {"ms": 9},
+            {"bytes": 91},
+            {"peer": True},
+            {"ms": float("nan")},
+        ):
+            with self.subTest(change=change):
+                altered = {
+                    **drop,
+                    "preceding_callback": {
+                        **cast(dict[str, object], drop["preceding_callback"]),
+                        **change,
+                    },
+                }
+                result = reference.browser_read_diagnostics(
+                    {"receive_timings_dropped": 0, "receive_timings": []},
+                    [channel],
+                    1,
+                    {"records": [altered], "dropped": 0},
+                )
+                self.assertEqual(result["matched_buffer_drop_packets"], [])
+                self.assertEqual(result["unread_without_matched_drop_packets"], [marker])
+                self.assertEqual(len(result["unresolved_buffer_drop_records"]), 1)
+                self.assertIsNone(
+                    result["terminal_tracked_unread_payload_bytes_excluding_matched_drops"]
+                )
+        legacy = copy.deepcopy(drop)
+        legacy.pop("callback_scope")
+        result = reference.browser_read_diagnostics(
+            {"receive_timings_dropped": 0, "receive_timings": []},
+            [channel],
+            1,
+            {"records": [legacy], "dropped": 0},
+        )
+        self.assertEqual(result["matched_buffer_drop_packets"], [])
+        self.assertEqual(result["unresolved_buffer_drop_records"], [legacy])
+        self.assertIsNone(result["terminal_tracked_unread_payload_bytes_excluding_matched_drops"])
+        for channels, records in (
+            ([channel, {**channel, "peer": 8}], [drop]),
+            ([channel], [drop, drop]),
+            ([channel, channel], [drop]),
+        ):
+            with self.subTest(channels=channels, records=records):
+                result = reference.browser_read_diagnostics(
+                    {"receive_timings_dropped": 0, "receive_timings": []},
+                    channels,
+                    1,
+                    {"records": records, "dropped": 0},
+                )
+                self.assertEqual(result["matched_buffer_drop_packets"], [])
+                self.assertIsNone(
+                    result["terminal_tracked_unread_payload_bytes_excluding_matched_drops"]
+                )
+
+    def test_browser_drop_attribution_keeps_incomplete_or_contradictory_evidence(self) -> None:
+        marker = "snapshot:1:reference:0"
+        callback = {"packet": marker, "bytes": 4100, "ms": 10}
+        channel = {"peer": 7, "id": 1, "label": "reliable", "dropped": 0, "callbacks": [callback]}
+        drop = {
+            "ms": 11,
+            "callback_scope": "engine_onmessage",
+            "preceding_callback": {"peer": 7, "id": 1, "label": "reliable", **callback},
+        }
+        for channel_dropped, script_dropped, drop_dropped, reads in (
+            (1, 0, 0, []),
+            (0, 1, 0, []),
+            (0, 0, 1, []),
+            (0, 0, None, []),
+            (0, 0, 0, [{"packet": marker, "bytes": 4100, "mode": 2, "browser_ms": 12}]),
+        ):
+            with self.subTest(
+                channel_dropped=channel_dropped,
+                script_dropped=script_dropped,
+                drop_dropped=drop_dropped,
+                reads=reads,
+            ):
+                result = reference.browser_read_diagnostics(
+                    {"receive_timings_dropped": script_dropped, "receive_timings": reads},
+                    [{**channel, "dropped": channel_dropped}],
+                    1,
+                    {"records": [drop], "dropped": drop_dropped},
+                )
+                self.assertIsNone(
+                    result["terminal_tracked_unread_payload_bytes_excluding_matched_drops"]
+                )
+                if reads:
+                    self.assertEqual(result["matched_buffer_drop_packets"], [])
+                    self.assertEqual(len(result["unresolved_buffer_drop_records"]), 1)
+
+        for malformed in (
+            {"dropped": 0},
+            {"records": [None], "dropped": 0},
+            {"records": {}, "dropped": 0},
+            {"records": None, "dropped": 0},
+        ):
+            with self.subTest(malformed=malformed):
+                result = reference.browser_read_diagnostics(
+                    {"receive_timings_dropped": 0, "receive_timings": []}, [channel], 1, malformed
+                )
+                self.assertIsNone(
+                    result["terminal_tracked_unread_payload_bytes_excluding_matched_drops"]
+                )
+        tiny = {**callback, "bytes": 1}
+        result = reference.browser_read_diagnostics(
+            {"receive_timings_dropped": 0, "receive_timings": []},
+            [{**channel, "callbacks": [tiny]}],
+            1,
+            {
+                "records": [
+                    {
+                        **drop,
+                        "preceding_callback": {
+                            "peer": 7,
+                            "id": 1,
+                            "label": "reliable",
+                            **tiny,
+                            "bytes": True,
+                        },
+                    }
+                ],
+                "dropped": 0,
+            },
+        )
+        self.assertEqual(result["matched_buffer_drop_packets"], [])
+        self.assertIsNone(result["terminal_tracked_unread_payload_bytes_excluding_matched_drops"])
+
     def test_browser_read_boundary_keeps_incomplete_evidence_explicit(self) -> None:
         self.assertFalse(reference.browser_read_diagnostics({}, [], 1)["available"])
         marker = "heartbeat:1:reference:0"

@@ -488,17 +488,29 @@ async function main() {
     calls = 0;
     addEventListener() {}
     createDataChannel(label, options) {
-      return {
+      return new (class {
+        id = options.id;
+        label = label;
+        negotiated = true;
+        ordered = options.ordered;
+        maxPacketLifeTime = options.maxPacketLifeTime ?? null;
+        maxRetransmits = null;
+        handler = null;
+        listener = null;
+        get onmessage() {
+          return this.handler;
+        }
+        set onmessage(value) {
+          this.handler = value;
+        }
         addEventListener(_event, listener) {
-          this.receive = listener;
-        },
-        id: options.id,
-        label,
-        negotiated: true,
-        ordered: options.ordered,
-        maxPacketLifeTime: options.maxPacketLifeTime ?? null,
-        maxRetransmits: null,
-      };
+          this.listener = listener;
+        }
+        receive(event) {
+          this.listener(event);
+          return this.handler?.call(this, event);
+        }
+      })();
     }
     async getStats() {
       this.calls++;
@@ -703,29 +715,72 @@ async function main() {
     ],
   );
   assert.ok(captured.callbacks.every((row) => Number.isFinite(row.ms)));
-  traced.receive({ data: "partial-credit:2:reference:godot:4" });
-  context.console.error("ERROR: Buffer full! Dropping data.", "preserved");
-  const drop = context.window.webrtcDropSnapshot();
-  assert.equal(drop.records.length, 1);
+  context.console.error("Buffer full! Dropping data.");
   assert.equal(
-    drop.records[0].preceding_callback.packet,
+    context.window.webrtcDropSnapshot().records[0].preceding_callback,
+    null,
+  );
+  const handler = function (event) {
+    assert.equal(this, traced);
+    assert.equal(event.data, "partial-credit:2:reference:godot:4");
+    context.console.error("ERROR: Buffer full! Dropping data.", "preserved");
+    return 42;
+  };
+  traced.onmessage = handler;
+  assert.equal(traced.onmessage, handler);
+  assert.equal(
+    traced.receive({ data: "partial-credit:2:reference:godot:4" }),
+    42,
+  );
+  const drop = context.window.webrtcDropSnapshot();
+  assert.equal(drop.records.length, 2);
+  assert.equal(drop.records[1].callback_scope, "engine_onmessage");
+  assert.equal(
+    drop.records[1].preceding_callback.packet,
     "partial-credit:2:reference:godot:4",
   );
-  assert.equal(drop.records[0].preceding_callback.label, "reliable");
-  assert.ok(drop.records[0].ms >= drop.records[0].preceding_callback.ms);
-  assert.deepEqual(errors[0], [
+  assert.equal(drop.records[1].preceding_callback.label, "reliable");
+  assert.ok(drop.records[1].ms >= drop.records[1].preceding_callback.ms);
+  assert.deepEqual(errors[1], [
     "ERROR: Buffer full! Dropping data.",
     "preserved",
   ]);
-  drop.records[0].preceding_callback.packet = "mutated copy";
+  drop.records[1].preceding_callback.packet = "mutated copy";
   assert.equal(
-    context.window.webrtcDropSnapshot().records[0].preceding_callback.packet,
+    context.window.webrtcDropSnapshot().records[1].preceding_callback.packet,
     "partial-credit:2:reference:godot:4",
   );
+  traced.onmessage = () => {
+    finiteTrace.receive({ data: "reference:1:unreliable" });
+    context.console.error("Buffer full! Dropping data.");
+  };
+  finiteTrace.onmessage = () => {
+    context.console.error("Buffer full! Dropping data.");
+  };
+  traced.receive({ data: "reference:1:reliable" });
+  const nestedDrops = context.window.webrtcDropSnapshot().records.slice(-2);
+  assert.equal(nestedDrops[0].preceding_callback.label, "unreliable");
+  assert.equal(nestedDrops[1].preceding_callback.label, "reliable");
+  finiteTrace.onmessage = null;
+  traced.onmessage = () => {
+    throw new Error("handler failed");
+  };
+  assert.throws(
+    () => traced.receive({ data: "reference:1:reliable" }),
+    /handler failed/,
+  );
+  context.console.error("Buffer full! Dropping data.");
+  assert.equal(
+    context.window.webrtcDropSnapshot().records[4].preceding_callback,
+    null,
+  );
+  traced.onmessage = null;
+  assert.equal(traced.onmessage, null);
+  traced.receive({ data: "reference:1:reliable" });
   for (let i = 0; i < 130; i++)
     context.console.error("Buffer full! Dropping data.");
   assert.equal(context.window.webrtcDropSnapshot().records.length, 128);
-  assert.equal(context.window.webrtcDropSnapshot().dropped, 3);
+  assert.equal(context.window.webrtcDropSnapshot().dropped, 7);
   peer.fail = true;
   await sample();
   assert.match(output.at(-1).peers[0].error, /sample unavailable/);

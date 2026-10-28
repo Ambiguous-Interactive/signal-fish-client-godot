@@ -40,7 +40,7 @@
   const callbackChannels = [];
   const drops = [];
   let dropsOmitted = 0;
-  let precedingCallback = null;
+  let activeCallback = null;
   const reportError = console.error;
   console.error = function (...args) {
     if (
@@ -51,7 +51,8 @@
       if (drops.length < 128)
         drops.push({
           ms: performance.now(),
-          preceding_callback: precedingCallback,
+          preceding_callback: activeCallback,
+          callback_scope: activeCallback ? "engine_onmessage" : null,
         });
       else dropsOmitted++;
     }
@@ -92,6 +93,39 @@
         observedChannels.push(received);
         callbackChannels.push(received);
         if (callbackChannels.length > 32) callbackChannels.shift();
+        const callbackEvents = new WeakMap();
+        let owner = channel;
+        let messageProperty;
+        while (owner && !messageProperty) {
+          messageProperty = Object.getOwnPropertyDescriptor(owner, "onmessage");
+          owner = Object.getPrototypeOf(owner);
+        }
+        if (messageProperty?.get && messageProperty?.set) {
+          let handler = null;
+          Object.defineProperty(channel, "onmessage", {
+            configurable: true,
+            enumerable: messageProperty.enumerable,
+            get: () => handler,
+            set(value) {
+              handler = typeof value === "function" ? value : null;
+              const assigned = handler;
+              messageProperty.set.call(
+                channel,
+                assigned
+                  ? function (event) {
+                      const previous = activeCallback;
+                      activeCallback = callbackEvents.get(event) ?? null;
+                      try {
+                        return Reflect.apply(assigned, this, [event]);
+                      } finally {
+                        activeCallback = previous;
+                      }
+                    }
+                  : null,
+              );
+            },
+          });
+        }
         channel.addEventListener("message", (event) => {
           const bytes =
             typeof event.data === "string"
@@ -129,12 +163,13 @@
                 null,
             });
           } else received.dropped++;
-          precedingCallback = {
-            peer: id,
-            label: channel.label,
-            ...(received.callbacks.at(-1) ?? {}),
-          };
-          if (received.dropped) precedingCallback = null;
+          if (!received.dropped)
+            callbackEvents.set(event, {
+              peer: id,
+              id: channel.id,
+              label: channel.label,
+              ...received.callbacks.at(-1),
+            });
         });
         console.log(
           "WEBRTC_BROWSER_CHANNEL " +

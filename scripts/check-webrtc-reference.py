@@ -441,7 +441,12 @@ def browser_read_diagnostics(
 
     browser = index(
         [
-            {**row, "label": channel.get("label")}
+            {
+                **row,
+                "peer": channel.get("peer"),
+                "id": channel.get("id"),
+                "label": channel.get("label"),
+            }
             for channel in callbacks
             for row in diagnostic_records(channel.get("callbacks"))
         ]
@@ -531,6 +536,73 @@ def browser_read_diagnostics(
         ),
         None,
     )
+    raw_drop_records = (drops or {}).get("records")
+    drop_records = diagnostic_records(raw_drop_records)
+    read_records = godot.get("receive_timings")
+    receipt_trace_complete = (
+        isinstance(read_records, list)
+        and all(isinstance(row, dict) for row in read_records)
+        and all(
+            isinstance(channel.get("callbacks"), list)
+            and all(isinstance(row, dict) for row in cast(list[object], channel["callbacks"]))
+            for channel in callbacks
+        )
+    )
+    matching_drops: dict[str, list[dict[str, object]]] = {}
+    unresolved_drops = []
+    for drop in drop_records:
+        preceding = diagnostic_mapping(drop.get("preceding_callback"))
+        drop_marker = preceding.get("packet")
+        if not isinstance(drop_marker, str):
+            unresolved_drops.append(drop)
+            continue
+        if not pattern.fullmatch(drop_marker):
+            continue
+        rows = browser.get(drop_marker, [])
+        callback = rows[0] if len(rows) == 1 else {}
+        peer = callback.get("peer")
+        if (
+            not occupancy_valid
+            or not receipt_trace_complete
+            or drop.get("callback_scope") != "engine_onmessage"
+            or not callback
+            or script.get(drop_marker)
+            or type(peer) is not int
+            or peer <= 0
+            or type(preceding.get("peer")) is not int
+            or type(callback.get("id")) is not int
+            or cast(int, callback["id"]) < 0
+            or type(preceding.get("id")) is not int
+            or type(preceding.get("bytes")) is not int
+            or any(
+                preceding.get(key) != callback.get(key)
+                for key in ("peer", "id", "label", "packet", "ms", "bytes")
+            )
+            or diagnostic_interval(preceding.get("ms"), drop.get("ms")) is None
+        ):
+            unresolved_drops.append(drop)
+            continue
+        matching_drops.setdefault(drop_marker, []).append(drop)
+    for marker in list(matching_drops):
+        if len(matching_drops[marker]) != 1:
+            unresolved_drops.extend(matching_drops.pop(marker))
+    drop_adjusted_valid = (
+        occupancy_valid
+        and receipt_trace_complete
+        and isinstance(raw_drop_records, list)
+        and all(isinstance(row, dict) for row in raw_drop_records)
+        and type((drops or {}).get("dropped")) is int
+        and (drops or {})["dropped"] == 0
+        and not unresolved_drops
+    )
+    adjusted_events = list(events)
+    for marker in matching_drops:
+        callback = browser[marker][0]
+        adjusted_events.remove((cast(float, callback["ms"]), cast(int, callback["bytes"])))
+    adjusted_pending = adjusted_peak = 0
+    for _, delta in sorted(adjusted_events, key=lambda event: (event[0], -event[1])):
+        adjusted_pending += delta
+        adjusted_peak = max(adjusted_peak, adjusted_pending)
     at_drop = None
     if first_drop is not None and occupancy_valid:
         at_drop = sum(delta for at, delta in events if at <= cast(float, first_drop["ms"]))
@@ -557,6 +629,17 @@ def browser_read_diagnostics(
             for key in ("read_to_echo_ms", "callback_to_echo_ms")
         },
         "unread_packets": sorted(browser.keys() - script.keys()),
+        "matched_buffer_drop_packets": sorted(matching_drops),
+        "unread_without_matched_drop_packets": sorted(
+            browser.keys() - script.keys() - matching_drops.keys()
+        ),
+        "unresolved_buffer_drop_records": unresolved_drops,
+        "peak_tracked_unread_payload_bytes_excluding_matched_drops": adjusted_peak
+        if drop_adjusted_valid
+        else None,
+        "terminal_tracked_unread_payload_bytes_excluding_matched_drops": adjusted_pending
+        if drop_adjusted_valid
+        else None,
         "unmatched_script_packets": unmatched,
         "invalid_intervals": sorted(invalid),
         "peak_tracked_unread_payload_bytes": peak if occupancy_valid else None,
@@ -569,7 +652,7 @@ def browser_read_diagnostics(
         else None,
         "script_trace_dropped": script_dropped,
         "channel_in_buffer_kb": godot.get("channel_in_buffer_kb"),
-        "limits": "Tracks reliable snapshot, partial, startup, initial probe, heartbeat and credit payloads only. Unread bytes can be queued, cached or dropped. This is not engine ring occupancy; framing and other packets are excluded. Instrumentation reads the browser clock after script reads and heartbeat echo sends. Echo send completion does not prove remote receipt.",
+        "limits": "Tracks reliable snapshot, partial, startup, initial probe, heartbeat and credit payloads only. Unread bytes can be queued, cached or dropped. Adjusted totals remove only unique peer/label/packet/time/size-matched buffer-drop observations with complete traces and no script receipt. Unresolved drop records keep adjusted totals unavailable. This is not engine ring occupancy; framing and other packets are excluded. Instrumentation reads the browser clock after script reads and heartbeat echo sends. Echo send completion does not prove remote receipt.",
     }
 
 

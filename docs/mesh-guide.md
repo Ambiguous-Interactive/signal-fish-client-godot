@@ -874,6 +874,36 @@ Historical stall and heartbeat histories still need their own reproduction.
 These opt-in local controls keep the existing deadlines. They do not simulate
 WebRTC network delay or establish the cause of #396.
 
+### Reliable callback drops
+
+`diagnostics.browser_read_phases` separates `matched_buffer_drop_packets`
+from `unread_without_matched_drop_packets`. A match needs a unique physical
+peer, channel ID, label, packet marker, timestamp and byte count. The buffer
+error must occur inside the engine's synchronous `onmessage` handler. Errors
+outside that handler keep a null callback identity. Duplicate, missing and
+truncated evidence leaves adjusted byte totals unavailable.
+
+`peak_tracked_unread_payload_bytes_excluding_matched_drops` and its terminal
+counterpart remove matched rejected arrivals. Godot's Web adapter rejects a
+packet before adding it to its receive ring when space is insufficient.
+The observer follows the synchronous handler in
+[Godot 4.7.2's Web bridge](https://github.com/godotengine/godot/blob/4.7.2-stable/modules/webrtc/library_godot_webrtc.js#L48)
+and the rejection in
+[its channel reader](https://github.com/godotengine/godot/blob/4.7.2-stable/modules/webrtc/webrtc_data_channel_js.cpp#L67).
+These totals cover tracked payloads; framing, cached packets and untracked
+traffic prevent an exact ring occupancy claim. An unread callback without a
+matched error can still be queued. Every reliable receipt remains required.
+
+A fresh 4 KiB packet-only Web service control at Godot 4.7.2 matched five
+rejections to snapshots 115-119. The next script read was snapshot 120. A
+100 ms reader control matched two other rejections. Both runs failed their
+original receipt checks. A 48 KiB window control with the same reader interval
+received all 128 snapshots in each direction and completed its heartbeat pause
+proof, then failed during queued-packet retirement (#471). The matching native control
+completed both generations and service rejoin. This locates those Web reliable
+gaps at engine ingress (#442); retirement, historical heartbeat failures (#440)
+and remote-network qualification (#355) remain open.
+
 ### Active Godot reader budgets
 
 Use `--receive-batch-packets 1` to limit each Godot gameplay drain to one
