@@ -17,8 +17,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Trace the native SCTP failure near final three-seat teardown (#474), with
-      physical peer identities and local close boundaries on the driver timeline.
+- [ ] Capture a native SCTP failure with the opt-in association trace (#474;
+      see `docs/mesh-guide.md`). Join notification state/error, native local-close
+      boundaries and remote departure evidence; compare matched remote controls.
 
 - [ ] Compare uniquely enqueued initial probe expiry with transmitted gaps and
       remote-network controls (#458; see `docs/mesh-guide.md`). Keep strict

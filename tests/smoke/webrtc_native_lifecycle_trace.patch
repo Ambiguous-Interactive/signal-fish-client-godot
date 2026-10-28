@@ -1,0 +1,270 @@
+diff --git a/src/WebRTCLibDataChannel.cpp b/src/WebRTCLibDataChannel.cpp
+index 8bacca7..83e6f74 100644
+--- a/src/WebRTCLibDataChannel.cpp
++++ b/src/WebRTCLibDataChannel.cpp
+@@ -43,6 +43,7 @@
+ #include <string.h>
+ 
+ #include <cstring>
++#include "rtc/lifecycletrace.hpp"
+ 
+ using namespace godot;
+ using namespace godot_webrtc;
+@@ -177,6 +178,7 @@ Error WebRTCLibDataChannel::_poll() {
+ 
+ void WebRTCLibDataChannel::_close() try {
+ 	if (channel) {
++		rtc::diagnostics::lifecycle("channel_close", 0, 0, 0, get_instance_id(), -1, -1, 0, -1, 0, channel->id().has_value() ? int(*channel->id()) : -1);
+ 		channel->close();
+ 	}
+ } catch (...) {
+diff --git a/src/WebRTCLibPeerConnection.cpp b/src/WebRTCLibPeerConnection.cpp
+index 22177e6..2524c16 100644
+--- a/src/WebRTCLibPeerConnection.cpp
++++ b/src/WebRTCLibPeerConnection.cpp
+@@ -31,6 +31,7 @@
+ #include "WebRTCLibPeerConnection.hpp"
+ 
+ #include "WebRTCLibDataChannel.hpp"
++#include "rtc/lifecycletrace.hpp"
+ 
+ using namespace godot;
+ using namespace godot_webrtc;
+@@ -238,6 +239,7 @@ Ref<WebRTCDataChannel> WebRTCLibPeerConnection::_create_data_channel(const Strin
+ 
+ 	WebRTCLibDataChannel *wrapper = WebRTCLibDataChannel::new_data_channel(ch, ch->id().has_value());
+ 	ERR_FAIL_COND_V(wrapper == nullptr, nullptr);
++	rtc::diagnostics::lifecycle("channel_bind", peer_connection->diagnosticId(), 0, get_instance_id(), wrapper->get_instance_id(), -1, -1, 0, -1, 0, ch->id().has_value() ? int(*ch->id()) : -1);
+ 	return wrapper;
+ } catch (const std::exception &e) {
+ 	ERR_PRINT(e.what());
+@@ -312,7 +314,9 @@ Error WebRTCLibPeerConnection::_poll() {
+ void WebRTCLibPeerConnection::_close() {
+ 	if (peer_connection != nullptr) {
+ 		try {
++			rtc::diagnostics::lifecycle("peer_close_begin", peer_connection->diagnosticId(), 0, get_instance_id(), 0, int(peer_connection->state()));
+ 			peer_connection->close();
++			rtc::diagnostics::lifecycle("peer_close_end", peer_connection->diagnosticId(), 0, get_instance_id(), 0, int(peer_connection->state()));
+ 		} catch (...) {
+ 		}
+ 	}
+@@ -333,6 +337,7 @@ Error WebRTCLibPeerConnection::_create_pc(rtc::Configuration &r_config) try {
+ 
+ 	peer_connection = std::make_shared<rtc::PeerConnection>(r_config);
+ 	ERR_FAIL_COND_V(!peer_connection, FAILED);
++	rtc::diagnostics::lifecycle("peer_bind", peer_connection->diagnosticId(), 0, get_instance_id());
+ 
+ 	auto queue_task = [](std::shared_ptr<SharedState> p_state, std::function<void(godot::Object *)> p_task) {
+ 		if (p_state == nullptr) {
+diff --git a/thirdparty/libdatachannel/include/rtc/lifecycletrace.hpp b/thirdparty/libdatachannel/include/rtc/lifecycletrace.hpp
+new file mode 100644
+index 0000000..aaf89b1
+--- /dev/null
++++ b/thirdparty/libdatachannel/include/rtc/lifecycletrace.hpp
+@@ -0,0 +1,14 @@
++#ifndef RTC_LIFECYCLE_TRACE_H
++#define RTC_LIFECYCLE_TRACE_H
++
++#include "common.hpp"
++#include <cstdint>
++
++namespace rtc::diagnostics {
++RTC_CPP_EXPORT uint64_t nextId();
++RTC_CPP_EXPORT void lifecycle(const char *event, uint64_t peer = 0, uint64_t sctp = 0,
++                             uint64_t godot = 0, uint64_t channel = 0, int state = -1,
++                             int notification = -1, uint64_t association = 0,
++                             int associationState = -1, int error = 0, int stream = -1);
++}
++#endif
+diff --git a/thirdparty/libdatachannel/include/rtc/peerconnection.hpp b/thirdparty/libdatachannel/include/rtc/peerconnection.hpp
+index f7a76a1..a27bbd5 100644
+--- a/thirdparty/libdatachannel/include/rtc/peerconnection.hpp
++++ b/thirdparty/libdatachannel/include/rtc/peerconnection.hpp
+@@ -80,6 +80,7 @@ public:
+ 	~PeerConnection();
+ 
+ 	void close();
++	uint64_t diagnosticId() const;
+ 
+ 	const Configuration *config() const;
+ 	State state() const;
+diff --git a/thirdparty/libdatachannel/src/impl/peerconnection.cpp b/thirdparty/libdatachannel/src/impl/peerconnection.cpp
+index d920e91..fc305ca 100644
+--- a/thirdparty/libdatachannel/src/impl/peerconnection.cpp
++++ b/thirdparty/libdatachannel/src/impl/peerconnection.cpp
+@@ -85,6 +85,7 @@ PeerConnection::~PeerConnection() {
+ }
+ 
+ void PeerConnection::close() {
++	diagnostics::lifecycle("impl_peer_close", diagnosticId, 0, 0, 0, int(state.load()));
+ 	if (!closing.exchange(true)) {
+ 		PLOG_VERBOSE << "Closing PeerConnection";
+ 		if (auto transport = std::atomic_load(&mSctpTransport))
+@@ -95,6 +96,7 @@ void PeerConnection::close() {
+ }
+ 
+ void PeerConnection::remoteClose() {
++	diagnostics::lifecycle("impl_peer_remote_close", diagnosticId, 0, 0, 0, int(state.load()));
+ 	close();
+ 	if (state.load() != State::Closed) {
+ 		// Close data channels and tracks asynchronously
+@@ -354,6 +356,7 @@ shared_ptr<SctpTransport> PeerConnection::initSctpTransport() {
+ 				    });
+ 		    });
+ 
++		diagnostics::lifecycle("sctp_bind", diagnosticId, transport->diagnosticId);
+ 		return emplaceTransport(this, &mSctpTransport, std::move(transport));
+ 
+ 	} catch (const std::exception &e) {
+@@ -376,6 +379,7 @@ shared_ptr<SctpTransport> PeerConnection::getSctpTransport() const {
+ }
+ 
+ void PeerConnection::closeTransports() {
++	diagnostics::lifecycle("impl_peer_close_transports", diagnosticId, 0, 0, 0, int(state.load()));
+ 	PLOG_VERBOSE << "Closing transports";
+ 
+ 	// Change ICE state to sink state Closed
+diff --git a/thirdparty/libdatachannel/src/impl/peerconnection.hpp b/thirdparty/libdatachannel/src/impl/peerconnection.hpp
+index 79f191a..ba08025 100644
+--- a/thirdparty/libdatachannel/src/impl/peerconnection.hpp
++++ b/thirdparty/libdatachannel/src/impl/peerconnection.hpp
+@@ -19,6 +19,7 @@
+ #include "track.hpp"
+ 
+ #include "rtc/peerconnection.hpp"
++#include "rtc/lifecycletrace.hpp"
+ 
+ #include <mutex>
+ #include <shared_mutex>
+@@ -114,6 +115,7 @@ struct PeerConnection : std::enable_shared_from_this<PeerConnection> {
+ 		}
+ 	}
+ 
++	const uint64_t diagnosticId = diagnostics::nextId();
+ 	const Configuration config;
+ 	std::atomic<State> state = State::New;
+ 	std::atomic<IceState> iceState = IceState::New;
+diff --git a/thirdparty/libdatachannel/src/impl/sctptransport.cpp b/thirdparty/libdatachannel/src/impl/sctptransport.cpp
+index 552ee94..8dd63ce 100644
+--- a/thirdparty/libdatachannel/src/impl/sctptransport.cpp
++++ b/thirdparty/libdatachannel/src/impl/sctptransport.cpp
+@@ -409,6 +409,7 @@ bool SctpTransport::flush() {
+ }
+ 
+ void SctpTransport::closeStream(unsigned int stream) {
++	diagnostics::lifecycle("sctp_close_stream", 0, diagnosticId, 0, 0, int(state()), -1, 0, -1, 0, int(stream));
+ 	std::lock_guard lock(mSendMutex);
+ 
+ 	// RFC 8831 6.7. Closing a Data Channel
+@@ -421,6 +422,7 @@ void SctpTransport::closeStream(unsigned int stream) {
+ }
+ 
+ void SctpTransport::close() {
++	diagnostics::lifecycle("sctp_close", 0, diagnosticId, 0, 0, int(state()));
+ 	mSendQueue.stop();
+ 	if (state() == State::Connected) {
+ 		mProcessor.enqueue(&SctpTransport::flush, shared_from_this());
+@@ -456,6 +458,7 @@ void SctpTransport::incoming(message_ptr message) {
+ 		return;
+ 
+ 	if (!message) {
++		diagnostics::lifecycle("sctp_incoming_null", 0, diagnosticId, 0, 0, int(state()));
+ 		PLOG_INFO << "SCTP disconnected";
+ 		changeState(State::Disconnected);
+ 		recv(nullptr);
+@@ -863,6 +866,7 @@ void SctpTransport::processNotification(const union sctp_notification *notify, s
+ 	case SCTP_ASSOC_CHANGE: {
+ 		PLOG_VERBOSE << "SCTP association change event";
+ 		const struct sctp_assoc_change &sac = notify->sn_assoc_change;
++		diagnostics::lifecycle("sctp_notification", 0, diagnosticId, 0, 0, int(state()), int(type), sac.sac_assoc_id, sac.sac_state, sac.sac_error);
+ 		if (sac.sac_state == SCTP_COMM_UP) {
+ 			PLOG_DEBUG << "SCTP negotiated streams: incoming=" << sac.sac_inbound_streams
+ 			           << ", outgoing=" << sac.sac_outbound_streams;
+@@ -877,6 +881,7 @@ void SctpTransport::processNotification(const union sctp_notification *notify, s
+ 				changeState(State::Disconnected);
+ 				recv(nullptr);
+ 			} else {
++				diagnostics::lifecycle("sctp_failure", 0, diagnosticId, 0, 0, int(state()), int(type), sac.sac_assoc_id, sac.sac_state, sac.sac_error);
+ 				PLOG_ERROR << "SCTP connection failed";
+ 				changeState(State::Failed);
+ 			}
+diff --git a/thirdparty/libdatachannel/src/impl/sctptransport.hpp b/thirdparty/libdatachannel/src/impl/sctptransport.hpp
+index 769b505..444cbb3 100644
+--- a/thirdparty/libdatachannel/src/impl/sctptransport.hpp
++++ b/thirdparty/libdatachannel/src/impl/sctptransport.hpp
+@@ -22,11 +22,13 @@
+ #include <mutex>
+ 
+ #include "usrsctp.h"
++#include "rtc/lifecycletrace.hpp"
+ 
+ namespace rtc::impl {
+ 
+ class SctpTransport final : public Transport, public std::enable_shared_from_this<SctpTransport> {
+ public:
++	const uint64_t diagnosticId = diagnostics::nextId();
+ 	static void Init();
+ 	static void SetSettings(const SctpSettings &s);
+ 	static void Cleanup();
+diff --git a/thirdparty/libdatachannel/src/peerconnection.cpp b/thirdparty/libdatachannel/src/peerconnection.cpp
+index 135f458..3094d61 100644
+--- a/thirdparty/libdatachannel/src/peerconnection.cpp
++++ b/thirdparty/libdatachannel/src/peerconnection.cpp
+@@ -8,6 +8,12 @@
+  */
+ 
+ #include "peerconnection.hpp"
++#include "rtc/lifecycletrace.hpp"
++#include <atomic>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <mutex>
+ #include "common.hpp"
+ #include "rtp.hpp"
+ 
+@@ -30,6 +36,35 @@
+ 
+ using namespace std::placeholders;
+ 
++namespace rtc::diagnostics {
++uint64_t nextId() {
++    static std::atomic<uint64_t> identity{0};
++    return ++identity;
++}
++void lifecycle(const char *event, uint64_t peer, uint64_t sctp, uint64_t godot,
++               uint64_t channel, int state, int notification, uint64_t association,
++               int associationState, int error, int stream) {
++    static const bool enabled = [] {
++        const char *value = std::getenv("SF_NATIVE_LIFECYCLE");
++        return value && std::strcmp(value, "1") == 0;
++    }();
++    if (!enabled) return;
++    const auto entry = std::chrono::duration_cast<std::chrono::microseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count();
++    static std::mutex mutex;
++    static uint64_t sequence = 0;
++    std::lock_guard<std::mutex> lock(mutex);
++    const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count();
++    std::fprintf(stderr, "SF_NATIVE_LIFECYCLE {\"sequence\":%llu,\"native_us\":%llu,\"native_entry_us\":%llu,\"event\":\"%s\",\"peer\":%llu,\"sctp\":%llu,\"godot_instance\":%llu,\"channel_instance\":%llu,\"state\":%d,\"notification\":%d,\"association\":%llu,\"association_state\":%d,\"error\":%d,\"stream\":%d}\n",
++        static_cast<unsigned long long>(++sequence), static_cast<unsigned long long>(now), static_cast<unsigned long long>(entry), event,
++        static_cast<unsigned long long>(peer), static_cast<unsigned long long>(sctp),
++        static_cast<unsigned long long>(godot), static_cast<unsigned long long>(channel),
++        state, notification, static_cast<unsigned long long>(association), associationState, error, stream);
++    std::fflush(stderr);
++}
++}
++
+ namespace rtc {
+ 
+ PeerConnection::PeerConnection() : PeerConnection(Configuration()) {}
+@@ -45,6 +80,8 @@ PeerConnection::~PeerConnection() {
+ 	}
+ }
+ 
++uint64_t PeerConnection::diagnosticId() const { return impl()->diagnosticId; }
++
+ void PeerConnection::close() { impl()->close(); }
+ 
+ const Configuration *PeerConnection::config() const { return &impl()->config; }

@@ -88,6 +88,159 @@ class DriverTimelineTests(unittest.TestCase):
         self.assertEqual(event["truncated_characters"], len(line) - 32768)
 
 
+class NativeLifecycleTests(unittest.TestCase):
+    @staticmethod
+    def row(sequence: int, event: str, **values: object) -> str:
+        record = {
+            "sequence": sequence,
+            "native_us": sequence * 100,
+            "native_entry_us": 0,
+            "event": event,
+            "peer": 0,
+            "sctp": 0,
+            "godot_instance": 0,
+            "channel_instance": 0,
+            "state": -1,
+            "notification": -1,
+            "association": 0,
+            "association_state": -1,
+            "error": 0,
+            "stream": -1,
+        }
+        record.update(values)
+        return "SF_NATIVE_LIFECYCLE " + json.dumps(record)
+
+    def test_joins_callback_identity_without_using_pipe_order_as_close_cause(self) -> None:
+        output = "\n".join(
+            [
+                self.row(1, "peer_bind", peer=1, godot_instance=900),
+                self.row(2, "sctp_bind", peer=1, sctp=2),
+                self.row(3, "peer_close_begin", peer=1, godot_instance=900),
+                self.row(
+                    4,
+                    "sctp_failure",
+                    sctp=2,
+                    state=3,
+                    notification=1,
+                    association=7,
+                    association_state=2,
+                    error=9,
+                ),
+                "ERROR: SCTP connection failed",
+                "WEBRTC_INTEROP_PASS seat=0",
+            ]
+        )
+        evidence = drill.native_lifecycle_evidence(output)
+        self.assertEqual(
+            evidence["associations"],
+            [{"sctp": 2, "peer": 1, "godot_instance": 900, "script_connection_instance": 900}],
+        )
+        self.assertEqual(evidence["issues"], [])
+        self.assertEqual(evidence["unbound_sctp"], [])
+        self.assertEqual(evidence["events"][-1]["error"], 9)
+        self.assertFalse(drill.seat_evidence(output, 0)["passed"])
+        timeline = drill.DriverTimeline()
+        timeline.observe(0, output.splitlines()[3])
+        self.assertEqual(len(timeline.snapshot()["events"]), 1)
+
+    def test_unsigned_native_object_ids_join_signed_gdscript_ids(self) -> None:
+        identity = (1 << 63) + 123
+        evidence = drill.native_lifecycle_evidence(
+            "\n".join(
+                [
+                    self.row(1, "peer_bind", peer=1, godot_instance=identity),
+                    self.row(2, "sctp_bind", peer=1, sctp=2),
+                    self.row(
+                        3,
+                        "channel_bind",
+                        peer=1,
+                        godot_instance=identity,
+                        channel_instance=identity + 1,
+                    ),
+                ]
+            )
+        )
+        self.assertEqual(evidence["associations"][0]["godot_instance"], identity)
+        self.assertEqual(
+            evidence["associations"][0]["script_connection_instance"], -(1 << 63) + 123
+        )
+        self.assertEqual(evidence["events"][2]["script_channel_instance"], -(1 << 63) + 124)
+
+    def test_missing_trace_and_unbound_callback_remain_explicit(self) -> None:
+        self.assertEqual(drill.native_lifecycle_evidence("noise")["observed_records"], 0)
+        evidence = drill.native_lifecycle_evidence(self.row(1, "sctp_failure", sctp=8))
+        self.assertEqual(evidence["unbound_sctp"], [8])
+        self.assertIsNone(evidence["associations"][0]["godot_instance"])
+
+    def test_malformed_and_truncated_evidence_cannot_hide_sequence_gaps(self) -> None:
+        malformed = [
+            "SF_NATIVE_LIFECYCLE {",
+            "SF_NATIVE_LIFECYCLE []",
+            self.row(2, "peer_bind", peer=True),
+            self.row(2, "sctp_close", native_entry_us=201),
+            self.row(2, "future_event"),
+            "interleaved " + self.row(2, "sctp_bind"),
+        ]
+        for line in malformed:
+            with self.subTest(line=line):
+                evidence = drill.native_lifecycle_evidence(
+                    "\n".join(
+                        [
+                            self.row(1, "peer_bind", peer=1, godot_instance=900),
+                            line,
+                            self.row(3, "sctp_failure", sctp=2),
+                        ]
+                    )
+                )
+                self.assertEqual(evidence["invalid_line_numbers"], [2])
+                self.assertIn("sequence gap or reordering", evidence["issues"])
+        evidence = drill.native_lifecycle_evidence(
+            "\n".join(
+                [
+                    self.row(1, "peer_bind", peer=1, godot_instance=900),
+                    self.row(1, "peer_bind", peer=1, godot_instance=901, native_us=1),
+                    self.row(3, "sctp_bind", peer=1, sctp=2),
+                    self.row(4, "sctp_bind", peer=3, sctp=2),
+                ]
+            )
+        )
+        self.assertEqual(
+            set(evidence["issues"]),
+            {
+                "sequence gap or reordering",
+                "native clock regressed",
+                "invalid peer binding",
+                "invalid SCTP binding",
+                "contradictory event identity",
+            },
+        )
+        self.assertEqual(evidence["associations"][0]["peer"], 1)
+
+    def test_contradictory_callback_identity_is_never_silently_joined(self) -> None:
+        for values in ({"peer": 99}, {"peer": 1, "godot_instance": 901}, {"sctp": 0}):
+            with self.subTest(values=values):
+                callback = {"sctp": 2}
+                callback.update(values)
+                evidence = drill.native_lifecycle_evidence(
+                    "\n".join(
+                        [
+                            self.row(1, "peer_bind", peer=1, godot_instance=900),
+                            self.row(2, "sctp_bind", peer=1, sctp=2),
+                            self.row(3, "sctp_failure", **callback),
+                        ]
+                    )
+                )
+                self.assertIn("contradictory event identity", evidence["issues"])
+
+    def test_all_retained_structures_are_bounded(self) -> None:
+        output = "\n".join(self.row(i, "sctp_bind", sctp=i, peer=i) for i in range(1, 8))
+        evidence = drill.native_lifecycle_evidence(output, limit=2)
+        self.assertEqual(len(evidence["events"]), 2)
+        self.assertEqual(len(evidence["associations"]), 2)
+        self.assertEqual(evidence["observed_records"], 7)
+        self.assertEqual(evidence["omitted_records"], 5)
+
+
 class RelayObservationTests(unittest.TestCase):
     def test_http_backend_requires_the_observed_choice(self) -> None:
         for requested in (False, True):
