@@ -52,9 +52,9 @@ STEAM_ENGINE_ARCHIVES = {
     ),
 }
 STEAM_GDE_ARCHIVE = (
-    "https://codeberg.org/godotsteam/godotsteam/releases/download/v4.21-gde/"
-    "godotsteam-4.21-gdextension-plugin-4.4.zip",
-    "288c41f9f9cf974d9da0566c54be8a14b849777aae88571f874b7390c3fb98bf",
+    "https://codeberg.org/godotsteam/godotsteam/releases/download/v4.23.2-gde/"
+    "godotsteam-4.23.2-gdextension-plugin-4.4.zip",
+    "4f1db786924ad0e1de9b161d87276b1a0b7504332ceec2e9c6694be202c33da4",
 )
 STEAM_GROUNDWORK = "tests/smoke/run_steam_groundwork.gd"
 STEAM_LIVE_DRILL = "tests/smoke/run_steam_live_drill.gd"

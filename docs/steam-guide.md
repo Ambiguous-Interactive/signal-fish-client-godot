@@ -144,13 +144,13 @@ bootstrap in a shipped game.
 - Steam app: the drills run against app id `480` (Spacewar). Put a
   `steam_appid.txt` file with `480` next to the Godot binary; Steamworks
   reads it when launched outside Steam.
-- Engine: Godot 4.4.1 plus the GodotSteam GDExtension 4.21 - the pair the
+- Engine: Godot 4.4.1 plus the GodotSteam GDExtension 4.23.2 - the pair the
   opt-in `steam-ext` lane downloads, pins, and checksums; use its copy for
   the seat's drill tree. Version landmines (measured facts:
   `.llm/research/steam-identity.md`):
   - Every GDExtension from 4.16 on needs Godot 4.4 or newer.
   - Godot 4.3 caps at GDExtension 4.15, which ships no linux arm64
-    libraries; arm64 seats need the 4.21 extension with Godot 4.4.1.
+    libraries; arm64 seats need the 4.23.2 extension with Godot 4.4.1.
   - Embedded callbacks broke in 4.14/3.29; auto-init plus embed only
     works from 4.23. The drill harness pumps `run_callbacks()` itself,
     so it needs neither.
