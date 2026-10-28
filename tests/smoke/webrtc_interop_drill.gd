@@ -27,6 +27,8 @@ var _client: DrillClient
 var _mesh: MeshScript
 var _inbox: HttpScript
 var _outbox: HttpScript
+var _outboxes: Dictionary = {}
+var _outgoing: Dictionary = {}
 var _url := ""
 var _seat := 0
 var _mixed_traffic := false
@@ -166,7 +168,7 @@ func _ready() -> void:
 	_release_rpc_recovery()
 	_finished = true
 	_inbox.cancel_request()
-	_outbox.cancel_request()
+	_cancel_outboxes()
 	_mesh.detach()
 	if _mesh.get_peer_count() != 0 or _mesh.get_multiplayer_peer() != null:
 		_fail("detach retained the multiplayer peer")
@@ -178,7 +180,7 @@ func _ready() -> void:
 	print(
 		(
 			"WEBRTC_HTTP_EVIDENCE "
-			+ JSON.stringify({"http_inbox": _inbox.evidence(), "http_outbox": _outbox.evidence()})
+			+ JSON.stringify({"http_inbox": _inbox.evidence(), "http_outbox": _outbox_evidence()})
 		)
 	)
 	print("WEBRTC_INTEROP_PASS seat=%d" % _seat)
@@ -189,7 +191,6 @@ func _ready() -> void:
 
 func _setup_http(use_fetch := true) -> void:
 	_inbox = HttpScript.new()
-	_outbox = HttpScript.new()
 	if OS.has_feature("web"):
 		use_fetch = (
 			JavaScriptBridge.eval(
@@ -198,11 +199,18 @@ func _setup_http(use_fetch := true) -> void:
 			and use_fetch
 		)
 	_inbox.use_fetch = use_fetch
-	_outbox.use_fetch = use_fetch
 	add_child(_inbox)
-	add_child(_outbox)
 	_inbox.request_completed.connect(_on_inbox)
-	_outbox.request_completed.connect(_on_outbox)
+	for destination: int in _signal_players.size():
+		if destination == _seat:
+			continue
+		var request := HttpScript.new()
+		request.use_fetch = use_fetch
+		add_child(request)
+		request.request_completed.connect(_on_outbox.bind(destination))
+		_outboxes[destination] = request
+		if _outbox == null:
+			_outbox = request
 
 
 func _check_lifetime_controls() -> bool:
@@ -231,25 +239,30 @@ func _process(_delta: float) -> void:
 			_receive_started = now
 			if _inbox.request(_url + "/signal/%d" % _seat) != OK:
 				_fail("signaling receive request failed")
-	if not _pending.is_empty():
-		if not _sending:
-			var message: Dictionary = _pending.pop_front()
-			_sending = true
-			_send_started = now
-			_sending_marker = message.get("marker", "")
-			_sending_to = message.get("to", 1 - _seat)
-			if message.has("marker"):
-				_last_marker_sent = message["marker"]
-			if (
-				_outbox.request(
-					_url + "/signal/%d" % message.get("to", 1 - _seat),
-					PackedStringArray(["Content-Type: application/json"]),
-					HTTPClient.METHOD_POST,
-					JSON.stringify(message)
-				)
-				!= OK
-			):
-				_fail("signaling send request failed")
+	var index := 0
+	while index < _pending.size():
+		var message: Dictionary = _pending[index]
+		var destination: int = message.get("to", 1 - _seat)
+		if _outgoing.has(destination):
+			index += 1
+			continue
+		_pending.remove_at(index)
+		_outgoing[destination] = {"started": now, "marker": message.get("marker", "")}
+		_update_send_state()
+		if message.has("marker"):
+			_last_marker_sent = message["marker"]
+		var request: HttpScript = _outboxes[destination]
+		if (
+			request.request(
+				_url + "/signal/%d" % destination,
+				PackedStringArray(["Content-Type: application/json"]),
+				HTTPClient.METHOD_POST,
+				JSON.stringify(message)
+			)
+			!= OK
+		):
+			_fail("signaling send request failed")
+			return
 	if _mesh != null:
 		_mesh.poll()
 		var peer: WebRTCMultiplayerPeer = _mesh.get_multiplayer_peer()
@@ -284,18 +297,21 @@ func _on_inbox(result: int, code: int, _headers: PackedStringArray, body: Packed
 
 
 func _on_outbox(
-	result: int, code: int, _headers: PackedStringArray, _body: PackedByteArray
+	result: int, code: int, _headers: PackedStringArray, _body: PackedByteArray, destination: int
 ) -> void:
 	if _failed or _finished:
 		return
-	_sending = false
-	if not _sending_marker.is_empty():
+	var sent: Dictionary = _outgoing[destination]
+	_outgoing.erase(destination)
+	_update_send_state()
+	if not str(sent["marker"]).is_empty():
 		var now := Time.get_ticks_msec()
+		var started: int = sent["started"]
 		_marker_posts.append(
 			{
-				"marker": _sending_marker,
-				"to": _sending_to,
-				"elapsed_ms": now - _send_started,
+				"marker": sent["marker"],
+				"to": destination,
+				"elapsed_ms": now - started,
 				"completed_tick_ms": now,
 				"result": result,
 				"http_code": code
@@ -307,6 +323,53 @@ func _on_outbox(
 		_fail("signaling send failed")
 	else:
 		_signal_sent += 1
+
+
+func _update_send_state() -> void:
+	_sending = not _outgoing.is_empty()
+	_send_started = 9223372036854775807
+	for destination: int in _outgoing:
+		var sent: Dictionary = _outgoing[destination]
+		var started: int = sent["started"]
+		if started < _send_started:
+			_send_started = sent["started"]
+			_sending_marker = sent["marker"]
+			_sending_to = destination
+
+
+func _cancel_outboxes() -> void:
+	for request: HttpScript in _outboxes.values():
+		request.cancel_request()
+
+
+func _outbox_evidence(include_history := true) -> Dictionary:
+	var aggregate := {
+		"active": {},
+		"completed": 0,
+		"recent": [],
+		"marker_requests": [],
+		"history_included": include_history,
+		"marker_count": 0,
+		"marker_overflow": 0,
+		"by_destination": {}
+	}
+	var destinations: Dictionary = aggregate["by_destination"]
+	var recent: Array = aggregate["recent"]
+	var markers: Array = aggregate["marker_requests"]
+	for destination: int in _outboxes:
+		var request: HttpScript = _outboxes[destination]
+		var evidence := request.evidence(include_history)
+		destinations[str(destination)] = evidence
+		aggregate["completed"] += evidence["completed"]
+		aggregate["marker_count"] += evidence["marker_count"]
+		aggregate["marker_overflow"] += evidence["marker_overflow"]
+		var request_recent: Array = evidence["recent"]
+		var request_markers: Array = evidence["marker_requests"]
+		recent.append_array(request_recent)
+		markers.append_array(request_markers)
+		if _outgoing.has(destination) and destination == _sending_to:
+			aggregate["active"] = evidence["active"]
+	return aggregate
 
 
 func _release_rpc_recovery() -> void:
@@ -1263,7 +1326,7 @@ func _snapshot() -> Dictionary:
 		"interrupted_queued": _interrupted_queued,
 		"pending_signals": _pending.size(),
 		"http_inbox": _inbox.evidence(false) if _inbox != null else {},
-		"http_outbox": _outbox.evidence(false) if _outbox != null else {},
+		"http_outbox": _outbox_evidence(false) if _outbox != null else {},
 		"web_http_fetch": OS.has_feature("web") and _inbox != null and _inbox.use_fetch,
 		"signal_sent": _signal_sent,
 		"signal_received": _signal_received,
@@ -1326,14 +1389,14 @@ func _fail(reason: String) -> void:
 	_failed = true
 	var snapshot := _snapshot()
 	snapshot["http_inbox"] = _inbox.evidence() if _inbox != null else {}
-	snapshot["http_outbox"] = _outbox.evidence() if _outbox != null else {}
+	snapshot["http_outbox"] = _outbox_evidence() if _outbox != null else {}
 	snapshot["reason"] = reason
 	print("WEBRTC_INTEROP_FAIL " + JSON.stringify(snapshot))
 	_release_rpc_recovery()
 	if _inbox != null:
 		_inbox.cancel_request()
 	if _outbox != null:
-		_outbox.cancel_request()
+		_cancel_outboxes()
 	if _mesh != null:
 		_mesh.detach()
 		_mesh.free()

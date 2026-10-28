@@ -158,6 +158,71 @@ class CreditDelay:
         }
 
 
+class PostDelay:
+    def __init__(self, milliseconds: int = 0) -> None:
+        self.milliseconds = milliseconds
+        self.started: float | None = None
+        self.released: float | None = None
+        self.credits: dict[str, float] = {}
+
+    def begin(self, seat: int, message: object) -> bool:
+        if (
+            not self.milliseconds
+            or self.started is not None
+            or seat != 1
+            or not isinstance(message, dict)
+            or type(message.get("from")) is not int
+            or message.get("from") != 0
+            or message.get("marker") != "consumed-1-0-8"
+        ):
+            return False
+        self.started = time.monotonic()
+        return True
+
+    def record(self, seat: int, message: object) -> None:
+        if (
+            self.started is None
+            or not isinstance(message, dict)
+            or type(message.get("from")) is not int
+        ):
+            return
+        marker = message.get("marker")
+        sender = message.get("from")
+        if (seat, sender, marker) in (
+            (2, 0, "consumed-1-0-64"),
+            (0, 2, "consumed-1-2-64"),
+        ):
+            self.credits.setdefault(str(marker), time.monotonic())
+
+    def proven(self) -> bool:
+        return (
+            self.started is not None
+            and self.released is not None
+            and (self.released - self.started) * 1000 >= self.milliseconds > 0
+            and len(self.credits) == 2
+            and all(self.started <= stamp < self.released for stamp in self.credits.values())
+        )
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "requested_ms": self.milliseconds,
+            "destination": 1,
+            "marker": "consumed-1-0-8",
+            "started": self.started is not None,
+            "released": self.released is not None,
+            "held_ms": round((self.released - self.started) * 1000)
+            if self.released is not None and self.started is not None
+            else None,
+            "final_credit_after_start_ms": {
+                marker: round((stamp - self.started) * 1000)
+                for marker, stamp in self.credits.items()
+            }
+            if self.started is not None
+            else {},
+            "independent_final_credits_while_held": self.proven(),
+        }
+
+
 class RelayServer(ThreadingHTTPServer):
     # Concurrent seats can each open six browser connections before accept resumes.
     request_queue_size = 128
@@ -170,6 +235,7 @@ class RelayHandler(SimpleHTTPRequestHandler):
     lock = threading.Lock()
     observation = RelayObservation()
     credit_delay = CreditDelay()
+    post_delay = PostDelay()
 
     def log_message(self, _format: str, *_args: object) -> None:
         pass
@@ -198,6 +264,14 @@ class RelayHandler(SimpleHTTPRequestHandler):
             self.credit_delay.record_proof(seat, message)
             self.queues[seat].append(message)
             self.observation.enqueue(seat, message)
+            hold = self.post_delay.begin(seat, message)
+            self.post_delay.record(seat, message)
+        if hold:
+            try:
+                time.sleep(self.post_delay.milliseconds / 1000)
+            finally:
+                with self.lock:
+                    self.post_delay.released = time.monotonic()
         self.reply(b"{}")
 
     def reply(self, body: bytes) -> None:
@@ -755,6 +829,7 @@ def run_seats(
         lock = threading.Lock()
         observation = RelayObservation()
         credit_delay = CreditDelay(args.http_credit_delay_ms)
+        post_delay = PostDelay(getattr(args, "http_post_delay_ms", 0))
 
     handler = functools.partial(TrialRelayHandler, directory=str(web / "build/web"))
     server = RelayServer(("127.0.0.1", 0), handler)
@@ -965,11 +1040,16 @@ def run_seats(
                 delay_proven = TrialRelayHandler.credit_delay.proven(proof)
                 seat_results[0]["passed"] = seat_results[0]["passed"] and delay_proven
                 delay_control["independent_pair_completed_while_held"] = delay_proven
+            if getattr(args, "http_post_delay_ms", 0):
+                seat_results[0]["passed"] = (
+                    seat_results[0]["passed"] and TrialRelayHandler.post_delay.proven()
+                )
             relay_observation = relay_observation or TrialRelayHandler.observation.snapshot()
             evidence = {
                 "web_http_fetch": getattr(args, "web_http_fetch", True),
                 "require_finite_lifetimes": args.require_finite_lifetimes,
                 "http_credit_delay": delay_control,
+                "http_post_delay": TrialRelayHandler.post_delay.snapshot(),
                 "driver_error": driver_error,
                 "browser_version": browser_version,
                 "browser_observation": browser_observation,
@@ -1082,6 +1162,12 @@ def main() -> None:
         default=0,
         help="With --multi-peer and HTTP credit, hold the first Web-1 credit to native",
     )
+    parser.add_argument(
+        "--http-post-delay-ms",
+        type=positive_count,
+        default=0,
+        help="With --multi-peer and HTTP credit, hold one native-to-Web-1 POST response",
+    )
     parser.add_argument("--native-extension", type=Path, required=True)
     parser.add_argument("--chromium", help="Optional Playwright Chromium executable")
     parser.add_argument("--output", type=Path, help="Keep projects and logs in this new directory")
@@ -1146,6 +1232,16 @@ def main() -> None:
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"
     )
     args = parser.parse_args()
+    if args.http_post_delay_ms and (
+        not args.multi_peer
+        or args.credit_transport != "http"
+        or args.rpc_traffic
+        or args.http_credit_delay_ms
+        or args.http_post_delay_ms > 10000
+    ):
+        parser.error(
+            "HTTP POST delay needs --multi-peer, HTTP credit, no RPC/GET delay and <=10000 ms"
+        )
     if args.http_credit_delay_ms and (
         not args.multi_peer
         or args.credit_transport != "http"

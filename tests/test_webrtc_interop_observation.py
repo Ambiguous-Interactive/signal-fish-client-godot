@@ -390,6 +390,153 @@ class LifetimeContractTests(unittest.TestCase):
         self.assertFalse(drill.finite_lifetimes([changed]))
 
 
+class PostDelayTests(unittest.TestCase):
+    def test_post_hold_selects_one_phase_sender_destination_and_starts_once(self) -> None:
+        selected = {"from": 0, "marker": "consumed-1-0-8"}
+        for seat, message in (
+            (0, selected),
+            (2, selected),
+            (1, {"from": 2, "marker": "consumed-1-0-8"}),
+            (1, {"from": False, "marker": "consumed-1-0-8"}),
+            (1, {"from": 0.0, "marker": "consumed-1-0-8"}),
+            (1, {"from": 0, "marker": "consumed-2-0-8"}),
+            (1, {"from": 0, "marker": "consumed-1-0-16"}),
+            (1, {"payload": {"Offer": "example"}}),
+            (1, None),
+        ):
+            with self.subTest(seat=seat, message=message):
+                delay = drill.PostDelay(6000)
+                self.assertFalse(delay.begin(seat, message))
+                self.assertIsNone(delay.started)
+        self.assertFalse(drill.PostDelay().begin(1, selected))
+        delay = drill.PostDelay(6000)
+        with patch.object(drill.time, "monotonic", return_value=10):
+            self.assertTrue(delay.begin(1, selected))
+        with patch.object(drill.time, "monotonic", return_value=12):
+            self.assertFalse(delay.begin(1, selected))
+        self.assertEqual(delay.started, 10)
+        delay.released = 16
+        self.assertFalse(delay.begin(1, selected))
+
+    def test_final_credits_require_both_directions_during_completed_hold(self) -> None:
+        final = [
+            (2, {"from": 0, "marker": "consumed-1-0-64"}),
+            (0, {"from": 2, "marker": "consumed-1-2-64"}),
+        ]
+        for credit_time, release_time, expected in (
+            (9, 16, False),
+            (10, 16, True),
+            (12, 15.9, False),
+            (12, 16, True),
+            (16, 16, False),
+            (17, 16, False),
+        ):
+            with self.subTest(credit_time=credit_time, release_time=release_time):
+                delay = drill.PostDelay(6000)
+                for seat, message in final:
+                    delay.record(seat, message)
+                self.assertEqual(delay.credits, {})
+                with patch.object(drill.time, "monotonic", return_value=10):
+                    delay.begin(1, {"from": 0, "marker": "consumed-1-0-8"})
+                with patch.object(drill.time, "monotonic", return_value=credit_time):
+                    delay.record(*final[0])
+                    self.assertFalse(delay.proven())
+                    delay.record(*final[1])
+                self.assertFalse(delay.proven())
+                delay.released = release_time
+                self.assertIs(delay.proven(), expected)
+                self.assertIs(delay.snapshot()["independent_final_credits_while_held"], expected)
+
+    def test_wrong_or_repeated_credits_cannot_supply_missing_direction(self) -> None:
+        delay = drill.PostDelay(6000)
+        with patch.object(drill.time, "monotonic", return_value=10):
+            delay.begin(1, {"from": 0, "marker": "consumed-1-0-8"})
+        with patch.object(drill.time, "monotonic", return_value=12):
+            for seat, message in (
+                (1, {"from": 0, "marker": "consumed-1-0-64"}),
+                (2, {"from": 1, "marker": "consumed-1-0-64"}),
+                (2, {"from": False, "marker": "consumed-1-0-64"}),
+                (2, {"from": 0.0, "marker": "consumed-1-0-64"}),
+                (2, {"from": 0, "marker": "consumed-2-0-64"}),
+                (2, {"from": 0, "marker": "consumed-1-0-56"}),
+                (0, None),
+            ):
+                delay.record(seat, message)
+            self.assertEqual(delay.credits, {})
+            delay.record(2, {"from": 0, "marker": "consumed-1-0-64"})
+        with patch.object(drill.time, "monotonic", return_value=13):
+            delay.record(2, {"from": 0, "marker": "consumed-1-0-64"})
+        delay.released = 16
+        self.assertFalse(delay.proven())
+        self.assertEqual(delay.credits, {"consumed-1-0-64": 12})
+        self.assertEqual(delay.snapshot()["final_credit_after_start_ms"], {"consumed-1-0-64": 2000})
+
+    def test_delayed_post_response_keeps_other_destinations_and_gets_live(self) -> None:
+        class Handler(drill.RelayHandler):  # type: ignore[name-defined,misc]
+            queues: ClassVar[list[list[object]]] = [[], [], []]
+            lock = threading.Lock()
+            observation = drill.RelayObservation()
+            credit_delay = drill.CreditDelay()
+            post_delay = drill.PostDelay(6000)
+
+        entered, release = threading.Event(), threading.Event()
+        clock = [10.0]
+
+        def hold(seconds: float) -> None:
+            self.assertEqual(seconds, 6)
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("test did not release the POST response")
+
+        server = drill.RelayServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        held = {"from": 0, "marker": "consumed-1-0-8"}
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+
+        def delayed_post() -> bytes:
+            client = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+            try:
+                client.request("POST", "/signal/1", body=json.dumps(held))
+                return client.getresponse().read()
+            finally:
+                client.close()
+
+        try:
+            with (
+                patch.object(drill.time, "monotonic", side_effect=lambda: clock[0]),
+                patch.object(drill.time, "sleep", side_effect=hold),
+                ThreadPoolExecutor(max_workers=1) as pool,
+            ):
+                future = pool.submit(delayed_post)
+                try:
+                    self.assertTrue(entered.wait(5))
+                    self.assertFalse(future.done())
+                    connection.request("GET", "/signal/1")
+                    self.assertEqual(json.loads(connection.getresponse().read()), [held])
+                    clock[0] = 12
+                    for seat, sender in ((2, 0), (0, 2)):
+                        credit = {"from": sender, "marker": f"consumed-1-{sender}-64"}
+                        connection.request("POST", f"/signal/{seat}", body=json.dumps(credit))
+                        self.assertEqual(connection.getresponse().read(), b"{}")
+                        connection.request("GET", f"/signal/{seat}")
+                        self.assertEqual(json.loads(connection.getresponse().read()), [credit])
+                    self.assertFalse(future.done())
+                    self.assertFalse(Handler.post_delay.proven())
+                    clock[0] = 16.1
+                finally:
+                    release.set()
+                self.assertEqual(future.result(timeout=5), b"{}")
+                self.assertTrue(Handler.post_delay.proven())
+                self.assertEqual(Handler.post_delay.snapshot()["held_ms"], 6100)
+        finally:
+            release.set()
+            connection.close()
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+
 class CreditDelayTests(unittest.TestCase):
     def test_hold_only_the_selected_credit_and_release_once(self) -> None:
         delay = drill.CreditDelay(6000)

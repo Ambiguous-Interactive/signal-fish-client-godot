@@ -152,7 +152,7 @@ func _ready() -> void:
 	_release_rpc_recovery()
 	_finished = true
 	_inbox.cancel_request()
-	_outbox.cancel_request()
+	_cancel_outboxes()
 	_mesh.detach()
 	_mesh.free()
 	_mesh = null

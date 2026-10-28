@@ -17,6 +17,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
+- [ ] Trace the native SCTP failure near final three-seat teardown (#474).
+
 - [ ] Compare uniquely enqueued initial probe expiry with transmitted gaps and
       remote-network controls (#458; see `docs/mesh-guide.md`). Keep strict
       initial-probe failures separate from reliable loss. The historical
