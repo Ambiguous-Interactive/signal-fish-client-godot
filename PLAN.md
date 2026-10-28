@@ -17,7 +17,7 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Compare identity-matched initial probe expiry with transmitted gaps and
+- [ ] Compare uniquely enqueued initial probe expiry with transmitted gaps and
       remote-network controls (#458; see `docs/mesh-guide.md`). Keep strict
       initial-probe failures separate from reliable loss. The historical
       untraced packet's cause remains open.
@@ -51,9 +51,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       Include the captured two-chunk 16 KiB HTTP credit-turnover limit with
       independent reference receive/send tasks before changing pacing or
       deadlines.
-- [ ] Match queued-retirement sends to SCTP enqueue/abandon identities and
-      browser callbacks for the missing Web finite tail (#471). Preserve the
-      failed 4 KiB/100 ms reader control and strict retirement checks.
+- [ ] Reproduce the missing Web finite tail with before/after SCTP enqueue
+      boundaries and retirement callback identities (#471). Compare remote
+      controls; preserve the failed 4 KiB/100 ms reader history and strict
+      retirement checks.
 - [ ] Capture the next native import failure with setup resource samples and
       file identities, then retain its crash report or backtrace (#447).
 

@@ -686,6 +686,9 @@ async function main() {
   const finitePackets = [
     "reference:1:unreliable",
     "reference:1:reliable",
+    "retirement:1:unreliable",
+    "retirement:2:reliable",
+    "retirement:2:tail",
     "ordered:2:reference:7",
     "position:2:reference:3:body",
     "startup:2:reference:31:body",

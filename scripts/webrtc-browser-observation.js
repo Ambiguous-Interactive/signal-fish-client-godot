@@ -151,6 +151,8 @@
             );
             const probe =
               /^(godot|reference):(1|2):(reliable|unreliable)$/.exec(prefix);
+            const retirement =
+              /^(retirement):(1|2):(reliable|unreliable|tail)$/.exec(prefix);
             const credit =
               /^(credit|partial-credit|startup-credit):(1|2):(godot|reference):(godot|reference):(\d+)$/.exec(
                 prefix,
@@ -159,8 +161,9 @@
               ms: performance.now(),
               bytes,
               packet:
-                (match ?? finite ?? probe ?? credit)?.slice(1).join(":") ??
-                null,
+                (match ?? finite ?? probe ?? retirement ?? credit)
+                  ?.slice(1)
+                  .join(":") ?? null,
             });
           } else received.dropped++;
           if (!received.dropped)
