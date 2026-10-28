@@ -820,6 +820,9 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
         "startup_credit",
         "startup_acknowledged",
         "snapshot_startup_credit",
+        "positions_sent",
+        "position_interval_ms",
+        "position_timings",
         "snapshot_sent",
         "snapshot_received",
         "snapshot_acknowledged",
@@ -1493,6 +1496,7 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
                 "service_app_id": getattr(args, "service_app_id", "godot-reference"),
                 "native_profile": bool(getattr(args, "native_reference_probe", None)),
                 "startup_burst": getattr(args, "startup_burst", False),
+                "position_interval_ms": getattr(args, "position_interval_ms", 0),
                 "snapshot_body_bytes": getattr(args, "snapshot_body_bytes", 1024),
                 "snapshot_window_bytes": getattr(args, "snapshot_window_bytes", 0),
                 "receive_batch_packets": getattr(args, "receive_batch_packets", 32),
@@ -1598,6 +1602,42 @@ def reference_receive_schedule_passed(phase: dict[str, object], batch: int, inte
     return True
 
 
+def position_schedule_passed(phase: dict[str, object], interval: int, mixed: bool) -> bool:
+    if (
+        type(phase.get("position_interval_ms", 0)) is not int
+        or phase.get("position_interval_ms", 0) != interval
+    ):
+        return False
+    samples = phase.get("position_timings", [])
+    if not isinstance(samples, list):
+        return False
+    if not interval:
+        return samples == []
+    count = 32 if mixed else 0
+    if (
+        len(samples) != count
+        or type(phase.get("positions_sent")) is not int
+        or phase["positions_sent"] != count
+    ):
+        return False
+    previous = None
+    for sequence, row in enumerate(samples):
+        if not isinstance(row, dict) or any(
+            type(row.get(key)) is not int
+            for key in ("sequence", "enqueue_ms", "snapshot_sent", "snapshot_acknowledged")
+        ):
+            return False
+        if (
+            row["sequence"] != sequence
+            or row["enqueue_ms"] < 0
+            or not 0 <= row["snapshot_acknowledged"] <= row["snapshot_sent"] <= 128
+            or (previous is not None and row["enqueue_ms"] - previous < interval)
+        ):
+            return False
+        previous = row["enqueue_ms"]
+    return True
+
+
 def gameplay_phase_checks(
     godot: dict[str, object],
     ref: dict[str, object],
@@ -1666,6 +1706,12 @@ def gameplay_phase_checks(
             ref,
             getattr(args, "reference_receive_batch_packets", 0),
             getattr(args, "reference_receive_interval_ms", 0),
+        ),
+        "position_schedule": all(
+            position_schedule_passed(
+                phase, getattr(args, "position_interval_ms", 0), args.mixed_traffic
+            )
+            for phase in (godot, ref)
         ),
         "heartbeat_totals": heartbeat_phase_passed(godot, ref, args.mixed_traffic),
         "retirement": retirement_passed(
@@ -1808,6 +1854,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
             (probe if probe else assets / "reference/engine.js").read_bytes()
         ).hexdigest(),
         "startup_burst": getattr(args, "startup_burst", False),
+        "position_interval_ms": getattr(args, "position_interval_ms", 0),
         "snapshot_body_bytes": getattr(args, "snapshot_body_bytes", 1024),
         "snapshot_window_bytes": getattr(args, "snapshot_window_bytes", 0),
         "channel_in_buffer_kb": getattr(args, "channel_in_buffer_kb", 0),
@@ -1879,7 +1926,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         ],
                     )
                 reference.evaluate(
-                    "([seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup, bodyBytes, windowBytes, refBatch, refInterval]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup, bodyBytes, windowBytes, refBatch, refInterval); }",
+                    "([seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup, bodyBytes, windowBytes, refBatch, refInterval, positionInterval]) => { void window.runReference(seat, offer, mixed, credit, slow, channel, closer, queued, binary, startup, bodyBytes, windowBytes, refBatch, refInterval, positionInterval); }",
                     [
                         1 if web else 0,
                         args.godot_offer,
@@ -1900,6 +1947,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                         getattr(args, "snapshot_window_bytes", 0),
                         getattr(args, "reference_receive_batch_packets", 0),
                         getattr(args, "reference_receive_interval_ms", 0),
+                        getattr(args, "position_interval_ms", 0),
                     ],
                 )
                 hold_proof: dict[str, object] = {}
@@ -2184,6 +2232,12 @@ def main() -> None:
         default=0,
         help="Minimum reference application drain interval, 0-1000 ms; transport keeps polling",
     )
+    parser.add_argument(
+        "--position-interval-ms",
+        type=int,
+        default=0,
+        help="Send 32 positions on an independent 20-200 ms cadence; 0 keeps every-four-snapshots pacing",
+    )
     parser.add_argument("--chromium")
     parser.add_argument(
         "--safe-receive", action="store_true", help="Read through the RPC-safe peer"
@@ -2236,6 +2290,10 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if args.position_interval_ms and not (
+        20 <= args.position_interval_ms <= 200 and args.mixed_traffic
+    ):
+        parser.error("--position-interval-ms requires --mixed-traffic and 20-200 ms, or 0")
     if not 1 <= args.receive_batch_packets <= 256:
         parser.error("--receive-batch-packets must be 1-256")
     if not 0 <= args.receive_interval_ms <= 1000:

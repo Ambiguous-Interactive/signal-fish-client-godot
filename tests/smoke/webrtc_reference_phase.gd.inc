@@ -13,6 +13,9 @@ var _reference_acknowledged := 0
 var _reference_credit_stride := 8
 var _reference_peak_outstanding := 0
 var _reference_positions_sent := 0
+var _reference_next_position := 0
+var _reference_position_interval := 0
+var _reference_position_timings: Array[Dictionary] = []
 var _reference_positions_received: Dictionary = {}
 var _reference_credit_updated := 0
 var _reference_transfer_started := 0
@@ -56,6 +59,8 @@ func _run_phase(phase: int) -> bool:
 	_reference_acknowledged = 0
 	_reference_peak_outstanding = 0
 	_reference_positions_sent = 0
+	_reference_next_position = 0
+	_reference_position_timings.clear()
 	_reference_positions_received.clear()
 	_reference_credit_updated = Time.get_ticks_msec()
 	_reference_transfer_started = 0
@@ -80,6 +85,7 @@ func _run_phase(phase: int) -> bool:
 	_reference_options = JSON.parse_string(
 		FileAccess.get_file_as_string("res://reference-options.json")
 	)
+	_reference_position_interval = _reference_options.get("position_interval_ms", 0)
 	_reference_last_drain = -1
 	_reference_receive_schedule = {
 		"batch_packets": _reference_options.get("receive_batch_packets", 32),
@@ -271,6 +277,7 @@ func _reference_gameplay_complete() -> bool:
 			not _reference_options.get("startup_burst", false)
 			or (_reference_startup_sent == 32 and _reference_startup_received == 32)
 		)
+		and (not _reference_options["mixed_traffic"] or _reference_positions_sent == 32)
 		and _reference_snapshot_received == 128
 		and _reference_snapshot_sent == 128
 		and _reference_partial_sent == 4
@@ -381,7 +388,11 @@ func _reference_packets() -> void:
 			_reference_peak_outstanding = maxi(
 				_reference_peak_outstanding, _reference_snapshot_sent - acknowledged
 			)
-			if _reference_options["mixed_traffic"] and _reference_snapshot_sent % 4 == 0:
+			if (
+				_reference_options["mixed_traffic"]
+				and _reference_position_interval == 0
+				and _reference_snapshot_sent % 4 == 0
+			):
 				peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
 				var position := _reference_position("godot", _reference_positions_sent)
 				if peer.call("put_packet", position) != OK:
@@ -390,7 +401,35 @@ func _reference_packets() -> void:
 				_reference_positions_sent += 1
 				peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_RELIABLE)
 		if (
-			acknowledged == 128
+			_reference_options["mixed_traffic"]
+			and _reference_position_interval > 0
+			and _reference_positions_sent < 32
+			and Time.get_ticks_msec() >= _reference_next_position
+		):
+			peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
+			if (
+				peer.call("put_packet", _reference_position("godot", _reference_positions_sent))
+				!= OK
+			):
+				_fail("reference position send failed")
+				return
+			(
+				_reference_position_timings
+				. append(
+					{
+						"sequence": _reference_positions_sent,
+						"enqueue_ms": Time.get_ticks_msec(),
+						"snapshot_sent": _reference_snapshot_sent,
+						"snapshot_acknowledged": _reference_acknowledged,
+					}
+				)
+			)
+			_reference_positions_sent += 1
+			_reference_next_position = Time.get_ticks_msec() + _reference_position_interval
+			peer.set("transfer_mode", MultiplayerPeer.TRANSFER_MODE_RELIABLE)
+		if (
+			(not _reference_options["mixed_traffic"] or _reference_positions_sent == 32)
+			and acknowledged == 128
 			and _reference_snapshot_received == 128
 			and _reference_partial_sent < 4
 		):
@@ -916,6 +955,8 @@ func _reference_evidence() -> Dictionary:
 		"snapshot_received": _reference_snapshot_received,
 		"snapshot_acknowledged": _reference_acknowledged,
 		"positions_sent": _reference_positions_sent,
+		"position_interval_ms": _reference_position_interval,
+		"position_timings": _reference_position_timings.duplicate(true),
 		"positions_received": _reference_positions_received.size(),
 		"peak_outstanding": _reference_peak_outstanding,
 		"credit_wait_age_ms":

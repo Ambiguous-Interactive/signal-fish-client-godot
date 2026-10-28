@@ -18,6 +18,7 @@ window.runReference = async function (
   snapshotWindowBytes = 49152,
   receiveBatchPackets = 0,
   receiveIntervalMs = 0,
+  positionIntervalMs = 0,
 ) {
   const seat = 1 - godotSeat;
   const startupCredit = startupBurst && snapshotWindowBytes > 0;
@@ -63,6 +64,8 @@ window.runReference = async function (
       let peakOutstandingBytes = 0;
       const heartbeatTimings = [];
       let positionsSent = 0;
+      let nextPosition = 0;
+      const positionTimings = [];
       const positionsReceived = new Set();
       let peakOutstanding = 0;
       let creditUpdated = performance.now();
@@ -490,6 +493,8 @@ window.runReference = async function (
         max_credit_wait_ms: maxCreditWaitMs,
         snapshot_acknowledged: snapshotAck,
         positions_sent: positionsSent,
+        position_interval_ms: positionIntervalMs,
+        position_timings: positionTimings.map((entry) => ({ ...entry })),
         positions_received: positionsReceived.size,
         peak_outstanding: peakOutstanding,
         credit_wait_age_ms:
@@ -760,12 +765,31 @@ window.runReference = async function (
                 peakOutstanding,
                 snapshotSent - snapshotAck,
               );
-              if (mixedTraffic && snapshotSent % 4 === 0)
+              if (mixedTraffic && !positionIntervalMs && snapshotSent % 4 === 0)
                 engine
                   .channel("godot", "unreliable")
                   .send(position("reference", positionsSent++));
             }
             if (
+              mixedTraffic &&
+              positionIntervalMs &&
+              positionsSent < 32 &&
+              performance.now() >= nextPosition
+            ) {
+              const sequence = positionsSent++;
+              engine
+                .channel("godot", "unreliable")
+                .send(position("reference", sequence));
+              positionTimings.push({
+                sequence,
+                enqueue_ms: Math.round(performance.now() - started),
+                snapshot_sent: snapshotSent,
+                snapshot_acknowledged: snapshotAck,
+              });
+              nextPosition = performance.now() + positionIntervalMs;
+            }
+            if (
+              (!mixedTraffic || !positionIntervalMs || positionsSent === 32) &&
               snapshotReceived === 128 &&
               snapshotAck === 128 &&
               partialSent < 4

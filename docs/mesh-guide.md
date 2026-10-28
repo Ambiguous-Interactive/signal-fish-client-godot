@@ -288,6 +288,16 @@ message IDs; these runs do not reproduce a missing initial probe. Stable
 Godot still reports unset ordered/unreliable lifetimes. The new native repair
 and these local controls leave repaired-engine and remote qualification open.
 
+A later Web reference-offer service control at the same reference revision
+captures an absent initial unreliable probe with matching sender evidence.
+It uses 16 KiB snapshot bodies, the 48 KiB byte window, startup traffic and the
+reference-consumer pause. Generation 1 enqueues message 33 on stream 3,
+incarnation 2, SSN 0. A later live receive sample retains that exact lifetime
+abandonment with `transmission_selected=false`. All reliable full, partial and
+startup receipts finish. This explains pre-selection expiry for this captured
+probe (#458); its strict initial-probe verdict stays failed. The earlier
+untraced packet and remote qualification remain open.
+
 For packet-level SCTP controls at reference commit
 `67725d677ff0fdb662d041af9b175d8a6d08c75f`, apply the optional trace patch
 before building the probe:
@@ -964,6 +974,50 @@ while bulk sends wait for credit; outbound `buffered_amount` alone cannot show
 remote receive capacity. Reset all credit with the physical link. A receipt
 from an earlier generation must never release the new link's bytes. The
 reference sender is a runnable example of this application-owned contract.
+
+### Independent position updates
+
+Use `--mixed-traffic --position-interval-ms 100` to send the same 32 exact
+unreliable positions on a separate cadence. Both seats send at most one update
+per loop, wait at least the requested interval, and finish position sends
+before partial exchange and teardown. Choose 20-200 ms. The default `0` keeps
+the original schedule: one position after every four snapshots.
+
+This is an explicit workload control. A 48 KiB window holds two 16 KiB chunks;
+the original schedule can stop positions while snapshot credit is withheld.
+The independent cadence lets the consumer-pause check measure position and
+heartbeat progress during that bulk wait (#396, #440). It keeps the same
+snapshot counts, exact bytes, metadata, deadlines, pause requirements and
+fresh-link checks (#355). Use a separate output directory for each schedule.
+
+Phase records include `position_interval_ms` and at most 32 `position_timings`.
+Each send records its sequence, enqueue time, snapshots sent and snapshots
+acknowledged. Times use each sender's own clock. Qualification requires all
+32 ordered timing records, the requested minimum spacing and valid credit
+counts. A send record alone does not prove transport delivery. Finite-loss
+and strict initial-probe verdicts still apply.
+
+The new controls use Linux ARM64, Chromium 156.0.8078.4, webrtc-native
+1.2.2-stable and native reference `e8a2d969`.
+
+Matched local service controls with 16 KiB bodies, the 48 KiB window, startup
+traffic and the 1500 ms reference pause pass both offer roles on Godot 4.7.2
+native/Web and Godot 4.3 native with the 100 ms cadence. Every full/partial
+receipt, pause proof and service rejoin passes. The original snapshot-coupled
+Web control still fails its pause proof with zero queued positions.
+
+The independent Web HTTPRequest control still times out: Godot consumes all
+128 incoming snapshots but sends 116, with credit through 114. Both seats send
+and receive all 32 positions, and the reference receives all 128 heartbeat
+echoes. Its pause queues 14 positions and proves 14 new heartbeat round trips.
+Changing only to `--web-http-fetch` completes both generations and every strict
+check, with the same pause progress. These controls isolate bulk credit
+turnover from real-time progress. They leave the historical stall (#396),
+delayed echoes (#440) and remote-network qualification open.
+
+For game code, schedule real-time state updates independently of bulk snapshot
+credit. Bound both workloads and reserve receive capacity for control traffic.
+Keep application consumption credit tied to bytes actually consumed.
 
 ### Slow browser reference consumer
 
