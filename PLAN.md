@@ -59,8 +59,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       boundaries and retirement callback identities (#471). Compare remote
       controls; preserve the failed 4 KiB/100 ms reader history and strict
       retirement checks.
-- [ ] Capture the next native import failure with setup resource samples and
-      file identities, then retain its crash report or backtrace (#447).
+- [ ] Symbolicate the retained cold-import crash at engine PC `0x19a9bd8`
+      (#447), then isolate extension initialization and editor shutdown. Keep
+      the original/patched-extension failures and warm/no-extension controls.
 
 Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:
