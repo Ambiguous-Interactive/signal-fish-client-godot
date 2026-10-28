@@ -1630,6 +1630,27 @@ recovery checks, then logged a native SCTP failure near final teardown (#474).
 The strict verdict retains that failure. Matching old/current single-case
 comparisons pass; the cause remains open.
 
+Use `--multi-peer --slow-receiver --retirement-case 16` to run the captured
+case alone. Cases 0 through 17 use the same directed-link and channel mapping
+as `--retirement-matrix`. The two options are mutually exclusive. Logs keep
+the selected case number. Preserve the original credit transport and tool
+versions when comparing an earlier failure.
+
+Each three-seat run prints `WEBRTC_LIFECYCLE` records for physical connection
+and channel instances, state changes, barrier receipts and explicit close
+boundaries. Removed peers retain their last observed identity and state.
+`lifecycle` in progress and phase snapshots keeps up to 256 records and
+reports omitted records. The observer keeps copied values only.
+
+`driver-timeline.json` places native pipe lines and browser console messages
+on one driver monotonic clock. It retains lifecycle, phase, stage and error
+observations, including errors after a PASS marker. Its 4096-event limit and
+line truncation counts are explicit. Raw seat logs retain the complete output.
+These times describe when the driver read a line or received a console event.
+They do not establish a native SCTP callback time or cross-seat causal order.
+Join each seat's physical identities, local `tick_us` boundaries and barrier
+markers before classifying a failure as final closure or an active-link fault.
+
 WebRTC credits carry the phase, sender, destination and cumulative consumed
 count. Reads check exact bytes, reliable mode, channel zero, the next eight-chunk
 boundary and the sender's outstanding count. Credits share the reliable channel

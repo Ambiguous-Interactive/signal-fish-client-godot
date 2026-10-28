@@ -1,6 +1,7 @@
 extends "res://tests/smoke/webrtc_interop_drill.gd"
 # gdlint: disable=max-returns
 
+const LifecycleScript = preload("res://tests/smoke/webrtc_lifecycle_observer.gd")
 const MultiRpcProbeScript = preload("res://tests/smoke/webrtc_multipeer_rpc_probe.gd")
 
 const ROSTER: Array[String] = [
@@ -46,6 +47,7 @@ var _saved: Dictionary = {}
 var _interruption: Dictionary = {}
 var _connections: Dictionary = {}
 var _last_packet: Dictionary = {}
+var _lifecycle := LifecycleScript.new()
 
 
 func _ready() -> void:
@@ -142,7 +144,9 @@ func _ready() -> void:
 		return
 	var relay := SessionScript.SessionPlanInfo.new()
 	relay.transport = SessionScript.TransportKind.RELAY
+	_lifecycle_boundary("before-final-relay-plan")
 	_mesh._apply_plan(relay)
+	_lifecycle_boundary("after-final-relay-plan")
 	_safe.poll()
 	if _safe.get_available_packet_count() != 0 or _rpc_disconnected.size() != 4:
 		_fail("final teardown retained packets or missed disconnections")
@@ -153,13 +157,83 @@ func _ready() -> void:
 	_finished = true
 	_inbox.cancel_request()
 	_cancel_outboxes()
+	_lifecycle_boundary("before-detach")
 	_mesh.detach()
+	_lifecycle_boundary("after-detach")
 	_mesh.free()
 	_mesh = null
 	_client.free()
 	_client = null
 	print("WEBRTC_INTEROP_PASS seat=%d" % _seat)
 	get_tree().quit()
+
+
+func _process(delta: float) -> void:
+	if _failed or _finished or _inbox == null:
+		return
+	_observe_lifecycle("before-process")
+	super._process(delta)
+	_observe_lifecycle("after-process")
+
+
+func _lifecycle_context(location: String) -> Dictionary:
+	return {
+		"seat": _seat,
+		"phase": _phase,
+		"stage": _stage,
+		"tick_us": Time.get_ticks_usec(),
+		"location": location
+	}
+
+
+func _lifecycle_peers() -> Array[Dictionary]:
+	var states: Array[Dictionary] = []
+	if _mesh == null:
+		return states
+	var multiplayer_peer: WebRTCMultiplayerPeer = _mesh.get_multiplayer_peer()
+	for uuid: String in _mesh._peers:
+		var entry: Object = _mesh._peers[uuid]
+		var connection: WebRTCPeerConnection = entry.get("connection")
+		var peer_id: int = entry.get("peer_id")
+		var channels: Array[Dictionary] = []
+		if multiplayer_peer != null and multiplayer_peer.has_peer(peer_id):
+			var peer: Dictionary = multiplayer_peer.get_peer(peer_id)
+			for channel: WebRTCDataChannel in peer["channels"]:
+				channels.append(
+					{
+						"instance": channel.get_instance_id(),
+						"id": channel.get_id(),
+						"label": channel.get_label(),
+						"state": channel.get_ready_state()
+					}
+				)
+		states.append(
+			{
+				"peer_id": peer_id,
+				"remote_seat": _seat_for_id(peer_id),
+				"generation": entry.get("generation"),
+				"connection_instance": connection.get_instance_id(),
+				"connection_state": connection.get_connection_state(),
+				"gathering_state": connection.get_gathering_state(),
+				"signaling_state": connection.get_signaling_state(),
+				"channels": channels
+			}
+		)
+	return states
+
+
+func _observe_lifecycle(location: String) -> void:
+	for event: Dictionary in _lifecycle.observe(_lifecycle_peers(), _lifecycle_context(location)):
+		print("WEBRTC_LIFECYCLE " + JSON.stringify(event))
+
+
+func _lifecycle_boundary(action: String, details: Dictionary = {}) -> void:
+	_observe_lifecycle(action)
+	var boundary_details := details.duplicate(true)
+	boundary_details["peers"] = _lifecycle_peers()
+	var event := _lifecycle.boundary(action, boundary_details, _lifecycle_context(action))
+	if not event.is_empty():
+		print("WEBRTC_LIFECYCLE " + JSON.stringify(event))
 
 
 func _wait_web_start() -> bool:
@@ -193,9 +267,10 @@ func _retiring_remote() -> int:
 
 
 func _barrier(marker: String) -> bool:
+	_lifecycle_boundary("before-barrier", {"marker": marker})
 	for seat: int in _others():
 		_pending.append({"to": seat, "from": _seat, "marker": "%s-%d" % [marker, _seat]})
-	return await _wait_until(
+	var completed := await _wait_until(
 		marker,
 		func() -> bool:
 			for seat: int in _others():
@@ -203,6 +278,11 @@ func _barrier(marker: String) -> bool:
 					return false
 			return _pending.is_empty() and not _sending
 	)
+
+	_lifecycle_boundary(
+		"after-barrier", {"marker": marker, "completed": completed, "markers": _markers.keys()}
+	)
+	return completed
 
 
 func _connect_generation(phase: int) -> bool:
@@ -222,10 +302,14 @@ func _connect_generation(phase: int) -> bool:
 	for remote: SessionScript.SessionPeerInfo in plan.peers:
 		if not remote.initiate:
 			responders.peers.append(remote)
+	_lifecycle_boundary("before-responder-plan")
 	_mesh._apply_plan(responders)
+	_lifecycle_boundary("after-responder-plan")
 	if not await _barrier("responders-%d" % phase):
 		return false
+	_lifecycle_boundary("before-full-plan")
 	_mesh._apply_plan(plan)
+	_lifecycle_boundary("after-full-plan")
 	if not await _wait_until(
 		"triangle channels open", func() -> bool: return _mesh._count_connected_peers() == 2
 	):
@@ -633,7 +717,9 @@ func _retire_one_link() -> bool:
 			peer.get_peer(MeshScript.uuid_to_peer_id(ROSTER[_remote_seat]))["channels"]
 		)
 		var channel: WebRTCDataChannel = channels[_closing_channel]
+		_lifecycle_boundary("before-channel-close", {"channel_instance": channel.get_instance_id()})
 		channel.close()
+		_lifecycle_boundary("after-channel-close", {"channel_instance": channel.get_instance_id()})
 	if not await _wait_until(
 		"selective retirement notifications",
 		func() -> bool:
@@ -698,6 +784,7 @@ func _retire_one_link() -> bool:
 
 func _snapshot() -> Dictionary:
 	var snapshot := super._snapshot()
+	snapshot["lifecycle"] = _lifecycle.evidence()
 	snapshot["multi_peer"] = true
 	snapshot["credit_transport"] = _credit_transport
 	snapshot["credits_sent_by_target"] = _credits_sent
