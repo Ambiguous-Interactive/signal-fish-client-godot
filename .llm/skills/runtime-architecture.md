@@ -64,8 +64,10 @@ max_buffered_bytes` -> `ERR_BUSY` + `protocol_error`, nothing queued.
   while CLOSING to capture close code/reason; `-1` maps through as-is.
 - `SessionState`: UNAUTHENTICATED -> AUTHENTICATING -> AUTHENTICATED ->
   IN_ROOM_WAITING/LOBBY/FINALIZED or SPECTATING. Lobby transitions are
-  **server-driven** (`RoomJoined`/`LobbyStateChanged`/`Reconnected`); the
-  client never self-promotes. `GameStarting` does not change session state.
+  **server-driven** (`RoomJoined`/`LobbyStateChanged`/`Reconnected`/`GameStarting`); the
+  client never self-promotes. A room-scoped `GameStarting` finalizes the cached
+  lobby before emission; seated clients enter `IN_ROOM_FINALIZED`, while spectators
+  keep their read-only role. Roomless game-start events cannot create membership.
 - Reconnect opens a fresh transport, authenticates, then sends `Reconnect`
   once `Authenticated` arrives (enforcing servers reject pre-auth messages).
   On `Reconnected`, restore cached state, decode `missed_events` through the

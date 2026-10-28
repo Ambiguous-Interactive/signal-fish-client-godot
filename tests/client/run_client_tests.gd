@@ -550,9 +550,9 @@ func _test_room_lifecycle_state_machine() -> void:
 		{"type": "GameStarting", "data": {"peer_connections": [_peer_connection()]}}
 	)
 	_assert_equal(
-		SignalFishClientScript.SessionState.IN_ROOM_LOBBY,
+		SignalFishClientScript.SessionState.IN_ROOM_FINALIZED,
 		client.get_session_state(),
-		"game_starting does not change session state"
+		"game_starting finalizes session state"
 	)
 
 	fake.inject_server_message(

@@ -1154,6 +1154,16 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 					_session_state = _session_state_for_lobby(_lobby_state)
 			lobby_state_changed.emit(event.args[0], event.args[1], event.args[2])
 		&"game_starting":
+			if (
+				not _room_id.is_empty()
+				and (
+					_session_state in _PLAYER_ROOM_STATES
+					or _session_state == SessionState.SPECTATING
+				)
+			):
+				_lobby_state = SFTypesScript.LobbyState.FINALIZED
+				if _session_state != SessionState.SPECTATING:
+					_session_state = SessionState.IN_ROOM_FINALIZED
 			game_starting.emit(event.args[0])
 		&"pong":
 			_awaiting_pong = false
