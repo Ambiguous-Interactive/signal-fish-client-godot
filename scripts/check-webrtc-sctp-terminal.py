@@ -38,6 +38,8 @@ CASES = frozenset(
         "reentrant_disconnect",
         "null_state_callback",
         "null_state_callback_failure",
+        "close_connecting",
+        "close_during_comm_up",
     }
 )
 BASELINE_FAILURES = frozenset(
@@ -47,9 +49,12 @@ BASELINE_FAILURES = frozenset(
         "lower_after_selection",
         "late_comm_up",
         "delayed_connected_callback",
+        "close_during_comm_up",
     }
 )
-BASELINE_PASSES = frozenset({"connecting_failure", "connected_loss", "failed_lower"})
+BASELINE_PASSES = frozenset(
+    {"connecting_failure", "connected_loss", "failed_lower", "close_connecting"}
+)
 
 
 def run(command: list[str], log: Path, cwd: Path | None = None) -> str:
@@ -85,8 +90,13 @@ def run(command: list[str], log: Path, cwd: Path | None = None) -> str:
 def control_results(raw: str) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     names: set[str] = set()
-    for line in raw.splitlines():
-        value: object = json.loads(line)
+    for line_number, line in enumerate(raw.splitlines(), start=1):
+        try:
+            value: object = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Invalid JSON on control output line {line_number}: {line[:160]!r}"
+            ) from exc
         if not isinstance(value, dict):
             raise RuntimeError("Invalid control record")
         name = value.get("case")
@@ -130,6 +140,14 @@ def instrument(root: Path, repaired: bool) -> None:
             "\t\t\tsf_terminal_hook(0);\n\t\t\tconst auto previous = state();\n"
             "\t\t\tsf_terminal_hook(1);\n\t\t\tif (previous == State::Connected) {",
         )
+    close_transition = (
+        "\t\tchangeState(State::Failed);"
+        if not repaired
+        else "\t\tchangeStateIf(State::Connecting, State::Failed);"
+    )
+    if close_transition not in text:
+        close_transition = "\t\tif (!changeStateIf(State::Connecting, State::Failed))"
+    text = text.replace(close_transition, "\t\tsf_terminal_hook(4);\n" + close_transition, 1)
     source.write_text(text)
     transport = impl / "transport.cpp"
     text = transport.read_text().replace(

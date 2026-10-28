@@ -1,15 +1,16 @@
 --- a/thirdparty/libdatachannel/src/impl/sctptransport.cpp
 +++ b/thirdparty/libdatachannel/src/impl/sctptransport.cpp
-@@ -435,7 +435,7 @@
+@@ -435,7 +435,8 @@
  				PLOG_WARNING << "SCTP shutdown failed, errno=" << errno;
  			}
  		}
 -		changeState(State::Failed);
-+		changeStateIf(State::Connecting, State::Failed);
++		if (!changeStateIf(State::Connecting, State::Failed))
++			disconnect();
  		mWrittenCondition.notify_all();
  	}
  }
-@@ -443,6 +443,29 @@
+@@ -443,6 +444,29 @@
  unsigned int SctpTransport::maxStream() const {
  	unsigned int streamsCount = mNegotiatedStreamsCount.value_or(MAX_SCTP_STREAMS_COUNT);
  	return streamsCount > 0 ? streamsCount - 1 : 0;
@@ -39,7 +40,7 @@
  }
  
  void SctpTransport::incoming(message_ptr message) {
-@@ -459,9 +482,7 @@
+@@ -459,9 +483,7 @@
  
  	if (!message) {
  		diagnostics::lifecycle("sctp_incoming_null", 0, diagnosticId, 0, 0, int(state()));
@@ -50,7 +51,7 @@
  		return;
  	}
  
-@@ -590,8 +611,7 @@
+@@ -590,8 +612,7 @@
  				PLOG_VERBOSE << "SCTP already shut down";
  			} else {
  				PLOG_WARNING << "SCTP shutdown failed, errno=" << errno;
@@ -60,7 +61,7 @@
  			}
  		}
  	}
-@@ -873,18 +893,11 @@
+@@ -873,18 +894,11 @@
  			mNegotiatedStreamsCount.emplace(
  			    std::min(sac.sac_inbound_streams, sac.sac_outbound_streams));
  

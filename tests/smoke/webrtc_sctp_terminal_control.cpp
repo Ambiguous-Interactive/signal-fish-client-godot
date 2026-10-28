@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <condition_variable>
 #include <iostream>
 #include <mutex>
@@ -19,9 +20,11 @@ bool paused = false;
 bool released = false;
 bool lowerEntered = false;
 std::atomic<int> errors{0};
+std::atomic<int> shutdownErrno{0};
 }
 
 void sf_terminal_hook(int point) {
+    if (point == 4) shutdownErrno = errno;
     std::unique_lock lock(gate);
     if (point == 3 && std::this_thread::get_id() != notificationThread) {
         lowerEntered = true;
@@ -126,6 +129,68 @@ struct SctpTerminalControl {
                   << ",\"state_callbacks\":" << states.size()
                   << ",\"eof_callbacks\":" << ended << ",\"errors\":" << errors << "}"
                   << std::endl;
+    }
+
+    static void earlyClose(bool promote) {
+        std::atomic<int> ended{0};
+        std::mutex statesMutex;
+        std::vector<State> states;
+        auto peer = std::make_shared<SctpTransport>(
+            nullptr, Configuration{}, SctpTransport::Ports{},
+            [&](message_ptr p) { if (!p) ++ended; }, nullptr,
+            [&](State s) { std::lock_guard lock(statesMutex); states.push_back(s); });
+        peer->mWrittenOnce = true;
+        peer->changeState(State::Connecting);
+        states.clear();
+        errors = 0;
+        shutdownErrno = 0;
+        if (promote) {
+            {
+                std::lock_guard lock(gate);
+                pauseAt = 4;
+                paused = released = false;
+            }
+            std::thread worker([&] {
+                {
+                    std::lock_guard lock(gate);
+                    notificationThread = std::this_thread::get_id();
+                }
+                peer->close();
+            });
+            {
+                std::unique_lock lock(gate);
+                if (!ready.wait_for(lock, std::chrono::seconds(5), [] { return paused; }))
+                    std::terminate();
+            }
+            union sctp_notification notification{};
+            auto &sac = notification.sn_assoc_change;
+            sac.sac_type = SCTP_ASSOC_CHANGE;
+            sac.sac_length = sizeof(sctp_assoc_change);
+            sac.sac_state = SCTP_COMM_UP;
+            peer->processNotification(&notification, sizeof(sctp_assoc_change));
+            {
+                std::lock_guard lock(gate);
+                released = true;
+            }
+            ready.notify_all();
+            worker.join();
+            pauseAt = -1;
+        } else {
+            peer->close();
+        }
+        const auto expected = promote ? State::Disconnected : State::Failed;
+        const auto expectedStates = promote ? std::vector<State>{State::Connected, State::Disconnected}
+                                            : std::vector<State>{State::Failed};
+        const bool passed = peer->state() == expected && ended == (promote ? 1 : 0) &&
+            errors == 0 && states == expectedStates && !peer->mSendQueue.running() &&
+            shutdownErrno == ENOTCONN;
+        std::cout << "{\"case\":\"" << (promote ? "close_during_comm_up" : "close_connecting")
+                  << "\",\"passed\":" << (passed ? "true" : "false")
+                  << ",\"state\":" << int(peer->state())
+                  << ",\"state_callbacks\":" << states.size()
+                  << ",\"eof_callbacks\":" << ended << ",\"errors\":" << errors
+                  << ",\"send_queue_running\":" << (peer->mSendQueue.running() ? "true" : "false")
+                  << ",\"shutdown_errno\":" << shutdownErrno << "}" << std::endl;
     }
 
     static void nullStateCallback(bool connecting) {
@@ -233,4 +298,6 @@ int main() {
     Control::delayedConnectedCallback();
     Control::nullStateCallback(false);
     Control::nullStateCallback(true);
+    Control::earlyClose(false);
+    Control::earlyClose(true);
 }
