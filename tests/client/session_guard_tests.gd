@@ -32,6 +32,7 @@ static func run(runner: Object) -> Array[String]:
 
 func run_all() -> void:
 	var cases: Array[Callable] = [
+		_test_game_starting_projects_finalized_state,
 		_test_spectator_baseline_ends_player_role,
 		_test_spectator_live_room_events,
 		_test_roomless_lobby_state_change_is_inert,
@@ -490,4 +491,70 @@ func _test_spectator_live_room_events() -> void:
 		ERR_UNAUTHORIZED, client.send_game_data({}), "live data does not grant send permission"
 	)
 	client.free()
+	_done()
+
+
+func _test_game_starting_projects_finalized_state() -> void:
+	for kind: int in 6:
+		var client: SignalFishClientScript
+		match kind:
+			0:
+				client = _connected_client()
+			1:
+				client = _authenticated_client()
+			5:
+				client = _spectating_client()
+			_:
+				client = _in_room_client()
+		var fake: SFFakeTransportScript = client.transport
+		if kind in [3, 4, 5]:
+			fake.inject_server_message(
+				{
+					"type": "LobbyStateChanged",
+					"data":
+					{
+						"lobby_state": "finalized" if kind == 4 else "lobby",
+						"ready_players": [],
+						"all_ready": true
+					}
+				}
+			)
+		var expected_state: SignalFishClientScript.SessionState = client.get_session_state()
+		var expected_lobby: int = client.get_lobby_state()
+		if kind >= 2:
+			expected_lobby = SFTypesScript.LobbyState.FINALIZED
+			if kind != 5:
+				expected_state = SignalFishClientScript.SessionState.IN_ROOM_FINALIZED
+		var observed: Array = []
+		client.game_starting.connect(
+			func(_peers: Array[SFTypesScript.PeerConnectionInfo]) -> void:
+				observed.append([client.get_session_state(), client.get_lobby_state()])
+		)
+		for _repeat: int in 2:
+			fake.inject_server_message({"type": "GameStarting", "data": {"peer_connections": []}})
+		_assert_equal(
+			[[expected_state, expected_lobby], [expected_state, expected_lobby]],
+			observed,
+			"game start projects baseline-owned state before each listener: %d" % kind
+		)
+		if kind == 5:
+			_assert_equal(
+				ERR_UNAUTHORIZED, client.send_game_data({}), "started spectator stays read-only"
+			)
+		client.free()
+	var closing := _in_room_client()
+	var closing_transport: SFFakeTransportScript = closing.transport
+	closing.game_starting.connect(
+		func(_peers: Array[SFTypesScript.PeerConnectionInfo]) -> void: closing.close()
+	)
+	closing_transport.inject_server_message(
+		{"type": "GameStarting", "data": {"peer_connections": []}}
+	)
+	_assert_equal(
+		SignalFishClientScript.SessionState.UNAUTHENTICATED,
+		closing.get_session_state(),
+		"listener close owns final state"
+	)
+	_assert_equal("", closing.get_room_id(), "listener close clears room")
+	closing.free()
 	_done()

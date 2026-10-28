@@ -44,6 +44,9 @@ released version.
 
 ### Fixed
 
+- Fix game-start listeners reading an outdated lobby state. Seated clients now
+  report finalized state before the callback; spectators keep their read-only role (#468).
+
 - Web builds hosted on HTTP localhost can connect to local WebSocket services (#428).
 
 - Safe WebRTC RPC peers skip closed links and avoid duplicate lifecycle
