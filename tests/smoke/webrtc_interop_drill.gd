@@ -1223,7 +1223,7 @@ func _wait_until(stage: String, condition: Callable) -> bool:
 	return false
 
 
-func _snapshot(include_http_history := false) -> Dictionary:
+func _snapshot() -> Dictionary:
 	var now := Time.get_ticks_msec()
 	var snapshot := {
 		"seat": _seat,
@@ -1262,8 +1262,8 @@ func _snapshot(include_http_history := false) -> Dictionary:
 		"interrupted_received": _interrupted_received,
 		"interrupted_queued": _interrupted_queued,
 		"pending_signals": _pending.size(),
-		"http_inbox": _inbox.evidence(include_http_history) if _inbox != null else {},
-		"http_outbox": _outbox.evidence(include_http_history) if _outbox != null else {},
+		"http_inbox": _inbox.evidence(false) if _inbox != null else {},
+		"http_outbox": _outbox.evidence(false) if _outbox != null else {},
 		"web_http_fetch": OS.has_feature("web") and _inbox != null and _inbox.use_fetch,
 		"signal_sent": _signal_sent,
 		"signal_received": _signal_received,
@@ -1324,7 +1324,9 @@ func _fail(reason: String) -> void:
 	if _failed:
 		return
 	_failed = true
-	var snapshot := _snapshot(true)
+	var snapshot := _snapshot()
+	snapshot["http_inbox"] = _inbox.evidence() if _inbox != null else {}
+	snapshot["http_outbox"] = _outbox.evidence() if _outbox != null else {}
 	snapshot["reason"] = reason
 	print("WEBRTC_INTEROP_FAIL " + JSON.stringify(snapshot))
 	_release_rpc_recovery()

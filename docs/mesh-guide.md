@@ -983,6 +983,15 @@ Compare those intervals with heartbeat and credit progress before attributing
 a bulk timeout to WebRTC delivery. Resource timing measures the HTTP path;
 it does not identify SCTP loss or prove a remote gameplay receipt.
 
+Fresh Web service controls with the same 16 KiB workload show a median six
+process frames per HTTPRequest marker. Median resource response intervals
+are 2-5 ms; median script completion follows about 64-71 ms later. Both roles
+reach the bulk deadline with zero channel-buffer drop messages. Both fetch
+roles complete every strict check. The HTTPRequest pauses still prove fresh
+heartbeat round trips and queued position updates. These local controls narrow
+credit-turnover delay in #396 and #440; their historical failures and #355
+remote-network qualification remain open.
+
 For game code, count encoded bytes per destination and channel. Reserve buffer
 space for control traffic and packet framing. Release credit only after the
 receiver validates and consumes a chunk. Keep reading and echoing heartbeats
