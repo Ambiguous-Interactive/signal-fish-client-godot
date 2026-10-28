@@ -42,7 +42,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Compare the three-seat held-credit control with the captured native/browser
       stream stall using matched HTTP/WebRTC credit runs, independent gameplay
       and reference-consumer pause controls,
-      with command pipe-write, request, relay, engine and transport timings plus matched Godot and
+      with independent position cadence and command pipe-write, request, relay,
+      engine and transport timings plus matched Godot and
       reference application drain schedules and direct browser fetch versus
       HTTPRequest markers (#396; see `docs/mesh-guide.md`).
       Include the captured two-chunk 16 KiB HTTP credit-turnover limit with

@@ -24,6 +24,70 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_position_cadence_requires_complete_independent_sends(self) -> None:
+        good = {
+            "position_interval_ms": 100,
+            "positions_sent": 32,
+            "position_timings": [
+                {
+                    "sequence": sequence,
+                    "enqueue_ms": 500 + 100 * sequence,
+                    "snapshot_sent": 2,
+                    "snapshot_acknowledged": 0,
+                }
+                for sequence in range(32)
+            ],
+        }
+        self.assertTrue(reference.position_schedule_passed(good, 100, True))
+        self.assertTrue(reference.position_schedule_passed({}, 0, True))
+        for fault in (
+            "interval",
+            "count",
+            "missing",
+            "sequence",
+            "burst",
+            "credit",
+            "type",
+            "negative",
+        ):
+            with self.subTest(fault=fault):
+                broken = copy.deepcopy(good)
+                samples = cast(list[dict[str, object]], broken["position_timings"])
+                if fault == "interval":
+                    broken["position_interval_ms"] = 0
+                elif fault == "count":
+                    broken["positions_sent"] = 31
+                elif fault == "missing":
+                    samples.pop()
+                elif fault == "sequence":
+                    samples[1]["sequence"] = 0
+                elif fault == "burst":
+                    samples[1]["enqueue_ms"] = 550
+                elif fault == "credit":
+                    samples[1]["snapshot_acknowledged"] = 3
+                elif fault == "type":
+                    samples[1]["sequence"] = True
+                elif fault == "negative":
+                    samples[0]["enqueue_ms"] = -1
+                self.assertFalse(reference.position_schedule_passed(broken, 100, True))
+        self.assertFalse(reference.position_schedule_passed(good, 0, True))
+        self.assertFalse(reference.position_schedule_passed(good, 100, False))
+        args = argparse.Namespace(
+            mixed_traffic=True,
+            credit_transport="webrtc",
+            safe_receive=True,
+            position_interval_ms=100,
+        )
+        self.assertTrue(
+            reference.gameplay_phase_checks(good, good, args, 2, True)["position_schedule"]
+        )
+        self.assertFalse(
+            reference.gameplay_phase_checks(good, {}, args, 2, True)["position_schedule"]
+        )
+        self.assertFalse(
+            reference.gameplay_phase_checks({}, good, args, 2, True)["position_schedule"]
+        )
+
     def test_initial_expiry_requires_same_association_message_and_live_evidence(self) -> None:
         identity = {
             "message_id": 33,

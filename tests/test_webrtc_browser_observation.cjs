@@ -357,12 +357,121 @@ async function testStartupCredit() {
   console.log("Startup consumption credit tests passed");
 }
 
+async function testIndependentPositions() {
+  for (const interval of [20, 100, 200, 0]) {
+    let clock = 0;
+    let hooks;
+    const sent = [];
+    const context = {
+      window: {},
+      TextEncoder,
+      TextDecoder,
+      AbortController,
+      performance: { now: () => clock },
+      console: { log() {}, error() {} },
+      setTimeout: (callback) =>
+        setImmediate(() => {
+          clock += 20;
+          if (clock === 1000) clock += 500;
+          callback();
+        }),
+      Engine: class {
+        nativeProfile = true;
+        constructor(_verbose, callbacks) {
+          hooks = callbacks;
+        }
+        async pairWith() {
+          return null;
+        }
+        channel(_peer, label) {
+          return {
+            readyState: "open",
+            send(text) {
+              sent.push({ text, clock, label });
+              if (text.startsWith("heartbeat:"))
+                queueMicrotask(() =>
+                  hooks.onChannelMessage("godot", 1, "reliable", text),
+                );
+            },
+          };
+        }
+        diagnosticSnapshot() {
+          return {};
+        }
+        async removePeer() {}
+      },
+      fetch: async (_url, options) => ({
+        ok: true,
+        json: async () =>
+          options?.method === "POST" ? [] : [{ marker: "ready-1" }],
+      }),
+    };
+    vm.runInNewContext(
+      fs
+        .readFileSync("tests/smoke/webrtc_reference.js", "utf8")
+        .replace(/^import .*;\n/, ""),
+      context,
+    );
+    await context.window.runReference(
+      0,
+      true,
+      true,
+      "webrtc",
+      false,
+      "reliable",
+      "reference",
+      false,
+      null,
+      false,
+      16384,
+      49152,
+      0,
+      0,
+      interval,
+    );
+    const snapshots = sent.filter((item) => item.text.startsWith("snapshot:"));
+    const positions = sent.filter((item) => item.text.startsWith("position:"));
+    assert.equal(
+      snapshots.length,
+      2,
+      "withheld credit must keep the bulk window full",
+    );
+    assert.equal(
+      positions.length,
+      interval ? 32 : 0,
+      "independent positions must progress while snapshot credit is withheld",
+    );
+    for (const [sequence, packet] of positions.entries()) {
+      assert.equal(packet.label, "unreliable");
+      assert.equal(
+        packet.text,
+        `position:1:reference:${sequence}:` + "0123456789abcdef".repeat(4),
+      );
+      if (sequence)
+        assert.ok(packet.clock - positions[sequence - 1].clock >= interval);
+    }
+    assert.ok(
+      sent.filter((item) => item.text.startsWith("heartbeat:")).length >= 5,
+    );
+    const report = context.window.referenceProgress();
+    assert.equal(report.position_interval_ms, interval);
+    assert.equal(report.position_timings.length, positions.length);
+    for (const sample of report.position_timings) {
+      assert.equal(sample.snapshot_acknowledged, 0);
+      assert.ok(sample.snapshot_sent <= 2);
+    }
+    assert.match(context.window.referenceError, /missing Godot teardown/);
+  }
+  console.log("Independent position cadence tests passed");
+}
+
 async function main() {
   await require("./test_webrtc_native_reference.cjs")();
   await require("./test_webrtc_http_request.cjs")();
   await testReferenceFirstFailure();
   await testSmallSnapshotWindows();
   await testStartupCredit();
+  await testIndependentPositions();
   let sample;
   const output = [];
   const errors = [];
