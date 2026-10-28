@@ -1690,7 +1690,11 @@ state/error and prior transport state. Explicit local peer/channel closures,
 remote-close callbacks and lower-transport disconnects have separate records.
 Native records use one bounded output write to keep concurrent stdout from
 splitting their fields. The driver reports malformed lines, sequence gaps,
-conflicting identities, unbound transports and omitted records. Raw `native.log` retains all output.
+conflicting identities, unbound transports and omitted records. The parser
+recovers a complete native record after a Godot log prefix and retains its
+line number in `interleaved_line_numbers` (#481). Malformed or combined native
+records still fail validation. The surrounding Godot progress line can remain
+split. Raw `native.log` retains all output.
 Missing trace records provide no native callback evidence.
 
 `native_entry_us` samples the process steady clock at the trace call;

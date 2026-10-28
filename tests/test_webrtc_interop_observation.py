@@ -87,6 +87,23 @@ class DriverTimelineTests(unittest.TestCase):
         self.assertEqual(event["line"], line[:32768])
         self.assertEqual(event["truncated_characters"], len(line) - 32768)
 
+    def test_timeline_keeps_embedded_native_record_and_filters_ordinary_progress(self) -> None:
+        for padding in (4096, 33000):
+            with self.subTest(padding=padding):
+                progress = 'WEBRTC_INTEROP_PROGRESS {"padding":"' + "x" * padding
+                line = progress + NativeLifecycleTests.row(1, "sctp_bind", peer=1, sctp=2)
+                timeline = drill.DriverTimeline(limit=1)
+                timeline.observe(0, progress)
+                timeline.observe(0, line)
+                timeline.observe(0, line)
+                result = timeline.snapshot()
+                self.assertEqual(len(result["events"]), 1)
+                self.assertEqual(result["events"][0]["line"], line[:32768])
+                self.assertEqual(
+                    result["events"][0]["truncated_characters"], max(0, len(line) - 32768)
+                )
+                self.assertEqual(result["dropped_events"], 1)
+
 
 class NativeLifecycleTests(unittest.TestCase):
     @staticmethod
@@ -174,6 +191,69 @@ class NativeLifecycleTests(unittest.TestCase):
         self.assertEqual(evidence["unbound_sctp"], [8])
         self.assertIsNone(evidence["associations"][0]["godot_instance"])
 
+    def test_complete_native_record_inside_progress_retains_association_identity(self) -> None:
+        prefix = 'WEBRTC_INTEROP_PROGRESS {"channels":[{"id":3,"instance":900,'.ljust(4096)
+        output = "\n".join(
+            [
+                self.row(1, "peer_bind", peer=1, godot_instance=900),
+                prefix + self.row(2, "sctp_bind", peer=1, sctp=2),
+                '"label":"unreliable","state":0}]}',
+                self.row(3, "sctp_close", sctp=2),
+            ]
+        )
+        evidence = drill.native_lifecycle_evidence(output)
+        self.assertEqual([row["sequence"] for row in evidence["events"]], [1, 2, 3])
+        self.assertEqual(evidence["invalid_line_numbers"], [])
+        self.assertEqual(evidence["interleaved_line_numbers"], [2])
+        self.assertEqual(evidence["issues"], [])
+        self.assertEqual(evidence["unbound_sctp"], [])
+        self.assertEqual(evidence["associations"][0]["godot_instance"], 900)
+        self.assertEqual(evidence["observed_records"], 3)
+
+    def test_embedded_partial_duplicate_and_unrelated_markers_stay_invalid(self) -> None:
+        prefix = 'WEBRTC_INTEROP_PROGRESS {"channels":['
+        record = self.row(2, "sctp_bind", peer=1, sctp=2)
+        malformed = (
+            prefix + record[:-1],
+            prefix + record + " trailing text",
+            prefix + record + self.row(3, "sctp_close", sctp=2),
+            prefix + 'SF_NATIVE_LIFECYCLE {"note":"unrelated"}',
+            json.dumps({"message": record}),
+        )
+        for line in malformed:
+            with self.subTest(line=line):
+                evidence = drill.native_lifecycle_evidence(
+                    "\n".join(
+                        [
+                            self.row(1, "peer_bind", peer=1, godot_instance=900),
+                            line,
+                            self.row(3, "sctp_close", sctp=2),
+                        ]
+                    )
+                )
+                self.assertEqual(evidence["invalid_line_numbers"], [2])
+                self.assertEqual(evidence["interleaved_line_numbers"], [])
+                self.assertIn("sequence gap or reordering", evidence["issues"])
+                self.assertEqual(evidence["unbound_sctp"], [2])
+
+    def test_embedded_conflicts_and_clock_regression_stay_explicit(self) -> None:
+        output = "\n".join(
+            [
+                self.row(1, "peer_bind", peer=1, godot_instance=900),
+                self.row(2, "sctp_bind", peer=1, sctp=2),
+                'WEBRTC_INTEROP_PROGRESS {"channels":['
+                + self.row(3, "sctp_bind", peer=99, sctp=2, native_us=1),
+                self.row(4, "sctp_close", sctp=2),
+            ]
+        )
+        evidence = drill.native_lifecycle_evidence(output)
+        self.assertEqual(evidence["interleaved_line_numbers"], [3])
+        self.assertEqual(evidence["invalid_line_numbers"], [])
+        self.assertEqual(
+            set(evidence["issues"]),
+            {"native clock regressed", "invalid SCTP binding", "contradictory event identity"},
+        )
+
     def test_malformed_and_truncated_evidence_cannot_hide_sequence_gaps(self) -> None:
         malformed = [
             "SF_NATIVE_LIFECYCLE {",
@@ -181,7 +261,7 @@ class NativeLifecycleTests(unittest.TestCase):
             self.row(2, "peer_bind", peer=True),
             self.row(2, "sctp_close", native_entry_us=201),
             self.row(2, "future_event"),
-            "interleaved " + self.row(2, "sctp_bind"),
+            "interleaved " + self.row(2, "sctp_bind")[:-1],
             self.row(2, "sctp_close", sctp=2).replace(
                 '"sctp": 2', '"sctp"interop stage: seat=0 phase=3 stage=teardown'
             ),
@@ -275,12 +355,16 @@ class NativeLifecycleTests(unittest.TestCase):
                 )
 
     def test_all_retained_structures_are_bounded(self) -> None:
-        output = "\n".join(self.row(i, "sctp_bind", sctp=i, peer=i) for i in range(1, 8))
+        output = "\n".join(
+            'WEBRTC_INTEROP_PROGRESS {"channels":[' + self.row(i, "sctp_bind", sctp=i, peer=i)
+            for i in range(1, 8)
+        )
         evidence = drill.native_lifecycle_evidence(output, limit=2)
         self.assertEqual(len(evidence["events"]), 2)
         self.assertEqual(len(evidence["associations"]), 2)
         self.assertEqual(evidence["observed_records"], 7)
         self.assertEqual(evidence["omitted_records"], 5)
+        self.assertEqual(evidence["interleaved_line_numbers"], [1, 2])
 
 
 class RelayObservationTests(unittest.TestCase):
