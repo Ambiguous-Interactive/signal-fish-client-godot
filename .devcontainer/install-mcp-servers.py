@@ -13,8 +13,8 @@ from pathlib import Path
 
 PACKAGES = (
     ("GODOT_MCP_NPM_SPEC", "@coding-solo/godot-mcp@0.1.1", "godot-mcp"),
-    ("PLAYWRIGHT_MCP_NPM_SPEC", "@playwright/mcp@0.0.82", "playwright-mcp"),
-    ("CONTEXT7_MCP_NPM_SPEC", "@upstash/context7-mcp@4.0.4", "context7-mcp"),
+    ("PLAYWRIGHT_MCP_NPM_SPEC", "@playwright/mcp@0.0.83", "playwright-mcp"),
+    ("CONTEXT7_MCP_NPM_SPEC", "@upstash/context7-mcp@4.4.4", "context7-mcp"),
 )
 ALLOW_SCRIPTS = (
     "@coding-solo/godot-mcp,@playwright/mcp,@upstash/context7-mcp,playwright,playwright-core"

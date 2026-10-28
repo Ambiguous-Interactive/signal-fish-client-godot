@@ -967,6 +967,34 @@ and marker observation times. It does not add receive capacity or qualify the
 original reliable loss (#442). Run packet-only and byte-window histories
 separately. The default HTTPRequest history keeps its own verdict.
 
+Reference assessments include `diagnostics.http_requests`. Each marker request
+records its HTTPClient states, process frames and browser-clock start and
+completion. A unique matching browser resource splits that duration into
+`submit_ms`, `response_ms` and `completion_ms`. Missing or ambiguous matches
+keep null intervals. Native requests keep their state and frame evidence.
+`marker_overflow`, `states_omitted` and `resources_dropped` expose trace limits.
+Periodic progress omits the full history; terminal and failure records retain it.
+Bounded `WEBRTC_HTTP_REQUEST` events preserve completed marker requests if the
+driver stops before Godot reports failure. `history_source: request_events`
+marks that fallback; it can contain a partial history.
+
+Godot's [HTTPRequest update](https://github.com/godotengine/godot/blob/ed1daf0bf/scene/main/http_request.cpp#L550)
+runs once per process frame. Its [Web HTTPClient](https://github.com/godotengine/godot/blob/ed1daf0bf/platform/web/http_client_web.cpp#L210)
+advances connection, request and body states through later polls. A short
+browser response can therefore take several more frames to reach script code.
+Compare those intervals with heartbeat and credit progress before attributing
+a bulk timeout to WebRTC delivery. Resource timing measures the HTTP path;
+it does not identify SCTP loss or prove a remote gameplay receipt.
+
+Fresh Web service controls with the same 16 KiB workload show a median six
+process frames per HTTPRequest marker. Median resource response intervals
+are 2-5 ms; median script completion follows about 64-71 ms later. Both roles
+reach the bulk deadline with zero channel-buffer drop messages. Both fetch
+roles complete every strict check. The HTTPRequest pauses still prove fresh
+heartbeat round trips and queued position updates. These local controls narrow
+credit-turnover delay in #396 and #440; their historical failures and #355
+remote-network qualification remain open.
+
 For game code, count encoded bytes per destination and channel. Reserve buffer
 space for control traffic and packet framing. Release credit only after the
 receiver validates and consumes a chunk. Keep reading and echoing heartbeats

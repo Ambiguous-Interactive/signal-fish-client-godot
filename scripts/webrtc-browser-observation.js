@@ -1,4 +1,37 @@
 (() => {
+  const http = [];
+  let httpOmitted = 0;
+  const retainHttp = (entries) => {
+    for (const entry of entries) {
+      const match = new URL(entry.name).pathname.match(/^\/signal\/(\d+)$/);
+      if (!match) continue;
+      if (http.length >= 4096) {
+        httpOmitted++;
+        continue;
+      }
+      http.push({
+        seat: match[1],
+        start_ms: entry.startTime,
+        response_start_ms: entry.responseStart,
+        response_end_ms: entry.responseEnd,
+        initiator: entry.initiatorType,
+      });
+    }
+  };
+  let httpObserver;
+  if (typeof PerformanceObserver !== "undefined") {
+    httpObserver = new PerformanceObserver((list) =>
+      retainHttp(list.getEntries()),
+    );
+    httpObserver.observe({ type: "resource", buffered: true });
+  }
+  window.webrtcHttpSnapshot = () => {
+    if (httpObserver) retainHttp(httpObserver.takeRecords());
+    return {
+      records: http.map((entry) => ({ ...entry })),
+      dropped: httpOmitted,
+    };
+  };
   const EnginePeer = window.RTCPeerConnection;
   const peers = new Map();
   let created = 0;

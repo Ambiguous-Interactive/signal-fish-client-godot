@@ -175,6 +175,12 @@ func _ready() -> void:
 	_mesh = null
 	_client.free()
 	_client = null
+	print(
+		(
+			"WEBRTC_HTTP_EVIDENCE "
+			+ JSON.stringify({"http_inbox": _inbox.evidence(), "http_outbox": _outbox.evidence()})
+		)
+	)
 	print("WEBRTC_INTEROP_PASS seat=%d" % _seat)
 	# The driver owns Web teardown; early quit can race audio startup (#430).
 	if not OS.has_feature("web"):
@@ -1256,6 +1262,8 @@ func _snapshot() -> Dictionary:
 		"interrupted_received": _interrupted_received,
 		"interrupted_queued": _interrupted_queued,
 		"pending_signals": _pending.size(),
+		"http_inbox": _inbox.evidence(false) if _inbox != null else {},
+		"http_outbox": _outbox.evidence(false) if _outbox != null else {},
 		"web_http_fetch": OS.has_feature("web") and _inbox != null and _inbox.use_fetch,
 		"signal_sent": _signal_sent,
 		"signal_received": _signal_received,
@@ -1317,6 +1325,8 @@ func _fail(reason: String) -> void:
 		return
 	_failed = true
 	var snapshot := _snapshot()
+	snapshot["http_inbox"] = _inbox.evidence() if _inbox != null else {}
+	snapshot["http_outbox"] = _outbox.evidence() if _outbox != null else {}
 	snapshot["reason"] = reason
 	print("WEBRTC_INTEROP_FAIL " + JSON.stringify(snapshot))
 	_release_rpc_recovery()

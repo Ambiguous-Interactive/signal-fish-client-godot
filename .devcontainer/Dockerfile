@@ -120,7 +120,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     PIPX_HOME=/usr/local/pipx PIPX_BIN_DIR=/usr/local/bin \
         pipx install pre-commit; \
     PIPX_HOME=/usr/local/pipx PIPX_BIN_DIR=/usr/local/bin \
-        pipx install uv==0.12.19; \
+        pipx install uv==0.13.6; \
     uv --version
 
 # MCP servers that do not depend on the Node devcontainer feature (which is
@@ -128,9 +128,9 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 # All versions pinned; see .devcontainer/README.md ("MCP servers").
 # GitHub's official server runs as a native binary because the upstream
 # Docker image would require Docker-in-Docker inside this container.
-ARG GITHUB_MCP_VERSION=1.12.2
-ARG MCP_SERVER_GIT_VERSION=2026.8.18
-ARG MCP_SERVER_FETCH_VERSION=2026.8.18
+ARG GITHUB_MCP_VERSION=2.0.3
+ARG MCP_SERVER_GIT_VERSION=2026.10.19
+ARG MCP_SERVER_FETCH_VERSION=2026.10.24
 COPY mcp-shims/sf-github-mcp.py /usr/local/bin/sf-github-mcp
 # pipx/pip download caches are cache-mounted (same rationale as the
 # pre-commit layer above): warm rebuilds reuse fetched wheels.

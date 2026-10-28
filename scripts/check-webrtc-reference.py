@@ -779,6 +779,59 @@ def initial_probe_diagnostics(
     }
 
 
+def http_request_diagnostics(
+    state: dict[str, object], resources: dict[str, object]
+) -> dict[str, object]:
+    entries = diagnostic_records(resources.get("records"))
+    clients: dict[str, object] = {}
+    for name in ("http_inbox", "http_outbox"):
+        evidence = diagnostic_mapping(state.get(name))
+        requests = []
+        for record in diagnostic_records(evidence.get("marker_requests")):
+            started = diagnostic_mapping(record.get("started"))
+            completed = diagnostic_mapping(record.get("completed"))
+            start = started.get("browser_ms")
+            end = completed.get("browser_ms")
+            matches = [
+                entry
+                for entry in entries
+                if entry.get("seat") == record.get("seat")
+                and diagnostic_interval(start, entry.get("start_ms")) is not None
+                and diagnostic_interval(entry.get("start_ms"), entry.get("response_end_ms"))
+                is not None
+                and diagnostic_interval(entry.get("response_end_ms"), end) is not None
+            ]
+            resource = matches[0] if len(matches) == 1 else {}
+            requests.append(
+                {
+                    **record,
+                    "resource_matches": len(matches),
+                    "resource": resource,
+                    "submit_ms": diagnostic_interval(start, resource.get("start_ms")),
+                    "response_ms": diagnostic_interval(
+                        resource.get("start_ms"), resource.get("response_end_ms")
+                    ),
+                    "completion_ms": diagnostic_interval(resource.get("response_end_ms"), end),
+                    "total_ms": diagnostic_interval(start, end),
+                    "frames": diagnostic_interval(started.get("frame"), completed.get("frame")),
+                }
+            )
+        clients[name] = {
+            "completed": evidence.get("completed"),
+            "active": evidence.get("active"),
+            "marker_overflow": evidence.get("marker_overflow"),
+            "history_included": evidence.get("history_included"),
+            "history_source": evidence.get("history_source", "snapshot"),
+            "requests": requests,
+        }
+    return {
+        "clients": clients,
+        "resources_dropped": resources.get("dropped"),
+        "limits": "Intervals use the Godot page's browser clock. Unique resource matches only. "
+        "Resource timing does not locate SCTP loss. Native requests have no browser intervals.",
+    }
+
+
 def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, object]:
     bridge = native_bridge_packet_diagnostics(diagnostic_mapping(report.get("native_timing")))
     evidence = diagnostic_mapping(report.get("godot_evidence"))
@@ -814,6 +867,32 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
         "peers",
     )
     state = failure or progress
+    http_state = state
+    http_events: dict[str, list[dict[str, object]]] = {"http_inbox": [], "http_outbox": []}
+    for line in output.splitlines():
+        if line.startswith("WEBRTC_HTTP_REQUEST "):
+            try:
+                event = diagnostic_mapping(json.loads(line.removeprefix("WEBRTC_HTTP_REQUEST ")))
+            except json.JSONDecodeError:
+                continue
+            if event.get("method") in (0, 2):
+                http_events["http_inbox" if event["method"] == 0 else "http_outbox"].append(event)
+        if line.startswith("WEBRTC_HTTP_EVIDENCE "):
+            try:
+                http_state = diagnostic_mapping(
+                    json.loads(line.removeprefix("WEBRTC_HTTP_EVIDENCE "))
+                )
+            except json.JSONDecodeError:
+                continue
+    http_state = dict(http_state)
+    for name, events in http_events.items():
+        client = diagnostic_mapping(http_state.get(name))
+        if events and client.get("history_included") is not True:
+            http_state[name] = {
+                **client,
+                "marker_requests": events,
+                "history_source": "request_events",
+            }
     queue_fields = (
         "startup_sent",
         "startup_received",
@@ -846,6 +925,9 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
         "last_stage": evidence.get("last_stage"),
         "last_ready": evidence.get("last_ready"),
         "godot_queue": {key: queue.get(key) for key in queue_fields},
+        "http_requests": http_request_diagnostics(
+            http_state, diagnostic_mapping(report.get("godot_http_resources"))
+        ),
         "godot_buffer_drop_messages": output.count("Buffer full! Dropping data."),
         "reference_error": ref.get("error"),
         "driver_error": report.get("driver_error"),
@@ -2067,6 +2149,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
                     try:
                         report["godot_browser_callbacks"] = page.evaluate(
                             "window.webrtcCallbackSnapshot?.() ?? null"
+                        )
+                        report["godot_http_resources"] = page.evaluate(
+                            "window.webrtcHttpSnapshot?.() ?? null"
                         )
                         report["godot_browser_drops"] = page.evaluate(
                             "window.webrtcDropSnapshot?.() ?? null"
