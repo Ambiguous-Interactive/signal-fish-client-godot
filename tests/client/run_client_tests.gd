@@ -19,6 +19,7 @@ const SessionGuardTestsScript = preload("res://tests/client/session_guard_tests.
 const V3ClientTestsScript = preload("res://tests/client/v3_client_tests.gd")
 const WebrtcMeshTestsScript = preload("res://tests/client/webrtc_mesh_tests.gd")
 const SteamIdentityTestsScript = preload("res://tests/client/steam_identity_tests.gd")
+const DrillHttpTestsScript = preload("res://tests/client/drill_http_tests.gd")
 const RosterRecoveryTests = preload("res://tests/client/roster_recovery_tests.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const FuzzDecodeTestsScript = preload("res://tests/protocol/fuzz_decode_tests.gd")
@@ -69,6 +70,9 @@ func _helper_suites_are_loadable() -> bool:
 		return false
 	if not (SteamIdentityTestsScript as Script).has_method("run"):
 		push_error("helper suite failed to load: steam_identity_tests")
+		return false
+	if not (DrillHttpTestsScript as Script).has_method("run"):
+		push_error("helper suite failed to load: drill_http_tests")
 		return false
 	if not (SFPluginScript as Script).can_instantiate():
 		push_error("addon script failed to load: plugin")
@@ -121,6 +125,7 @@ func _run() -> void:
 	_failures.append_array(WebrtcMeshTestsScript.run(self))
 	_failures.append_array(SteamIdentityTestsScript.run(self))
 	_failures.append_array(RosterRecoveryTests.run(self))
+	_failures.append_array(DrillHttpTestsScript.run())
 	_run_completed = true
 
 

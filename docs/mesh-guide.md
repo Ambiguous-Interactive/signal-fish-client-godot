@@ -1602,6 +1602,34 @@ A short hold that does not establish independence fails the control. These
 runs isolate a known HTTP credit delay; the original intermittent timeout
 still needs a causal capture (#396).
 
+The drill sends HTTP messages through one outbox per destination. Each outbox
+keeps its own FIFO. A pending response from one player allows credit and
+signaling requests to the other player to continue.
+
+Use `--http-post-delay-ms 6000` with `--multi-peer` and HTTP credit to hold
+the response to native's first eight-chunk consumption credit to Web-1.
+The relay queues that credit before holding the response. It requires both
+final 64-chunk credits between native and Web-2 during the hold, followed by
+all exact receipts, transfer modes, retirement and fresh-link recovery.
+
+```bash
+python scripts/check-webrtc-interop.py --multi-peer \
+  --http-post-delay-ms 6000 --native-extension /path/to/webrtc-native \
+  --output /tmp/multi-peer-held-post
+```
+
+`seats.json.http_post_delay` retains the held marker, actual hold duration
+and each independent final-credit time. Missing or late proof fails even
+when gameplay eventually completes. This control accepts at most 10,000 ms
+and runs separately from the GET credit hold and RPC workload. Compare an
+undelayed HTTP run and a WebRTC-credit run. The captured historical timeout
+and remote-network qualification remain open (#396, #355, #403).
+
+One Godot 4.7.2 HTTP retirement-matrix case completed all exact traffic and
+recovery checks, then logged a native SCTP failure near final teardown (#474).
+The strict verdict retains that failure. Matching old/current single-case
+comparisons pass; the cause remains open.
+
 WebRTC credits carry the phase, sender, destination and cumulative consumed
 count. Reads check exact bytes, reliable mode, channel zero, the next eight-chunk
 boundary and the sender's outstanding count. Credits share the reliable channel
