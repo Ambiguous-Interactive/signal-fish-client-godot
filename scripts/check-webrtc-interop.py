@@ -55,6 +55,7 @@ class DriverTimeline:
                     "USER ERROR:",
                 )
             )
+            or "SF_NATIVE_LIFECYCLE " in line
             or "SCRIPT ERROR" in line
             or "interop stage:" in line
         ):
@@ -106,6 +107,7 @@ def capture_native_output(
 def native_lifecycle_evidence(output: str, limit: int = 4096) -> dict[str, object]:
     events: list[dict[str, object]] = []
     invalid: list[int] = []
+    interleaved: list[int] = []
     issues: list[str] = []
     omitted = 0
     observed = 0
@@ -153,7 +155,8 @@ def native_lifecycle_evidence(output: str, limit: int = 4096) -> dict[str, objec
             omitted += 1
             continue
         try:
-            row = json.loads(line.removeprefix("SF_NATIVE_LIFECYCLE "))
+            prefix, _, payload = line.partition("SF_NATIVE_LIFECYCLE ")
+            row = json.loads(payload)
             if (
                 not isinstance(row, dict)
                 or row.get("event") not in kinds
@@ -177,6 +180,8 @@ def native_lifecycle_evidence(output: str, limit: int = 4096) -> dict[str, objec
             if len(invalid) < limit:
                 invalid.append(line_number)
             continue
+        if prefix:
+            interleaved.append(line_number)
         if row["sequence"] != previous_sequence + 1 and "sequence gap or reordering" not in issues:
             issues.append("sequence gap or reordering")
         if row["native_us"] < previous_time and "native clock regressed" not in issues:
@@ -235,6 +240,7 @@ def native_lifecycle_evidence(output: str, limit: int = 4096) -> dict[str, objec
         "events": events,
         "omitted_records": omitted,
         "invalid_line_numbers": invalid,
+        "interleaved_line_numbers": interleaved,
         "issues": issues,
         "associations": links,
         "unbound_sctp": [link["sctp"] for link in links if link["godot_instance"] is None],

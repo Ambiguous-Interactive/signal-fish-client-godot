@@ -41,6 +41,19 @@ CASES = frozenset(
         "null_state_callback_failure",
         "close_connecting",
         "close_during_comm_up",
+        "preinit_lower_eof",
+        "preinit_reentrant_eof",
+        "preinit_close",
+        "preinit_failure",
+        "preinit_local_write",
+        "preinit_close_wait_race",
+        "preinit_failure_wait_race",
+        "startup_buffered_eof",
+        "startup_buffered_data",
+        "startup_after_close",
+        "startup_reentrant_close",
+        "startup_close_before_transition",
+        "startup_close_before_bind",
     }
 )
 BASELINE_FAILURES = frozenset(
@@ -51,10 +64,28 @@ BASELINE_FAILURES = frozenset(
         "late_comm_up",
         "delayed_connected_callback",
         "close_during_comm_up",
+        "preinit_lower_eof",
+        "preinit_reentrant_eof",
+        "preinit_close_wait_race",
+        "preinit_failure_wait_race",
+        "startup_buffered_eof",
+        "startup_buffered_data",
+        "startup_after_close",
+        "startup_reentrant_close",
+        "startup_close_before_transition",
+        "startup_close_before_bind",
     }
 )
 BASELINE_PASSES = frozenset(
-    {"connecting_failure", "connected_loss", "failed_lower", "close_connecting"}
+    {
+        "connecting_failure",
+        "connected_loss",
+        "failed_lower",
+        "close_connecting",
+        "preinit_close",
+        "preinit_failure",
+        "preinit_local_write",
+    }
 )
 
 
@@ -171,6 +202,8 @@ def instrument(root: Path, repaired: bool) -> None:
             "private:\n", "private:\n\tfriend struct SctpTerminalControl;\n", 1
         )
     )
+    if repaired:
+        header.write_text("#define SF_TERMINAL_REPAIRED 1\n" + header.read_text())
     source = impl / "sctptransport.cpp"
     text = source.read_text().replace(
         "using namespace std::chrono_literals;",
@@ -187,14 +220,52 @@ def instrument(root: Path, repaired: bool) -> None:
             "\t\t\tsf_terminal_hook(0);\n\t\t\tconst auto previous = state();\n"
             "\t\t\tsf_terminal_hook(1);\n\t\t\tif (previous == State::Connected) {",
         )
+    close_start = text.index("void SctpTransport::close() {")
+    close_end = text.index("\nunsigned int SctpTransport::maxStream()", close_start)
+    close = text[close_start:close_end]
     close_transition = (
         "\t\tchangeState(State::Failed);"
         if not repaired
-        else "\t\tchangeStateIf(State::Connecting, State::Failed);"
+        else "\t\tif (!changeStateIf(State::Connecting, State::Failed))"
     )
-    if close_transition not in text:
-        close_transition = "\t\tif (!changeStateIf(State::Connecting, State::Failed))"
-    text = text.replace(close_transition, "\t\tsf_terminal_hook(4);\n" + close_transition, 1)
+    if close_transition not in close:
+        raise RuntimeError("Missing pinned close transition")
+    close = close.replace(close_transition, "\t\tsf_terminal_hook(4);\n" + close_transition, 1)
+    text = text[:close_start] + close + text[close_end:]
+    text = (
+        text.replace(
+            "mWrittenCondition.wait(lock, [&]() { return mWrittenOnce || state() == State::Failed; });",
+            "mWrittenCondition.wait(lock, [&]() { const bool ready = mWrittenOnce || state() == State::Failed; if (!ready) sf_terminal_hook(5); return ready; });",
+        )
+        .replace(
+            "mWrittenCondition.wait(lock, [&]() { return mWrittenOnce || mInitCancelled; });",
+            "mWrittenCondition.wait(lock, [&]() { const bool ready = mWrittenOnce || mInitCancelled; if (!ready) sf_terminal_hook(5); return ready; });",
+        )
+        .replace(
+            "void SctpTransport::cancelInitWait() {",
+            "void SctpTransport::cancelInitWait() {\n\tsf_terminal_hook(8);",
+        )
+        .replace(
+            "\tusrsctp_conninput(this,",
+            "\tsf_terminal_hook(6);\n\tusrsctp_conninput(this,",
+        )
+    )
+    text = (
+        text.replace(
+            "\tif (!changeStateIf(State::Disconnected, State::Connecting))",
+            "\tsf_terminal_hook(9);\n\tif (!changeStateIf(State::Disconnected, State::Connecting))",
+        )
+        .replace(
+            "\tchangeState(State::Connecting);",
+            "\tsf_terminal_hook(9);\n\tchangeState(State::Connecting);",
+            1,
+        )
+        .replace(
+            "\tauto local = getSockAddrConn(mPorts.local);",
+            "\tsf_terminal_hook(10);\n\tauto local = getSockAddrConn(mPorts.local);",
+            1,
+        )
+    )
     source.write_text(text)
     transport = impl / "transport.cpp"
     text = transport.read_text().replace(

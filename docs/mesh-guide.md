@@ -210,8 +210,9 @@ native monotonic clock; compare intervals within each clock. Records stop at
 10,000 and retain a dropped count. These timings distinguish bridge progress
 from gameplay progress. They do not measure SCTP ingress or prove packet-loss
 causes. `reference_terminal` retains the latest phase counters before cleanup,
-including failures before the six-second observation. The original observation
-stays separate. Read failures include the engine error, sender, mode, channel
+including failures before the six-second observation. Partial Godot progress
+also retains initial probe labels received before a later phase failure.
+The original observation stays separate. Read failures include the engine error, sender, mode, channel
 and byte count.
 
 `diagnostics.native_bridge_packets` joins initial probes and heartbeats to
@@ -567,6 +568,14 @@ all three exact callbacks and preserve the selected packet. An earlier baseline
 Web control passes. These controls explain this new initial-probe expiry;
 they leave the historical initial packet and finite tail open. Instrumentation
 and a different probe compiler limit timing comparisons (#458, #471, #355).
+
+A later fixed 4 KiB/48 KiB Web control captures a missing phase-2 retirement
+tail with unique enqueue boundaries (#471). Message 226 on stream 3,
+incarnation 2, is abandoned with `transmission_selected=false`. The cached
+unreliable packet 224 and reliable packet 225 have exact browser callbacks;
+the tail has none. Phase 1 preserves all three retirement packets. The strict
+phase-2 queued-arrival check still fails. This explains the new tail's sender
+expiry; the historical phase-1 tail and remote networks remain open.
 
 `phase_checks.initial_probes` requires both initial labels on both seats,
 including the native reference profile. A missing unreliable probe fails final
@@ -1681,7 +1690,11 @@ state/error and prior transport state. Explicit local peer/channel closures,
 remote-close callbacks and lower-transport disconnects have separate records.
 Native records use one bounded output write to keep concurrent stdout from
 splitting their fields. The driver reports malformed lines, sequence gaps,
-conflicting identities, unbound transports and omitted records. Raw `native.log` retains all output.
+conflicting identities, unbound transports and omitted records. The parser
+recovers a complete native record after a Godot log prefix and retains its
+line number in `interleaved_line_numbers` (#481). Malformed or combined native
+records still fail validation. The surrounding Godot progress line can remain
+split. Raw `native.log` retains all output.
 Missing trace records provide no native callback evidence.
 
 `native_entry_us` samples the process steady clock at the trace call;
@@ -1718,17 +1731,34 @@ selection. Other cases check genuine failures, duplicate shutdowns, early close,
 connection success during close and delayed connection callbacks. The original
 must reproduce the race; every repaired case must pass.
 
-The control injects notifications into real transport objects with the initial
-write flag set. It isolates terminal classification; pre-INIT waiting and
-connection startup still need separate qualification. A lower disconnect while
-Connecting becomes Failed in the experimental patch.
+The control injects notifications into real transport objects. Startup cases
+leave the first-write flag unset. They require a lower EOF, local close and
+genuine failure to release pending reads; DATA still waits for a successful
+local write. Thread barriers force close/failure between the wait predicate
+check and sleep. A reentrant state callback must also finish without a blocked
+read. Startup controls also replay buffered lower DATA and EOF, close before
+start, and close from the Connecting callback. The original misses wakeups
+and can block before local INIT or reopen a cancelled startup.
+
+The experimental repair initiates local SCTP before registering the lower
+receive callback, so buffered DATA can replay after the local write. Chosen
+close barriers before the state transition and before binding require zero
+late INIT writes and zero false failure errors. The transport can briefly
+report Connecting before the raced close reaches Failed.
+The repair handles EOF before the INIT wait and publishes wait cancellation
+under a separate mutex before terminal callbacks. A local
+write uses that same mutex to publish readiness. Transport callbacks and writes
+run outside it. Cancelled INIT waits release pending reads without feeding
+SCTP. A lower disconnect while Connecting becomes Failed; genuine establishment
+failures still report errors. Other concurrent native API calls and remote
+networks still need qualification.
 
 For a live comparison, copy the traced extension source and apply
 `tests/smoke/webrtc_sctp_terminal.patch` after the lifecycle trace patch.
 Build that copy, then use its extension with the same three-seat HTTP and
 WebRTC-credit retirement matrices. Keep the original extension and all failed
-attempts. For an existing Linux ARM64 build, rebuild the nested library before
-relinking the extension:
+attempts. For an existing Linux ARM64 build, apply the incremental-build patch
+below or rebuild the nested library before relinking the extension:
 
 ```bash
 cmake --build bin/thirdparty/libdatachannel/linux/arm64 --target datachannel-static -j4
@@ -1736,8 +1766,8 @@ scons platform=linux arch=arm64 target=template_debug build_profile=build_profil
 ```
 
 Use the build directory and platform options for your target. Verify the rebuilt
-extension hash; SCons can reuse a cached nested library. The repair makes terminal handling idempotent and serializes state
-callbacks. A genuine connection failure still reports an error. This patch is
+extension hash; an unpatched SCons build can reuse a cached nested library.
+The repair makes terminal handling idempotent and serializes state callbacks. A genuine connection failure still reports an error. This patch is
 experimental; upstream acceptance and remote-network qualification remain open.
 It does not establish the cause of the historical snapshot stalls (#396) or
 complete reference-client qualification (#355).
@@ -1749,6 +1779,36 @@ with snapshot chunks. These bytes belong to the drill workload; applications
 choose their own gameplay message format. Compare the two credit paths before
 attributing a snapshot wait to data-channel delivery (#396). This comparison
 keeps the engine deadlines and channel negotiation unchanged.
+
+### Native incremental builds
+
+Nested native source edits can leave the old archive and extension in place
+when SCons decides the CMake target is current (#479). The pinned CMake tool
+tracks its top-level build file and declared dependencies. It delegates no
+check of nested source files to CMake on that path.
+
+The opt-in `tests/smoke/webrtc_native_incremental_build.patch` runs CMake's
+incremental check on every build. It prevents SCons cache reads for those
+outputs and preserves CMake-owned files so unchanged objects and archives
+can be reused. Apply it to the pinned webrtc-native
+`62135fc034cbdc5aee177136e526e3ead3cc563a` source before building a repair.
+Run the compiled control on Linux ARM64 or x86-64 with SCons, CMake and a C++
+compiler available. Use executable paths without spaces:
+
+```bash
+python scripts/check-webrtc-native-build.py \
+  --source /path/to/webrtc-native \
+  --output /tmp/native-incremental-control
+```
+
+The control uses the actual pinned CMake tool with a small native library and
+loaded extension. It checks nested source, header and build-file edits, plus a
+top-level build-file edit, a no-op build and build failure/recovery. A SCons
+cache stays enabled during the control. Reports retain source, archive and
+extension hashes and the value returned by the loaded extension. The original
+tool must reproduce stale nested builds. The repair must rebuild changed code
+and preserve unchanged output hashes and modification times. This isolates the
+build boundary; live gameplay still needs the rebuilt WebRTC extension.
 
 Add `--rpc-traffic` to `--multi-peer` to run actual `SceneMultiplayer` RPCs
 after each raw-packet phase:

@@ -912,6 +912,7 @@ func _reference_evidence() -> Dictionary:
 				)
 			)
 	return {
+		"received": _reference_received.keys(),
 		"channel_queues": channel_queues,
 		"web_http_fetch": OS.has_feature("web") and _inbox.use_fetch,
 		"channel_in_buffer_kb":
