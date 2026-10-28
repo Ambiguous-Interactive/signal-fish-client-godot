@@ -1192,17 +1192,87 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
         self.assertEqual(result["trace_overflow"]["timings_dropped"], 4)
         self.assertIsNone(result["max_ms"]["bridge_queue_ms"])
 
-    def test_fetch_control_requires_the_observed_http_backend(self) -> None:
-        args = argparse.Namespace(
-            mixed_traffic=True, credit_transport="http", safe_receive=True, web_http_fetch=True
-        )
-        for web in (False, True):
-            for observed in (None, False, True, 1, 0):
-                with self.subTest(web=web, observed=observed):
-                    checks = reference.gameplay_phase_checks(
-                        {"web_http_fetch": observed}, {}, args, 24, True, web=web
-                    )
-                    self.assertEqual(checks["http_backend"], observed is web)
+    def test_http_backend_requires_the_observed_choice_for_both_runtimes(self) -> None:
+        for requested in (None, False, True):
+            args = argparse.Namespace(
+                mixed_traffic=True, credit_transport="http", safe_receive=True
+            )
+            if requested is not None:
+                args.web_http_fetch = requested
+            for web in (False, True):
+                expected = web and requested is not False
+                for observed in (None, False, True, 1, 0, "true", "false"):
+                    with self.subTest(requested=requested, web=web, observed=observed):
+                        checks = reference.gameplay_phase_checks(
+                            {"web_http_fetch": observed}, {}, args, 24, True, web=web
+                        )
+                        self.assertEqual(checks["http_backend"], observed is expected)
+                self.assertFalse(
+                    reference.gameplay_phase_checks({}, {}, args, 24, True, web=web)["http_backend"]
+                )
+
+    def test_http_backend_cli_defaults_to_fetch_and_keeps_explicit_controls(self) -> None:
+        for flags, expected in (
+            ([], True),
+            (["--web-http-fetch"], True),
+            (["--web-http-request"], False),
+        ):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as temporary:
+                (Path(temporary) / "assessment").mkdir()
+                command = [
+                    str(SCRIPT),
+                    "--native-extension",
+                    temporary,
+                    "--reference-assets",
+                    temporary,
+                    "--reference-revision",
+                    "test",
+                    "--runtime",
+                    "web",
+                    "--offerer",
+                    "reference",
+                    "--output",
+                    str(Path(temporary) / "assessment"),
+                    *flags,
+                ]
+                with (
+                    patch("sys.argv", command),
+                    patch.object(
+                        reference, "assess", return_value={"assessment_complete": True}
+                    ) as assess,
+                    patch("builtins.print"),
+                ):
+                    reference.main()
+                self.assertEqual(assess.call_count, 1)
+                self.assertIs(assess.call_args.args[0].web_http_fetch, expected)
+
+    def test_http_backend_cli_rejects_conflicting_controls_before_preparation(self) -> None:
+        for flags in (
+            ["--web-http-fetch", "--web-http-request"],
+            ["--web-http-request", "--web-http-fetch"],
+        ):
+            with (
+                self.subTest(flags=flags),
+                patch(
+                    "sys.argv",
+                    [
+                        str(SCRIPT),
+                        "--native-extension",
+                        "/missing",
+                        "--reference-assets",
+                        "/missing",
+                        "--reference-revision",
+                        "test",
+                        *flags,
+                    ],
+                ),
+                patch("sys.stderr", new_callable=io.StringIO),
+                patch.object(reference, "assess") as assess,
+            ):
+                with self.assertRaises(SystemExit) as error:
+                    reference.main()
+                self.assertEqual(error.exception.code, 2)
+                assess.assert_not_called()
 
     def test_named_checks_report_late_failures_after_gameplay_failure(self) -> None:
         args = argparse.Namespace(mixed_traffic=True, credit_transport="webrtc", safe_receive=True)
@@ -1782,8 +1852,11 @@ console.log(JSON.stringify({error: context.window.referenceError, ...context.win
         )
 
     def test_receive_capacity_control_is_applied_before_engine_import(self) -> None:
-        for capacity in (0, 64, 256):
-            with self.subTest(capacity=capacity), tempfile.TemporaryDirectory() as temporary:
+        for capacity, fetch in ((0, None), (0, False), (64, True), (256, False)):
+            with (
+                self.subTest(capacity=capacity, fetch=fetch),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 args = argparse.Namespace(
                     native_extension=Path("extension"),
                     godot="godot",
@@ -1794,8 +1867,9 @@ console.log(JSON.stringify({error: context.window.referenceError, ...context.win
                     channel_in_buffer_kb=capacity,
                     receive_batch_packets=4,
                     receive_interval_ms=200,
-                    web_http_fetch=bool(capacity),
                 )
+                if fetch is not None:
+                    args.web_http_fetch = fetch
                 with patch.object(reference.interop, "checked") as checked:
                     project = reference.prepare(args, Path(temporary), web=True)
                 content = (project / "project.godot").read_text()
@@ -1807,7 +1881,8 @@ console.log(JSON.stringify({error: context.window.referenceError, ...context.win
                 self.assertEqual(options["receive_batch_packets"], 4)
                 self.assertEqual(options["receive_interval_ms"], 200)
                 source = (project / "tests/smoke/webrtc_interop_drill.gd").read_text()
-                self.assertEqual("_setup_http(true)" in source, bool(capacity))
+                self.assertEqual("_setup_http(true)" in source, fetch is not False)
+                self.assertEqual("_setup_http(false)" in source, fetch is False)
                 self.assertTrue((project / "tests/smoke/webrtc_http_request.gd").is_file())
                 self.assertEqual(checked.call_count, 2)
 

@@ -187,15 +187,15 @@ func _ready() -> void:
 		get_tree().quit()
 
 
-func _setup_http(use_fetch := false) -> void:
+func _setup_http(use_fetch := true) -> void:
 	_inbox = HttpScript.new()
 	_outbox = HttpScript.new()
 	if OS.has_feature("web"):
 		use_fetch = (
-			use_fetch
-			or JavaScriptBridge.eval(
-				"new URLSearchParams(window.location.search).get('http_fetch') === '1'"
+			JavaScriptBridge.eval(
+				"new URLSearchParams(window.location.search).get('http_fetch') !== '0'"
 			)
+			and use_fetch
 		)
 	_inbox.use_fetch = use_fetch
 	_outbox.use_fetch = use_fetch

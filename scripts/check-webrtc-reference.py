@@ -1554,8 +1554,8 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
         )
     script = project / "tests/smoke/webrtc_interop_drill.gd"
     source = script.read_text()
-    if getattr(args, "web_http_fetch", False):
-        source = source.replace("\t_setup_http()", "\t_setup_http(true)", 1)
+    fetch = "true" if getattr(args, "web_http_fetch", True) else "false"
+    source = source.replace("\t_setup_http()", f"\t_setup_http({fetch})", 1)
     fragment = (ROOT / "tests/smoke/webrtc_reference_phase.gd.inc").read_text()
     variables, methods = fragment.split("\n\nfunc _run_phase", 1)
     start = source.index("func _run_phase(phase: int) -> bool:")
@@ -1730,8 +1730,8 @@ def gameplay_phase_checks(
     web: bool = False,
 ) -> dict[str, bool]:
     return {
-        "http_backend": not getattr(args, "web_http_fetch", False)
-        or godot.get("web_http_fetch") is web,
+        "http_backend": godot.get("web_http_fetch")
+        is (web and getattr(args, "web_http_fetch", True)),
         "initial_probes": initial_probes_passed(godot) and initial_probes_passed(ref),
         "godot_gameplay": gameplay_phase_passed(
             godot,
@@ -1919,7 +1919,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "assessment_complete": False,
         "driver_error": "",
         "runtime": "web" if web else "native",
-        "web_http_fetch": web and getattr(args, "web_http_fetch", False),
+        "web_http_fetch": web and getattr(args, "web_http_fetch", True),
         "safe_receive": args.safe_receive,
         "godot_offer": args.godot_offer,
         "mixed_traffic": args.mixed_traffic,
@@ -2220,11 +2220,19 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", default="godot")
-    parser.add_argument(
+    http_backend = parser.add_mutually_exclusive_group()
+    http_backend.add_argument(
         "--web-http-fetch",
         action="store_true",
-        help="Use browser fetch for Godot drill HTTP markers; keep the default HTTPRequest control separate",
+        help="Use browser fetch for Web drill HTTP markers (default); native keeps HTTPRequest",
     )
+    http_backend.add_argument(
+        "--web-http-request",
+        action="store_false",
+        dest="web_http_fetch",
+        help="Use Godot HTTPRequest for the Web drill's historical HTTP polling control",
+    )
+    parser.set_defaults(web_http_fetch=True)
     parser.add_argument("--service-url", default="", help="Use real v3 service rooms and signaling")
     parser.add_argument("--service-app-id", default="godot-reference")
     parser.add_argument(
