@@ -164,6 +164,13 @@ def native_lifecycle_evidence(output: str, limit: int = 4096) -> dict[str, objec
                     not 0 <= row[key] < (1 << 64)
                     for key in ("peer", "sctp", "godot_instance", "channel_instance")
                 )
+                or (
+                    row["event"] in ("sctp_notification", "sctp_failure")
+                    and any(
+                        row[key] < 0
+                        for key in ("notification", "association_state", "error", "association")
+                    )
+                )
             ):
                 raise ValueError("invalid native lifecycle row")
         except (ValueError, TypeError):

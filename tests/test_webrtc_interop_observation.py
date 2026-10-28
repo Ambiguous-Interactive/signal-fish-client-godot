@@ -107,6 +107,8 @@ class NativeLifecycleTests(unittest.TestCase):
             "error": 0,
             "stream": -1,
         }
+        if event in ("sctp_notification", "sctp_failure"):
+            record.update(notification=1, association=7, association_state=2)
         record.update(values)
         return "SF_NATIVE_LIFECYCLE " + json.dumps(record)
 
@@ -234,6 +236,43 @@ class NativeLifecycleTests(unittest.TestCase):
                     )
                 )
                 self.assertIn("contradictory event identity", evidence["issues"])
+
+    def test_negative_callback_fields_remain_invalid_and_leave_a_sequence_gap(self) -> None:
+        for event in ("sctp_notification", "sctp_failure"):
+            for field in ("notification", "association_state", "error", "association"):
+                for value in (-1, -7):
+                    with self.subTest(event=event, field=field, value=value):
+                        evidence = drill.native_lifecycle_evidence(
+                            "\n".join(
+                                [
+                                    self.row(1, "peer_bind", peer=1, godot_instance=900),
+                                    self.row(2, "sctp_bind", peer=1, sctp=2),
+                                    self.row(3, event, sctp=2, **{field: value}),
+                                    self.row(4, "sctp_close", sctp=2),
+                                ]
+                            )
+                        )
+                        self.assertEqual(evidence["invalid_line_numbers"], [3])
+                        self.assertEqual([row["sequence"] for row in evidence["events"]], [1, 2, 4])
+                        self.assertIn("sequence gap or reordering", evidence["issues"])
+
+    def test_callback_zero_fields_and_other_event_sentinels_remain_valid(self) -> None:
+        for event in ("sctp_notification", "sctp_failure", "sctp_close"):
+            with self.subTest(event=event):
+                values = (
+                    {"notification": 0, "association_state": 0, "error": 0, "association": 0}
+                    if event != "sctp_close"
+                    else {}
+                )
+                evidence = drill.native_lifecycle_evidence(self.row(1, event, sctp=2, **values))
+                self.assertEqual(evidence["invalid_line_numbers"], [])
+                self.assertEqual(len(evidence["events"]), 1)
+                self.assertEqual(
+                    evidence["events"][0]["notification"], -1 if event == "sctp_close" else 0
+                )
+                self.assertEqual(
+                    evidence["events"][0]["association_state"], -1 if event == "sctp_close" else 0
+                )
 
     def test_all_retained_structures_are_bounded(self) -> None:
         output = "\n".join(self.row(i, "sctp_bind", sctp=i, peer=i) for i in range(1, 8))
