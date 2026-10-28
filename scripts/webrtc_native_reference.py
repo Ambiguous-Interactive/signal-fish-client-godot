@@ -43,6 +43,8 @@ class NativeReference:
         self.timings: list[dict[str, object]] = []
         self.timings_dropped = 0
         self.output_lines = 0
+        self.sender_samples: list[dict[str, object]] = []
+        self.sender_samples_dropped = 0
         self.error = ""
         self.receive_failure = ""
         self.reader = threading.Thread(target=self._read, daemon=True)
@@ -82,6 +84,10 @@ class NativeReference:
     def timing_snapshot(self) -> dict[str, object]:
         with self.condition:
             return {
+                "sender_evidence": {
+                    "samples": list(self.sender_samples),
+                    "dropped": self.sender_samples_dropped,
+                },
                 "records": list(self.timings),
                 "dropped": self.timings_dropped,
                 "output_lines": self.output_lines,
@@ -100,6 +106,36 @@ class NativeReference:
                 self.log.flush()
                 with self.condition:
                     self.output_lines += 1
+                    boundary = value.get("send_boundary")
+                    stage = "send"
+                    if not isinstance(boundary, dict):
+                        received = value.get("receive_boundary")
+                        if isinstance(received, dict):
+                            boundary = received.get("snapshot")
+                            stage = "receive"
+                        elif value.get("event") in ("closed", "receive_rejected"):
+                            boundary = value.get("snapshot")
+                            stage = "close"
+                        elif isinstance(value.get("result"), dict):
+                            boundary = cast(dict[str, object], value["result"])
+                            stage = "snapshot"
+                    if isinstance(boundary, dict) and "sctp" in boundary:
+                        if len(self.sender_samples) < 64:
+                            self.sender_samples.append(
+                                {
+                                    "stage": stage,
+                                    "line": self.output_lines,
+                                    "generation": value.get(
+                                        "generation", boundary.get("generation")
+                                    ),
+                                    "marker": packet_marker(value),
+                                    "label": value.get("label"),
+                                    "probe_us": value.get("probe_us"),
+                                    "snapshot": boundary,
+                                }
+                            )
+                        else:
+                            self.sender_samples_dropped += 1
                     if value.get("event") == "receive_rejected":
                         self.receive_failure = self.receive_failure or (
                             f"native receive rejected: generation={value.get('generation')} "

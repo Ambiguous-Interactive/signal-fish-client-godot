@@ -24,6 +24,188 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_initial_expiry_requires_same_association_message_and_live_evidence(self) -> None:
+        identity = {
+            "message_id": 33,
+            "stream_id": 3,
+            "stream_generation": 2,
+            "sequence_number": 0,
+            "unordered": True,
+            "reliability": "lifetime",
+            "transmission_selected": False,
+        }
+        sent: dict[str, object] = {
+            "stage": "send",
+            "generation": 2,
+            "probe_us": 10,
+            "marker": "reference:1:unreliable",
+            "label": "unreliable",
+            "snapshot": {
+                "generation": 2,
+                "sctp_error": None,
+                "sctp": {"last_enqueued_message": identity},
+            },
+        }
+        sampled: dict[str, object] = {
+            "stage": "receive",
+            "generation": 2,
+            "probe_us": 20,
+            "snapshot": {
+                "generation": 2,
+                "sctp_error": None,
+                "sctp": {"first_abandoned_message": identity},
+            },
+        }
+        for fault in (
+            "none",
+            "selected",
+            "generation",
+            "snapshot_generation",
+            "message_id",
+            "stream_id",
+            "stream_generation",
+            "policy",
+            "missing",
+            "duplicate",
+            "before_enqueue",
+            "received",
+            "boolean_id",
+            "sampling_error",
+            "overflow",
+            "reference_generation",
+            "selection_conflict",
+        ):
+            with self.subTest(fault=fault):
+                enqueue, later = copy.deepcopy(sent), copy.deepcopy(sampled)
+                samples = [enqueue, later]
+                received = ["reliable"]
+                later_snapshot = cast(dict[str, object], later["snapshot"])
+                later_sctp = cast(dict[str, object], later_snapshot["sctp"])
+                abandoned = cast(dict[str, object], later_sctp["first_abandoned_message"])
+                if fault == "selected":
+                    abandoned["transmission_selected"] = True
+                elif fault == "generation":
+                    later["generation"] = 3
+                elif fault == "snapshot_generation":
+                    later_snapshot["generation"] = 3
+                elif fault in ("message_id", "stream_id", "stream_generation"):
+                    abandoned[fault] = cast(int, abandoned[fault]) + 1
+                elif fault == "policy":
+                    abandoned["reliability"] = "reliable"
+                elif fault == "missing":
+                    samples.pop()
+                elif fault == "duplicate":
+                    samples.append(copy.deepcopy(enqueue))
+                elif fault == "before_enqueue":
+                    later["probe_us"] = 9
+                elif fault == "received":
+                    received.append("unreliable")
+                elif fault == "boolean_id":
+                    enqueue_snapshot = cast(dict[str, object], enqueue["snapshot"])
+                    enqueue_sctp = cast(dict[str, object], enqueue_snapshot["sctp"])
+                    queued = cast(dict[str, object], enqueue_sctp["last_enqueued_message"])
+                    queued["message_id"] = True
+                    abandoned["message_id"] = True
+                elif fault == "sampling_error":
+                    later_snapshot["sctp_error"] = "unavailable"
+                if fault == "selection_conflict":
+                    conflicting = copy.deepcopy(later)
+                    other_snapshot = cast(dict[str, object], conflicting["snapshot"])
+                    other_stats = cast(dict[str, object], other_snapshot["sctp"])
+                    other_abandoned = cast(
+                        dict[str, object], other_stats["first_abandoned_message"]
+                    )
+                    other_abandoned["transmission_selected"] = True
+                    samples.append(conflicting)
+                result = reference.initial_probe_diagnostics(
+                    {"received": received},
+                    {
+                        "received": ["reliable", "unreliable"],
+                        "snapshot": {"generation": 3 if fault == "reference_generation" else 2},
+                    },
+                    {"samples": samples, "dropped": 1 if fault == "overflow" else 0},
+                    1,
+                )
+                probe = result["native_to_godot"][1]
+                expected = {
+                    "none": "expired_before_selection",
+                    "selected": "abandoned_after_selection",
+                    "received": "conflicting_evidence",
+                    "selection_conflict": "conflicting_evidence",
+                }.get(fault, "unresolved")
+                self.assertEqual(probe["sender_result"], expected)
+                self.assertEqual(probe["received"], fault == "received")
+                self.assertEqual(result["strict_initial_probes_passed"], fault == "received")
+                self.assertEqual(probe["enqueue_observations"], 2 if fault == "duplicate" else 1)
+        self.assertFalse(
+            reference.initial_probe_diagnostics({}, {}, {}, 1)["strict_initial_probes_passed"]
+        )
+
+    def test_probe_diagnostics_keep_completed_receipts_over_earlier_progress(self) -> None:
+        labels = ["reliable", "unreliable"]
+        report = {
+            "godot_phases": [{"phase": 1, "received": labels}],
+            "reference": {"phases": [{"phase": 1, "received": labels}]},
+            "godot_evidence": {"last_progress": {"phase": 1, "reference": {}}},
+        }
+        phase = reference.gameplay_diagnostics(report, "")["initial_probe_phases"][0]
+        self.assertTrue(phase["strict_initial_probes_passed"])
+        self.assertTrue(
+            all(p["sender_result"] == "receipt_observed" for p in phase["native_to_godot"])
+        )
+        unknown = reference.initial_probe_diagnostics({}, {}, {}, 1)
+        self.assertTrue(
+            all(
+                p["received"] is None and p["sender_result"] == "unresolved"
+                for p in unknown["native_to_godot"]
+            )
+        )
+
+    def test_bridge_retains_bounded_sender_boundaries_without_packet_bodies(self) -> None:
+        import sys
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            probe = directory / "probe"
+            probe.write_text(
+                "#!" + sys.executable + "\n"
+                "import sys,json\n"
+                "for line in sys.stdin:\n"
+                " v=json.loads(line)\n"
+                " boundary={'generation':2,'sctp':{'messages_abandoned':1}}\n"
+                " rows=[{'event':'sent','send_boundary':boundary},"
+                "{'event':'binary','receive_boundary':{'snapshot':boundary}},"
+                "{'event':'closed','snapshot':boundary}]\n"
+                " for i in range(70):\n"
+                "  row=rows[i%3] | {'generation':2,'probe_us':i,'label':'unreliable',"
+                "'marker':'reference:1:unreliable','text':'opaque-body'}\n"
+                "  print(json.dumps(row),flush=True)\n"
+                " print(json.dumps({'id':v['id'],'result':None}),flush=True)\n"
+            )
+            probe.chmod(0o700)
+            bridge = reference.native_reference.NativeReference(probe, directory)
+            try:
+                bridge.command({"op": "snapshot"})
+                evidence = bridge.timing_snapshot()["sender_evidence"]
+                self.assertEqual(len(evidence["samples"]), 64)
+                self.assertEqual(evidence["dropped"], 6)
+                self.assertEqual(
+                    {s["stage"] for s in evidence["samples"]}, {"send", "receive", "close"}
+                )
+                self.assertTrue(
+                    all(
+                        s["generation"] == s["snapshot"]["generation"] == 2
+                        for s in evidence["samples"]
+                    )
+                )
+                self.assertEqual([s["line"] for s in evidence["samples"]], list(range(1, 65)))
+                self.assertNotIn("opaque-body", json.dumps(evidence))
+                self.assertIn(
+                    "opaque-body", directory.joinpath("native-reference.jsonl").read_text()
+                )
+            finally:
+                bridge.close()
+
     def test_bridge_packet_intervals_keep_clocks_and_missing_receipts_separate(self) -> None:
         marker = "heartbeat:1:reference:3"
         records = [

@@ -234,6 +234,60 @@ the same `probe_us` origin as JSONL events. Available transport detail depends
 on the reference build. Keep the exact source, binary hash and any local trace
 patches with the run; an enqueue trace alone cannot prove packet expiry (#458).
 
+### Initial probe expiry
+
+Use reliable packets for startup state that every player must receive. A
+successful unreliable send can expire before transmission. Keep sequence
+numbers on position updates and let later updates replace missed state.
+
+For sender evidence, use the server-owned probe at
+[`e8a2d969`](https://github.com/Ambiguous-Interactive/signal-fish-server/tree/e8a2d969a73d2870ecce41a62d103ec70aa6c914/clients/native/tests/fixtures).
+It includes the ordered-expiry repair and per-message SCTP observations:
+
+```sh
+mkdir -p /path/to/server/clients/native/examples
+cp /path/to/server/clients/native/tests/fixtures/godot_reference_probe.rs \
+  /path/to/server/clients/native/examples/godot_reference_probe.rs
+cargo build --manifest-path /path/to/server/clients/native/Cargo.toml \
+  --example godot_reference_probe
+python scripts/check-webrtc-reference.py \
+  --native-reference-probe /path/to/server/clients/native/target/debug/examples/godot_reference_probe \
+  --reference-revision e8a2d969a73d2870ecce41a62d103ec70aa6c914 \
+  --native-extension /path/to/webrtc_native --runtime all --offerer both \
+  --safe-receive --mixed-traffic --startup-burst --credit-transport webrtc \
+  --require-gameplay --output /tmp/reference-expiry
+```
+
+`native_timing.sender_evidence` retains up to 64 enqueue, live receipt and
+closure samples, with JSONL line numbers and an overflow count. Full native
+JSONL remains beside the report. `diagnostics.initial_probe_phases` joins
+initial probes to those samples. A match requires the same physical generation,
+message ID, stream incarnation, stream ID, ordering and reliability policy.
+Sample times must follow enqueue on the same native clock. Incomplete
+sample traces leave gaps unresolved.
+
+`expired_before_selection` requires matching lifetime abandonment with
+`transmission_selected=false`. `abandoned_after_selection` requires a true
+selection flag; it does not prove packet emission or remote receipt. A received
+probe with matching abandonment reports `conflicting_evidence`. Missing,
+duplicate or mismatched enqueue evidence leaves a gap `unresolved`. First/last
+abandonment samples can omit intermediate messages. An absent match cannot exclude
+expiry. Older probes can run without these fields.
+
+The report keeps the strict initial-probe verdict separate. Every direction
+and generation must receive both labels, and a missing unreliable probe still
+fails `--require-gameplay`. Reliable snapshots retain every exact receipt.
+This native sender evidence does not qualify stable Godot's unset lifetimes,
+the historical untraced #458 packet, or remote networks (#433, #355).
+
+Local service-rejoin controls at that reference revision pass both offer roles
+on Godot 4.7.2 native/Web and loaded Godot 4.3 native. All 48 initial receipts
+and 3,072 reliable snapshot receipts pass. Live native samples also retain
+finite-message abandonment before selection. Those records refer to other
+message IDs; these runs do not reproduce a missing initial probe. Stable
+Godot still reports unset ordered/unreliable lifetimes. The new native repair
+and these local controls leave repaired-engine and remote qualification open.
+
 For packet-level SCTP controls at reference commit
 `67725d677ff0fdb662d041af9b175d8a6d08c75f`, apply the optional trace patch
 before building the probe:
