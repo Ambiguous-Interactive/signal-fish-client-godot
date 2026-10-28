@@ -207,10 +207,10 @@ index 769b505..444cbb3 100644
  	static void SetSettings(const SctpSettings &s);
  	static void Cleanup();
 diff --git a/thirdparty/libdatachannel/src/peerconnection.cpp b/thirdparty/libdatachannel/src/peerconnection.cpp
-index 135f458..3094d61 100644
+index 135f458..86057d0 100644
 --- a/thirdparty/libdatachannel/src/peerconnection.cpp
 +++ b/thirdparty/libdatachannel/src/peerconnection.cpp
-@@ -8,6 +8,12 @@
+@@ -8,6 +8,18 @@
   */
  
  #include "peerconnection.hpp"
@@ -220,10 +220,16 @@ index 135f458..3094d61 100644
 +#include <cstdlib>
 +#include <cstring>
 +#include <mutex>
++#include <cerrno>
++#ifdef _WIN32
++#include <io.h>
++#else
++#include <unistd.h>
++#endif
  #include "common.hpp"
  #include "rtp.hpp"
  
-@@ -30,6 +36,35 @@
+@@ -30,6 +42,56 @@
  
  using namespace std::placeholders;
  
@@ -247,19 +253,40 @@ index 135f458..3094d61 100644
 +    std::lock_guard<std::mutex> lock(mutex);
 +    const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
 +        std::chrono::steady_clock::now().time_since_epoch()).count();
-+    std::fprintf(stderr, "SF_NATIVE_LIFECYCLE {\"sequence\":%llu,\"native_us\":%llu,\"native_entry_us\":%llu,\"event\":\"%s\",\"peer\":%llu,\"sctp\":%llu,\"godot_instance\":%llu,\"channel_instance\":%llu,\"state\":%d,\"notification\":%d,\"association\":%llu,\"association_state\":%d,\"error\":%d,\"stream\":%d}\n",
++    char line[512];
++    const int length = std::snprintf(line, sizeof(line), "SF_NATIVE_LIFECYCLE {\"sequence\":%llu,\"native_us\":%llu,\"native_entry_us\":%llu,\"event\":\"%s\",\"peer\":%llu,\"sctp\":%llu,\"godot_instance\":%llu,\"channel_instance\":%llu,\"state\":%d,\"notification\":%d,\"association\":%llu,\"association_state\":%d,\"error\":%d,\"stream\":%d}\n",
 +        static_cast<unsigned long long>(++sequence), static_cast<unsigned long long>(now), static_cast<unsigned long long>(entry), event,
 +        static_cast<unsigned long long>(peer), static_cast<unsigned long long>(sctp),
 +        static_cast<unsigned long long>(godot), static_cast<unsigned long long>(channel),
 +        state, notification, static_cast<unsigned long long>(association), associationState, error, stream);
-+    std::fflush(stderr);
++    const char *output = line;
++    size_t count = length > 0 ? static_cast<size_t>(length) : 0;
++    if (length < 0 || count >= sizeof(line)) {
++        output = "SF_NATIVE_LIFECYCLE {\"trace_error\":\"format_truncated\"}\n";
++        count = std::strlen(output);
++    }
++    auto writeLine = [](const char *data, size_t size) {
++#ifdef _WIN32
++        return _write(2, data, static_cast<unsigned int>(size));
++#else
++        return ::write(STDERR_FILENO, data, size);
++#endif
++    };
++    decltype(writeLine(output, count)) written;
++    do {
++        written = writeLine(output, count);
++    } while (written < 0 && errno == EINTR);
++    if (written < 0 || static_cast<size_t>(written) != count) {
++        static constexpr char error[] = "SF_NATIVE_LIFECYCLE {\"trace_error\":\"write_failed\"}\n";
++        writeLine(error, sizeof(error) - 1);
++    }
 +}
 +}
 +
  namespace rtc {
  
  PeerConnection::PeerConnection() : PeerConnection(Configuration()) {}
-@@ -45,6 +80,8 @@ PeerConnection::~PeerConnection() {
+@@ -45,6 +107,8 @@ PeerConnection::~PeerConnection() {
  	}
  }
  

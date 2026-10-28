@@ -180,6 +180,9 @@ class NativeLifecycleTests(unittest.TestCase):
             self.row(2, "sctp_close", native_entry_us=201),
             self.row(2, "future_event"),
             "interleaved " + self.row(2, "sctp_bind"),
+            self.row(2, "sctp_close", sctp=2).replace(
+                '"sctp": 2', '"sctp"interop stage: seat=0 phase=3 stage=teardown'
+            ),
         ]
         for line in malformed:
             with self.subTest(line=line):

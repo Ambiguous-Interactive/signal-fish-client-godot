@@ -17,9 +17,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Capture a native SCTP failure with the opt-in association trace (#474;
-      see `docs/mesh-guide.md`). Join notification state/error, native local-close
-      boundaries and remote departure evidence; compare matched remote controls.
+- [ ] Coordinate idempotent native SCTP terminal-notification handling (#474;
+      see `docs/mesh-guide.md`). Add a deterministic concurrent-disconnect
+      control, then compare the retained failures and remote-network controls.
 
 - [ ] Compare uniquely enqueued initial probe expiry with transmitted gaps and
       remote-network controls (#458; see `docs/mesh-guide.md`). Keep strict

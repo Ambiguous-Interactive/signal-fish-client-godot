@@ -1679,8 +1679,9 @@ fields preserve Godot's signed 64-bit script view of native unsigned object
 IDs. Use those fields when joining script lifecycle records. Notifications retain the SCTP association ID, notification
 state/error and prior transport state. Explicit local peer/channel closures,
 remote-close callbacks and lower-transport disconnects have separate records.
-The driver reports malformed lines, sequence gaps, conflicting identities,
-unbound transports and omitted records. Raw `native.log` retains all output.
+Native records use one bounded output write to keep concurrent stdout from
+splitting their fields. The driver reports malformed lines, sequence gaps,
+conflicting identities, unbound transports and omitted records. Raw `native.log` retains all output.
 Missing trace records provide no native callback evidence.
 
 `native_entry_us` samples the process steady clock at the trace call;
@@ -1690,6 +1691,11 @@ the call. These times describe instrumentation inside the native function.
 They do not measure OS notification arrival or establish order with browser
 clocks. A later notification after local close does not establish its cause.
 Keep the strict engine-error verdict and exact gameplay checks.
+
+Two traced HTTP cases identify native errors on a retiring first-generation
+link during a concurrent lower-transport disconnect (#474). All exact gameplay
+checks complete; the strict runs still fail. Native terminal-state handling
+needs upstream assessment.
 
 WebRTC credits carry the phase, sender, destination and cumulative consumed
 count. Reads check exact bytes, reliable mode, channel zero, the next eight-chunk
