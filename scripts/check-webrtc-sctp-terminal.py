@@ -10,6 +10,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,11 +58,14 @@ BASELINE_PASSES = frozenset(
 )
 
 
-def run(command: list[str], log: Path, cwd: Path | None = None) -> str:
+def run(
+    command: list[str], log: Path, cwd: Path | None = None, env: dict[str, str] | None = None
+) -> str:
     with log.open("a") as stream:
         stream.write(shlex.join(command) + "\n")
         stream.flush()
         environment = os.environ.copy()
+        environment.update(env or {})
         environment["SF_NATIVE_LIFECYCLE"] = "0"
         try:
             result = subprocess.run(  # noqa: S603
@@ -85,6 +89,46 @@ def run(command: list[str], log: Path, cwd: Path | None = None) -> str:
     if result.returncode:
         raise RuntimeError(f"Command exited {result.returncode}; see {log}")
     return result.stdout
+
+
+def verify_source(library: Path, output: Path, log: Path) -> None:
+    trace = (ROOT / "tests/smoke/webrtc_native_lifecycle_trace.patch").read_text()
+    nested = "".join(
+        "diff --git " + block
+        for block in trace.split("diff --git ")[1:]
+        if block.startswith("a/thirdparty/libdatachannel/")
+    )
+    if not nested:
+        raise RuntimeError("Missing pinned native lifecycle patch")
+    expected_patch = output / "expected-source.patch"
+    expected_patch.write_text(nested)
+    with tempfile.TemporaryDirectory(prefix="sf-sctp-source-") as directory:
+        environment = {"GIT_INDEX_FILE": str(Path(directory) / "index")}
+        run(["git", "read-tree", REVISION], log, library, environment)
+        run(["git", "apply", "--cached", "-p3", str(expected_patch)], log, library, environment)
+        difference = run(
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--binary",
+                "--ignore-submodules=none",
+            ],
+            log,
+            library,
+            environment,
+        )
+        extra = run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            log,
+            library,
+            environment,
+        )
+    (output / "source-provenance.diff").write_text(difference)
+    (output / "source-extra-paths.json").write_text(json.dumps(extra.split("\0")[:-1]) + "\n")
+    if difference or extra:
+        raise RuntimeError(f"Source differs from the pinned lifecycle build; see {output}")
 
 
 def control_results(raw: str) -> list[dict[str, object]]:
@@ -194,6 +238,7 @@ def main() -> None:
     revision = run(["git", "rev-parse", "HEAD"], log, library).strip()
     if revision != REVISION:
         raise RuntimeError(f"Expected libdatachannel {REVISION}, got {revision}")
+    verify_source(library, output, log)
     builds = list(
         (source / "bin/thirdparty/libdatachannel").glob(
             "*/*/CMakeFiles/datachannel-static.dir/flags.make"

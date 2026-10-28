@@ -1708,7 +1708,8 @@ python scripts/check-webrtc-sctp-terminal.py \
   --output /tmp/sctp-terminal-control
 ```
 
-The output directory must be new. The runner copies the native sources,
+The output directory must be new. The runner rejects source edits beyond the
+pinned lifecycle trace patch. It copies the native sources,
 compiles the original and repaired SCTP callbacks, and links the pinned build's
 libraries. Use a Linux build with `g++` and bundled MbedTLS. It retains commands,
 process results, source hashes and per-case results. Controlled thread barriers
