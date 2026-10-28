@@ -665,6 +665,7 @@ def packet_delivery_diagnostics(
     pattern = re.compile(
         rf"(?:snapshot|partial|heartbeat|startup|position|ordered):{phase}:reference:[0-9]+"
         rf"|reference:{phase}:(?:reliable|unreliable)"
+        rf"|retirement:{phase}:(?:reliable|unreliable|tail)"
     )
     snapshot = diagnostic_mapping(reference.get("snapshot"))
     stages: dict[str, dict[str, list[dict[str, object]]]] = {}
@@ -690,8 +691,10 @@ def packet_delivery_diagnostics(
         kind = marker.split(":")[0]
         label = (
             marker.split(":")[-1]
-            if kind == "reference"
-            else {"position": "unreliable", "ordered": "ordered"}.get(kind, "reliable")
+            if kind in ("reference", "retirement") and not marker.endswith(":tail")
+            else {"retirement": "unreliable", "position": "unreliable", "ordered": "ordered"}.get(
+                kind, "reliable"
+            )
         )
         mode = {"unreliable": 0, "ordered": 1, "reliable": 2}[label]
         mismatches = [
@@ -748,109 +751,211 @@ def packet_delivery_diagnostics(
     }
 
 
+def unique_send_boundary(
+    before: dict[str, object], after: dict[str, object], label: str, stream: int
+) -> bool:
+    previous_stats = diagnostic_mapping(before.get("sctp"))
+    current_stats = diagnostic_mapping(after.get("sctp"))
+    previous = diagnostic_mapping(previous_stats.get("last_enqueued_message"))
+    current = diagnostic_mapping(current_stats.get("last_enqueued_message"))
+    previous_id, current_id = previous.get("message_id"), current.get("message_id")
+    if "last_enqueued_message" not in previous_stats or type(current_id) is not int:
+        return False
+    if previous_stats["last_enqueued_message"] is None:
+        if current_id != 0:
+            return False
+    elif type(previous_id) is not int or previous_id < 0 or current_id != previous_id + 1:
+        return False
+    counts = []
+    for snapshot in (before, after):
+        channels = snapshot.get("transport_channels")
+        if not isinstance(channels, list) or not channels:
+            return False
+        values: dict[tuple[str, int], int] = {}
+        for row in channels:
+            if (
+                not isinstance(row, dict)
+                or not isinstance(row.get("label"), str)
+                or type(row.get("stream_id")) is not int
+                or type(row.get("messages_sent")) is not int
+                or row["messages_sent"] < 0
+            ):
+                return False
+            key = (row["label"], row["stream_id"])
+            if key in values:
+                return False
+            values[key] = row["messages_sent"]
+        counts.append(values)
+    first, last = counts
+    target = (label, stream)
+    return (
+        target in first
+        and first.keys() == last.keys()
+        and all(last[key] == value + (key == target) for key, value in first.items())
+    )
+
+
+def sender_sample_trace_complete(value: object) -> bool:
+    if not isinstance(value, list):
+        return False
+    for row in value:
+        if not isinstance(row, dict):
+            return False
+        snapshot = row.get("snapshot")
+        terminal = row.get("stage") in ("close", "snapshot")
+        if (
+            row.get("stage") not in ("send", "receive", "close", "snapshot")
+            or type(row.get("generation")) is not int
+            or row["generation"] <= 0
+            or type(row.get("probe_us")) is not int
+            or row["probe_us"] < 0
+            or not isinstance(snapshot, dict)
+            or type(snapshot.get("generation")) is not int
+            or snapshot["generation"] != row["generation"]
+            or "sctp_error" not in snapshot
+            or (
+                snapshot["sctp_error"] is not None
+                and not (terminal and isinstance(snapshot["sctp_error"], str))
+            )
+            or "sctp" not in snapshot
+            or (
+                not isinstance(snapshot["sctp"], dict)
+                and not (terminal and snapshot["sctp"] is None)
+            )
+            or (
+                row["stage"] == "send"
+                and any(
+                    not isinstance(row.get(key), str) or not row[key] for key in ("marker", "label")
+                )
+            )
+        ):
+            return False
+    return True
+
+
+def packet_sender_diagnostics(
+    reference: dict[str, object],
+    evidence: dict[str, object],
+    marker: str,
+    label: str,
+    stream: int,
+    received: bool | None,
+) -> dict[str, object]:
+    samples = diagnostic_records(evidence.get("samples"))
+    identity_fields = ("message_id", "stream_id", "stream_generation", "sequence_number")
+    enqueues = [
+        row for row in samples if row.get("stage") == "send" and row.get("marker") == marker
+    ]
+    identity: dict[str, object] = {}
+    matches = []
+    if len(enqueues) == 1 and sender_sample_trace_complete(evidence.get("samples")):
+        enqueue = enqueues[0]
+        snapshot = diagnostic_mapping(enqueue.get("snapshot"))
+        candidate = diagnostic_mapping(
+            diagnostic_mapping(snapshot.get("sctp")).get("last_enqueued_message")
+        )
+        generation, at = enqueue.get("generation"), enqueue.get("probe_us")
+        before = diagnostic_mapping(enqueue.get("before_snapshot"))
+        native_generation = diagnostic_mapping(reference.get("snapshot")).get("generation")
+        valid = (
+            type(evidence.get("dropped")) is int
+            and evidence["dropped"] == 0
+            and type(native_generation) is int
+            and native_generation == generation
+            and type(generation) is int
+            and generation > 0
+            and type(snapshot.get("generation")) is int
+            and snapshot["generation"] == generation
+            and "sctp_error" in snapshot
+            and snapshot["sctp_error"] is None
+            and type(before.get("generation")) is int
+            and before["generation"] == generation
+            and "sctp_error" in before
+            and before["sctp_error"] is None
+            and unique_send_boundary(before, snapshot, label, stream)
+            and type(at) is int
+            and at >= 0
+            and enqueue.get("label") == label
+            and all(
+                type(candidate.get(key)) is int and cast(int, candidate[key]) >= 0
+                for key in identity_fields
+            )
+            and candidate.get("stream_id") == stream
+            and candidate.get("unordered") is (label == "unreliable")
+            and candidate.get("reliability") == ("reliable" if label == "reliable" else "lifetime")
+        )
+        if valid:
+            identity = candidate
+            for row in samples:
+                later = diagnostic_mapping(row.get("snapshot"))
+                if (
+                    type(row.get("generation")) is not int
+                    or row["generation"] != generation
+                    or type(later.get("generation")) is not int
+                    or later["generation"] != generation
+                    or "sctp_error" not in later
+                    or later["sctp_error"] is not None
+                    or type(row.get("probe_us")) is not int
+                    or cast(int, row["probe_us"]) < cast(int, at)
+                ):
+                    continue
+                stats = diagnostic_mapping(later.get("sctp"))
+                for field in ("first_abandoned_message", "last_abandoned_message"):
+                    abandoned = diagnostic_mapping(stats.get(field))
+                    if (
+                        all(
+                            type(abandoned.get(key)) is int and abandoned[key] == identity[key]
+                            for key in identity_fields
+                        )
+                        and abandoned.get("unordered") is identity["unordered"]
+                        and abandoned.get("reliability") == identity["reliability"]
+                        and type(abandoned.get("transmission_selected")) is bool
+                    ):
+                        matches.append(
+                            {
+                                "line": row.get("line"),
+                                "stage": row.get("stage"),
+                                "probe_us": row["probe_us"],
+                                "field": field,
+                                "transmission_selected": abandoned["transmission_selected"],
+                            }
+                        )
+    selected = {match["transmission_selected"] for match in matches}
+    result = "receipt_observed" if received else "unresolved"
+    if matches:
+        if received or len(selected) != 1 or label == "reliable":
+            result = "conflicting_evidence"
+        else:
+            result = "abandoned_after_selection" if True in selected else "expired_before_selection"
+    return {
+        "packet": marker,
+        "received": received,
+        "enqueue_observations": len(enqueues),
+        "generation": enqueues[0].get("generation") if len(enqueues) == 1 else None,
+        "identity": identity or None,
+        "abandonment_matches": matches,
+        "sender_result": result,
+    }
+
+
 def initial_probe_diagnostics(
     godot: dict[str, object],
     reference: dict[str, object],
     evidence: dict[str, object],
     phase: object,
 ) -> dict[str, object]:
-    samples = diagnostic_records(evidence.get("samples"))
-    identity_fields = ("message_id", "stream_id", "stream_generation", "sequence_number")
-    probes = []
-    for stream, label in ((1, "reliable"), (3, "unreliable")):
-        marker = f"reference:{phase}:{label}"
-        enqueues = [
-            row for row in samples if row.get("stage") == "send" and row.get("marker") == marker
-        ]
-        receipts = godot.get("received")
-        received = label in receipts if isinstance(receipts, list) else None
-        identity: dict[str, object] = {}
-        matches = []
-        if len(enqueues) == 1:
-            enqueue = enqueues[0]
-            snapshot = diagnostic_mapping(enqueue.get("snapshot"))
-            candidate = diagnostic_mapping(
-                diagnostic_mapping(snapshot.get("sctp")).get("last_enqueued_message")
-            )
-            generation, at = enqueue.get("generation"), enqueue.get("probe_us")
-            native_generation = diagnostic_mapping(reference.get("snapshot")).get("generation")
-            valid = (
-                type(evidence.get("dropped")) is int
-                and evidence["dropped"] == 0
-                and type(native_generation) is int
-                and native_generation == generation
-                and type(generation) is int
-                and generation > 0
-                and type(snapshot.get("generation")) is int
-                and snapshot["generation"] == generation
-                and snapshot.get("sctp_error") is None
-                and type(at) is int
-                and at >= 0
-                and enqueue.get("label") == label
-                and all(
-                    type(candidate.get(key)) is int and cast(int, candidate[key]) >= 0
-                    for key in identity_fields
-                )
-                and candidate.get("stream_id") == stream
-                and candidate.get("unordered") is (label == "unreliable")
-                and candidate.get("reliability")
-                == ("reliable" if label == "reliable" else "lifetime")
-            )
-            if valid:
-                identity = candidate
-                for row in samples:
-                    later = diagnostic_mapping(row.get("snapshot"))
-                    if (
-                        type(row.get("generation")) is not int
-                        or row["generation"] != generation
-                        or type(later.get("generation")) is not int
-                        or later["generation"] != generation
-                        or later.get("sctp_error") is not None
-                        or type(row.get("probe_us")) is not int
-                        or cast(int, row["probe_us"]) < cast(int, at)
-                    ):
-                        continue
-                    stats = diagnostic_mapping(later.get("sctp"))
-                    for field in ("first_abandoned_message", "last_abandoned_message"):
-                        abandoned = diagnostic_mapping(stats.get(field))
-                        if (
-                            all(
-                                type(abandoned.get(key)) is int and abandoned[key] == identity[key]
-                                for key in identity_fields
-                            )
-                            and abandoned.get("unordered") is identity["unordered"]
-                            and abandoned.get("reliability") == identity["reliability"]
-                            and type(abandoned.get("transmission_selected")) is bool
-                        ):
-                            matches.append(
-                                {
-                                    "line": row.get("line"),
-                                    "stage": row.get("stage"),
-                                    "probe_us": row["probe_us"],
-                                    "field": field,
-                                    "transmission_selected": abandoned["transmission_selected"],
-                                }
-                            )
-        selected = {match["transmission_selected"] for match in matches}
-        result = "receipt_observed" if received else "unresolved"
-        if matches:
-            if received or len(selected) != 1 or label == "reliable":
-                result = "conflicting_evidence"
-            else:
-                result = (
-                    "abandoned_after_selection" if True in selected else "expired_before_selection"
-                )
-        probes.append(
-            {
-                "packet": marker,
-                "received": received,
-                "enqueue_observations": len(enqueues),
-                "generation": enqueues[0].get("generation") if len(enqueues) == 1 else None,
-                "identity": identity or None,
-                "abandonment_matches": matches,
-                "sender_result": result,
-            }
+    receipts = godot.get("received")
+    probes = [
+        packet_sender_diagnostics(
+            reference,
+            evidence,
+            f"reference:{phase}:{label}",
+            label,
+            stream,
+            label in receipts if isinstance(receipts, list) else None,
         )
+        for stream, label in ((1, "reliable"), (3, "unreliable"))
+    ]
     return {
         "phase": phase,
         "strict_initial_probes_passed": initial_probes_passed(godot)
@@ -858,7 +963,58 @@ def initial_probe_diagnostics(
         "godot_to_native_received": reference.get("received"),
         "native_to_godot": probes,
         "samples_dropped": evidence.get("dropped"),
-        "limits": "Only matching association, stream incarnation and message identities establish abandonment. False transmission_selected proves no fragment selection. True does not prove emission or receipt. First/last samples omit intermediate abandonments; absent matches remain unresolved. Strict receipt checks stay separate.",
+        "limits": "Only unique before/after enqueue increments and matching association, stream incarnation and message identities establish abandonment. Older after-only probes remain unresolved. False transmission_selected proves no fragment selection. True does not prove emission or receipt. First/last samples omit intermediate abandonments; absent matches remain unresolved. Strict receipt checks stay separate.",
+    }
+
+
+def retirement_delivery_diagnostics(
+    godot: dict[str, object],
+    reference: dict[str, object],
+    evidence: dict[str, object],
+    callbacks: list[dict[str, object]],
+    phase: object,
+) -> dict[str, object]:
+    packets = []
+    for suffix, label in (
+        ("unreliable", "unreliable"),
+        ("reliable", "reliable"),
+        ("tail", "unreliable"),
+    ):
+        marker = f"retirement:{phase}:{suffix}"
+        arrivals = [
+            {
+                **row,
+                "peer": channel.get("peer"),
+                "id": channel.get("id"),
+                "label": channel.get("label"),
+            }
+            for channel in callbacks
+            for row in diagnostic_records(channel.get("callbacks"))
+            if row.get("packet") == marker
+        ]
+        sender = packet_sender_diagnostics(
+            reference,
+            evidence,
+            marker,
+            label,
+            1 if label == "reliable" else 3,
+            True if arrivals else None,
+        )
+        packets.append(
+            {
+                **sender,
+                "browser_callbacks": arrivals,
+                "callback_metadata_mismatch": any(
+                    row.get("label") != label or row.get("bytes") != len(marker) for row in arrivals
+                ),
+            }
+        )
+    return {
+        "phase": phase,
+        "packets": packets,
+        "queued_arrival": diagnostic_mapping(godot.get("retirement")).get("queued_arrival"),
+        "samples_dropped": evidence.get("dropped"),
+        "limits": "A browser callback proves JavaScript arrival only. Cached retirement packets can remain unread by design. Missing callbacks do not prove loss; native runs have no browser callback trace. Sender abandonment needs unique before/after enqueue boundaries. Strict queued-retirement checks stay separate.",
     }
 
 
@@ -1052,6 +1208,18 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
                 item.get("phase"),
             )
             for item in reference_phases
+        ],
+        "retirement_delivery_phases": [
+            retirement_delivery_diagnostics(
+                item,
+                next((ref for ref in reference_phases if ref.get("phase") == phase), {}),
+                diagnostic_mapping(
+                    diagnostic_mapping(report.get("native_timing")).get("sender_evidence")
+                ),
+                diagnostic_records(report.get("godot_browser_callbacks")),
+                phase,
+            )
+            for phase, item in local.items()
         ],
         "packet_delivery_phases": [
             packet_delivery_diagnostics(

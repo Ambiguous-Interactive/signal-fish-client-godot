@@ -185,6 +185,13 @@ class ReferenceEvidenceTests(unittest.TestCase):
                 "generation": 2,
                 "sctp_error": None,
                 "sctp": {"last_enqueued_message": identity},
+                "transport_channels": [{"label": "unreliable", "stream_id": 3, "messages_sent": 1}],
+            },
+            "before_snapshot": {
+                "generation": 2,
+                "sctp_error": None,
+                "sctp": {"last_enqueued_message": {**identity, "message_id": 32}},
+                "transport_channels": [{"label": "unreliable", "stream_id": 3, "messages_sent": 0}],
             },
         }
         sampled: dict[str, object] = {
@@ -215,6 +222,16 @@ class ReferenceEvidenceTests(unittest.TestCase):
             "overflow",
             "reference_generation",
             "selection_conflict",
+            "legacy_boundary",
+            "unchanged_identity",
+            "multiple_enqueues",
+            "counter_unchanged",
+            "other_channel_changed",
+            "duplicate_channel",
+            "counter_bool",
+            "before_generation",
+            "before_error",
+            "missing_sctp_error",
         ):
             with self.subTest(fault=fault):
                 enqueue, later = copy.deepcopy(sent), copy.deepcopy(sampled)
@@ -249,6 +266,34 @@ class ReferenceEvidenceTests(unittest.TestCase):
                     abandoned["message_id"] = True
                 elif fault == "sampling_error":
                     later_snapshot["sctp_error"] = "unavailable"
+                before = cast(dict[str, object], enqueue["before_snapshot"])
+                before_sctp = cast(dict[str, object], before["sctp"])
+                prior = cast(dict[str, object], before_sctp["last_enqueued_message"])
+                channels = cast(list[dict[str, object]], before["transport_channels"])
+                if fault == "legacy_boundary":
+                    enqueue.pop("before_snapshot")
+                elif fault == "unchanged_identity":
+                    prior["message_id"] = 33
+                elif fault == "multiple_enqueues":
+                    prior["message_id"] = 31
+                elif fault == "counter_unchanged":
+                    channels[0]["messages_sent"] = 1
+                elif fault == "other_channel_changed":
+                    channels.append({"label": "reliable", "stream_id": 1, "messages_sent": 0})
+                    cast(
+                        list[dict[str, object]],
+                        cast(dict[str, object], enqueue["snapshot"])["transport_channels"],
+                    ).append({"label": "reliable", "stream_id": 1, "messages_sent": 1})
+                elif fault == "duplicate_channel":
+                    channels.append(copy.deepcopy(channels[0]))
+                elif fault == "counter_bool":
+                    channels[0]["messages_sent"] = False
+                elif fault == "before_generation":
+                    before["generation"] = 1
+                elif fault == "before_error":
+                    before["sctp_error"] = "missing"
+                elif fault == "missing_sctp_error":
+                    before.pop("sctp_error")
                 if fault == "selection_conflict":
                     conflicting = copy.deepcopy(later)
                     other_snapshot = cast(dict[str, object], conflicting["snapshot"])
@@ -282,6 +327,163 @@ class ReferenceEvidenceTests(unittest.TestCase):
             reference.initial_probe_diagnostics({}, {}, {}, 1)["strict_initial_probes_passed"]
         )
 
+    def test_retirement_diagnostics_join_tail_identity_without_consuming_cached_packets(
+        self,
+    ) -> None:
+        identity = {
+            "message_id": 226,
+            "stream_id": 3,
+            "stream_generation": 2,
+            "sequence_number": 0,
+            "unordered": True,
+            "reliability": "lifetime",
+            "transmission_selected": False,
+        }
+        sent = {
+            "stage": "send",
+            "generation": 1,
+            "probe_us": 10,
+            "marker": "retirement:1:tail",
+            "label": "unreliable",
+            "before_snapshot": {
+                "generation": 1,
+                "sctp_error": None,
+                "sctp": {"last_enqueued_message": {**identity, "message_id": 225}},
+                "transport_channels": [
+                    {"label": "unreliable", "stream_id": 3, "messages_sent": 33}
+                ],
+            },
+            "snapshot": {
+                "generation": 1,
+                "sctp_error": None,
+                "sctp": {"last_enqueued_message": identity},
+                "transport_channels": [
+                    {"label": "unreliable", "stream_id": 3, "messages_sent": 34}
+                ],
+            },
+        }
+        abandoned = {
+            "generation": 1,
+            "probe_us": 20,
+            "stage": "snapshot",
+            "snapshot": {
+                "generation": 1,
+                "sctp_error": None,
+                "sctp": {"last_abandoned_message": identity},
+            },
+        }
+        callbacks = [
+            {
+                "peer": 1,
+                "id": 3,
+                "label": "unreliable",
+                "dropped": 0,
+                "callbacks": [{"packet": "retirement:1:tail", "ms": 123, "bytes": 17}],
+            }
+        ]
+        evidence = {"samples": [sent, abandoned], "dropped": 0}
+        for arrived in (False, True):
+            with self.subTest(arrived=arrived):
+                report = reference.retirement_delivery_diagnostics(
+                    {"retirement": {"queued_arrival": {"preserved": False}}},
+                    {"snapshot": {"generation": 1}},
+                    evidence,
+                    callbacks if arrived else [],
+                    1,
+                )
+                tail = report["packets"][2]
+                self.assertEqual(
+                    tail["sender_result"],
+                    "conflicting_evidence" if arrived else "expired_before_selection",
+                )
+                self.assertEqual(tail["identity"], identity)
+                self.assertEqual(len(tail["browser_callbacks"]), int(arrived))
+                self.assertFalse(tail["callback_metadata_mismatch"])
+                self.assertFalse(report["queued_arrival"]["preserved"])
+        for malformed in (
+            None,
+            {},
+            {"marker": "retirement:1:tail", "generation": 1},
+            {**sent, "stage": None},
+            {**sent, "stage": "unknown"},
+            {**sent, "generation": True},
+            {**sent, "probe_us": None},
+            {**sent, "snapshot": None},
+            {**sent, "marker": None},
+            {**sent, "label": None},
+            {**sent, "snapshot": {"generation": 1, "sctp_error": None, "sctp": None}},
+            {
+                **abandoned,
+                "stage": "receive",
+                "snapshot": {"generation": 1, "sctp_error": None, "sctp": None},
+            },
+            {**abandoned, "snapshot": {"generation": 1, "sctp_error": None}},
+            {**abandoned, "snapshot": {"generation": 1, "sctp_error": None, "sctp": []}},
+            {**abandoned, "snapshot": {"generation": 1, "sctp_error": False, "sctp": None}},
+        ):
+            for received in (False, True):
+                with self.subTest(malformed=malformed, received=received):
+                    result = reference.packet_sender_diagnostics(
+                        {"snapshot": {"generation": 1}},
+                        {"samples": [sent, abandoned, malformed], "dropped": 0},
+                        "retirement:1:tail",
+                        "unreliable",
+                        3,
+                        received,
+                    )
+                    self.assertEqual(
+                        result["sender_result"],
+                        "receipt_observed" if received else "unresolved",
+                    )
+                    self.assertIsNone(result["identity"])
+                    self.assertEqual(result["abandonment_matches"], [])
+        for stage in ("receive", "close", "snapshot"):
+            with self.subTest(stage=stage):
+                result = reference.packet_sender_diagnostics(
+                    {"snapshot": {"generation": 1}},
+                    {"samples": [sent, {**abandoned, "stage": stage}], "dropped": 0},
+                    "retirement:1:tail",
+                    "unreliable",
+                    3,
+                    None,
+                )
+                self.assertEqual(result["sender_result"], "expired_before_selection")
+        for stage in ("close", "snapshot"):
+            for error in (None, "association unavailable"):
+                with self.subTest(stage=stage, error=error):
+                    closed = {
+                        **abandoned,
+                        "stage": stage,
+                        "probe_us": 30,
+                        "snapshot": {"generation": 1, "sctp_error": error, "sctp": None},
+                    }
+                    result = reference.packet_sender_diagnostics(
+                        {"snapshot": {"generation": 1}},
+                        {"samples": [sent, abandoned, closed], "dropped": 0},
+                        "retirement:1:tail",
+                        "unreliable",
+                        3,
+                        None,
+                    )
+                    self.assertEqual(result["sender_result"], "expired_before_selection")
+                    self.assertEqual(result["identity"], identity)
+                    self.assertEqual(len(result["abandonment_matches"]), 1)
+        missing = reference.retirement_delivery_diagnostics({}, {}, {}, [], 2)
+        self.assertTrue(all(row["sender_result"] == "unresolved" for row in missing["packets"]))
+        self.assertEqual(
+            [row["packet"] for row in missing["packets"]],
+            [
+                "retirement:2:unreliable",
+                "retirement:2:reliable",
+                "retirement:2:tail",
+            ],
+        )
+        delivered = reference.packet_delivery_diagnostics({}, {}, callbacks, 1)
+        tail = next(row for row in delivered["packets"] if row["packet"] == "retirement:1:tail")
+        self.assertEqual(tail["expected_label"], "unreliable")
+        self.assertEqual(tail["expected_mode"], 0)
+        self.assertEqual(tail["metadata_mismatch_stages"], [])
+
     def test_probe_diagnostics_keep_completed_receipts_over_earlier_progress(self) -> None:
         labels = ["reliable", "unreliable"]
         report = {
@@ -314,7 +516,7 @@ class ReferenceEvidenceTests(unittest.TestCase):
                 "for line in sys.stdin:\n"
                 " v=json.loads(line)\n"
                 " boundary={'generation':2,'sctp':{'messages_abandoned':1}}\n"
-                " rows=[{'event':'sent','send_boundary':boundary},"
+                " rows=[{'event':'sent','send_boundary':boundary,'send_boundary_before':boundary},"
                 "{'event':'binary','receive_boundary':{'snapshot':boundary}},"
                 "{'event':'closed','snapshot':boundary}]\n"
                 " for i in range(70):\n"
@@ -340,6 +542,14 @@ class ReferenceEvidenceTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual([s["line"] for s in evidence["samples"]], list(range(1, 65)))
+                self.assertTrue(
+                    all(
+                        row["before_snapshot"] == row["snapshot"]
+                        if row["stage"] == "send"
+                        else row["before_snapshot"] is None
+                        for row in evidence["samples"]
+                    )
+                )
                 self.assertNotIn("opaque-body", json.dumps(evidence))
                 self.assertIn(
                     "opaque-body", directory.joinpath("native-reference.jsonl").read_text()
@@ -400,7 +610,13 @@ class ReferenceEvidenceTests(unittest.TestCase):
         import base64
 
         marker = reference.native_reference.packet_marker
-        for text in ("heartbeat:1:reference:0:body", "reference:2:unreliable"):
+        for text in (
+            "heartbeat:1:reference:0:body",
+            "reference:2:unreliable",
+            "retirement:1:unreliable",
+            "retirement:2:reliable",
+            "retirement:2:tail",
+        ):
             expected = ":".join(text.split(":")[:4])
             self.assertEqual(marker({"text": text}), expected)
             self.assertEqual(

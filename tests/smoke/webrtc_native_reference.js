@@ -208,8 +208,11 @@ export class Engine {
       if (this.sentTimings.length < 4096)
         this.sentTimings.push({
           label: event.label,
+          generation: event.generation,
           marker: event.marker,
           probe_us: event.probe_us,
+          send_boundary_before: event.send_boundary_before ?? null,
+          send_boundary: event.send_boundary ?? null,
           callback_ms: performance.now(),
         });
       else this.sentTimingsDropped++;

@@ -489,8 +489,36 @@ module.exports = async function testNativeReference() {
     });
   const nativeSent = timed.diagnosticSnapshot().native_sent;
   assert.equal(nativeSent.length, 1);
+  assert.equal(nativeSent[0].generation, 2);
   assert.equal(nativeSent[0].probe_us, 500);
+  assert.equal(nativeSent[0].send_boundary_before, null);
+  assert.equal(nativeSent[0].send_boundary, null);
   assert.equal(typeof nativeSent[0].callback_ms, "number");
+  for (const marker of ["reference:1:unreliable", "retirement:1:tail"]) {
+    const before = {
+      generation: 2,
+      sctp: { last_enqueued_message: { message_id: 41, stream_id: 3 } },
+    };
+    const after = {
+      generation: 2,
+      sctp: { last_enqueued_message: { message_id: 42, stream_id: 3 } },
+    };
+    for (const generation of [1, 2])
+      timed.dispatch({
+        event: "sent",
+        generation,
+        label: "unreliable",
+        marker,
+        probe_us: 600,
+        send_boundary_before: before,
+        send_boundary: after,
+      });
+    const captured = timed.diagnosticSnapshot().native_sent;
+    assert.equal(captured.filter((event) => event.marker === marker).length, 1);
+    assert.deepEqual(captured.at(-1).send_boundary_before, before);
+    assert.deepEqual(captured.at(-1).send_boundary, after);
+    assert.equal(captured.at(-1).generation, 2);
+  }
   await timed.removePeer("godot");
   context.fetch = originalFetch;
 

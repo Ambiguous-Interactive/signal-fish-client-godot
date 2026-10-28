@@ -245,6 +245,7 @@ For sender evidence, use the server-owned probe at
 It includes the ordered-expiry repair and per-message SCTP observations:
 
 ```sh
+git -C /path/to/server apply /path/to/client/tests/smoke/webrtc_finite_send_trace.patch
 mkdir -p /path/to/server/clients/native/examples
 cp /path/to/server/clients/native/tests/fixtures/godot_reference_probe.rs \
   /path/to/server/clients/native/examples/godot_reference_probe.rs
@@ -264,7 +265,12 @@ JSONL remains beside the report. `diagnostics.initial_probe_phases` joins
 initial probes to those samples. A match requires the same physical generation,
 message ID, stream incarnation, stream ID, ordering and reliability policy.
 Sample times must follow enqueue on the same native clock. Incomplete
-sample traces leave gaps unresolved.
+sample traces leave gaps unresolved. The optional patch captures transport
+snapshots immediately before and after each initial or retirement send. The
+message ID must advance by exactly one (the first is zero), the target channel's
+send count must increase by one, and other channel counts must stay unchanged.
+Both snapshots must belong to the same physical generation. Retain the patch,
+compiler, source and binary hashes with each run; sampling can affect scheduling.
 
 `expired_before_selection` requires matching lifetime abandonment with
 `transmission_selected=false`. `abandoned_after_selection` requires a true
@@ -272,7 +278,8 @@ selection flag; it does not prove packet emission or remote receipt. A received
 probe with matching abandonment reports `conflicting_evidence`. Missing,
 duplicate or mismatched enqueue evidence leaves a gap `unresolved`. First/last
 abandonment samples can omit intermediate messages. An absent match cannot exclude
-expiry. Older probes can run without these fields.
+expiry. Older probes can run without these fields; after-only sender evidence
+leaves abandonment attribution unresolved.
 
 The report keeps the strict initial-probe verdict separate. Every direction
 and generation must receive both labels, and a missing unreliable probe still
@@ -294,9 +301,10 @@ It uses 16 KiB snapshot bodies, the 48 KiB byte window, startup traffic and the
 reference-consumer pause. Generation 1 enqueues message 33 on stream 3,
 incarnation 2, SSN 0. A later live receive sample retains that exact lifetime
 abandonment with `transmission_selected=false`. All reliable full, partial and
-startup receipts finish. This explains pre-selection expiry for this captured
-probe (#458); its strict initial-probe verdict stays failed. The earlier
-untraced packet and remote qualification remain open.
+startup receipts finish. That older after-only capture lacks the unique enqueue
+boundary now required for attribution. Its strict initial-probe verdict stays
+failed; reanalysis leaves the sender result unresolved. The earlier untraced
+packet and remote qualification remain open.
 
 For packet-level SCTP controls at reference commit
 `67725d677ff0fdb662d041af9b175d8a6d08c75f`, apply the optional trace patch
@@ -489,8 +497,8 @@ and a local drop are separate observations; retain both with the full log.
 
 Web assessments retain `godot_browser_callbacks` through channel closure.
 Each of at most 32 channels keeps 1024 callback times, byte counts and known
-snapshot, heartbeat, startup, position, ordered, initial probe and credit
-identities. `dropped` counts omitted trace records. Opaque
+snapshot, heartbeat, startup, position, ordered, initial probe, retirement and
+credit identities. `dropped` counts omitted trace records. Opaque
 packets keep a null identity. `diagnostics.snapshot_receive_phases` matches
 snapshot sequences against Godot's bounded `receive_timings`, including the
 packet that failed validation. Compare `first_callback_not_read` with
@@ -538,6 +546,27 @@ position or ordered traffic (#458). Trace overflow and unobserved stages remain
 explicit. Native enqueue does not prove SCTP transmission or expiry. The stage
 clocks differ; compare intervals only within one clock. Exact payload and
 gameplay checks still determine the verdict.
+
+`diagnostics.retirement_delivery_phases` lists the cached unreliable packet,
+later reliable packet and finite tail separately (#471). Each keeps its native
+enqueue identity, matching abandonment observations and browser callbacks.
+`queued_arrival` retains the strict selected-packet proof. Missing callbacks
+alone leave receipt unknown. Retirement packets can remain cached or queued by
+design, so the trace does not require script reads to infer arrival. A callback
+with matching sender abandonment reports conflicting evidence. Missing send
+boundaries, multiple new messages or trace overflow leave attribution unresolved.
+This evidence keeps finite expiry separate from reliable receive-buffer drops.
+
+New local service controls with the patched probe complete both generations on
+Godot 4.7.2 native and loaded Godot 4.3 native. The Web 4.7.2 control completes
+reliable traffic, retirement and service rejoin, but misses the phase-1 initial
+unreliable probe. Unique before/after boundaries identify message 1 on stream 3,
+incarnation 2; a matching abandonment has `transmission_selected=false`. The
+strict gameplay verdict remains failed. Both Web retirement generations retain
+all three exact callbacks and preserve the selected packet. An earlier baseline
+Web control passes. These controls explain this new initial-probe expiry;
+they leave the historical initial packet and finite tail open. Instrumentation
+and a different probe compiler limit timing comparisons (#458, #471, #355).
 
 `phase_checks.initial_probes` requires both initial labels on both seats,
 including the native reference profile. A missing unreliable probe fails final

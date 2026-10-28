@@ -26,7 +26,9 @@ def packet_marker(value: dict[str, object]) -> str | None:
     return (
         marker
         if re.fullmatch(
-            r"heartbeat:[12]:reference:[0-9]+|reference:[12]:(?:reliable|unreliable)", marker
+            r"heartbeat:[12]:reference:[0-9]+|reference:[12]:(?:reliable|unreliable)"
+            r"|retirement:[12]:(?:reliable|unreliable|tail)",
+            marker,
         )
         else None
     )
@@ -132,6 +134,7 @@ class NativeReference:
                                     "label": value.get("label"),
                                     "probe_us": value.get("probe_us"),
                                     "snapshot": boundary,
+                                    "before_snapshot": value.get("send_boundary_before"),
                                 }
                             )
                         else:
