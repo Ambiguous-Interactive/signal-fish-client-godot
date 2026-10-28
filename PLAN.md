@@ -32,9 +32,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       and recovery (reliable-prefix ingress attribution: server #1244;
       zero-byte script sends: #437; original Chromium 156 receive loss: #442;
       capture heartbeat pause failures with packet interval summaries: #440).
-- [ ] Repair the Web reliable receive boundary using first-drop callback/read
-      timelines and matched byte-window controls (#442). Compare startup
-      consumption credit with the original packet-only and no-startup workloads.
+- [ ] Repair the Web reliable receive boundary using scoped engine-rejection
+      identities and matched byte-window controls (#442). Keep rejected arrivals
+      separate from queued callbacks. Compare startup consumption credit with
+      the original packet-only and no-startup workloads.
       Reproduce the historical
       heartbeat pause failure and compare shared-clock read latency with native
       emission and application drain delays (#440). Keep every reliable receipt
@@ -50,6 +51,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       Include the captured two-chunk 16 KiB HTTP credit-turnover limit with
       independent reference receive/send tasks before changing pacing or
       deadlines.
+- [ ] Match queued-retirement sends to SCTP enqueue/abandon identities and
+      browser callbacks for the missing Web finite tail (#471). Preserve the
+      failed 4 KiB/100 ms reader control and strict retirement checks.
 - [ ] Capture the next native import failure with setup resource samples and
       file identities, then retain its crash report or backtrace (#447).
 
