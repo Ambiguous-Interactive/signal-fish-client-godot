@@ -1697,6 +1697,51 @@ link during a concurrent lower-transport disconnect (#474). All exact gameplay
 checks complete; the strict runs still fail. Native terminal-state handling
 needs upstream assessment.
 
+### Experimental native terminal handling
+
+Issue #474 has an opt-in native repair and a deterministic control. Use the
+pinned, built trace extension source above as the control's input:
+
+```bash
+python scripts/check-webrtc-sctp-terminal.py \
+  --source /path/to/built-trace-extension \
+  --output /tmp/sctp-terminal-control
+```
+
+The output directory must be new. The runner rejects source edits beyond the
+pinned lifecycle trace patch. It copies the native sources,
+compiles the original and repaired SCTP callbacks, and links the pinned build's
+libraries. Use a Linux build with `g++` and bundled MbedTLS. It retains commands,
+process results, source hashes and per-case results. Controlled thread barriers
+place a lower disconnect before notification classification and after state
+selection. Other cases check genuine failures, duplicate shutdowns, early close,
+connection success during close and delayed connection callbacks. The original
+must reproduce the race; every repaired case must pass.
+
+The control injects notifications into real transport objects with the initial
+write flag set. It isolates terminal classification; pre-INIT waiting and
+connection startup still need separate qualification. A lower disconnect while
+Connecting becomes Failed in the experimental patch.
+
+For a live comparison, copy the traced extension source and apply
+`tests/smoke/webrtc_sctp_terminal.patch` after the lifecycle trace patch.
+Build that copy, then use its extension with the same three-seat HTTP and
+WebRTC-credit retirement matrices. Keep the original extension and all failed
+attempts. For an existing Linux ARM64 build, rebuild the nested library before
+relinking the extension:
+
+```bash
+cmake --build bin/thirdparty/libdatachannel/linux/arm64 --target datachannel-static -j4
+scons platform=linux arch=arm64 target=template_debug build_profile=build_profile.json -j4
+```
+
+Use the build directory and platform options for your target. Verify the rebuilt
+extension hash; SCons can reuse a cached nested library. The repair makes terminal handling idempotent and serializes state
+callbacks. A genuine connection failure still reports an error. This patch is
+experimental; upstream acceptance and remote-network qualification remain open.
+It does not establish the cause of the historical snapshot stalls (#396) or
+complete reference-client qualification (#355).
+
 WebRTC credits carry the phase, sender, destination and cumulative consumed
 count. Reads check exact bytes, reliable mode, channel zero, the next eight-chunk
 boundary and the sender's outstanding count. Credits share the reliable channel

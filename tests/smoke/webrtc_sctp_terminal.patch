@@ -1,0 +1,151 @@
+--- a/thirdparty/libdatachannel/src/impl/sctptransport.cpp
++++ b/thirdparty/libdatachannel/src/impl/sctptransport.cpp
+@@ -435,7 +435,8 @@
+ 				PLOG_WARNING << "SCTP shutdown failed, errno=" << errno;
+ 			}
+ 		}
+-		changeState(State::Failed);
++		if (!changeStateIf(State::Connecting, State::Failed))
++			disconnect();
+ 		mWrittenCondition.notify_all();
+ 	}
+ }
+@@ -443,6 +444,29 @@
+ unsigned int SctpTransport::maxStream() const {
+ 	unsigned int streamsCount = mNegotiatedStreamsCount.value_or(MAX_SCTP_STREAMS_COUNT);
+ 	return streamsCount > 0 ? streamsCount - 1 : 0;
++}
++
++void SctpTransport::disconnect(const sctp_assoc_change *association) {
++	// A lower-transport EOF can race the association notification.
++	for (;;) {
++		const auto previous = state();
++		if (previous != State::Connecting && previous != State::Connected)
++			return;
++		const auto terminal = previous == State::Connected ? State::Disconnected : State::Failed;
++		if (!changeStateIf(previous, terminal))
++			continue;
++		if (terminal == State::Disconnected) {
++			PLOG_INFO << "SCTP disconnected";
++			recv(nullptr);
++		} else {
++			if (association) {
++				diagnostics::lifecycle("sctp_failure", 0, diagnosticId, 0, 0, int(previous), SCTP_ASSOC_CHANGE, association->sac_assoc_id, association->sac_state, association->sac_error);
++			}
++			PLOG_ERROR << "SCTP connection failed";
++		}
++		mWrittenCondition.notify_all();
++		return;
++	}
+ }
+ 
+ void SctpTransport::incoming(message_ptr message) {
+@@ -459,9 +483,7 @@
+ 
+ 	if (!message) {
+ 		diagnostics::lifecycle("sctp_incoming_null", 0, diagnosticId, 0, 0, int(state()));
+-		PLOG_INFO << "SCTP disconnected";
+-		changeState(State::Disconnected);
+-		recv(nullptr);
++		disconnect();
+ 		return;
+ 	}
+ 
+@@ -590,8 +612,7 @@
+ 				PLOG_VERBOSE << "SCTP already shut down";
+ 			} else {
+ 				PLOG_WARNING << "SCTP shutdown failed, errno=" << errno;
+-				changeState(State::Disconnected);
+-				recv(nullptr);
++				disconnect();
+ 			}
+ 		}
+ 	}
+@@ -873,18 +894,11 @@
+ 			mNegotiatedStreamsCount.emplace(
+ 			    std::min(sac.sac_inbound_streams, sac.sac_outbound_streams));
+ 
+-			PLOG_INFO << "SCTP connected";
+-			changeState(State::Connected);
++			if (changeStateIf(State::Connecting, State::Connected)) {
++				PLOG_INFO << "SCTP connected";
++			}
+ 		} else {
+-			if (state() == State::Connected) {
+-				PLOG_INFO << "SCTP disconnected";
+-				changeState(State::Disconnected);
+-				recv(nullptr);
+-			} else {
+-				diagnostics::lifecycle("sctp_failure", 0, diagnosticId, 0, 0, int(state()), int(type), sac.sac_assoc_id, sac.sac_state, sac.sac_error);
+-				PLOG_ERROR << "SCTP connection failed";
+-				changeState(State::Failed);
+-			}
++			disconnect(&sac);
+ 			mWrittenCondition.notify_all();
+ 		}
+ 		break;
+--- a/thirdparty/libdatachannel/src/impl/sctptransport.hpp
++++ b/thirdparty/libdatachannel/src/impl/sctptransport.hpp
+@@ -79,6 +79,7 @@
+ 
+ 	void connect();
+ 	void shutdown();
++	void disconnect(const sctp_assoc_change *association = nullptr);
+ 	void incoming(message_ptr message) override;
+ 	bool outgoing(message_ptr message) override;
+ 
+--- a/thirdparty/libdatachannel/src/impl/transport.cpp
++++ b/thirdparty/libdatachannel/src/impl/transport.cpp
+@@ -88,11 +88,23 @@
+ 
+ void Transport::changeState(State state) {
+ 	try {
+-		if (mState.exchange(state) != state)
+-			mStateChangeCallback(state);
++		mStateChangeCallback.callIf([&]() { return mState.exchange(state) != state; }, state);
+ 	} catch (const std::exception &e) {
+ 		PLOG_WARNING << e.what();
+ 	}
++}
++
++bool Transport::changeStateIf(State expected, State desired) {
++	bool changed = false;
++	try {
++		mStateChangeCallback.callIf([&]() {
++			changed = mState.compare_exchange_strong(expected, desired);
++			return changed;
++		}, desired);
++	} catch (const std::exception &e) {
++		PLOG_WARNING << e.what();
++	}
++	return changed;
+ }
+ 
+ void Transport::incoming(message_ptr message) { recv(message); }
+--- a/thirdparty/libdatachannel/src/impl/transport.hpp
++++ b/thirdparty/libdatachannel/src/impl/transport.hpp
+@@ -44,6 +44,7 @@
+ protected:
+ 	void recv(message_ptr message);
+ 	void changeState(State state);
++	bool changeStateIf(State expected, State desired);
+ 	virtual void incoming(message_ptr message);
+ 	virtual bool outgoing(message_ptr message);
+ 
+--- a/thirdparty/libdatachannel/include/rtc/utils.hpp
++++ b/thirdparty/libdatachannel/include/rtc/utils.hpp
+@@ -81,6 +81,14 @@
+ 		return call(std::move(args)...);
+ 	}
+ 
++	template <typename Predicate> bool callIf(Predicate predicate, Args... args) const {
++		std::lock_guard lock(mutex);
++		if (!predicate())
++			return false;
++		call(std::move(args)...);
++		return true;
++	}
++
+ 	operator bool() const {
+ 		std::lock_guard lock(mutex);
+ 		return callback ? true : false;
