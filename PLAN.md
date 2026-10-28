@@ -17,9 +17,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Coordinate idempotent native SCTP terminal-notification handling (#474;
-      see `docs/mesh-guide.md`). Add a deterministic concurrent-disconnect
-      control, then compare the retained failures and remote-network controls.
+- [ ] Qualify idempotent native SCTP terminal-notification handling (#474;
+      see `docs/mesh-guide.md`). Coordinate upstream review of the experimental
+      repair and compare remote-network controls with the retained failures.
 
 - [ ] Compare uniquely enqueued initial probe expiry with transmitted gaps and
       remote-network controls (#458; see `docs/mesh-guide.md`). Keep strict
