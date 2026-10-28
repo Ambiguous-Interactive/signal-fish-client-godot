@@ -178,6 +178,7 @@ func _retain_request() -> void:
 	if not markers.is_empty():
 		if _markers.size() < 256:
 			_markers.append(_active)
+			print("WEBRTC_HTTP_REQUEST " + JSON.stringify(_active))
 		else:
 			_marker_overflow += 1
 	_active = {}

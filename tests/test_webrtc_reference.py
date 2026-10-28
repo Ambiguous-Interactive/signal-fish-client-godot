@@ -24,6 +24,38 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_driver_timeout_keeps_completed_http_request_events(self) -> None:
+        event = {
+            "method": 0,
+            "seat": "1",
+            "markers": ["snapshot-ack-1-8"],
+            "started": {"browser_ms": 10, "frame": 1},
+            "completed": {"browser_ms": 30, "frame": 7},
+        }
+        progress: dict[str, object] = {"http_inbox": {"history_included": False}}
+        report = {
+            "driver_error": "TimeoutError",
+            "godot_evidence": {"last_progress": progress},
+        }
+        output = "WEBRTC_HTTP_REQUEST " + json.dumps(event) + "\nWEBRTC_HTTP_REQUEST {partial"
+        result = reference.gameplay_diagnostics(report, output)["http_requests"]["clients"][
+            "http_inbox"
+        ]
+        self.assertEqual(len(result["requests"]), 1)
+        self.assertEqual(result["requests"][0]["markers"], ["snapshot-ack-1-8"])
+        self.assertEqual(result["requests"][0]["total_ms"], 20)
+        self.assertEqual(result["history_source"], "request_events")
+        self.assertFalse(result["history_included"])
+        progress["http_inbox"] = {
+            "history_included": True,
+            "marker_requests": [event],
+        }
+        result = reference.gameplay_diagnostics(report, output)["http_requests"]["clients"][
+            "http_inbox"
+        ]
+        self.assertEqual(len(result["requests"]), 1)
+        self.assertEqual(result["history_source"], "snapshot")
+
     def test_http_request_stage_intervals_require_one_browser_resource(self) -> None:
         record = {
             "seat": "1",

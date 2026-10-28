@@ -974,6 +974,9 @@ completion. A unique matching browser resource splits that duration into
 keep null intervals. Native requests keep their state and frame evidence.
 `marker_overflow`, `states_omitted` and `resources_dropped` expose trace limits.
 Periodic progress omits the full history; terminal and failure records retain it.
+Bounded `WEBRTC_HTTP_REQUEST` events preserve completed marker requests if the
+driver stops before Godot reports failure. `history_source: request_events`
+marks that fallback; it can contain a partial history.
 
 Godot's [HTTPRequest update](https://github.com/godotengine/godot/blob/ed1daf0bf/scene/main/http_request.cpp#L550)
 runs once per process frame. Its [Web HTTPClient](https://github.com/godotengine/godot/blob/ed1daf0bf/platform/web/http_client_web.cpp#L210)

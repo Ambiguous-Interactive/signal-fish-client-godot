@@ -821,6 +821,7 @@ def http_request_diagnostics(
             "active": evidence.get("active"),
             "marker_overflow": evidence.get("marker_overflow"),
             "history_included": evidence.get("history_included"),
+            "history_source": evidence.get("history_source", "snapshot"),
             "requests": requests,
         }
     return {
@@ -867,7 +868,15 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
     )
     state = failure or progress
     http_state = state
+    http_events: dict[str, list[dict[str, object]]] = {"http_inbox": [], "http_outbox": []}
     for line in output.splitlines():
+        if line.startswith("WEBRTC_HTTP_REQUEST "):
+            try:
+                event = diagnostic_mapping(json.loads(line.removeprefix("WEBRTC_HTTP_REQUEST ")))
+            except json.JSONDecodeError:
+                continue
+            if event.get("method") in (0, 2):
+                http_events["http_inbox" if event["method"] == 0 else "http_outbox"].append(event)
         if line.startswith("WEBRTC_HTTP_EVIDENCE "):
             try:
                 http_state = diagnostic_mapping(
@@ -875,6 +884,15 @@ def gameplay_diagnostics(report: dict[str, object], output: str) -> dict[str, ob
                 )
             except json.JSONDecodeError:
                 continue
+    http_state = dict(http_state)
+    for name, events in http_events.items():
+        client = diagnostic_mapping(http_state.get(name))
+        if events and client.get("history_included") is not True:
+            http_state[name] = {
+                **client,
+                "marker_requests": events,
+                "history_source": "request_events",
+            }
     queue_fields = (
         "startup_sent",
         "startup_received",
