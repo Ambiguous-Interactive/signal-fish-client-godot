@@ -24,10 +24,82 @@ SCENE = "tests/smoke/webrtc_interop_drill.tscn"
 PROJECT = f"""config_version=5
 [application]
 config/name="Mesh interoperability drill"
+run/flush_stdout_on_print=true
 run/main_scene="res://{SCENE}"
 [rendering]
 renderer/rendering_method="gl_compatibility"
 """
+
+
+class DriverTimeline:
+    def __init__(self, limit: int = 4096) -> None:
+        self.lock = threading.Lock()
+        self.origin_ns = time.monotonic_ns()
+        self.limit = limit
+        self.events: list[dict[str, object]] = []
+        self.dropped = 0
+
+    def observe(self, seat: int, line: str) -> None:
+        if not (
+            line.startswith(
+                (
+                    "WEBRTC_LIFECYCLE ",
+                    "WEBRTC_INTEROP_FAIL ",
+                    "WEBRTC_INTEROP_PASS ",
+                    "WEBRTC_MULTIPEER_PHASE ",
+                    "WEBRTC_MULTIPEER_INTERRUPTION ",
+                    "PAGE_ERROR ",
+                    "BROWSER_CRASH",
+                    "ERROR:",
+                    "USER ERROR:",
+                )
+            )
+            or "SCRIPT ERROR" in line
+            or "interop stage:" in line
+        ):
+            return
+        with self.lock:
+            observed_ns = time.monotonic_ns() - self.origin_ns
+            if len(self.events) >= self.limit:
+                self.dropped += 1
+                return
+            self.events.append(
+                {
+                    "seat": seat,
+                    "observed_us": observed_ns // 1000,
+                    "line": line[:32768],
+                    "truncated_characters": max(0, len(line) - 32768),
+                }
+            )
+
+    def snapshot(self) -> dict[str, object]:
+        with self.lock:
+            return {
+                "clock": "driver monotonic; pipe/console observation, not engine event time",
+                "events": [dict(event) for event in self.events],
+                "dropped_events": self.dropped,
+            }
+
+
+def capture_native_output(
+    process: subprocess.Popen[bytes],
+    destination: Path,
+    timeline: DriverTimeline,
+    errors: list[str],
+) -> None:
+    try:
+        if process.stdout is None:
+            raise RuntimeError("Native stdout pipe is missing")
+        with destination.open("wb") as log:
+            for raw in process.stdout:
+                log.write(raw)
+                log.flush()
+                timeline.observe(0, raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+    except Exception as exc:
+        errors.append(f"Native output capture failed: {type(exc).__name__}: {exc}")
+    finally:
+        if process.stdout is not None:
+            process.stdout.close()
 
 
 class RelayObservation:
@@ -373,6 +445,7 @@ def prepare(project: Path, extension: Path | None, addon_root: Path) -> None:
     tests.mkdir(parents=True)
     for name in (
         "webrtc_lifetime_probe.gd",
+        "webrtc_lifecycle_observer.gd",
         "webrtc_http_request.gd",
         "webrtc_interop_drill.gd",
         "webrtc_interop_drill.tscn",
@@ -836,7 +909,23 @@ def run_seats(
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     url = f"http://127.0.0.1:{server.server_port}"
-    native_log = (directory / "native.log").open("w")
+    native_log = directory / "native.log"
+    native_log.touch()
+    timeline = DriverTimeline()
+    capture_errors: list[str] = []
+    capture_thread: threading.Thread | None = None
+
+    def start_native(command: list[str]) -> subprocess.Popen[bytes]:
+        nonlocal capture_thread
+        child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)  # noqa: S603
+        capture_thread = threading.Thread(
+            target=capture_native_output,
+            args=(child, native_log, timeline, capture_errors),
+            daemon=True,
+        )
+        capture_thread.start()
+        return child
+
     process = None
     messages: list[str] = []
     extra_messages: list[str] = []
@@ -873,7 +962,7 @@ def run_seats(
             *(["--slow-receiver"] if args.slow_receiver else []),
         ]
         if not args.multi_peer:
-            process = subprocess.Popen(native_command, stdout=native_log, stderr=subprocess.STDOUT)  # noqa: S603
+            process = start_native(native_command)
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
                 headless=True,
@@ -886,6 +975,7 @@ def run_seats(
                 page.add_init_script(path=ROOT / "scripts/webrtc-browser-observation.js")
 
                 def console_message(message: str) -> None:
+                    timeline.observe(1, message)
                     messages.append(message)
                     observation.console(message)
 
@@ -894,7 +984,7 @@ def run_seats(
                 page.on("request", observation.started)
                 page.on("requestfinished", observation.finished)
                 page.on("requestfailed", lambda request: observation.finished(request, failed=True))
-                page.on("pageerror", lambda error: messages.append("PAGE_ERROR " + str(error)))
+                page.on("pageerror", lambda error: console_message("PAGE_ERROR " + str(error)))
                 query = "?mixed_traffic=1" if args.mixed_traffic else ""
                 if args.slow_receiver:
                     query = "?slow_receiver=1"
@@ -925,6 +1015,7 @@ def run_seats(
                     extra_page.add_init_script(path=ROOT / "scripts/webrtc-browser-observation.js")
 
                     def extra_console(message: str) -> None:
+                        timeline.observe(2, message)
                         extra_messages.append(message)
                         extra_observation.console(message)
 
@@ -952,9 +1043,7 @@ def run_seats(
                         )
                     )
                     wait_web_startup(page, [(1, messages), (2, extra_messages)])
-                    process = subprocess.Popen(  # noqa: S603
-                        native_command, stdout=native_log, stderr=subprocess.STDOUT
-                    )
+                    process = start_native(native_command)
                     page.evaluate("window.sfMeshStart = true")
                     extra_page.evaluate("window.sfMeshStart = true")
                 if process is None:
@@ -991,9 +1080,17 @@ def run_seats(
                     process.kill()
                     process.wait(timeout=10)
         finally:
-            native_log.close()
+            if capture_thread is not None:
+                capture_thread.join(timeout=10)
+                if capture_thread.is_alive():
+                    capture_errors.append("Native output capture did not finish within 10 seconds")
+            if capture_errors:
+                driver_error += " " + "; ".join(capture_errors)
+            (directory / "driver-timeline.json").write_text(
+                json.dumps(timeline.snapshot(), indent=2) + "\n"
+            )
             (directory / "browser.log").write_text("\n".join(messages))
-            native_output = (directory / "native.log").read_text()
+            native_output = (directory / "native.log").read_text(errors="replace")
             expected_case = retirement_case if args.multi_peer else None
             seat_results = [
                 seat_evidence(
@@ -1051,6 +1148,7 @@ def run_seats(
                 "http_credit_delay": delay_control,
                 "http_post_delay": TrialRelayHandler.post_delay.snapshot(),
                 "driver_error": driver_error,
+                "driver_timeline": "driver-timeline.json",
                 "browser_version": browser_version,
                 "browser_observation": browser_observation,
                 "browser_2_observation": browser_2_observation,
@@ -1106,9 +1204,15 @@ def run(args: argparse.Namespace, directory: Path) -> None:
             order.reverse()
         for name in order:
             native, web = projects[name]
-            for retirement_case in range(18 if args.retirement_matrix else 1):
+            selected_case = getattr(args, "retirement_case", None)
+            cases = (
+                [selected_case]
+                if selected_case is not None
+                else range(18 if args.retirement_matrix else 1)
+            )
+            for retirement_case in cases:
                 logs = directory / f"trial-{trial:03d}" / name
-                if args.retirement_matrix:
+                if args.retirement_matrix or selected_case is not None:
                     logs /= f"case-{retirement_case:02d}"
                 started = time.monotonic()
                 error = ""
@@ -1180,7 +1284,14 @@ def main() -> None:
         action="store_true",
         help="With --multi-peer, hold one reader until the other pair finishes",
     )
-    parser.add_argument(
+    retirement = parser.add_mutually_exclusive_group()
+    retirement.add_argument(
+        "--retirement-case",
+        type=int,
+        choices=range(18),
+        help="With --multi-peer, run one directed close case (0 through 17)",
+    )
+    retirement.add_argument(
         "--retirement-matrix",
         action="store_true",
         help="With --multi-peer, close each required channel on all six directed links",
@@ -1253,8 +1364,8 @@ def main() -> None:
         )
     if args.credit_transport != "http" and not args.multi_peer:
         parser.error("--credit-transport webrtc requires --multi-peer")
-    if args.retirement_matrix and not args.multi_peer:
-        parser.error("--retirement-matrix requires --multi-peer")
+    if (args.retirement_matrix or args.retirement_case is not None) and not args.multi_peer:
+        parser.error("--retirement-matrix and --retirement-case require --multi-peer")
     if args.slow_receiver and not args.multi_peer:
         parser.error("--slow-receiver requires --multi-peer")
     if args.multi_peer and args.channel_receive:

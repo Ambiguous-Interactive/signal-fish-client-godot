@@ -8,6 +8,7 @@ import io
 import json
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -25,6 +26,66 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Could not load {SCRIPT}")
 drill = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(drill)
+
+
+class DriverTimelineTests(unittest.TestCase):
+    def test_shared_clock_filters_noise_and_reports_bounded_loss(self) -> None:
+        with patch.object(
+            drill.time, "monotonic_ns", side_effect=[1000000, 1009000, 1012000, 1015000]
+        ):
+            timeline = drill.DriverTimeline(limit=2)
+            timeline.observe(0, "noise")
+            timeline.observe(2, 'WEBRTC_LIFECYCLE {"event":"close"}')
+            timeline.observe(0, "ERROR: SCTP connection failed")
+            timeline.observe(1, "WEBRTC_INTEROP_PASS seat=1")
+        result = timeline.snapshot()
+        self.assertEqual(
+            [(row["seat"], row["observed_us"]) for row in result["events"]], [(2, 9), (0, 12)]
+        )
+        self.assertEqual(result["dropped_events"], 1)
+        self.assertIn("not engine event time", result["clock"])
+        result["events"][0]["seat"] = 99
+        self.assertEqual(timeline.snapshot()["events"][0]["seat"], 2)
+
+    def test_native_pipe_keeps_raw_bytes_and_engine_error_after_pass(self) -> None:
+        raw = b"noise \xff\nWEBRTC_INTEROP_PASS seat=0\nERROR: SCTP connection failed\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "native.log"
+            process = subprocess.Popen(  # noqa: S603
+                [sys.executable, "-c", "import sys; sys.stdout.buffer.write(" + repr(raw) + ")"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            timeline = drill.DriverTimeline()
+            errors: list[str] = []
+            drill.capture_native_output(process, destination, timeline, errors)
+            self.assertEqual(process.wait(timeout=10), 0)
+            self.assertEqual(destination.read_bytes(), raw)
+            self.assertEqual(errors, [])
+            rows = timeline.snapshot()["events"]
+            self.assertEqual(
+                [row["line"] for row in rows],
+                ["WEBRTC_INTEROP_PASS seat=0", "ERROR: SCTP connection failed"],
+            )
+            self.assertLessEqual(rows[0]["observed_us"], rows[1]["observed_us"])
+            self.assertFalse(drill.seat_evidence(raw.decode(errors="replace"), 0)["passed"])
+
+    def test_capture_failure_is_explicit_and_closes_pipe(self) -> None:
+        process = Mock(stdout=io.BytesIO(b"ERROR: failed\n"))
+        errors: list[str] = []
+        with tempfile.TemporaryDirectory() as temporary:
+            drill.capture_native_output(process, Path(temporary), drill.DriverTimeline(), errors)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("Native output capture failed", errors[0])
+        self.assertTrue(process.stdout.closed)
+
+    def test_long_diagnostic_retains_explicit_truncation(self) -> None:
+        timeline = drill.DriverTimeline()
+        line = "WEBRTC_LIFECYCLE " + "x" * 40000
+        timeline.observe(1, line)
+        event = timeline.snapshot()["events"][0]
+        self.assertEqual(event["line"], line[:32768])
+        self.assertEqual(event["truncated_characters"], len(line) - 32768)
 
 
 class RelayObservationTests(unittest.TestCase):
@@ -1063,6 +1124,19 @@ class RetirementMatrixTests(unittest.TestCase):
                 if fetch is not None:
                     args.web_http_fetch = fetch
                 browser = MagicMock(version="154-test")
+                pages = [MagicMock() for _ in range(2 if multi_peer else 1)]
+                browser.new_page.side_effect = pages
+                for seat, page in enumerate(pages, 1):
+
+                    def navigate(_url: str, *, page: Mock = page, seat: int = seat) -> None:
+                        handler = next(
+                            call.args[1]
+                            for call in page.on.call_args_list
+                            if call.args[0] == "pageerror"
+                        )
+                        handler(RuntimeError(f"failure in seat {seat}"))
+
+                    page.goto.side_effect = navigate
                 playwright = MagicMock()
                 playwright.__enter__.return_value.chromium.launch.return_value = browser
                 process = Mock(returncode=0)
@@ -1089,7 +1163,21 @@ class RetirementMatrixTests(unittest.TestCase):
                 self.assertIn("--rpc-traffic", command)
                 self.assertEqual("--retirement-case=7" in command, multi_peer)
                 self.assertEqual("--credit-transport=webrtc" in command, multi_peer)
-                urls = [call.args[0] for call in browser.new_page.return_value.goto.call_args_list]
+                urls = [page.goto.call_args.args[0] for page in pages]
+                trial = Path(temporary) / "trial"
+                timeline = json.loads((trial / "driver-timeline.json").read_text())
+                self.assertEqual(
+                    [(row["seat"], row["line"]) for row in timeline["events"]],
+                    [
+                        (seat, f"PAGE_ERROR failure in seat {seat}")
+                        for seat in range(1, len(pages) + 1)
+                    ],
+                )
+                for seat in range(1, len(pages) + 1):
+                    filename = "browser.log" if seat == 1 else "browser-2.log"
+                    self.assertIn(
+                        f"PAGE_ERROR failure in seat {seat}", (trial / filename).read_text()
+                    )
                 self.assertEqual(len(urls), 2 if multi_peer else 1)
                 expected_fetch = fetch is not False
                 for url in urls:
@@ -1107,6 +1195,62 @@ class RetirementMatrixTests(unittest.TestCase):
                 self.assertTrue(
                     all(("credit_transport=webrtc" in url) == multi_peer for url in urls)
                 )
+
+    def test_selected_retirement_case_is_preserved_in_logs_and_summary(self) -> None:
+        for selected in (0, 16, 17):
+            args = argparse.Namespace(
+                repeat=1, retirement_matrix=False, retirement_case=selected, baseline=None
+            )
+            with (
+                self.subTest(selected=selected),
+                tempfile.TemporaryDirectory() as temporary,
+                patch.object(drill, "prepare_pair", return_value=(Path("native"), Path("web"))),
+                patch.object(drill, "run_seats") as run_seats,
+            ):
+                directory = Path(temporary)
+                drill.run(args, directory)
+                results = json.loads((directory / "summary.json").read_text())
+                self.assertEqual(run_seats.call_count, 1)
+                self.assertEqual(run_seats.call_args.kwargs["retirement_case"], selected)
+                self.assertEqual(Path(results[0]["logs"]).name, f"case-{selected:02d}")
+                self.assertEqual(results[0]["retirement_case"], selected)
+
+    def test_selected_case_cli_rejects_invalid_and_conflicting_requests(self) -> None:
+        for flags in (
+            ["--retirement-case", "16"],
+            ["--multi-peer", "--retirement-case", "-1"],
+            ["--multi-peer", "--retirement-case", "18"],
+            ["--multi-peer", "--retirement-case", "16", "--retirement-matrix"],
+        ):
+            with (
+                self.subTest(flags=flags),
+                patch("sys.argv", [str(SCRIPT), "--native-extension", "/missing", *flags]),
+                patch("sys.stderr", new_callable=io.StringIO),
+                patch.object(drill, "run") as run,
+            ):
+                with self.assertRaises(SystemExit) as error:
+                    drill.main()
+                self.assertEqual(error.exception.code, 2)
+                run.assert_not_called()
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch(
+                "sys.argv",
+                [
+                    str(SCRIPT),
+                    "--native-extension",
+                    "/missing",
+                    "--multi-peer",
+                    "--retirement-case",
+                    "16",
+                    "--output",
+                    temporary,
+                ],
+            ),
+            patch.object(drill, "run") as run,
+        ):
+            drill.main()
+            self.assertEqual(run.call_args.args[0].retirement_case, 16)
 
     def test_terminal_requires_all_phases_and_the_requested_case(self) -> None:
         phases = [
@@ -1188,7 +1332,9 @@ class RetirementMatrixTests(unittest.TestCase):
             self.assertEqual(evidence["passed"], missing is None)
 
     def test_matrix_keeps_all_cases_after_failure_and_compares_both_addons(self) -> None:
-        args = Mock(repeat=1, retirement_matrix=True, baseline=Path("/baseline"))
+        args = Mock(
+            repeat=1, retirement_matrix=True, retirement_case=None, baseline=Path("/baseline")
+        )
         visited: list[tuple[str, int]] = []
 
         def run_case(
@@ -1216,7 +1362,9 @@ class RetirementMatrixTests(unittest.TestCase):
         self.assertEqual(len({item["logs"] for item in results}), 36)
 
     def test_default_runs_one_case_and_reverses_comparison_order(self) -> None:
-        args = Mock(repeat=2, retirement_matrix=False, baseline=Path("/baseline"))
+        args = Mock(
+            repeat=2, retirement_matrix=False, retirement_case=None, baseline=Path("/baseline")
+        )
         with (
             tempfile.TemporaryDirectory() as temporary,
             patch.object(drill, "prepare_pair", return_value=(Path("native"), Path("web"))),
