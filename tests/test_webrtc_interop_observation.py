@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import http.client
 import importlib.util
+import io
 import json
 import socket
 import subprocess
@@ -27,18 +28,63 @@ SPEC.loader.exec_module(drill)
 
 
 class RelayObservationTests(unittest.TestCase):
-    def test_fetch_control_requires_observed_web_backend(self) -> None:
-        for enabled in (None, False, True, 1):
-            with self.subTest(enabled=enabled):
-                output = (
-                    "WEBRTC_INTEROP_PROGRESS "
-                    + json.dumps({"web_http_fetch": enabled})
-                    + "\nWEBRTC_INTEROP_PASS seat=1"
-                )
-                result = drill.seat_evidence(output, 1, require_web_http_fetch=True)
-                self.assertEqual(result["passed"], enabled is True)
-        result = drill.seat_evidence("WEBRTC_INTEROP_PASS seat=1", 1, require_web_http_fetch=True)
-        self.assertFalse(result["passed"])
+    def test_http_backend_requires_the_observed_choice(self) -> None:
+        for requested in (False, True):
+            for observed in (None, False, True, 1, 0, "true", "false"):
+                with self.subTest(requested=requested, observed=observed):
+                    output = (
+                        "WEBRTC_INTEROP_PROGRESS "
+                        + json.dumps({"web_http_fetch": observed})
+                        + "\nWEBRTC_INTEROP_PASS seat=1"
+                    )
+                    result = drill.seat_evidence(output, 1, require_web_http_fetch=requested)
+                    self.assertEqual(result["passed"], observed is requested)
+            result = drill.seat_evidence(
+                "WEBRTC_INTEROP_PASS seat=1", 1, require_web_http_fetch=requested
+            )
+            self.assertFalse(result["passed"])
+        self.assertTrue(drill.seat_evidence("WEBRTC_INTEROP_PASS seat=1", 1)["passed"])
+
+    def test_http_backend_cli_defaults_to_fetch_and_keeps_explicit_controls(self) -> None:
+        for flags, expected in (
+            ([], True),
+            (["--web-http-fetch"], True),
+            (["--web-http-request"], False),
+        ):
+            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as temporary:
+                with (
+                    patch(
+                        "sys.argv",
+                        [
+                            str(SCRIPT),
+                            "--native-extension",
+                            temporary,
+                            "--output",
+                            str(Path(temporary) / "assessment"),
+                            *flags,
+                        ],
+                    ),
+                    patch.object(drill, "run") as run,
+                ):
+                    drill.main()
+                self.assertEqual(run.call_count, 1)
+                self.assertIs(run.call_args.args[0].web_http_fetch, expected)
+
+    def test_http_backend_cli_rejects_conflicting_controls_before_preparation(self) -> None:
+        for flags in (
+            ["--web-http-fetch", "--web-http-request"],
+            ["--web-http-request", "--web-http-fetch"],
+        ):
+            with (
+                self.subTest(flags=flags),
+                patch("sys.argv", [str(SCRIPT), "--native-extension", "/missing", *flags]),
+                patch("sys.stderr", new_callable=io.StringIO),
+                patch.object(drill, "run") as run,
+            ):
+                with self.assertRaises(SystemExit) as error:
+                    drill.main()
+                self.assertEqual(error.exception.code, 2)
+                run.assert_not_called()
 
     def test_relay_reuses_connection_for_markers_and_static_assets(self) -> None:
         class Handler(drill.RelayHandler):  # type: ignore[name-defined,misc]
@@ -838,8 +884,18 @@ class ObservationTests(unittest.TestCase):
 
 class RetirementMatrixTests(unittest.TestCase):
     def test_retirement_arguments_only_reach_multi_peer_scene(self) -> None:
-        for multi_peer in (False, True):
-            with self.subTest(multi_peer=multi_peer), tempfile.TemporaryDirectory() as temporary:
+        for multi_peer, fetch in (
+            (False, None),
+            (False, False),
+            (False, True),
+            (True, None),
+            (True, False),
+            (True, True),
+        ):
+            with (
+                self.subTest(multi_peer=multi_peer, fetch=fetch),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 args = argparse.Namespace(
                     godot="godot",
                     web_godot=None,
@@ -857,6 +913,8 @@ class RetirementMatrixTests(unittest.TestCase):
                     http_credit_delay_ms=0,
                     require_finite_lifetimes=False,
                 )
+                if fetch is not None:
+                    args.web_http_fetch = fetch
                 browser = MagicMock(version="154-test")
                 playwright = MagicMock()
                 playwright.__enter__.return_value.chromium.launch.return_value = browser
@@ -870,6 +928,7 @@ class RetirementMatrixTests(unittest.TestCase):
                     patch.object(drill, "wait_web_startup"),
                     patch.object(drill, "observe_browser", return_value=""),
                     patch.object(drill.subprocess, "Popen", return_value=process) as popen,
+                    patch.object(drill, "seat_evidence", wraps=drill.seat_evidence) as evidence,
                     self.assertRaisesRegex(RuntimeError, "Interoperability drill failed"),
                 ):
                     drill.run_seats(
@@ -884,7 +943,18 @@ class RetirementMatrixTests(unittest.TestCase):
                 self.assertEqual("--retirement-case=7" in command, multi_peer)
                 self.assertEqual("--credit-transport=webrtc" in command, multi_peer)
                 urls = [call.args[0] for call in browser.new_page.return_value.goto.call_args_list]
-                self.assertTrue(urls)
+                self.assertEqual(len(urls), 2 if multi_peer else 1)
+                expected_fetch = fetch is not False
+                for url in urls:
+                    self.assertEqual(url.count("http_fetch="), 1)
+                    self.assertIn(f"http_fetch={int(expected_fetch)}", url)
+                self.assertEqual(evidence.call_count, 3 if multi_peer else 2)
+                for seat, call in enumerate(evidence.call_args_list):
+                    self.assertEqual(call.args[1], seat)
+                    self.assertIs(
+                        call.kwargs.get("require_web_http_fetch"),
+                        False if seat == 0 else expected_fetch,
+                    )
                 self.assertTrue(all("rpc_traffic=1" in url for url in urls))
                 self.assertTrue(all(("retirement_case=7" in url) == multi_peer for url in urls))
                 self.assertTrue(
