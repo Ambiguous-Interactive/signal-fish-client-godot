@@ -12,6 +12,7 @@ var _server := ServerScript.new()
 var _peer := WebSocketPeer.new()
 var _credit_bytes := 0
 var _fragment_bytes := 0
+var _fragment_control := "none"
 var _received := 0
 var _first_gap: Dictionary = {}
 var _failures: Array[String] = []
@@ -25,13 +26,28 @@ var _watchdog_ms := CONNECT_TIMEOUT_MS
 func _initialize() -> void:
 	for argument: String in OS.get_cmdline_user_args():
 		var option := argument.get_slice("=", 0)
-		if option not in ["--capacity", "--max-queued-packets", "--credit", "--fragment-bytes"]:
+		if (
+			option
+			not in [
+				"--capacity",
+				"--max-queued-packets",
+				"--credit",
+				"--fragment-bytes",
+				"--fragment-control"
+			]
+		):
 			_failures.append("unknown argument: " + argument)
 			continue
 		if not argument.begins_with(option + "="):
-			_failures.append(option + " requires =integer")
+			_failures.append(option + " requires =value")
 			continue
 		var value := argument.substr(option.length() + 1)
+		if option == "--fragment-control":
+			if value not in ["none", "ping", "pong"]:
+				_failures.append("fragment control must be none, ping or pong")
+			else:
+				_fragment_control = value
+			continue
 		if not value.is_valid_int():
 			_failures.append(option + " must be an integer")
 			continue
@@ -48,6 +64,8 @@ func _initialize() -> void:
 			_peer.max_queued_packets = number
 	if _credit_bytes < 0 or _credit_bytes > 0 and _credit_bytes < BODY_BYTES:
 		_failures.append("credit must be zero or admit one complete body")
+	if _fragment_control != "none" and _fragment_bytes == 0:
+		_failures.append("fragment control requires fragmented messages")
 	if _fragment_bytes < 0 or _fragment_bytes >= BODY_BYTES:
 		_failures.append("fragment bytes must be zero or smaller than one body")
 	if _failures.is_empty():
@@ -77,7 +95,12 @@ func _body(sequence: int) -> String:
 
 func _send(sequence: int) -> Error:
 	if _fragment_bytes > 0:
-		return _server.send_text_fragments(_body(sequence), _fragment_bytes)
+		var control := 0
+		if _fragment_control == "ping":
+			control = ServerScript.OP_PING
+		elif _fragment_control == "pong":
+			control = ServerScript.OP_PONG
+		return _server.send_text_fragments(_body(sequence), _fragment_bytes, control)
 	return _server.send_text_frame(_body(sequence))
 
 
@@ -183,6 +206,7 @@ func _finish() -> void:
 					"max_queued_packets": _peer.max_queued_packets,
 					"body_bytes": BODY_BYTES,
 					"fragment_bytes": _fragment_bytes,
+					"fragment_control": _fragment_control,
 					"watchdog_ms": _watchdog_ms,
 					"target_packets": PACKETS + 1,
 					"offered_packets": _sent,

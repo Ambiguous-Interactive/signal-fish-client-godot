@@ -35,6 +35,7 @@ func _process(_delta: float) -> void:
 			current.call("poll")
 		if not _active or not seat.trace.is_empty() and seat.trace.back() == "closed":
 			continue
+		_flush_ack(seat)
 		if (
 			seat.refused.is_empty()
 			and seat.client.get_connection_state() == ClientScript.ConnectionState.CONNECTED
@@ -49,7 +50,10 @@ func _process(_delta: float) -> void:
 				seat.offered += burst
 			for _burst: int in burst:
 				var credit: int = _options.get("relay_credit_bytes", 0)
-				var outstanding := (seat.relay_sent - _other(seat).relay_received) * 4096
+				var consumed := (
+					seat.relay_acked if _uses_remote_ack() else _other(seat).relay_received
+				)
+				var outstanding := (seat.relay_sent - consumed) * 4096
 				if credit > 0 and outstanding + 4096 > credit:
 					seat.credit_blocked_frames += 1
 					break
@@ -163,26 +167,123 @@ func _setup() -> void:
 			func(reason: String, _code: int) -> void: _expect(false, reason)
 		)
 		seat.client.game_data_received.connect(
-			func(sender: String, value: Dictionary) -> void:
-				_expect(sender == seat.expected_sender, "relay sender")
-				if value.get("sequence") != seat.relay_received and seat.first_gap.is_empty():
-					seat.first_gap = {
-						"expected": seat.relay_received,
-						"received": value.get("sequence"),
-						"tick_ms": Time.get_ticks_msec(),
-						"poll": seat.transport.observer.latest.duplicate()
-					}
-				_expect(
-					(
-						value is Dictionary
-						and value.get("sequence") == seat.relay_received
-						and value.get("body") == "0123456789abcdef".repeat(256)
-					),
-					"exact relay bytes and sequence"
-				)
-				seat.relay_received += 1
+			func(sender: String, value: Dictionary) -> void: _receive_relay(seat, sender, value)
 		)
 		_seats.append(seat)
+
+
+func _uses_remote_ack() -> bool:
+	return _options.get("relay_credit_transport", "local") == "app-ack"
+
+
+func _receive_relay(seat: Seat, sender: String, value: Dictionary) -> void:
+	var valid_sender := sender == seat.expected_sender
+	_expect(valid_sender, "relay sender")
+	if _uses_remote_ack() and value.has("shutdown_ack"):
+		_receive_ack(seat, value["shutdown_ack"], valid_sender)
+		return
+	if value.get("sequence") != seat.relay_received and seat.first_gap.is_empty():
+		seat.first_gap = {
+			"expected": seat.relay_received,
+			"received": value.get("sequence"),
+			"tick_ms": Time.get_ticks_msec(),
+			"poll": seat.transport.observer.latest.duplicate()
+		}
+	var exact: bool = (
+		valid_sender
+		and value.get("sequence") == seat.relay_received
+		and value.get("body") == "0123456789abcdef".repeat(256)
+	)
+	_expect(exact, "exact relay bytes and sequence")
+	seat.relay_prefix_valid = seat.relay_prefix_valid and exact
+	seat.relay_received += 1
+
+
+func _receive_ack(seat: Seat, ack: Variant, valid_sender: bool) -> void:
+	if not valid_sender or not ack is Dictionary:
+		_expect(false, "remote ACK identity")
+		return
+	var typed_ack: Dictionary = ack
+	if (
+		typed_ack.get("generation") != _generation
+		or typed_ack.get("room_id") != seat.client.get_room_id()
+	):
+		_expect(false, "remote ACK generation")
+		return
+	var next_sequence: Variant = typed_ack.get("next_sequence")
+	if typeof(next_sequence) not in [TYPE_INT, TYPE_FLOAT]:
+		_expect(false, "remote ACK prefix")
+		return
+	var numeric_sequence: float = next_sequence
+	if (
+		numeric_sequence != floor(numeric_sequence)
+		or numeric_sequence < seat.relay_acked
+		or numeric_sequence > seat.relay_sent
+	):
+		_expect(false, "remote ACK prefix")
+		return
+	seat.relay_acked = int(numeric_sequence)
+	seat.acks_received += 1
+	_ack_marker(seat, "received", seat.relay_acked)
+
+
+func _flush_ack(seat: Seat) -> void:
+	if (
+		not _uses_remote_ack()
+		or not seat.relay_prefix_valid
+		or seat.ack_sent_prefix == seat.relay_received
+		or not seat.refused.is_empty()
+		or seat.client.get_connection_state() != ClientScript.ConnectionState.CONNECTED
+	):
+		return
+	var payload := {
+		"shutdown_ack":
+		{
+			"generation": _generation,
+			"room_id": seat.client.get_room_id(),
+			"next_sequence": seat.relay_received
+		}
+	}
+	var error := seat.client.send_game_data(payload)
+	if error != OK:
+		seat.refused.append({"error": error, "tick_ms": Time.get_ticks_msec(), "frame": "ack"})
+		_expect(_shutdown_requested, "ACK send refused before shutdown")
+		return
+	seat.ack_sent_prefix = seat.relay_received
+	seat.acks_sent += 1
+	_ack_marker(seat, "sent", seat.ack_sent_prefix)
+
+
+func _ack_marker(seat: Seat, direction: String, next_sequence: int) -> void:
+	print(
+		(
+			"ACTIVE_SHUTDOWN_ACK "
+			+ JSON.stringify(
+				{
+					"seat": _seats.find(seat),
+					"connection": seat.transport.observer.connection_index,
+					"generation": _generation,
+					"room_id": seat.client.get_room_id(),
+					"direction": direction,
+					"next_sequence": next_sequence,
+					"sent_data": seat.relay_sent,
+					"received_data": seat.relay_received
+				}
+			)
+		)
+	)
+
+
+func _ack_summary(seat: Seat) -> Dictionary:
+	return {
+		"transport": _options.get("relay_credit_transport", "local"),
+		"received": seat.acks_received,
+		"sent": seat.acks_sent,
+		"acked_prefix": seat.relay_acked,
+		"acked_body_bytes": seat.relay_acked * 4096,
+		"sent_prefix": seat.ack_sent_prefix,
+		"valid_received_prefix": seat.relay_prefix_valid
+	}
 
 
 func _connect_generation() -> bool:
@@ -198,6 +299,11 @@ func _connect_generation() -> bool:
 		seat.received = [0, 0, 0]
 		seat.relay_sent = 0
 		seat.relay_received = 0
+		seat.relay_acked = 0
+		seat.ack_sent_prefix = 0
+		seat.acks_received = 0
+		seat.acks_sent = 0
+		seat.relay_prefix_valid = true
 		seat.trace.clear()
 		seat.closes.clear()
 		seat.failures.clear()
@@ -266,6 +372,11 @@ func _connect_generation() -> bool:
 		"exact warm gameplay"
 	)
 
+	if _uses_remote_ack():
+		var configured_credit: int = _options["relay_credit_bytes"]
+		for seat: Seat in _seats:
+			_expect(seat.acks_received > 0 and seat.relay_acked > 0, "remote ACK credit progress")
+			_expect(seat.peak_outstanding_body_bytes <= configured_credit, "remote ACK byte window")
 	var evidence: Array[Dictionary] = []
 	for seat: Seat in _seats:
 		evidence.append(
@@ -274,6 +385,7 @@ func _connect_generation() -> bool:
 				"relay_sent": seat.relay_sent,
 				"relay_received": seat.relay_received,
 				"relay_offered": seat.offered,
+				"application_ack": _ack_summary(seat),
 				"credit_blocked_frames": seat.credit_blocked_frames,
 				"peak_outstanding_body_bytes": seat.peak_outstanding_body_bytes,
 				"receive": seat.transport.observer.summary(),
@@ -456,6 +568,7 @@ func _run() -> void:
 				"relay_sent": seat.relay_sent,
 				"relay_received": seat.relay_received,
 				"relay_offered": seat.offered,
+				"application_ack": _ack_summary(seat),
 				"credit_blocked_frames": seat.credit_blocked_frames,
 				"peak_outstanding_body_bytes": seat.peak_outstanding_body_bytes,
 				"receive": seat.transport.observer.summary(),
@@ -471,6 +584,7 @@ func _run() -> void:
 				seat.trace == results[_seats.find(seat)]["trace"]
 				and seat.failures == results[_seats.find(seat)]["failures"]
 				and seat.relay_sent == results[_seats.find(seat)]["relay_sent"]
+				and seat.acks_sent == results[_seats.find(seat)]["application_ack"]["sent"]
 			),
 			"no duplicate terminal"
 		)
@@ -542,6 +656,11 @@ class Seat:
 	var received: Array[int] = [0, 0, 0]
 	var relay_sent := 0
 	var relay_received := 0
+	var relay_acked := 0
+	var ack_sent_prefix := 0
+	var acks_received := 0
+	var acks_sent := 0
+	var relay_prefix_valid := true
 	var expected_sender := ""
 	var refused: Array[Dictionary] = []
 	var protocol_errors: Array[String] = []
