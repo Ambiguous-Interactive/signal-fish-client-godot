@@ -255,6 +255,11 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
                 report["browser"] = browser.version
                 page = browser.new_page()
                 page.add_init_script(WEB_SOCKET_TRACE)
+                if args.trace_receive:
+                    observation = directory / "websocket-browser-observation.js"
+                    shutil.copy2(args.output / "websocket-browser-observation.js", observation)
+                    report["websocket_observation_sha256"] = digest(observation)
+                    page.add_init_script(path=observation)
                 page.on(
                     "console",
                     lambda message: lines.append(
@@ -271,6 +276,13 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
                             raise RuntimeError("Web runtime did not finish within 70 seconds")
                         page.wait_for_timeout(20)
                 finally:
+                    if args.trace_receive:
+                        try:
+                            report["websocket_receive"] = page.evaluate(
+                                "() => window.websocketReceiveSnapshot()"
+                            )
+                        except Exception as exc:
+                            errors.append(f"receive trace: {type(exc).__name__}: {exc}")
                     browser.close()
                     output = "\n".join(lines)
                     (directory / "godot.log").write_text(output + "\n")
@@ -366,6 +378,11 @@ def main() -> int:
     parser.add_argument("--receive-pause-ms", type=int, default=0)
     parser.add_argument("--network-delay-ms", type=int, default=0)
     parser.add_argument("--network-chunk-bytes", type=int, default=65536)
+    parser.add_argument(
+        "--trace-receive",
+        action="store_true",
+        help="Retain scoped WebSocket callback/rejection observations on Web",
+    )
     args = parser.parse_args()
     if not 0 <= args.network_delay_ms <= 500 or not 1 <= args.network_chunk_bytes <= 65536:
         parser.error("Network delay must be 0..500 ms and chunk size 1..65536 bytes")
@@ -388,6 +405,11 @@ def main() -> int:
         args.native_extension = args.native_extension.resolve()
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=False)
+    if args.trace_receive:
+        shutil.copy2(
+            ROOT / "scripts/websocket-browser-observation.js",
+            args.output / "websocket-browser-observation.js",
+        )
     provenance = {
         "server_revision_declared": args.server_revision,
         "server_binary_sha256": digest(args.server_binary),
@@ -400,6 +422,7 @@ def main() -> int:
         "max_queued_packets": args.max_queued_packets,
         "network_delay_ms": args.network_delay_ms,
         "network_chunk_bytes": args.network_chunk_bytes,
+        "trace_receive": args.trace_receive,
         "client_revision": subprocess.check_output(  # noqa: S603
             [shutil.which("git") or "git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=30
         ).strip(),
@@ -409,6 +432,7 @@ def main() -> int:
                 Path(__file__).resolve(),
                 ROOT / "scripts/delayed_tcp_proxy.py",
                 ROOT / "scripts/check-webrtc-interop.py",
+                ROOT / "scripts/websocket-browser-observation.js",
                 ROOT / "tests/smoke/active_shutdown.gd",
                 ROOT / "addons/signal_fish/webrtc/sf_webrtc_mesh.gd",
                 ROOT / "addons/signal_fish/webrtc/sf_webrtc_multiplayer_peer.gd",

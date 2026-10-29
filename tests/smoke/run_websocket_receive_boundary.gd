@@ -11,6 +11,7 @@ const WATCHDOG_MARGIN_MS := 1000
 var _server := ServerScript.new()
 var _peer := WebSocketPeer.new()
 var _credit_bytes := 0
+var _fragment_bytes := 0
 var _received := 0
 var _first_gap: Dictionary = {}
 var _failures: Array[String] = []
@@ -24,7 +25,7 @@ var _watchdog_ms := CONNECT_TIMEOUT_MS
 func _initialize() -> void:
 	for argument: String in OS.get_cmdline_user_args():
 		var option := argument.get_slice("=", 0)
-		if option not in ["--capacity", "--max-queued-packets", "--credit"]:
+		if option not in ["--capacity", "--max-queued-packets", "--credit", "--fragment-bytes"]:
 			_failures.append("unknown argument: " + argument)
 			continue
 		if not argument.begins_with(option + "="):
@@ -37,6 +38,8 @@ func _initialize() -> void:
 		var number := value.to_int()
 		if option == "--credit":
 			_credit_bytes = number
+		elif option == "--fragment-bytes":
+			_fragment_bytes = number
 		elif number <= 0:
 			_failures.append(option + " must be positive")
 		elif option == "--capacity":
@@ -45,6 +48,8 @@ func _initialize() -> void:
 			_peer.max_queued_packets = number
 	if _credit_bytes < 0 or _credit_bytes > 0 and _credit_bytes < BODY_BYTES:
 		_failures.append("credit must be zero or admit one complete body")
+	if _fragment_bytes < 0 or _fragment_bytes >= BODY_BYTES:
+		_failures.append("fragment bytes must be zero or smaller than one body")
 	if _failures.is_empty():
 		if _credit_bytes > 0:
 			_batch_packets = mini(PACKETS, int(_credit_bytes / float(BODY_BYTES)))
@@ -68,6 +73,12 @@ func _process(_delta: float) -> bool:
 
 func _body(sequence: int) -> String:
 	return ("%08d" % sequence) + "x".repeat(BODY_BYTES - 8)
+
+
+func _send(sequence: int) -> Error:
+	if _fragment_bytes > 0:
+		return _server.send_text_fragments(_body(sequence), _fragment_bytes)
+	return _server.send_text_frame(_body(sequence))
 
 
 func _poll() -> void:
@@ -130,7 +141,7 @@ func _run() -> void:
 	while sent < PACKETS:
 		var batch := mini(PACKETS - sent, _batch_packets)
 		for sequence: int in range(sent, sent + batch):
-			if _server.send_text_frame(_body(sequence)) != OK:
+			if _send(sequence) != OK:
 				_failures.append("burst send failed")
 				_finish()
 				return
@@ -147,7 +158,7 @@ func _run() -> void:
 			_failures.append("finite burst count")
 			break
 	# A later message exposes an interior gap even when the dropped tail was final.
-	if _server.send_text_frame(_body(PACKETS)) != OK:
+	if _send(PACKETS) != OK:
 		_failures.append("sentinel send failed")
 	else:
 		_sent += 1
@@ -171,6 +182,7 @@ func _finish() -> void:
 					"capacity": _peer.inbound_buffer_size,
 					"max_queued_packets": _peer.max_queued_packets,
 					"body_bytes": BODY_BYTES,
+					"fragment_bytes": _fragment_bytes,
 					"watchdog_ms": _watchdog_ms,
 					"target_packets": PACKETS + 1,
 					"offered_packets": _sent,

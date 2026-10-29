@@ -3,7 +3,7 @@ extends RefCounted
 ## Minimal RFC 6455 WebSocket server bound to 127.0.0.1 for headless smoke
 ## tests. Supports one connection at a time, echoes text/binary frames,
 ## answers pings, and completes close handshakes in both directions. No TLS,
-## no extensions, no fragmentation; frames over 1 MiB drop the connection.
+## no extensions, no fragmented client messages; frames over 1 MiB drop the connection.
 
 const MAX_BUFFER_BYTES := 1024 * 1024
 const OP_CONTINUATION := 0x0
@@ -58,6 +58,22 @@ func close_connection(code: int, reason: String) -> void:
 ## Sends a text frame as its own TCP write (issue #70 regression helper).
 func send_text_frame(text: String) -> Error:
 	return _send_frame(OP_TEXT, text.to_utf8_buffer())
+
+
+## Sends one text message in RFC 6455 fragments for receive-boundary controls.
+func send_text_fragments(text: String, fragment_bytes: int) -> Error:
+	if fragment_bytes <= 0:
+		return ERR_INVALID_PARAMETER
+	var bytes := text.to_utf8_buffer()
+	if bytes.is_empty():
+		return _send_frame(OP_TEXT, bytes)
+	for offset: int in range(0, bytes.size(), fragment_bytes):
+		var end := mini(offset + fragment_bytes, bytes.size())
+		var opcode := OP_TEXT if offset == 0 else OP_CONTINUATION
+		var error := _send_frame(opcode, bytes.slice(offset, end), end == bytes.size())
+		if error != OK:
+			return error
+	return OK
 
 
 func poll() -> void:
@@ -240,21 +256,21 @@ func _handle_frame(opcode: int, payload: PackedByteArray) -> void:
 			pass
 
 
-func _send_frame(opcode: int, payload: PackedByteArray) -> Error:
+func _send_frame(opcode: int, payload: PackedByteArray, final: bool = true) -> Error:
 	if _connection == null:
 		return ERR_UNCONFIGURED
-	var frame := _frame_bytes(opcode, payload)
+	var frame := _frame_bytes(opcode, payload, final)
 	if _connection == null:
 		return ERR_INVALID_DATA
 	return _connection.put_data(frame)
 
 
-func _frame_bytes(opcode: int, payload: PackedByteArray) -> PackedByteArray:
+func _frame_bytes(opcode: int, payload: PackedByteArray, final: bool = true) -> PackedByteArray:
 	var length := payload.size()
 	if length > 0xFFFF:
 		_drop_connection()
 		return PackedByteArray()
-	var header := PackedByteArray([0x80 | opcode])
+	var header := PackedByteArray([(0x80 if final else 0) | opcode])
 	if length <= 125:
 		header.append(length)
 	else:
