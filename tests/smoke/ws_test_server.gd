@@ -63,14 +63,24 @@ func send_text_frame(text: String) -> Error:
 
 ## Sends one text message in RFC 6455 fragments for receive-boundary controls.
 func send_text_fragments(text: String, fragment_bytes: int, control_opcode: int = 0) -> Error:
-	if fragment_bytes <= 0 or control_opcode not in [0, OP_PING, OP_PONG]:
+	return send_message_fragments(text.to_utf8_buffer(), OP_TEXT, fragment_bytes, control_opcode)
+
+
+## Sends exact text or binary bytes with an optional interleaved control frame.
+func send_message_fragments(
+	bytes: PackedByteArray, message_opcode: int, fragment_bytes: int, control_opcode: int = 0
+) -> Error:
+	if (
+		fragment_bytes <= 0
+		or message_opcode not in [OP_TEXT, OP_BINARY]
+		or control_opcode not in [0, OP_PING, OP_PONG]
+	):
 		return ERR_INVALID_PARAMETER
-	var bytes := text.to_utf8_buffer()
 	if bytes.is_empty():
-		return _send_frame(OP_TEXT, bytes)
+		return _send_frame(message_opcode, bytes)
 	for offset: int in range(0, bytes.size(), fragment_bytes):
 		var end := mini(offset + fragment_bytes, bytes.size())
-		var opcode := OP_TEXT if offset == 0 else OP_CONTINUATION
+		var opcode := message_opcode if offset == 0 else OP_CONTINUATION
 		var error := _send_frame(opcode, bytes.slice(offset, end), end == bytes.size())
 		if error != OK:
 			return error

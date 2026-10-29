@@ -22,6 +22,48 @@ BODY_BYTES = 4096
 PACKETS = 64
 
 
+class ApplicationCredit:
+    def __init__(self, credit_bytes: int) -> None:
+        self.credit_bytes = credit_bytes
+        self.sent = 0
+        self.acknowledged = 0
+        self.started = False
+        self.receipts: list[dict[str, int]] = []
+        self.windows: list[dict[str, int]] = []
+
+    def receive(self, command: str) -> range:
+        if command == "start":
+            if self.started:
+                raise ValueError("duplicate application-credit start")
+            self.started = True
+        else:
+            if not self.started or not command.startswith("ack:"):
+                raise ValueError("application receipt before start or invalid command")
+            prefix = command[4:]
+            if not prefix.isascii() or not prefix.isdecimal():
+                raise ValueError("invalid application receipt")
+            received = int(prefix)
+            if not self.acknowledged < received <= self.sent:
+                raise ValueError("application receipt is stale or beyond offered prefix")
+            self.acknowledged = received
+            self.receipts.append({"prefix_packets": received, "received_ns": time.monotonic_ns()})
+        start = self.sent
+        while self.sent <= PACKETS:
+            if self.sent == PACKETS and self.acknowledged != PACKETS:
+                break
+            if (self.sent - self.acknowledged + 1) * BODY_BYTES > self.credit_bytes:
+                break
+            self.sent += 1
+        self.windows.append(
+            {
+                "acknowledged_packets": self.acknowledged,
+                "offered_packets": self.sent,
+                "outstanding_bytes": (self.sent - self.acknowledged) * BODY_BYTES,
+            }
+        )
+        return range(start, self.sent)
+
+
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -93,12 +135,20 @@ def main() -> int:
     parser.add_argument("--capacity", type=int, default=0)
     parser.add_argument("--max-queued-packets", type=int, default=0)
     parser.add_argument("--credit-bytes", type=int, default=0)
+    parser.add_argument("--credit-transport", choices=("local", "app-ack"), default="local")
+    parser.add_argument("--ack-delay-ms", type=int, default=0)
     parser.add_argument("--hold-ms", type=int, default=100)
     args = parser.parse_args()
     if args.capacity < 0 or 0 < args.capacity < BODY_BYTES or args.max_queued_packets < 0:
         parser.error("capacity must admit a body; zero capacity/count keeps engine defaults")
     if args.credit_bytes < 0 or 0 < args.credit_bytes < BODY_BYTES:
         parser.error("credit must be zero or admit one body")
+    if args.credit_transport == "app-ack" and args.credit_bytes == 0:
+        parser.error("application ACK credit requires a positive byte window")
+    if not 0 <= args.ack_delay_ms <= 1000 or (
+        args.ack_delay_ms and args.credit_transport != "app-ack"
+    ):
+        parser.error("ACK delay must be 0..1000 ms and requires application ACK credit")
     if not 1 <= args.hold_ms <= 1000:
         parser.error("hold must be 1..1000 ms")
     output = args.output.resolve()
@@ -124,6 +174,7 @@ def main() -> int:
     (project / "build/web").mkdir(parents=True)
     commands: list[dict[str, object]] = []
     server_errors: list[str] = []
+    application_credit = ApplicationCredit(args.credit_bytes)
 
     class Handler(SimpleHTTPRequestHandler):
         def log_message(self, _format: str, *_args: object) -> None:
@@ -165,18 +216,24 @@ def main() -> int:
                     if len(mask) != 4 or len(payload) != length:
                         raise ValueError("short command frame")
                     command = bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload)).decode()
-                    start, count = (int(value) for value in command.split(":"))
+                    if args.credit_transport == "app-ack":
+                        sequences = application_credit.receive(command)
+                        start, count = sequences.start, len(sequences)
+                    else:
+                        start, count = (int(value) for value in command.split(":"))
                     if (
                         not 0 <= start <= PACKETS
-                        or not 1 <= count <= PACKETS
+                        or not 0 <= count <= PACKETS
+                        or (count == 0 and args.credit_transport != "app-ack")
                         or start + count > PACKETS + 1
                     ):
                         raise ValueError("invalid finite burst")
                     for sequence in range(start, start + count):
                         self.connection.sendall(frame(sequence))
-                    commands.append(
-                        {"start": start, "count": count, "completed_ns": time.monotonic_ns()}
-                    )
+                    if count:
+                        commands.append(
+                            {"start": start, "count": count, "completed_ns": time.monotonic_ns()}
+                        )
             except (OSError, ValueError) as exc:
                 server_errors.append(str(exc))
 
@@ -187,13 +244,15 @@ def main() -> int:
         PACKETS if args.credit_bytes == 0 else min(PACKETS, args.credit_bytes // BODY_BYTES)
     )
     batches = (PACKETS + batch_packets - 1) // batch_packets
-    watchdog_ms = 5000 + batches * (args.hold_ms + 1000) + 2000
+    watchdog_ms = 5000 + batches * (args.hold_ms + args.ack_delay_ms + 1000) + 2000
     options = {
         "watchdog_ms": watchdog_ms,
         "url": f"ws://127.0.0.1:{server.server_port}/receive-boundary",
         "capacity": args.capacity,
         "max_queued_packets": args.max_queued_packets,
         "credit_bytes": args.credit_bytes,
+        "credit_transport": args.credit_transport,
+        "ack_delay_ms": args.ack_delay_ms,
         "hold_ms": args.hold_ms,
     }
     (project / "receive-options.json").write_text(json.dumps(options))
@@ -208,7 +267,11 @@ def main() -> int:
         "options": options,
         "engine_sha256": digest(engine),
         "source_sha256": {str(path.relative_to(ROOT)): digest(path) for path in sources},
-        "credit_scope": "local consumer body bytes; no network acknowledgement",
+        "credit_scope": (
+            "complete callback message bytes; cumulative exact-prefix WebSocket receipts"
+            if args.credit_transport == "app-ack"
+            else "local consumer body bytes; no network acknowledgement"
+        ),
     }
     lines: list[str] = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -278,12 +341,22 @@ def main() -> int:
             commands,
         )
         report["receive_evidence"] = evidence
+        application_complete = (
+            application_credit.started
+            and application_credit.acknowledged == PACKETS
+            and application_credit.sent == PACKETS + 1
+            and all(
+                window["outstanding_bytes"] <= args.credit_bytes
+                for window in application_credit.windows
+            )
+        )
         report["passed"] = (
             len(records) == 1
             and records[0].get("passed") is True
             and evidence["reliable_delivery"] is True
             and not report.get("receive_trace_error")
             and not server_errors
+            and (args.credit_transport != "app-ack" or application_complete)
             and not any("ERROR" in line or "Dropping data" in line for line in lines)
         )
     except Exception as exc:
@@ -294,6 +367,11 @@ def main() -> int:
         thread.join(timeout=5)
         report["commands"] = commands
         report["server_errors"] = server_errors
+        if args.credit_transport == "app-ack":
+            report["application_receipts"] = application_credit.receipts
+            report["application_sent_packets"] = application_credit.sent
+            report["application_acknowledged_packets"] = application_credit.acknowledged
+            report["application_windows"] = application_credit.windows
         (output / "godot.log").write_text("\n".join(lines) + "\n")
         (output / "assessment.json").write_text(json.dumps(report, indent=2) + "\n")
     print(

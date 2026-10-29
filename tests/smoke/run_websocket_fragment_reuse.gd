@@ -8,9 +8,20 @@ var _started := Time.get_ticks_msec()
 var _opened := 0
 var _closing_state := -1
 var _fresh: Dictionary = {}
+var _partial_type := "text"
+var _fresh_type := "text"
 
 
 func _initialize() -> void:
+	for argument: String in OS.get_cmdline_user_args():
+		var option := argument.get_slice("=", 0)
+		var value := argument.get_slice("=", 1)
+		if option not in ["--partial-type", "--fresh-type"] or value not in ["text", "binary"]:
+			_failures.append("expected --partial-type=text|binary or --fresh-type=text|binary")
+		elif option == "--partial-type":
+			_partial_type = value
+		else:
+			_fresh_type = value
 	call_deferred("_run")
 
 
@@ -41,6 +52,9 @@ func _open() -> bool:
 
 
 func _run() -> void:
+	if not _failures.is_empty():
+		_finish()
+		return
 	if _server.listen() != OK:
 		_failures.append("listen")
 		_finish()
@@ -48,7 +62,10 @@ func _run() -> void:
 	if not await _open():
 		_finish()
 		return
-	if _server._send_frame(ServerScript.OP_TEXT, "x".repeat(127).to_utf8_buffer(), false) != OK:
+	var partial_opcode := (
+		ServerScript.OP_TEXT if _partial_type == "text" else ServerScript.OP_BINARY
+	)
+	if _server._send_frame(partial_opcode, "x".repeat(127).to_utf8_buffer(), false) != OK:
 		_failures.append("fragment send")
 		_finish()
 		return
@@ -73,7 +90,13 @@ func _run() -> void:
 	if not await _open():
 		_finish()
 		return
-	if _server.send_text_frame("fresh") != OK:
+	var fresh_bytes := (
+		"fresh".to_utf8_buffer()
+		if _fresh_type == "text"
+		else PackedByteArray([0, 255, 128, 1, 254])
+	)
+	var fresh_opcode := ServerScript.OP_TEXT if _fresh_type == "text" else ServerScript.OP_BINARY
+	if _server._send_frame(fresh_opcode, fresh_bytes) != OK:
 		_failures.append("fresh send")
 	deadline = Time.get_ticks_msec() + 2000
 	while _peer.get_available_packet_count() == 0 and Time.get_ticks_msec() < deadline:
@@ -85,13 +108,14 @@ func _run() -> void:
 		var packet := _peer.get_packet()
 		_fresh = {
 			"bytes": packet.size(),
-			"body": packet.get_string_from_utf8(),
+			"hex": packet.hex_encode(),
+			"is_text": _peer.was_string_packet(),
 			"error": _peer.get_packet_error()
 		}
 		print("REDIAL_PACKET " + JSON.stringify(_fresh))
 		if (
-			packet != "fresh".to_utf8_buffer()
-			or not _peer.was_string_packet()
+			packet != fresh_bytes
+			or _peer.was_string_packet() != (_fresh_type == "text")
 			or _peer.get_packet_error() != OK
 		):
 			_failures.append("fresh exact bytes")
@@ -110,6 +134,8 @@ func _finish() -> void:
 					"closing_state": _closing_state,
 					"empty_pongs": _server.received_pongs.size(),
 					"fresh": _fresh,
+					"partial_type": _partial_type,
+					"fresh_type": _fresh_type,
 					"engine": Engine.get_version_info()["string"]
 				}
 			)

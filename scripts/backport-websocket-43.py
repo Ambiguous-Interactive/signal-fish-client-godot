@@ -55,19 +55,19 @@ def git(source: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def apply(source: Path, check_only: bool) -> dict[str, object]:
+def apply_patch(source: Path, check_only: bool, base: str, patch: Path) -> dict[str, object]:
     revision = git(source, "rev-parse", "HEAD")
-    if revision.returncode or revision.stdout.strip() != BASE:
-        raise ValueError(f"source HEAD must be Godot 4.3-stable {BASE}")
+    if revision.returncode or revision.stdout.strip() != base:
+        raise ValueError(f"source HEAD must be revision {base}")
     paths = [
         line.split(" b/", 1)[1]
-        for line in PATCH.read_text().splitlines()
+        for line in patch.read_text().splitlines()
         if line.startswith("diff --git ")
     ]
     if git(source, "diff", "--cached", "--exit-code", "--", *paths).returncode:
         raise ValueError("backport paths contain staged changes")
-    forward = git(source, "apply", "--check", str(PATCH))
-    reverse = git(source, "apply", "--reverse", "--check", str(PATCH))
+    forward = git(source, "apply", "--check", str(patch))
+    reverse = git(source, "apply", "--reverse", "--check", str(patch))
     if reverse.returncode == 0:
         actual = git(
             source,
@@ -86,7 +86,7 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
             "--",
             *paths,
         )
-        if actual.returncode or actual.stdout != PATCH.read_text():
+        if actual.returncode or actual.stdout != patch.read_text():
             raise ValueError("backport paths contain additional local changes")
         status = "already_applied"
     elif forward.returncode == 0:
@@ -94,7 +94,7 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
             raise ValueError("backport paths contain local changes")
         status = "applicable" if check_only else "applied"
         if not check_only:
-            applied = git(source, "apply", str(PATCH))
+            applied = git(source, "apply", str(patch))
             if applied.returncode:
                 raise ValueError(applied.stderr.strip())
     else:
@@ -102,7 +102,17 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
     return {
         "status": status,
         "source": str(source),
-        "base": BASE,
+        "base": base,
+        "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
+        "source_sha256": {
+            path: hashlib.sha256((source / path).read_bytes()).hexdigest() for path in paths
+        },
+    }
+
+
+def apply(source: Path, check_only: bool) -> dict[str, object]:
+    return {
+        **apply_patch(source, check_only, BASE, PATCH),
         "upstream_commits": UPSTREAM,
         "local_repairs": [
             {
@@ -116,10 +126,6 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
                 "cause": "A CLOSING peer can be reused before old assembly completes",
             },
         ],
-        "patch_sha256": hashlib.sha256(PATCH.read_bytes()).hexdigest(),
-        "source_sha256": {
-            path: hashlib.sha256((source / path).read_bytes()).hexdigest() for path in paths
-        },
         "scope": "experimental native receive repair; build and runtime qualification required",
     }
 

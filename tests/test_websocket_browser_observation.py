@@ -112,6 +112,37 @@ class ReceiveEvidenceTests(unittest.TestCase):
                 self.assertFalse(evidence["reliable_delivery"])
 
 
+class ApplicationCreditTests(unittest.TestCase):
+    def test_credit_counts_complete_messages_and_requires_actual_receipts(self) -> None:
+        credit = drill.ApplicationCredit(8 * 4096 + 4095)
+        self.assertEqual(list(credit.receive("start")), list(range(8)))
+        self.assertEqual(list(credit.receive("ack:3")), list(range(8, 11)))
+        self.assertEqual(credit.sent - credit.acknowledged, 8)
+        self.assertEqual(list(credit.receive("ack:11")), list(range(11, 19)))
+
+    def test_sentinel_waits_for_complete_prefix_even_with_spare_credit(self) -> None:
+        credit = drill.ApplicationCredit(128 * 4096)
+        self.assertEqual(list(credit.receive("start")), list(range(64)))
+        self.assertEqual(list(credit.receive("ack:63")), [])
+        self.assertEqual(list(credit.receive("ack:64")), [64])
+
+    def test_stale_future_and_malformed_receipts_never_release_credit(self) -> None:
+        for command in ("ack:0", "ack:9", "ack:-1", "ack:1.0", "ack: 1", "ack:\u0661", "start"):
+            with self.subTest(command=command):
+                credit = drill.ApplicationCredit(8 * 4096)
+                credit.receive("start")
+                with self.assertRaises(ValueError):
+                    credit.receive(command)
+                self.assertEqual((credit.sent, credit.acknowledged), (8, 0))
+        credit = drill.ApplicationCredit(8 * 4096)
+        with self.assertRaises(ValueError):
+            credit.receive("ack:1")
+        credit.receive("start")
+        credit.receive("ack:1")
+        with self.assertRaises(ValueError):
+            credit.receive("ack:1")
+
+
 class BrowserFailureTests(unittest.TestCase):
     def test_snapshot_failure_preserves_run_failure_and_always_closes_browser(self) -> None:
         for primary in ("navigation", "timeout", "crash", "snapshot_only"):
