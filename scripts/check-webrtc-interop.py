@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run the opt-in Godot native/browser mesh gameplay drill."""
 
+from __future__ import annotations
+
 import argparse
 import contextlib
 import functools
@@ -15,9 +17,10 @@ import time
 from collections import OrderedDict, deque
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
-from playwright.sync_api import Page, Request, sync_playwright
+if TYPE_CHECKING:
+    from playwright.sync_api import Page, Request
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENE = "tests/smoke/webrtc_interop_drill.tscn"
@@ -1040,6 +1043,8 @@ def prepare_pair(args: argparse.Namespace, directory: Path, addon_root: Path) ->
 def run_seats(
     args: argparse.Namespace, directory: Path, native: Path, web: Path, *, retirement_case: int = 0
 ) -> None:
+    from playwright.sync_api import sync_playwright
+
     directory.mkdir(parents=True)
 
     class TrialRelayHandler(RelayHandler):

@@ -269,9 +269,11 @@ and exact mesh packets with 4 KiB bodies in all three transfer modes.
 
 Build server commit `ee20b51ee605b09cdb448615f7500f6877d8c6e1` or a later
 source containing [the shutdown close repair](https://github.com/Ambiguous-Interactive/signal-fish-server/pull/1294).
-Keep the build log and source state with the executable hash. Install the matching
-Godot Web export templates and Playwright Chromium. Use a local server config
-with WebRTC enabled and empty ICE servers, as in `docs/mesh-guide.md`.
+Keep the build log and source state with the executable hash. Native runs need
+Godot and the native WebRTC extension. Web runs need matching Godot Web export
+templates and Playwright Chromium. The default `all` runtime needs both sets.
+Use a local server config with WebRTC enabled and empty ICE servers, as in
+`docs/mesh-guide.md`.
 
 ```sh
 python scripts/check-active-shutdown.py \

@@ -19,8 +19,6 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
 
-from playwright.sync_api import sync_playwright
-
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("interop", ROOT / "scripts/check-webrtc-interop.py")
 if SPEC is None or SPEC.loader is None:
@@ -199,6 +197,8 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
             report["returncode"] = result.returncode
             output = (directory / "godot.log").read_text()
         else:
+            from playwright.sync_api import sync_playwright
+
             lines: list[str] = []
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(
@@ -284,17 +284,20 @@ def main() -> int:
     parser.add_argument("--server-config", type=Path, required=True)
     parser.add_argument("--server-revision", required=True)
     parser.add_argument("--godot", default="godot")
-    parser.add_argument("--native-extension", type=Path, required=True)
+    parser.add_argument("--native-extension", type=Path)
     parser.add_argument("--chromium", type=Path)
     parser.add_argument("--runtime", choices=("all", "native", "web"), default="all")
     parser.add_argument("--mode", choices=("all", "graceful", "reset", "stall"), default="all")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--relay-packets-per-frame", type=int, choices=range(1, 17), default=4)
     args = parser.parse_args()
+    if args.runtime in ("all", "native") and args.native_extension is None:
+        parser.error("--native-extension is required for native or all runtime")
     if os.name != "posix":
         parser.error("This local process control requires POSIX signals")
     args.server_binary = args.server_binary.resolve()
-    args.native_extension = args.native_extension.resolve()
+    if args.native_extension is not None:
+        args.native_extension = args.native_extension.resolve()
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=False)
     provenance = {
@@ -303,12 +306,12 @@ def main() -> int:
         "server_config_input_sha256": digest(args.server_config),
         "relay_packets_per_frame": args.relay_packets_per_frame,
         "client_revision": subprocess.check_output(  # noqa: S603
-            [shutil.which("git") or "git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            [shutil.which("git") or "git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=30
         ).strip(),
         "source_sha256": {
             str(path.relative_to(ROOT)): digest(path)
             for path in (
-                Path(__file__),
+                Path(__file__).resolve(),
                 ROOT / "tests/smoke/active_shutdown.gd",
                 ROOT / "addons/signal_fish/webrtc/sf_webrtc_mesh.gd",
                 ROOT / "addons/signal_fish/webrtc/sf_webrtc_multiplayer_peer.gd",
