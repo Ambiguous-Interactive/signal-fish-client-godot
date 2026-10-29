@@ -17,6 +17,7 @@ var _generation := 0
 var _shutdown_requested := false
 var _started := 0
 var _http := HTTPRequest.new()
+var _relay_started := 0
 
 
 func _ready() -> void:
@@ -38,8 +39,20 @@ func _process(_delta: float) -> void:
 			seat.refused.is_empty()
 			and seat.client.get_connection_state() == ClientScript.ConnectionState.CONNECTED
 		):
+			var rate: int = _options.get("relay_packets_per_second", 0)
 			var burst: int = _options["relay_packets_per_frame"]
+			if rate > 0:
+				var due := int((Time.get_ticks_msec() - _relay_started) * rate / 1000.0)
+				seat.offered = due
+				burst = mini(16, maxi(0, due - seat.relay_sent))
+			else:
+				seat.offered += burst
 			for _burst: int in burst:
+				var credit: int = _options.get("relay_credit_bytes", 0)
+				var outstanding := (seat.relay_sent - _other(seat).relay_received) * 4096
+				if credit > 0 and outstanding + 4096 > credit:
+					seat.credit_blocked_frames += 1
+					break
 				var payload := {"sequence": seat.relay_sent, "body": "0123456789abcdef".repeat(256)}
 				var error := seat.client.send_game_data(payload)
 				if error != OK:
@@ -47,6 +60,9 @@ func _process(_delta: float) -> void:
 					_expect(_shutdown_requested, "send refused before shutdown")
 					break
 				seat.relay_sent += 1
+				seat.peak_outstanding_body_bytes = maxi(
+					seat.peak_outstanding_body_bytes, outstanding + 4096
+				)
 		if _hold:
 			continue
 		var peer := seat.mesh.get_safe_multiplayer_peer()
@@ -99,6 +115,9 @@ func _setup() -> void:
 		config.supported_transports = PackedStringArray(["relay", "webrtc"])
 		config.supported_topologies = PackedStringArray(["host"])
 		config.pong_timeout_sec = 2.0
+		seat.transport.seat_index = index
+		seat.transport.inbound_buffer_bytes = _options.get("inbound_buffer_bytes", 0)
+		seat.transport.max_queued_packets = _options.get("max_queued_packets", 0)
 		add_child(seat.client)
 		add_child(seat.mesh)
 		_expect(seat.client.configure(config) == OK, "configure")
@@ -150,7 +169,8 @@ func _setup() -> void:
 					seat.first_gap = {
 						"expected": seat.relay_received,
 						"received": value.get("sequence"),
-						"tick_ms": Time.get_ticks_msec()
+						"tick_ms": Time.get_ticks_msec(),
+						"poll": seat.transport.observer.latest.duplicate()
 					}
 				_expect(
 					(
@@ -184,6 +204,10 @@ func _connect_generation() -> bool:
 		seat.protocol_errors.clear()
 		seat.refused.clear()
 		seat.first_gap.clear()
+		seat.offered = 0
+		seat.credit_blocked_frames = 0
+		seat.peak_outstanding_body_bytes = 0
+		seat.client.transport = seat.transport
 		_expect(seat.client.connect_to_server(str(_options["service_url"])) == OK, "connect")
 	if not await _wait(
 		func() -> bool: return _seats[0].authenticated and _seats[1].authenticated, "login"
@@ -218,6 +242,10 @@ func _connect_generation() -> bool:
 		return false
 	for seat: Seat in _seats:
 		seat.expected_sender = _other(seat).client.get_player_id()
+	var pause_ms: int = _options.get("receive_pause_ms", 0)
+	for seat: Seat in _seats:
+		seat.transport.observer.pause_until_us = (Time.get_ticks_usec() + pause_ms * 1000)
+	_relay_started = Time.get_ticks_msec()
 	_active = true
 	for sequence: int in 32:
 		for seat: Seat in _seats:
@@ -245,6 +273,10 @@ func _connect_generation() -> bool:
 				"received_by_mode": seat.received.duplicate(),
 				"relay_sent": seat.relay_sent,
 				"relay_received": seat.relay_received,
+				"relay_offered": seat.offered,
+				"credit_blocked_frames": seat.credit_blocked_frames,
+				"peak_outstanding_body_bytes": seat.peak_outstanding_body_bytes,
+				"receive": seat.transport.observer.summary(),
 				"first_relay_gap": seat.first_gap.duplicate(),
 				"plan_generation": seat.plan.generation if seat.plan != null else ""
 			}
@@ -423,6 +455,10 @@ func _run() -> void:
 				"relay_sent_before_shutdown": before[_seats.find(seat)],
 				"relay_sent": seat.relay_sent,
 				"relay_received": seat.relay_received,
+				"relay_offered": seat.offered,
+				"credit_blocked_frames": seat.credit_blocked_frames,
+				"peak_outstanding_body_bytes": seat.peak_outstanding_body_bytes,
+				"receive": seat.transport.observer.summary(),
 				"first_relay_gap": seat.first_gap.duplicate(),
 				"mesh_received": seat.received.duplicate()
 			}
@@ -496,6 +532,10 @@ class Seat:
 	extends RefCounted
 	var client := ClientScript.new()
 	var mesh := MeshScript.new()
+	var transport := ReceiveTransport.new()
+	var offered := 0
+	var credit_blocked_frames := 0
+	var peak_outstanding_body_bytes := 0
 	var authenticated := false
 	var ready := false
 	var plan: SessionScript.SessionPlanInfo
@@ -511,3 +551,95 @@ class Seat:
 	var old_peer: MultiplayerPeer
 	var old_generation := ""
 	var first_gap: Dictionary = {}
+
+
+class ReceiveTransport:
+	extends "res://addons/signal_fish/transport/sf_websocket_transport.gd"
+	var inbound_buffer_bytes := 0
+	var max_queued_packets := 0
+	var observer: ReceiveObserver
+	var seat_index := 0
+	var _connection_index := 0
+
+	# gdscript-private-helper: allow _make_peer
+	func _make_peer() -> SFWebSocketPeerAdapterScript:
+		var engine_peer := WebSocketPeer.new()
+		if inbound_buffer_bytes > 0:
+			engine_peer.inbound_buffer_size = inbound_buffer_bytes
+		if max_queued_packets > 0:
+			engine_peer.max_queued_packets = max_queued_packets
+		_connection_index += 1
+		observer = ReceiveObserver.new(engine_peer)
+		observer.seat_index = seat_index
+		observer.connection_index = _connection_index
+		print(
+			(
+				"ACTIVE_SHUTDOWN_CAPACITY "
+				+ JSON.stringify(
+					{
+						"seat": seat_index,
+						"connection": _connection_index,
+						"inbound_buffer_bytes": engine_peer.inbound_buffer_size,
+						"max_queued_packets": engine_peer.max_queued_packets,
+						"web": OS.has_feature("web")
+					}
+				)
+			)
+		)
+		return observer
+
+
+class ReceiveObserver:
+	extends "res://addons/signal_fish/transport/sf_websocket_peer_adapter.gd"
+	var latest: Dictionary = {}
+	var pause_until_us := 0
+	var seat_index := 0
+	var connection_index := 0
+	var _skipped_polls := 0
+	var _last_poll_us := 0
+	var _polls := 0
+	var _peak_queued := 0
+	var _max_interval_us := 0
+	var _wire_bytes := 0
+
+	func poll() -> void:
+		var started := Time.get_ticks_usec()
+		if started < pause_until_us:
+			_skipped_polls += 1
+			return
+		var interval := 0 if _last_poll_us == 0 else started - _last_poll_us
+		_last_poll_us = started
+		_polls += 1
+		_max_interval_us = maxi(_max_interval_us, interval)
+		var before := get_available_packet_count()
+		super.poll()
+		var queued := get_available_packet_count()
+		_peak_queued = maxi(_peak_queued, queued)
+		latest = {
+			"seat": seat_index,
+			"connection": connection_index,
+			"poll": _polls,
+			"start_us": started,
+			"interval_us": interval,
+			"duration_us": Time.get_ticks_usec() - started,
+			"queued_before": before,
+			"queued_after": queued
+		}
+		if queued > 0:
+			print("ACTIVE_SHUTDOWN_POLL " + JSON.stringify(latest))
+
+	func get_packet() -> PackedByteArray:
+		var packet := super.get_packet()
+		_wire_bytes += packet.size()
+		return packet
+
+	func summary() -> Dictionary:
+		return {
+			"seat": seat_index,
+			"connection": connection_index,
+			"polls": _polls,
+			"skipped_polls": _skipped_polls,
+			"peak_queued_packets": _peak_queued,
+			"max_poll_interval_us": _max_interval_us,
+			"received_wire_bytes": _wire_bytes
+		}

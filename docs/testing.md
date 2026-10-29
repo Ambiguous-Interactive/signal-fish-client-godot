@@ -342,6 +342,75 @@ leaves the original reliable receive failure open. These results establish
 no SDK code change needed for the measured semantic closes. Engine coverage
 and remote qualification remain open in #482, #403 and #355.
 
+### Native WebSocket receive boundary
+
+Issue #485 is reproducible with `WebSocketPeer` and the local smoke server.
+This native control needs no Signal Fish server or WebRTC extension:
+
+```sh
+godot --headless --path . \
+  --script tests/smoke/run_websocket_receive_boundary.gd
+```
+
+It writes 64 exact 4096-byte messages, holds client polling for 100 ms, then
+drains. A later sentinel exposes an interior gap after a dropped burst tail.
+Every write must succeed. Every received packet must match its bytes, string
+mode and sequence. The final count must be 65. Engine errors remain failures.
+The control has a 10-second watchdog. It is opt-in because the original Godot
+4.3 failure must remain visible.
+
+Use `-- --credit=32768` to split the same finite work into batches bounded by
+local consumer body bytes. Use `-- --capacity=524288` for a larger byte buffer,
+or add `--max-queued-packets=2` to isolate the packet-count boundary.
+Credit uses direct local consumer observations; it adds no network ACK protocol.
+The script prints each poll, packet and final verdict. Keep logs, commands,
+source hashes and engine hashes for every attempt.
+
+On Linux ARM64, the new controls retain these results:
+
+| Engine | Default buffer | 512 KiB buffer | 512 KiB, two packets | 32 KiB body credit |
+| ------ | -------------- | -------------- | -------------------- | ------------------ |
+| 4.3    | Fails: 16/65   | Pass: 65/65    | Fails: 3/65          | Pass: 65/65        |
+| 4.4.1  | Pass: 65/65    | Pass: 65/65    | Pass: 65/65          | Pass: 65/65        |
+| 4.7.2  | Pass: 65/65    | Pass: 65/65    | Pass: 65/65          | Pass: 65/65        |
+
+The default byte setting is 65535 in all three engines. Matching the newer
+engines to 2048 queued packets also passes. The changed default packet count
+alone does not explain the repair. Godot's
+[unbuffered receive repair](https://github.com/godotengine/godot/commit/3114bda4e1ee88f04f55451697f24c9ee79be54f)
+limits socket reads to remaining queue space. Godot 4.4.1 includes this repair
+and later fragmented-message fixes. An SDK drain cannot recover bytes already
+dropped inside a Godot 4.3 engine poll. A larger finite buffer only moves that
+boundary. The retained 4.3 failure still needs an engine upgrade or qualified
+backport for a receive-boundary repair.
+
+The active-gameplay driver also accepts these comparison controls:
+
+- `--relay-packets-per-second 240`: use elapsed time to set the offered target,
+  with at most 16 sends per frame to catch up. Zero keeps the original frame rate.
+- `--relay-credit-bytes 32768`: cap outstanding 4096-byte bodies using the other
+  local seat's receive count. JSON framing and other protocol traffic add bytes.
+- `--receive-pause-ms 100`: hold engine polling after each mesh generation opens.
+  Other application and mesh work continues. Zero leaves polling unchanged.
+- `--inbound-buffer-bytes` and `--max-queued-packets`: set the engine capacities.
+  Zero preserves each engine's default. A Web property value does not establish
+  the browser's backing queue capacity.
+
+Logs identify the seat and physical connection, reported capacities, poll
+intervals and duration, queued packet peaks, total received frame bytes, first
+relay gap, offered target, credit blocks and peak outstanding body bytes.
+All original shutdown, cached-packet and exact mesh checks remain required.
+Keep rate, credit, pause and capacity changes separate in reports.
+
+A 240-packet/s native 4.3 run with a 100 ms poll hold fails on an engine overflow
+and a first delivered gap from 15 to 24. Its matched 32 KiB body-credit control
+passes all gameplay checks. The credit result qualifies that local control;
+it leaves the original uncredited workload failed. A new six-case Godot 4.4.1
+native/Web cohort passes graceful shutdown, reset, nonresponding close, cached
+metadata, retirement and fresh mesh recovery at the original four-per-frame
+rate. Three new Godot 4.3 Web shutdown controls also pass. Remote-network
+and Godot 4.3 native receive qualification remain open.
+
 ## Controlled lifecycle publication
 
 `tests/smoke/run_controlled_lifecycle_acceptance.gd` adds local server barriers

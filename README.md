@@ -39,6 +39,10 @@ hosting (beta).
 | Protocol | Signal Fish v2 + v3 session-plan signaling (fixtures pinned to upstream; drift-checked weekly) |
 | License  | [MIT](LICENSE)                                                                                 |
 
+Native Godot 4.3 can drop queued relay messages during receive bursts.
+See the [receive-boundary controls](docs/testing.md#native-websocket-receive-boundary)
+for the Godot 4.4.1 and 4.7.2 comparisons and engine repair.
+
 ## Documentation
 
 The [full guide](https://ambiguous-interactive.github.io/signal-fish-client-godot/)

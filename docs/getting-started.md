@@ -77,6 +77,12 @@ The client is polled, not threaded:
 - Call `poll()` yourself in headless tools or custom loops.
 - There are no threads and no blocking calls. The model is web-safe.
 
+Native Godot 4.3 can drop reliable WebSocket messages when a receive burst
+fills its engine queue. Polling more often or raising a finite buffer does
+not guarantee delivery. Godot 4.4.1 and 4.7.2 pass the measured receive-boundary
+control with the same byte setting. See the [engine repair and controls](testing.md#native-websocket-receive-boundary)
+when choosing an engine for sustained relay traffic.
+
 ## Authentication primer
 
 Signal Fish has two credentials, and they are not the same kind of thing:
