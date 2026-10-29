@@ -443,13 +443,16 @@ for that callback for at most one second, then falls back to one failure.
 Text and binary refusals use the same rule. All strict receipt, shutdown,
 cached metadata, retirement and fresh-gameplay checks remain required.
 
-The repaired 4.4.1 native/Web 50 ms cohort passes all six shutdown cases.
+One repaired 4.4.1 native/Web 50 ms cohort passes all six shutdown cases.
 Native 4.3 still fails exact relay receipts in all three delayed controls;
 its matched 32 KiB local body-credit controls pass. The 4.7.2 small-write
 cohort preserves shutdown and mesh checks, but its Web graceful case drops
 relay packets after restart (#488). Both seats expect sequence 24 and receive
 26/27 after engine buffer errors. Its matched 32 KiB body-credit cohort passes
-all three cases. Credit changes the local offered work; it does not repair or
+all three cases. Later final-source 4.4.1 Web graceful and reset runs also fail
+on receive overflow. The graceful gap is from sequence 535 to 536 during the
+first generation; its close, retirement and fresh mesh remain exact. Credit
+changes the local offered work; it does not repair or
 qualify the original uncredited receive boundary. Every failure stays retained.
 
 ## Controlled lifecycle publication
