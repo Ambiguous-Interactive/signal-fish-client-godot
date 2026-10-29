@@ -1055,9 +1055,9 @@ They retain the original captures and use a separate service port and output
 directories under `/tmp/session451-pinned-service-*`. Five pass every strict
 check. Three fail on the following reliable or finite-probe checks.
 The packet-only Web run rejects six reliable snapshots and fails expected
-sequence 15/read 16. Startup byte credit preserves all reliable data but loses
-initial message 33 before SCTP selection in phase 2. The held-HTTP control also
-preserves both reliable generations and heartbeat progress, but its phase-1
+sequence 15/read 16. Startup byte credit preserves all reliable data.
+Initial message 33 expires before SCTP selection in phase 2. The held-HTTP control
+preserves both reliable generations and heartbeat progress. Its phase-1
 initial unreliable probe expires before selection. Both finite-probe histories
 remain failed overall. During that HTTP hold, sends/credit stay at 35/24 for
 1090 ms while positions advance from 5 to 16 and heartbeat echoes from 4 to 15.
