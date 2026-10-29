@@ -1042,7 +1042,23 @@ Queued retirement preserves all three arrivals in both generations, including
 the Web history with the failed initial probe. The service changes generation
 and reference epoch while retaining the room and retiring the old receiver.
 
+Eight separate runs repeat the cases above with a fresh
+`cargo build --locked --bin signal-fish-server`
+from server `67725d677ff0fdb662d041af9b175d8a6d08c75f`. Its executable SHA-256 is
+`f91ef59d71e108612749f07a5297078c121bb2ff06b321012cc9671724f11b1b`.
+They retain the original captures and use a separate service port and output
+directories under `/tmp/session451-pinned-service-*`. Five pass every strict
+check. Three fail on the following reliable or finite-probe checks.
+The packet-only Web run rejects six reliable snapshots and fails expected
+sequence 15/read 16. Startup byte credit preserves all reliable data but loses
+initial message 33 before SCTP selection in phase 2. The held-HTTP control also
+preserves both reliable generations and heartbeat progress, but its phase-1
+initial unreliable probe expires before selection. Both finite-probe histories
+remain failed overall. During that HTTP hold, sends/credit stay at 35/24 for
+1090 ms while positions advance from 5 to 16 and heartbeat echoes from 4 to 15.
+
 Bound bulk bytes and keep polling gameplay while credits wait (#442, #396, #440).
+Use reliable channels for required initialization and budget their receive bytes.
 A receive-capacity change cannot prevent a sender's finite-lifetime
 expiry (#458, #471). The failed initial probe remains a failed qualification.
 These shared-host loopback service controls leave the historical failures and
