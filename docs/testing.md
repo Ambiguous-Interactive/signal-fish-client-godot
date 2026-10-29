@@ -261,6 +261,82 @@ room/identity state. The server uses a two-second grace for this drill.
 The publication drill below covers recovered correlated payload decoding;
 SDK room-operation admission remains unsupported. These drills are opt-in.
 
+### Active gameplay shutdown
+
+Use this POSIX-only local control for #482, #403 and #355. It starts and stops
+its own server processes. It runs native and Web seats with 4 KiB relay bodies
+and exact mesh packets with 4 KiB bodies in all three transfer modes.
+
+Build server commit `ee20b51ee605b09cdb448615f7500f6877d8c6e1` or a later
+source containing [the shutdown close repair](https://github.com/Ambiguous-Interactive/signal-fish-server/pull/1294).
+Keep the build log and source state with the executable hash. Install the matching
+Godot Web export templates and Playwright Chromium. Use a local server config
+with WebRTC enabled and empty ICE servers, as in `docs/mesh-guide.md`.
+
+```sh
+python scripts/check-active-shutdown.py \
+  --server-binary /path/to/signal-fish-server \
+  --server-config /path/to/local/config.json \
+  --server-revision ee20b51ee605b09cdb448615f7500f6877d8c6e1 \
+  --native-extension /path/to/webrtc_native \
+  --godot /path/to/godot --chromium /path/to/chromium \
+  --output /tmp/active-gameplay-shutdown
+```
+
+The output directory must be new. `--runtime native|web` and
+`--mode graceful|reset|stall` select a control. The driver copies the config,
+selects a local port and sets a three-second server drain. Other config values
+remain supplied by the caller. The declared server revision is recorded beside
+the executable hash; the driver cannot prove how an executable was built.
+The default relay rate is four packets per frame per seat.
+`--relay-packets-per-frame 1` selects a slower comparison. Keep its result
+separate from the original offered rate.
+
+Each control first exchanges 32 exact mesh packets per mode and direction.
+The RPC peer caches an unreliable packet before a later reliable arrival.
+The drill checks both packets' bytes and modes, then caches another packet
+for retirement. Relay sends stay active through graceful drain.
+
+- `graceful`: SIGTERM must yield `GoingAway`, then one
+  `disconnected(4000, "server_shutdown")` per client.
+- `reset`: SIGKILL must yield an abnormal close or a send-side transport
+  failure. Native and Web raw close values can differ.
+- `stall`: SIGSTOP holds the server while each client calls `close()`.
+  The two-second close watchdog must emit `heartbeat close timeout`.
+
+Every control checks that the mesh is empty, the cached receiver cannot return
+or send data, and terminal signals stay single. Graceful and reset controls
+check automatic retry eligibility, then disable retries for a controlled fresh
+login. User close must leave retries stopped. After server restart, a new plan
+and receiver must exchange every mesh packet again. The old receiver stays empty.
+
+Check every send result. A Web send can return `ERR_UNCONFIGURED` while a close
+frame is pending. The drill records that refusal and stops application sends
+for that seat. Graceful shutdown still requires the exact semantic close.
+Relay receives require exact bytes, sender and sequence for the delivered
+prefix. Shutdown may discard the remaining relay tail.
+
+Each case retains `godot.log`, `server/server.log`, `assessment.json`, import
+logs and effective config. Web cases also retain export logs. Root provenance
+records source and executable hashes. Failed attempts remain in their original
+output directories. These are local acceptance controls; remote networks,
+engine versions and extension builds need separate qualification.
+
+On Linux ARM64, all six controls pass with official Godot 4.7.2, Chromium
+156.0.8078.4 and server `ee20b51e`. Native seats use the opt-in repaired
+extension described in `docs/mesh-guide.md`. The server executable SHA-256 is
+`4f9c94a766864be0a151263b43230518e62910c4dfe9b7b8d4defbcde82fbdd3`.
+The local reports are under `/tmp/session452-final-matrix`.
+
+A Godot 4.3 native control with the earlier extension preserves shutdown
+metadata and fresh mesh gameplay, but fails on a WebSocket receive-buffer
+overflow and relay sequence gap (#485). Its reset and nonresponding controls
+pass. The original failure remains under `/tmp/session452-native43-original`.
+A separate one-packet-per-frame control passes every check. The slower pass
+leaves the original reliable receive failure open. These results establish
+no SDK code change needed for the measured semantic closes. Engine coverage
+and remote qualification remain open in #482, #403 and #355.
+
 ## Controlled lifecycle publication
 
 `tests/smoke/run_controlled_lifecycle_acceptance.gd` adds local server barriers
