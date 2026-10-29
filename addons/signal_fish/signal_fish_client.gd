@@ -844,8 +844,14 @@ func _on_transport_opened() -> void:
 	connected.emit()
 	if _connection_state != ConnectionState.CONNECTED:
 		return
+	var opened_transport := transport
 	var error: Error = _send_authenticate()
-	if error != OK and _connection_state == ConnectionState.CONNECTED:
+	if (
+		error != OK
+		and transport == opened_transport
+		and _connection_state == ConnectionState.CONNECTED
+		and not _defer_handshake_close()
+	):
 		# A refused authenticate (e.g. the backpressure cap) leaves the dial
 		# with nothing in flight (issue #73): resolve it like a transport
 		# failure instead of stalling. A consumer handler that closed inside
@@ -861,17 +867,23 @@ func _send_reconnect() -> Error:
 
 
 func _fail_reconnect_handshake() -> void:
-	# The directed handshake could not go out on the fresh socket: without it
-	# the session would hang authenticated-but-roomless with nothing in
-	# flight. Resolve the attempt negatively: reconnection_failed always
-	# fires. When the link is still up (e.g. the client-side backpressure cap
-	# refused the send), the attempt is torn down exactly like a close frame
-	# so consumers observe the terminal disconnect; when the send error
-	# already killed the link, the transport-failure cascade has surfaced
-	# connection_failed instead and auto-reconnect keeps the episode going.
+	# Resolve the refused request while keeping a closing socket for its
+	# terminal metadata. Other refusals terminate the attempt (#482).
+	var failed_transport := transport
 	_clear_reconnect_credentials()
 	reconnection_failed.emit("reconnect handshake send failed", SFErrorCodesScript.Code.NONE)
-	_terminate_reconnection_attempt()
+	if transport == failed_transport and not _defer_handshake_close():
+		_terminate_reconnection_attempt()
+
+
+func _defer_handshake_close() -> bool:
+	if transport == null or _connection_state != ConnectionState.CONNECTED:
+		return false
+	if transport.get_ready_state() not in [WebSocketPeer.STATE_CLOSING, WebSocketPeer.STATE_CLOSED]:
+		return false
+	_connection_state = ConnectionState.CLOSING
+	_reset_heartbeat()
+	return true
 
 
 func _send_authenticate() -> Error:

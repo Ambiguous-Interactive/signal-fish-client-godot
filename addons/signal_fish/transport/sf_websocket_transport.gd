@@ -112,7 +112,10 @@ func get_buffered_amount() -> int:
 func get_ready_state() -> int:
 	if _peer == null:
 		return WebSocketPeer.STATE_CLOSED
-	return _peer.get_ready_state()
+	var state := _peer.get_ready_state()
+	if state == WebSocketPeer.STATE_OPEN and not _pending_send_failure.is_empty():
+		return WebSocketPeer.STATE_CLOSING
+	return state
 
 
 func close(code := 1000, reason := "") -> void:

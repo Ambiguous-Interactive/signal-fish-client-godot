@@ -49,7 +49,8 @@ WEB_SOCKET_TRACE = """
     }
     get readyState() {
       const state = super.readyState;
-      if (this.drillConnection && (state === 2 || state === 3)) {
+      if (this.drillConnection && (state === 2 || state === 3) && this.drillSeen !== state) {
+        this.drillSeen = state;
         this.drillTrace('terminal_state_read');
       }
       return state;

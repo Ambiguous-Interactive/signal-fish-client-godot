@@ -37,6 +37,8 @@ transport waits up to one second for the browser close callback, drains queued
 packets, and reports `disconnected(code, reason)`. If no close arrives, it
 reports the original send failure once. Further sends return `ERR_UNCONFIGURED`
 during this wait. Check every send result; a refused frame was not queued.
+Authentication and reconnect handshake refusals preserve this wait and use
+the client's close watchdog.
 
 The Web engine also has a finite receive queue. A delayed Godot 4.7.2 relay
 control dropped reliable packets after restart when this queue filled
