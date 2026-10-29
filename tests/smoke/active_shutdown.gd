@@ -29,9 +29,9 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	for seat: Seat in _seats:
-		var current := seat.mesh.get_safe_multiplayer_peer()
+		var current := seat.mesh.get_multiplayer_peer()
 		if current != null:
-			current.poll()
+			current.call("poll")
 		if not _active or not seat.trace.is_empty() and seat.trace.back() == "closed":
 			continue
 		if (

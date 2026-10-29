@@ -312,6 +312,7 @@ def main() -> int:
             str(path.relative_to(ROOT)): digest(path)
             for path in (
                 Path(__file__).resolve(),
+                ROOT / "scripts/check-webrtc-interop.py",
                 ROOT / "tests/smoke/active_shutdown.gd",
                 ROOT / "addons/signal_fish/webrtc/sf_webrtc_mesh.gd",
                 ROOT / "addons/signal_fish/webrtc/sf_webrtc_multiplayer_peer.gd",
