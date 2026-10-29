@@ -322,11 +322,14 @@ records source and executable hashes. Failed attempts remain in their original
 output directories. These are local acceptance controls; remote networks,
 engine versions and extension builds need separate qualification.
 
-On Linux ARM64, all six controls pass with official Godot 4.7.2, Chromium
+On Linux ARM64, one six-case cohort passes with official Godot 4.7.2, Chromium
 156.0.8078.4 and server `ee20b51e`. Native seats use the opt-in repaired
 extension described in `docs/mesh-guide.md`. The server executable SHA-256 is
 `4f9c94a766864be0a151263b43230518e62910c4dfe9b7b8d4defbcde82fbdd3`.
 The local reports are under `/tmp/session452-final-matrix`.
+Later cold-editor imports abort before gameplay (#447). Those driver attempts
+remain failed. Direct runtime boots of the exact prepared projects pass the
+native graceful and nonresponding controls. The import failure remains open.
 
 A Godot 4.3 native control with the earlier extension preserves shutdown
 metadata and fresh mesh gameplay, but fails on a WebSocket receive-buffer
