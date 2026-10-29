@@ -982,11 +982,71 @@ During the deliberate reference pause, Godot bulk sends/credit stay at 19/8
 for 1.19-1.45 seconds while 11-15 position sends and 11-14 heartbeat reads
 continue. Web heartbeat callback-to-read maxima are 103-167 ms in the paced
 controls. This separates a bulk credit plateau from real-time progress in
-these controls (#396, #440). It leaves the historical failures, real-service
-comparison and remote-network qualification open. These controls use Godot
+these controls (#396, #440). It leaves the historical failures and
+remote-network qualification open. These controls use Godot
 4.7.2, Chromium 156, native reference `e8a2d969` and Linux ARM64. Native
 gameplay uses the opt-in repaired extension described below. Other local
 checks overlapped parts of this shared-host cohort.
+
+### Service receive-budget controls
+
+Use a real service with same-room leave/rejoin to check the byte budget across
+player epochs. Start with this Web reference-offer control. Set the paths to
+the pinned native reference probe, extension, Godot and Chromium binaries:
+
+```sh
+python scripts/check-webrtc-reference.py \
+  --native-reference-probe /path/to/probe \
+  --reference-revision e8a2d969a73d2870ecce41a62d103ec70aa6c914 \
+  --native-extension /path/to/webrtc_native \
+  --godot /path/to/godot --chromium /path/to/chromium \
+  --service-url ws://127.0.0.1:3537/v3/ws --service-rejoin \
+  --runtime web --offerer reference --safe-receive --mixed-traffic \
+  --snapshot-body-bytes 4096 --snapshot-window-bytes 49152 \
+  --receive-interval-ms 100 --position-interval-ms 100 \
+  --slow-reference-receiver --queued-retirement \
+  --credit-transport webrtc --require-gameplay \
+  --output /tmp/service-byte-budget
+```
+
+Use a fresh output directory for each comparison. Keep the 128 snapshots,
+four partial chunks, 1500 ms reference pause and original deadlines fixed.
+Use `--snapshot-window-bytes 0` for packet-only credit. Add `--startup-burst`
+to check 32 immediate reliable packets. For the HTTP credit hold, replace
+`--credit-transport webrtc` with `--credit-transport http
+--http-credit-delay-ms 1500`. Check the hold evidence before accepting that
+control. Compare native runs with `--runtime native --offerer both`.
+
+Eight local service histories at client `fd19955` use Godot 4.7.2 official,
+Chromium 156.0.8078.4, the reference above and Linux ARM64. The retained service
+binary has SHA-256 `cb29f6a667a308663fba635a3f100e2b81946fb342f450f6bbf43c066ba2b138`;
+its build revision is unverified. The native gameplay seats use the opt-in
+repaired extension described below. All attempts are retained locally under
+`/tmp/session451-service-*`; their independent audit and binary hashes are in
+`progress/session451-artifacts/`. These paths are local evidence.
+
+| Control                                                 | Observed result                                                                                                                    |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Web, 48 KiB window                                      | Both generations pass every strict check.                                                                                          |
+| Web, packet-only window                                 | Ten scoped reliable rejections; expected snapshot 15, read 20. The run fails before rejoin.                                        |
+| Web, 48 KiB plus startup, reference offers              | All reliable data and rejoin pass. Initial unreliable message 33 expires before SCTP selection in phase 1; overall gameplay fails. |
+| Web, 48 KiB plus startup, Godot offers                  | Both generations pass every strict check.                                                                                          |
+| Native, 48 KiB plus startup, both offer roles           | Both histories pass every strict check.                                                                                            |
+| Web, 48 KiB plus held HTTP credit                       | Both generations pass, including heartbeat progress during the hold.                                                               |
+| Web, packet-only plus startup, 256 KiB receive capacity | Both generations pass. This changes local capacity.                                                                                |
+
+The completed histories preserve every full, partial and startup reliable
+receipt. During the HTTP hold, snapshot sends/credit stay at 35/24 for 1060 ms
+while positions advance from 5 to 16 and heartbeat echoes from 4 to 14.
+Queued retirement preserves all three arrivals in both generations, including
+the Web history with the failed initial probe. The service changes generation
+and reference epoch while retaining the room and retiring the old receiver.
+
+Bound bulk bytes and keep polling gameplay while credits wait (#442, #396, #440).
+A receive-capacity change cannot prevent a sender's finite-lifetime
+expiry (#458, #471). The failed initial probe remains a failed qualification.
+These shared-host loopback service controls leave the historical failures and
+remote-network qualification open.
 
 ### Active Godot reader budgets
 
