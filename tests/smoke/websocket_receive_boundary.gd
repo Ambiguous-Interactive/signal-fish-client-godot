@@ -80,6 +80,10 @@ func _run() -> void:
 		_failures.append("open timeout")
 		_finish()
 		return
+	if _options.get("credit_transport", "local") == "app-ack":
+		await _run_application_credit()
+		_finish()
+		return
 	var credit: int = _options["credit_bytes"]
 	var batch_packets := PACKETS if credit == 0 else mini(PACKETS, int(credit / float(BODY_BYTES)))
 	while _sent < PACKETS:
@@ -113,6 +117,40 @@ func _run() -> void:
 	_finish()
 
 
+func _run_application_credit() -> void:
+	if _peer.send_text("start") != OK:
+		_failures.append("application-credit start failed")
+		return
+	var credit: int = _options["credit_bytes"]
+	var batch_packets := mini(PACKETS, int(credit / float(BODY_BYTES)))
+	while _received.size() < PACKETS:
+		var target := mini(PACKETS, _received.size() + batch_packets)
+		_sent = target
+		var hold_ms: int = _options["hold_ms"]
+		await get_tree().create_timer(hold_ms / 1000.0).timeout
+		var deadline := Time.get_ticks_msec() + 1000
+		_poll()
+		while _received.size() < target and Time.get_ticks_msec() < deadline:
+			await get_tree().process_frame
+			_poll()
+		if _received.size() != target or not _first_gap.is_empty() or not _failures.is_empty():
+			_failures.append("application-credit exact prefix")
+			return
+		var ack_delay_ms: int = _options["ack_delay_ms"]
+		if ack_delay_ms > 0:
+			await get_tree().create_timer(ack_delay_ms / 1000.0).timeout
+		if _peer.send_text("ack:%d" % _received.size()) != OK:
+			_failures.append("application receipt send failed")
+			return
+	_sent = PACKETS + 1
+	var sentinel_deadline := Time.get_ticks_msec() + 1000
+	while _received.size() < PACKETS + 1 and Time.get_ticks_msec() < sentinel_deadline:
+		await get_tree().process_frame
+		_poll()
+	if _received.size() != PACKETS + 1 or not _first_gap.is_empty():
+		_failures.append("application-credit sentinel")
+
+
 func _process(_delta: float) -> void:
 	var watchdog_ms: int = _options.get("watchdog_ms", 20000)
 	if not _finished and Time.get_ticks_msec() - _started_ms > watchdog_ms:
@@ -133,6 +171,7 @@ func _finish() -> void:
 					"engine": Engine.get_version_info()["string"],
 					"capacity": _peer.inbound_buffer_size,
 					"max_queued_packets": _peer.max_queued_packets,
+					"credit_transport": _options.get("credit_transport", "local"),
 					"received": _received,
 					"first_gap": _first_gap,
 					"offered_packets": _sent,

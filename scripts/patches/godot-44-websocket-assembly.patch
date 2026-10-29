@@ -1,0 +1,50 @@
+diff --git a/modules/websocket/wsl_peer.cpp b/modules/websocket/wsl_peer.cpp
+index 1a1f52a8a06b5867fc1c14e416f78f2a14fa908f..d922710e7717486994567694839e6444be26b1d2 100644
+--- a/modules/websocket/wsl_peer.cpp
++++ b/modules/websocket/wsl_peer.cpp
+@@ -594,9 +594,10 @@ ssize_t WSLPeer::_wsl_recv_callback(wslay_event_context_ptr ctx, uint8_t *data,
+ void WSLPeer::_wsl_recv_start_callback(wslay_event_context_ptr ctx, const struct wslay_event_on_frame_recv_start_arg *arg, void *user_data) {
+ 	WSLPeer *peer = (WSLPeer *)user_data;
+ 	uint8_t op = arg->opcode;
++	PendingMessage &pm = peer->pending_message;
++	pm.frame_is_data = !wslay_is_ctrl_frame(op);
+ 	if (op == WSLAY_TEXT_FRAME || op == WSLAY_BINARY_FRAME) {
+ 		// Get ready to process a data package.
+-		PendingMessage &pm = peer->pending_message;
+ 		pm.opcode = op;
+ 	}
+ }
+@@ -604,7 +605,7 @@ void WSLPeer::_wsl_recv_start_callback(wslay_event_context_ptr ctx, const struct
+ void WSLPeer::_wsl_frame_recv_chunk_callback(wslay_event_context_ptr ctx, const struct wslay_event_on_frame_recv_chunk_arg *arg, void *user_data) {
+ 	WSLPeer *peer = (WSLPeer *)user_data;
+ 	PendingMessage &pm = peer->pending_message;
+-	if (pm.opcode != 0) {
++	if (pm.opcode != 0 && pm.frame_is_data) {
+ 		// Only write the payload.
+ 		peer->in_buffer.write_packet(arg->data, arg->data_length, nullptr);
+ 		pm.payload_size += arg->data_length;
+@@ -917,6 +918,7 @@ void WSLPeer::_clear() {
+ 	was_string = 0;
+ 	in_buffer.clear();
+ 	packet_buffer.clear();
++	pending_message.clear();
+ 
+ 	// Close code info.
+ 	close_code = -1;
+diff --git a/modules/websocket/wsl_peer.h b/modules/websocket/wsl_peer.h
+index 2d3f9b8111b0beb1269c6390f0c8320a4cedd3ee..dd0a29f61c9a19882fe90b53bfff9f3d607c0700 100644
+--- a/modules/websocket/wsl_peer.h
++++ b/modules/websocket/wsl_peer.h
+@@ -84,10 +84,12 @@ private:
+ 	struct PendingMessage {
+ 		size_t payload_size = 0;
+ 		uint8_t opcode = 0;
++		bool frame_is_data = false;
+ 
+ 		void clear() {
+ 			payload_size = 0;
+ 			opcode = 0;
++			frame_is_data = false;
+ 		}
+ 	};
+ 

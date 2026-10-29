@@ -393,7 +393,10 @@ credit, capacity and the later sentinel stay unchanged. TCP may coalesce the
 writes. Godot 4.4-beta1 passes the original control but truncates fragmented
 messages: a 512 KiB run receives 65/65 messages with 127-byte bodies instead of
 4096 bytes. The exact-byte check fails from packet zero. Godot 4.4.1 and 4.7.2
-pass the same fragmented controls. A 4.3 backport also needs the
+pass the same fragmented controls. Add `--message-type=binary` for bodies
+containing all byte values, or `--message-type=alternating` to alternate text
+and binary messages. Both bytes and packet type must match the offered order.
+The default text workload stays unchanged. A 4.3 backport also needs the
 [message-completion callback repair](https://github.com/godotengine/godot/commit/d798068a0816a66b80b8096aa77212468c0155c4),
 the
 [fragmented-message assembly repair](https://github.com/godotengine/godot/commit/a2f5eb9cf095a8d942d9518a2ef5848cd47ce8f1),
@@ -429,7 +432,43 @@ to replace a closing peer after an unfinished fragment. The fresh text must
 be exactly five bytes. Official 4.4.1/4.7.2 retain stale assembly length and
 return an empty packet with a buffer error. The SDK creates a fresh engine peer
 for each session; this direct-reuse result does not establish an SDK reconnect
-defect.
+defect. Pass script options after Godot's `--` separator:
+
+```sh
+godot --headless --path . \
+  --script tests/smoke/run_websocket_fragment_reuse.gd -- \
+  --partial-type=binary --fresh-type=binary
+```
+
+Choose the partial and fresh message types independently. The fresh binary
+body includes zero and non-UTF-8 bytes.
+
+A separate experimental patch targets Godot 4.4.1-stable
+`49a5bc7b616bd04689a2c89e89bda41f50241464`:
+
+```sh
+python scripts/repair-websocket-stable.py --source /path/to/godot-4.4.1 \
+  --report /tmp/websocket-assembly.json
+```
+
+It changes only frame assembly and replacement cleanup. The applicator checks
+the exact revision, rejects conflicting changes and records source and patch
+hashes. `--check` leaves source unchanged. Build and qualify the patched engine
+before use. Official 4.4.1 and 4.7.2 still fail the mixed binary interleaved
+controls and every partial/fresh text/binary reuse pair. Upstream adoption,
+other engine builds and remote gameplay remain open.
+
+The locally built 4.4.1 native template passes 31 controls with no engine
+errors: text, binary and alternating messages across no-control/Ping/Pong,
+default byte limits, two queued packets and local 32 KiB credit, plus all
+four partial/fresh message-type pairs. Every burst delivers 65 exact packets
+with matching types. Reuse delivers exactly five fresh bytes. The same build
+passes the standard WebSocket smoke with client/server close handshakes.
+Its active SDK drill passes semantic shutdown, reset and nonresponding controls
+with the original uncredited four-per-frame sends, 50 ms TCP delay, 127-byte
+proxy writes and a 100 ms polling hold. Exact relay prefixes, cached mesh
+retirement and fresh gameplay receipts remain required. These results qualify
+the pinned Linux ARM64 build and local workload.
 
 Use `--import-godot /path/to/official-godot-4.3` in the active-shutdown driver
 to import with an editor and run a native template build via `--godot`.
@@ -470,6 +509,26 @@ the packet-count boundary, or `--hold-ms 1000` for a longer polling hold.
 Credit uses local observations and adds no network acknowledgement protocol.
 Zero capacity or packet count keeps the engine default. Keep each control
 separate from the original uncredited workload.
+
+For a receipt carried on the tested WebSocket, use
+`--credit-transport app-ack --credit-bytes 32768`. The receiver acknowledges
+only the cumulative exact prefix after checking bytes, order and message type.
+The server releases that many consumed bytes and keeps all receipts. Each
+complete callback body is 4096 bytes; the byte window covers the entire body.
+The later sentinel waits for a receipt covering all 64 burst bodies. Use
+`--ack-delay-ms 100` to hold receipts after consumption. The existing local
+batch control remains the default. This experiment needs a cooperating sender;
+it adds no delivery guarantee to the SDK or the uncredited workload. The window
+must also fit the packet-count limit: on a two-packet queue, a 32 KiB window
+still overflows, while an 8192-byte window admits exactly two bodies. Failed
+byte or order checks release no receipt or credit.
+
+With Chromium 156 on Linux ARM64, all three supported engines deliver 65/65
+exact messages with a 32 KiB application window, 100 ms polling holds and
+100 ms delayed receipts. No callback is rejected and outstanding bodies stay
+within 32768 bytes. The matched uncredited 4.7.2 run delivers 31/65 messages;
+34 scoped rejections account for every missing receipt. The later sentinel
+arrives. These local measurements preserve the original overflow verdict.
 
 Linux ARM64 and Chromium 156 controls retain these results on Web:
 

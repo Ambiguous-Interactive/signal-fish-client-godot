@@ -13,6 +13,7 @@ var _peer := WebSocketPeer.new()
 var _credit_bytes := 0
 var _fragment_bytes := 0
 var _fragment_control := "none"
+var _message_type := "text"
 var _received := 0
 var _first_gap: Dictionary = {}
 var _failures: Array[String] = []
@@ -33,7 +34,8 @@ func _initialize() -> void:
 				"--max-queued-packets",
 				"--credit",
 				"--fragment-bytes",
-				"--fragment-control"
+				"--fragment-control",
+				"--message-type"
 			]
 		):
 			_failures.append("unknown argument: " + argument)
@@ -42,6 +44,12 @@ func _initialize() -> void:
 			_failures.append(option + " requires =value")
 			continue
 		var value := argument.substr(option.length() + 1)
+		if option == "--message-type":
+			if value not in ["text", "binary", "alternating"]:
+				_failures.append("message type must be text, binary or alternating")
+			else:
+				_message_type = value
+			continue
 		if option == "--fragment-control":
 			if value not in ["none", "ping", "pong"]:
 				_failures.append("fragment control must be none, ping or pong")
@@ -89,19 +97,28 @@ func _process(_delta: float) -> bool:
 	return false
 
 
-func _body(sequence: int) -> String:
-	return ("%08d" % sequence) + "x".repeat(BODY_BYTES - 8)
+func _is_text(sequence: int) -> bool:
+	return _message_type == "text" or _message_type == "alternating" and sequence % 2 == 0
+
+
+func _body(sequence: int) -> PackedByteArray:
+	var bytes := ("%08d" % sequence).to_utf8_buffer()
+	bytes.resize(BODY_BYTES)
+	for offset: int in range(8, BODY_BYTES):
+		bytes[offset] = 120 if _is_text(sequence) else (offset + sequence) % 256
+	return bytes
 
 
 func _send(sequence: int) -> Error:
+	var opcode := ServerScript.OP_TEXT if _is_text(sequence) else ServerScript.OP_BINARY
 	if _fragment_bytes > 0:
 		var control := 0
 		if _fragment_control == "ping":
 			control = ServerScript.OP_PING
 		elif _fragment_control == "pong":
 			control = ServerScript.OP_PONG
-		return _server.send_text_fragments(_body(sequence), _fragment_bytes, control)
-	return _server.send_text_frame(_body(sequence))
+		return _server.send_message_fragments(_body(sequence), opcode, _fragment_bytes, control)
+	return _server._send_frame(opcode, _body(sequence))
 
 
 func _poll() -> void:
@@ -119,18 +136,25 @@ func _poll() -> void:
 	print("WEBSOCKET_RECEIVE_POLL " + JSON.stringify(observation))
 	while _peer.get_available_packet_count() > 0:
 		var bytes := _peer.get_packet()
-		var text := bytes.get_string_from_utf8()
-		var sequence := text.left(8).to_int()
-		var exact := bytes == _body(_received).to_utf8_buffer()
+		var sequence := bytes.slice(0, 8).get_string_from_ascii().to_int()
+		var exact := bytes == _body(_received)
+		var exact_mode := _peer.was_string_packet() == _is_text(_received)
 		if not exact and _first_gap.is_empty():
 			_first_gap = {"expected": _received, "received": sequence, "poll": observation}
-		if _peer.get_packet_error() != OK or not _peer.was_string_packet() or not exact:
+		if _peer.get_packet_error() != OK or not exact_mode or not exact:
 			if _failures.is_empty():
 				_failures.append("exact receive prefix")
 		print(
 			(
 				"WEBSOCKET_RECEIVE_PACKET "
-				+ JSON.stringify({"sequence": sequence, "bytes": bytes.size(), "exact": exact})
+				+ JSON.stringify(
+					{
+						"sequence": sequence,
+						"bytes": bytes.size(),
+						"exact": exact,
+						"exact_mode": exact_mode
+					}
+				)
 			)
 		)
 		_received += 1
@@ -207,6 +231,7 @@ func _finish() -> void:
 					"body_bytes": BODY_BYTES,
 					"fragment_bytes": _fragment_bytes,
 					"fragment_control": _fragment_control,
+					"message_type": _message_type,
 					"watchdog_ms": _watchdog_ms,
 					"target_packets": PACKETS + 1,
 					"offered_packets": _sent,
