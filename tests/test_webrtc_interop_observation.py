@@ -25,7 +25,8 @@ SPEC = importlib.util.spec_from_file_location("webrtc_interop", SCRIPT)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Could not load {SCRIPT}")
 drill = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(drill)
+with patch.dict(sys.modules, {"playwright": None, "playwright.sync_api": None}):
+    SPEC.loader.exec_module(drill)
 
 
 class DriverTimelineTests(unittest.TestCase):
@@ -1424,7 +1425,7 @@ class RetirementMatrixTests(unittest.TestCase):
                 with (
                     patch.object(drill, "RelayServer", return_value=server),
                     patch.object(drill.threading, "Thread"),
-                    patch.object(drill, "sync_playwright", return_value=playwright),
+                    patch("playwright.sync_api.sync_playwright", return_value=playwright),
                     patch.object(drill, "wait_web_startup"),
                     patch.object(drill, "observe_browser", return_value=""),
                     patch.object(drill.subprocess, "Popen", return_value=process) as popen,
