@@ -142,8 +142,8 @@ jobs:
             - name: Check Playwright system setup
               run: python3 -m unittest tests.test_install_playwright_deps
 
-            - name: Test WebRTC drill evidence
-              run: .venv-ci/bin/python -m unittest tests.test_webrtc_interop_observation tests.test_webrtc_reference
+            - name: Test transport drill evidence
+              run: .venv-ci/bin/python -m unittest tests.test_webrtc_interop_observation tests.test_webrtc_reference tests.test_websocket_browser_observation
 
     test:
         name: Godot ${{ matrix.godot }} tests
