@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the opt-in native WebSocket assembly repair to pinned stable Godot source."""
+"""Apply the opt-in native WebSocket receive repair to pinned stable Godot source."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
     patch = script.parent / "patches" / PATCHES[base]
     return {
         **backport.apply_patch(source, check_only, base, patch),
-        "issues": [491, 492],
-        "scope": "experimental native assembly repair; build and runtime qualification required",
+        "issues": [485, 491, 492, 496],
+        "scope": "experimental native receive/assembly repair; build and runtime qualification required",
     }
 
 

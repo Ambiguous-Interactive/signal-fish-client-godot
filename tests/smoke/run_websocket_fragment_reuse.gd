@@ -10,13 +10,28 @@ var _closing_state := -1
 var _fresh: Dictionary = {}
 var _partial_type := "text"
 var _fresh_type := "text"
+var _replacement := "closing"
+var _queued_before_partial := false
+var _retired_queued := 0
 
 
 func _initialize() -> void:
 	for argument: String in OS.get_cmdline_user_args():
 		var option := argument.get_slice("=", 0)
 		var value := argument.get_slice("=", 1)
-		if option not in ["--partial-type", "--fresh-type"] or value not in ["text", "binary"]:
+		if not argument.begins_with(option + "="):
+			_failures.append("option requires =value")
+		elif option == "--replacement":
+			if value not in ["closing", "aborted", "handshake"]:
+				_failures.append("replacement must be closing, aborted or handshake")
+			else:
+				_replacement = value
+		elif option == "--queued-before-partial":
+			if value not in ["true", "false"]:
+				_failures.append("queued-before-partial must be true or false")
+			else:
+				_queued_before_partial = value == "true"
+		elif option not in ["--partial-type", "--fresh-type"] or value not in ["text", "binary"]:
 			_failures.append("expected --partial-type=text|binary or --fresh-type=text|binary")
 		elif option == "--partial-type":
 			_partial_type = value
@@ -51,15 +66,37 @@ func _open() -> bool:
 	return true
 
 
-func _run() -> void:
+func _queue_retired() -> bool:
+	if not _queued_before_partial:
+		return true
+	if _server.send_text_frame("retired") != OK:
+		_failures.append("retired send")
+		return false
+	var deadline := Time.get_ticks_msec() + 2000
+	while _peer.get_available_packet_count() == 0 and Time.get_ticks_msec() < deadline:
+		_peer.poll()
+		await process_frame
+	_retired_queued = _peer.get_available_packet_count()
+	if _retired_queued != 1:
+		_failures.append("retired packet missing")
+		return false
+	return true
+
+
+func _prepare() -> bool:
 	if not _failures.is_empty():
-		_finish()
-		return
+		return false
 	if _server.listen() != OK:
 		_failures.append("listen")
+		return false
+	return await _open()
+
+
+func _run() -> void:
+	if not await _prepare():
 		_finish()
 		return
-	if not await _open():
+	if not await _queue_retired():
 		_finish()
 		return
 	var partial_opcode := (
@@ -81,12 +118,29 @@ func _run() -> void:
 		_failures.append("empty pong barrier")
 		_finish()
 		return
-	if _peer.get_available_packet_count() != 0:
+	if _peer.get_available_packet_count() != _retired_queued:
 		_failures.append("unfinished fragment became packet")
-	_peer.close(3400, "replace")
+	_peer.close(-1 if _replacement == "aborted" else 3400, "replace")
 	_closing_state = _peer.get_ready_state()
-	if _closing_state != WebSocketPeer.STATE_CLOSING:
+	if _replacement == "aborted":
+		if _closing_state != WebSocketPeer.STATE_CLOSED:
+			_failures.append("aborted state")
+	elif _closing_state != WebSocketPeer.STATE_CLOSING:
 		_failures.append("closing state")
+	if _replacement == "handshake":
+		deadline = Time.get_ticks_msec() + 2000
+		while (
+			_peer.get_ready_state() != WebSocketPeer.STATE_CLOSED
+			and Time.get_ticks_msec() < deadline
+		):
+			_peer.poll()
+			await process_frame
+		if _peer.get_ready_state() != WebSocketPeer.STATE_CLOSED:
+			_failures.append("close handshake timeout")
+			_finish()
+			return
+		if _peer.get_close_code() != 3400 or _peer.get_close_reason() != "replace":
+			_failures.append("close handshake result")
 	if not await _open():
 		_finish()
 		return
@@ -134,6 +188,8 @@ func _finish() -> void:
 					"closing_state": _closing_state,
 					"empty_pongs": _server.received_pongs.size(),
 					"fresh": _fresh,
+					"replacement": _replacement,
+					"retired_queued": _retired_queued,
 					"partial_type": _partial_type,
 					"fresh_type": _fresh_type,
 					"engine": Engine.get_version_info()["string"]

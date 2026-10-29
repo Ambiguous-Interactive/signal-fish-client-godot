@@ -24,7 +24,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       original delayed workload and separate local body-credit controls.
 - [ ] Qualify the experimental Godot 4.3 WebSocket receive backport and engine upgrades on
       remote networks (#485; see `docs/testing.md`). Preserve the retained
-      byte/count rejections, exact delivered prefix, fragmented-message assembly
+      byte/count rejections, exact delivered prefix, full-buffer empty-fragment progress (#496),
+      fragmented-message assembly
       and matched local/application ACK credit controls.
 - [ ] Coordinate the interleaved Ping/Pong assembly repair upstream and qualify
       additional stable engines on fragmented gameplay and direct peer reuse

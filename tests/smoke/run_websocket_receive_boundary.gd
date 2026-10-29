@@ -1,13 +1,14 @@
 extends SceneTree
 
 const ServerScript = preload("res://tests/smoke/ws_test_server.gd")
-const BODY_BYTES := 4096
 const PACKETS := 64
 const CONNECT_TIMEOUT_MS := 5000
 const READ_TIMEOUT_MS := 1000
 const BATCH_HOLD_MS := 100
 const WATCHDOG_MARGIN_MS := 1000
 
+var _body_bytes := 4096
+var _empty_fragments := false
 var _server := ServerScript.new()
 var _peer := WebSocketPeer.new()
 var _credit_bytes := 0
@@ -35,7 +36,9 @@ func _initialize() -> void:
 				"--credit",
 				"--fragment-bytes",
 				"--fragment-control",
-				"--message-type"
+				"--message-type",
+				"--body-bytes",
+				"--empty-fragments"
 			]
 		):
 			_failures.append("unknown argument: " + argument)
@@ -44,6 +47,12 @@ func _initialize() -> void:
 			_failures.append(option + " requires =value")
 			continue
 		var value := argument.substr(option.length() + 1)
+		if option == "--empty-fragments":
+			if value not in ["true", "false"]:
+				_failures.append("empty fragments must be true or false")
+			else:
+				_empty_fragments = value == "true"
+			continue
 		if option == "--message-type":
 			if value not in ["text", "binary", "alternating"]:
 				_failures.append("message type must be text, binary or alternating")
@@ -60,7 +69,9 @@ func _initialize() -> void:
 			_failures.append(option + " must be an integer")
 			continue
 		var number := value.to_int()
-		if option == "--credit":
+		if option == "--body-bytes":
+			_body_bytes = number
+		elif option == "--credit":
 			_credit_bytes = number
 		elif option == "--fragment-bytes":
 			_fragment_bytes = number
@@ -70,15 +81,19 @@ func _initialize() -> void:
 			_peer.inbound_buffer_size = number
 		else:
 			_peer.max_queued_packets = number
-	if _credit_bytes < 0 or _credit_bytes > 0 and _credit_bytes < BODY_BYTES:
+	if _body_bytes < 8 or _body_bytes > 65535:
+		_failures.append("body bytes must be 8..65535")
+	if _empty_fragments and _fragment_bytes == 0:
+		_failures.append("empty fragments require fragmented messages")
+	if _credit_bytes < 0 or _credit_bytes > 0 and _credit_bytes < _body_bytes:
 		_failures.append("credit must be zero or admit one complete body")
 	if _fragment_control != "none" and _fragment_bytes == 0:
 		_failures.append("fragment control requires fragmented messages")
-	if _fragment_bytes < 0 or _fragment_bytes >= BODY_BYTES:
+	if _fragment_bytes < 0 or _fragment_bytes >= _body_bytes:
 		_failures.append("fragment bytes must be zero or smaller than one body")
 	if _failures.is_empty():
 		if _credit_bytes > 0:
-			_batch_packets = mini(PACKETS, int(_credit_bytes / float(BODY_BYTES)))
+			_batch_packets = mini(PACKETS, int(_credit_bytes / float(_body_bytes)))
 		var batches := ceili(PACKETS / float(_batch_packets))
 		_watchdog_ms = (
 			CONNECT_TIMEOUT_MS
@@ -103,8 +118,8 @@ func _is_text(sequence: int) -> bool:
 
 func _body(sequence: int) -> PackedByteArray:
 	var bytes := ("%08d" % sequence).to_utf8_buffer()
-	bytes.resize(BODY_BYTES)
-	for offset: int in range(8, BODY_BYTES):
+	bytes.resize(_body_bytes)
+	for offset: int in range(8, _body_bytes):
 		bytes[offset] = 120 if _is_text(sequence) else (offset + sequence) % 256
 	return bytes
 
@@ -117,7 +132,9 @@ func _send(sequence: int) -> Error:
 			control = ServerScript.OP_PING
 		elif _fragment_control == "pong":
 			control = ServerScript.OP_PONG
-		return _server.send_message_fragments(_body(sequence), opcode, _fragment_bytes, control)
+		return _server.send_message_fragments(
+			_body(sequence), opcode, _fragment_bytes, control, _empty_fragments
+		)
 	return _server._send_frame(opcode, _body(sequence))
 
 
@@ -228,8 +245,9 @@ func _finish() -> void:
 					"engine": Engine.get_version_info()["string"],
 					"capacity": _peer.inbound_buffer_size,
 					"max_queued_packets": _peer.max_queued_packets,
-					"body_bytes": BODY_BYTES,
+					"body_bytes": _body_bytes,
 					"fragment_bytes": _fragment_bytes,
+					"empty_fragments": _empty_fragments,
 					"fragment_control": _fragment_control,
 					"message_type": _message_type,
 					"watchdog_ms": _watchdog_ms,

@@ -68,7 +68,11 @@ func send_text_fragments(text: String, fragment_bytes: int, control_opcode: int 
 
 ## Sends exact text or binary bytes with an optional interleaved control frame.
 func send_message_fragments(
-	bytes: PackedByteArray, message_opcode: int, fragment_bytes: int, control_opcode: int = 0
+	bytes: PackedByteArray,
+	message_opcode: int,
+	fragment_bytes: int,
+	control_opcode: int = 0,
+	empty_edges: bool = false
 ) -> Error:
 	if (
 		fragment_bytes <= 0
@@ -78,16 +82,24 @@ func send_message_fragments(
 		return ERR_INVALID_PARAMETER
 	if bytes.is_empty():
 		return _send_frame(message_opcode, bytes)
+	if empty_edges:
+		var error := _send_frame(message_opcode, PackedByteArray(), false)
+		if error != OK:
+			return error
 	for offset: int in range(0, bytes.size(), fragment_bytes):
 		var end := mini(offset + fragment_bytes, bytes.size())
-		var opcode := message_opcode if offset == 0 else OP_CONTINUATION
-		var error := _send_frame(opcode, bytes.slice(offset, end), end == bytes.size())
+		var opcode := message_opcode if offset == 0 and not empty_edges else OP_CONTINUATION
+		var error := _send_frame(
+			opcode, bytes.slice(offset, end), end == bytes.size() and not empty_edges
+		)
 		if error != OK:
 			return error
 		if offset == 0 and end < bytes.size() and control_opcode != 0:
 			var control_error := _send_frame(control_opcode, "interleaved-control".to_utf8_buffer())
 			if control_error != OK:
 				return control_error
+	if empty_edges:
+		return _send_frame(OP_CONTINUATION, PackedByteArray())
 	return OK
 
 

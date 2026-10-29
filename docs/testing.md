@@ -452,7 +452,7 @@ python scripts/repair-websocket-stable.py --source /path/to/godot-stable \
   --report /tmp/websocket-assembly.json
 ```
 
-Each patch changes only frame assembly and replacement cleanup. The applicator
+Each patch repairs receive progress, frame assembly and replacement cleanup. The applicator
 checks the exact revision, selects its patch, rejects conflicting changes and
 records source and patch hashes. `--check` leaves source unchanged. Build and
 qualify the patched engine before use. Official 4.4.1 and 4.7.2 still fail
@@ -509,6 +509,45 @@ the tested native build and local workload; upstream and remote qualification
 remain open. A new matched official 4.3 shutdown control also passes;
 that passing comparison does not explain the retained overflow history.
 The finite burst controls keep the native receive-boundary failure explicit.
+
+### Full fragmented-message receive limit
+
+A fragmented message can fill the native receive buffer before its final empty
+continuation arrives (#496). Official Godot 4.4.1/4.7.2 and the earlier experimental
+native patches stall with an open connection and no complete packet. Run:
+
+```sh
+godot --headless --path . \
+  --script tests/smoke/run_websocket_fragment_limit.gd
+```
+
+The fixture fills the 4095-byte buffer with an unfinished binary message,
+then sends an empty final continuation and a separate two-byte binary message.
+Both messages must arrive with exact bytes and types. Use
+`-- --message-type=text --fragment-control=ping` for text and an exact Pong
+response. `--fragment-control=pong` checks incoming Pong separation.
+`--capacity=65535` checks the default byte limit.
+`--oversize=true` adds one continuation byte: the peer must close with code
+1009 and return no packet. Engine buffer errors fail every control.
+
+The updated experimental patches permit one byte per socket read when an
+unfinished message fills the payload buffer and no complete packet is queued.
+This lets empty continuations and controls progress without reading into the
+next message. The bundled wslay change tracks cumulative message length in
+unbuffered mode, so an extra continuation byte still exceeds the configured
+limit. The 4.3 patch also adopts the pinned 4.4.1 close handling for a stopped
+parser, so a rejected message reaches a terminal close state.
+Apply the current patch to a clean pinned source checkout and rebuild.
+Earlier patched binaries do not contain this repair.
+
+The burst fixture also accepts `--body-bytes=4095 --capacity=4095` and
+`--empty-fragments=true --fragment-bytes=127`. Empty fragments surround each
+message; the default 4096-byte workload stays available.
+The reuse fixture accepts `--replacement=closing|aborted|handshake` and
+`--queued-before-partial=true`. It checks that a complete unread packet and
+unfinished fragment are retired before the fresh connection's five-byte
+message. These controls extend #485, #491 and #492. Remote networks and
+upstream adoption remain open.
 
 ### Web WebSocket receive boundary
 

@@ -57,7 +57,7 @@ index 3110e87071c26d4977f82a121ff241b3f14ed758..d81eeaa4485f4314b97b08832f7d424f
  public:
  	static WebSocketPeer *create() {
 diff --git a/modules/websocket/wsl_peer.cpp b/modules/websocket/wsl_peer.cpp
-index 0a9a4053e3a4d7c53bc462896c4314dc17d9abea..784f1d3bc34146764abe65ee0e3a42edb8e5420f 100644
+index 0a9a4053e3a4d7c53bc462896c4314dc17d9abea..5fa71e914dcba26d57957de2a263a989c74ba352 100644
 --- a/modules/websocket/wsl_peer.cpp
 +++ b/modules/websocket/wsl_peer.cpp
 @@ -295,6 +295,7 @@ Error WSLPeer::_do_server_handshake() {
@@ -76,12 +76,16 @@ index 0a9a4053e3a4d7c53bc462896c4314dc17d9abea..784f1d3bc34146764abe65ee0e3a42ed
  				wslay_event_config_set_max_recv_msg_length(wsl_ctx, inbound_buffer_size);
  				in_buffer.resize(nearest_shift(inbound_buffer_size), max_queued_packets);
  				packet_buffer.resize(inbound_buffer_size);
-@@ -567,8 +569,15 @@ ssize_t WSLPeer::_wsl_recv_callback(wslay_event_context_ptr ctx, uint8_t *data,
+@@ -567,8 +569,19 @@ ssize_t WSLPeer::_wsl_recv_callback(wslay_event_context_ptr ctx, uint8_t *data,
  		wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
  		return -1;
  	}
-+	// Make sure we don't read more than what our buffer can hold.
-+	size_t buffer_limit = MIN(peer->in_buffer.payload_space_left(), peer->in_buffer.packets_space_left() * 2); // The minimum size of a websocket message is 2 bytes.
++	int payload_limit = peer->in_buffer.payload_space_left();
++	if (payload_limit == 0 && peer->pending_message.payload_size == (size_t)peer->inbound_buffer_size && peer->in_buffer.packets_left() == 0) {
++		// Finish a full fragmented message or process control frames. The cumulative message limit rejects extra payload before its chunk callback.
++		payload_limit = 1; // Do not prefetch bytes from the next message.
++	}
++	size_t buffer_limit = MIN(payload_limit, peer->in_buffer.packets_space_left() * 2); // The minimum size of a websocket message is 2 bytes.
 +	size_t to_read = MIN(len, buffer_limit);
 +	if (to_read == 0) {
 +		wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
@@ -93,7 +97,7 @@ index 0a9a4053e3a4d7c53bc462896c4314dc17d9abea..784f1d3bc34146764abe65ee0e3a42ed
  	if (err != OK) {
  		print_verbose("Websocket get data error: " + itos(err) + ", read (should be 0!): " + itos(read));
  		wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
-@@ -581,6 +590,27 @@ ssize_t WSLPeer::_wsl_recv_callback(wslay_event_context_ptr ctx, uint8_t *data,
+@@ -581,6 +594,27 @@ ssize_t WSLPeer::_wsl_recv_callback(wslay_event_context_ptr ctx, uint8_t *data,
  	return read;
  }
  
@@ -121,7 +125,7 @@ index 0a9a4053e3a4d7c53bc462896c4314dc17d9abea..784f1d3bc34146764abe65ee0e3a42ed
  ssize_t WSLPeer::_wsl_send_callback(wslay_event_context_ptr ctx, const uint8_t *data, size_t len, int flags, void *user_data) {
  	WSLPeer *peer = (WSLPeer *)user_data;
  	Ref<StreamPeer> conn = peer->connection;
-@@ -626,25 +656,22 @@ void WSLPeer::_wsl_msg_recv_callback(wslay_event_context_ptr ctx, const struct w
+@@ -626,25 +660,22 @@ void WSLPeer::_wsl_msg_recv_callback(wslay_event_context_ptr ctx, const struct w
  		return;
  	}
  
@@ -155,7 +159,51 @@ index 0a9a4053e3a4d7c53bc462896c4314dc17d9abea..784f1d3bc34146764abe65ee0e3a42ed
  	_wsl_msg_recv_callback
  };
  
-@@ -780,8 +807,11 @@ void WSLPeer::close(int p_code, String p_reason) {
+@@ -688,12 +719,37 @@ void WSLPeer::poll() {
+ 			close(-1);
+ 			return;
+ 		}
+-		if (wslay_event_get_close_sent(wsl_ctx) && wslay_event_get_close_received(wsl_ctx)) {
+-			// Clean close.
+-			wslay_event_context_free(wsl_ctx);
+-			wsl_ctx = nullptr;
+-			close(-1);
+-			return;
++		if (wslay_event_get_close_sent(wsl_ctx)) {
++			if (wslay_event_get_close_received(wsl_ctx)) {
++				// Clean close.
++				wslay_event_context_free(wsl_ctx);
++				wsl_ctx = nullptr;
++				close(-1);
++				return;
++			} else if (!wslay_event_get_read_enabled(wsl_ctx)) {
++				// Some protocol error caused wslay to stop processing incoming events, we'll never receive a close from the other peer.
++				close_code = wslay_event_get_status_code_sent(wsl_ctx);
++				switch (close_code) {
++					case WSLAY_CODE_MESSAGE_TOO_BIG:
++						close_reason = "Message too big";
++						break;
++					case WSLAY_CODE_PROTOCOL_ERROR:
++						close_reason = "Protocol error";
++						break;
++					case WSLAY_CODE_ABNORMAL_CLOSURE:
++						close_reason = "Abnormal closure";
++						break;
++					case WSLAY_CODE_INVALID_FRAME_PAYLOAD_DATA:
++						close_reason = "Invalid frame payload data";
++						break;
++					default:
++						close_reason = "Unknown";
++				}
++				wslay_event_context_free(wsl_ctx);
++				wsl_ctx = nullptr;
++				close(-1);
++				return;
++			}
+ 		}
+ 	}
+ }
+@@ -780,8 +836,11 @@ void WSLPeer::close(int p_code, String p_reason) {
  		}
  	}
  
@@ -169,7 +217,7 @@ index 0a9a4053e3a4d7c53bc462896c4314dc17d9abea..784f1d3bc34146764abe65ee0e3a42ed
  }
  
  IPAddress WSLPeer::get_connected_host() const {
-@@ -833,6 +863,7 @@ void WSLPeer::_clear() {
+@@ -833,6 +892,7 @@ void WSLPeer::_clear() {
  	was_string = 0;
  	in_buffer.clear();
  	packet_buffer.clear();
@@ -219,3 +267,16 @@ index bf9f5c852732eb8c612f2adeac7e5c629692d9a2..7b54efbf762cabfb2565df5b478f07e6
  	// WebSocket configuration.
  	bool use_tls = true;
  	Ref<TLSOptions> tls_options;
+diff --git a/thirdparty/wslay/wslay_event.c b/thirdparty/wslay/wslay_event.c
+index 4c29fe400056c0f482cc7055a87316f8126a2570..f18387305081c63e70f015c0436045b205507589 100644
+--- a/thirdparty/wslay/wslay_event.c
++++ b/thirdparty/wslay/wslay_event.c
+@@ -564,6 +564,8 @@ int wslay_event_recv(wslay_event_context_ptr ctx) {
+             ctx->read_enabled = 0;
+             return (int)r;
+           }
++        } else {
++          ctx->imsg->msg_length += iocb.payload_length;
+         }
+       }
+       /* If RSV1 bit is set then it is too early for utf-8 validation */
