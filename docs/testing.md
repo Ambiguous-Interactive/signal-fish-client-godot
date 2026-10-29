@@ -386,6 +386,64 @@ dropped inside a Godot 4.3 engine poll. A larger finite buffer only moves that
 boundary. The retained 4.3 failure still needs an engine upgrade or qualified
 backport for a receive-boundary repair.
 
+Add `-- --fragment-bytes=127` to split each message into WebSocket TEXT and
+CONTINUATION frames. Zero preserves single-frame messages. Message bytes,
+credit, capacity and the later sentinel stay unchanged. TCP may coalesce the
+writes. Godot 4.4-beta1 passes the original control but truncates fragmented
+messages: a 512 KiB run receives 65/65 messages with 127-byte bodies instead of
+4096 bytes. The exact-byte check fails from packet zero. Godot 4.4.1 and 4.7.2
+pass the same fragmented controls. Any 4.3 backport must also include and qualify
+the [fragmented-message assembly repair](https://github.com/godotengine/godot/commit/a2f5eb9cf095a8d942d9518a2ef5848cd47ce8f1).
+The beta is a historical negative control; it adds no support promise.
+
+### Web WebSocket receive boundary
+
+Issue #488 has a separate engine-only browser control. It needs Godot Web
+export templates and Playwright Chromium. It uses a local Python server and
+`WebSocketPeer`, with no Signal Fish service or WebRTC extension:
+
+```sh
+python scripts/check-websocket-web-receive.py \
+  --godot /path/to/godot --chromium /path/to/chromium \
+  --output /tmp/websocket-web-receive
+```
+
+The output directory must be new. The server sends 64 exact 4096-byte text
+messages and a later sentinel. The script holds polling for 100 ms after each
+burst command, then checks every delivered byte, type and sequence. Results
+retain commands, engine/export/source hashes, browser version, poll intervals,
+every callback and every delivered sequence. This opt-in control preserves
+engine overflow failures outside the deterministic gates.
+
+Use `--credit-bytes 32768` for local consumer body-byte batches,
+`--capacity 524288` for a larger byte buffer, `--max-queued-packets 2` to isolate
+the packet-count boundary, or `--hold-ms 1000` for a longer polling hold.
+Credit uses local observations and adds no network acknowledgement protocol.
+Zero capacity or packet count keeps the engine default. Keep each control
+separate from the original uncredited workload.
+
+Linux ARM64 and Chromium 156 controls retain these results on Web:
+
+| Engine | Default buffer | 512 KiB buffer | 512 KiB, two packets | 32 KiB body credit |
+| ------ | -------------- | -------------- | -------------------- | ------------------ |
+| 4.3    | Fails          | Passes         | Fails                | Passes             |
+| 4.4.1  | Fails          | Passes         | Fails                | Passes             |
+| 4.7.2  | Fails          | Passes         | Fails                | Passes             |
+
+Every finite control observes all 65 browser callbacks. The failed byte/count
+controls retain unique engine rejection identities matching the missing script
+receipts; the later sentinel is delivered. A larger finite buffer and local
+credit qualify those controls. The original uncredited receive loss remains
+open. These are local controls; remote networks remain unqualified.
+
+The test-only observer wraps the engine's assigned browser `onmessage` handler.
+Each rejection records the physical connection, callback ordinal, byte length,
+bounded prefix, rejection reason and browser clock while that handler is active.
+Payload-capacity and packet-count rejections stay distinct. An error outside
+the handler has no callback identity. Callback arrival alone does not prove
+engine acceptance. A complete trace must account for omitted records before
+comparing rejected identities with script receipts.
+
 The active-gameplay driver also accepts these comparison controls:
 
 - `--relay-packets-per-second 240`: use elapsed time to set the offered target,
@@ -454,6 +512,21 @@ on receive overflow. The graceful gap is from sequence 535 to 536 during the
 first generation; its close, retirement and fresh mesh remain exact. Credit
 changes the local offered work; it does not repair or
 qualify the original uncredited receive boundary. Every failure stays retained.
+
+Add `--trace-receive` to retain scoped browser callback and rejection records
+for the active-shutdown drill. The driver freezes the observer source per
+cohort, copies it per case, and records its hash. Generated relay bodies also
+get a parsed `relay_sequence`; other messages leave it null. Snapshots are
+collected before the browser closes, including failed controls.
+
+A new uncredited 4.7.2 Web run with 50 ms delay and 127-byte proxy reads fails
+with a scoped rejection and a generation-one relay gap from 21 to 22. A
+separate 100 ms polling-hold control identifies rejected relay sequence 23 and
+the matching application gap from 23 to 24. Both retain GoingAway, one close
+4000/server_shutdown per seat, retry eligibility, cached retirement and exact
+fresh mesh receipts. Their overall verdicts stay failed. Matched 32 KiB
+body-credit controls pass. Passing attempts and every failure stay separate;
+this evidence leaves engine repair and remote qualification open.
 
 ## Controlled lifecycle publication
 

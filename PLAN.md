@@ -17,12 +17,14 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Isolate and repair Web WebSocket callback receive overflow after service
-      recovery (#488; see `docs/testing.md`). Preserve the original delayed
+- [ ] Repair and qualify Web WebSocket callback receive overflow after service
+      recovery (#488; see `docs/testing.md`). Use scoped rejection identities
+      and the engine-only finite-burst control. Preserve the original delayed
       workload and separate byte-credit controls.
 - [ ] Qualify a Godot 4.3 WebSocket receive backport or engine upgrade on
       remote networks (#485; see `docs/testing.md`). Preserve the retained
-      byte/count rejections, exact delivered prefix and matched credit controls.
+      byte/count rejections, exact delivered prefix, fragmented-message assembly
+      and matched credit controls.
 - [ ] Qualify active gameplay shutdown on remote networks (#482; see `docs/testing.md`). Preserve
       the browser send/close race control, distinct reset and nonresponding
       close outcomes, plus cached mesh retirement.

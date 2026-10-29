@@ -850,6 +850,161 @@ process.on("beforeExit", () => {
     process.exitCode = 1;
   }
 });
+
+function testWebSocketReceiveObservation() {
+  let errorCalls = 0;
+  class Socket {
+    constructor() {
+      this.listeners = [];
+      this.nativeHandler = null;
+    }
+    addEventListener(type, fn) {
+      if (type === "message") this.listeners.push(fn);
+    }
+    get onmessage() {
+      return this.nativeHandler;
+    }
+    set onmessage(fn) {
+      this.nativeHandler = fn;
+    }
+    deliver(data) {
+      const event = { data };
+      for (const listener of this.listeners) listener.call(this, event);
+      return this.nativeHandler?.call(this, event);
+    }
+  }
+  const sandbox = {
+    window: { WebSocket: Socket },
+    performance: { now: () => 10 },
+    console: { error: () => errorCalls++ },
+    TextEncoder,
+    TextDecoder,
+    ArrayBuffer,
+    Uint8Array,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    fs.readFileSync("scripts/websocket-browser-observation.js", "utf8"),
+    sandbox,
+  );
+  const WebSocket = sandbox.window.WebSocket;
+  const snapshot = () =>
+    JSON.parse(JSON.stringify(sandbox.window.websocketReceiveSnapshot()));
+  const reject = (kind = "payload") =>
+    sandbox.console.error(
+      kind === "packet"
+        ? "ERROR: Too many packets in queue! Dropping data."
+        : kind === "legacy"
+          ? "ERROR: Buffer full! Dropping data."
+          : "ERROR: Buffer payload full! Dropping data.",
+    );
+  const a = new WebSocket(),
+    b = new WebSocket();
+  const first = function (event) {
+    assert.equal(this, a);
+    assert.equal(event.data, "00000001xxx");
+    reject("legacy");
+    return 99;
+  };
+  a.onmessage = first;
+  assert.equal(a.onmessage, first);
+  assert.equal(a.deliver("00000001xxx"), 99);
+  reject();
+  b.onmessage = function () {
+    reject("packet");
+  };
+  b.deliver(new Uint8Array([50, 51]).buffer);
+  let result = snapshot();
+  assert.equal(result.sockets.length, 2);
+  assert.equal(result.sockets[0].received, 1);
+  assert.equal(result.sockets[1].callbacks[0].prefix, "23");
+  assert.equal(result.rejections[0].callback.connection, 1);
+  assert.equal(result.rejections[0].callback.ordinal, 1);
+  assert.equal(result.rejections[0].reason, "payload_capacity");
+  assert.equal(result.rejections[1].callback, null);
+  assert.equal(result.rejections[1].reason, "payload_capacity");
+  assert.equal(result.rejections[2].callback.connection, 2);
+  assert.equal(result.rejections[2].callback.bytes, 2);
+  assert.equal(result.rejections[2].reason, "packet_capacity");
+  const replacement = function () {
+    b.deliver("nested");
+    reject();
+    throw new Error("expected");
+  };
+  a.onmessage = replacement;
+  assert.throws(() => a.deliver("é"), /expected/);
+  reject("packet");
+  result = snapshot();
+  assert.equal(result.rejections[3].callback.connection, 2);
+  assert.equal(result.rejections[4].callback.connection, 1);
+  assert.equal(result.rejections[4].callback.bytes, 2);
+  assert.equal(result.rejections[5].callback, null);
+  assert.equal(result.rejections[5].reason, "packet_capacity");
+  a.onmessage = null;
+  a.deliver("after removal");
+  assert.equal(snapshot().sockets[0].wrapped, false);
+  assert.equal(a.onmessage, null);
+  const body = "0123456789abcdef".repeat(256);
+  const relay = (sequence, dataBody = body, type = "GameData") =>
+    JSON.stringify({ type, data: { data: { sequence, body: dataBody } } });
+  a.onmessage = () => {};
+  for (const [message, expected] of [
+    [relay(73), 73],
+    [relay(0), 0],
+    [relay(7, "different"), null],
+    [relay(7.25), null],
+    [relay("7"), null],
+    [relay(-1), null],
+    [relay(Number.MAX_SAFE_INTEGER + 1), null],
+    ['{"type":"GameData","data":', null],
+    [
+      JSON.stringify({ ...JSON.parse(relay(7)), padding: "x".repeat(16384) }),
+      null,
+    ],
+    [JSON.stringify({ type: "GameData", data: { sequence: 7, body } }), null],
+    [relay(7, body, "Other"), null],
+    [new TextEncoder().encode(relay(7)).buffer, null],
+  ]) {
+    a.deliver(message);
+    assert.equal(
+      snapshot().sockets[0].callbacks.at(-1).relay_sequence,
+      expected,
+    );
+  }
+  a.onmessage = () => {
+    reject("packet");
+    throw new Error("relay handler failed");
+  };
+  assert.throws(() => a.deliver(relay(91)), /relay handler failed/);
+  assert.equal(snapshot().rejections.at(-1).callback.relay_sequence, 91);
+  assert.equal(snapshot().rejections.at(-1).reason, "packet_capacity");
+  reject();
+  assert.equal(snapshot().rejections.at(-1).callback, null);
+  assert.equal(snapshot().rejections.at(-1).reason, "payload_capacity");
+  a.onmessage = null;
+  b.onmessage = () => {};
+  for (let i = 0; i < 16384; i++) b.deliver("overflow");
+  assert.equal(snapshot().sockets[1].callbacks.length, 16384);
+  assert.equal(snapshot().sockets[1].omitted, 2);
+  b.onmessage = reject;
+  b.deliver("unretained");
+  result = snapshot();
+  assert.equal(result.rejections.at(-1).callback, null);
+  assert.equal(result.rejections.at(-1).callback_scope, null);
+  for (let i = 0; i < 4096; i++) reject();
+  result = snapshot();
+  assert.equal(result.rejections.length, 4096);
+  assert.equal(result.omitted, 9);
+  for (let i = 0; i < 31; i++) new WebSocket();
+  assert.equal(snapshot().sockets.length, 32);
+  assert.equal(snapshot().omitted, 10);
+  assert.equal(errorCalls, 4105);
+  console.log(
+    "PASS: scoped/unscoped/nested callbacks, replacement, throw cleanup, UTF8/binary byte counts, bounded relay identity, omission caps, forwarding",
+  );
+}
+
+testWebSocketReceiveObservation();
 main()
   .then(() => {
     completed = true;
