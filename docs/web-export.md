@@ -29,6 +29,22 @@ The client is single-threaded and non-blocking. `poll()` drains the socket
 from `_process` (or from your own loop) and never blocks, which fits the
 browser's single-threaded runtime.
 
+## Sends during close
+
+A send can return `FAILED` while the browser starts closing and Godot still
+reports an open socket. Stop sending after a refusal and keep polling. The
+transport waits up to one second for the browser close callback, drains queued
+packets, and reports `disconnected(code, reason)`. If no close arrives, it
+reports the original send failure once. Further sends return `ERR_UNCONFIGURED`
+during this wait. Check every send result; a refused frame was not queued.
+
+The Web engine also has a finite receive queue. A delayed Godot 4.7.2 relay
+control dropped reliable packets after restart when this queue filled
+([#488](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/488)).
+The SDK cannot recover packets discarded inside the engine. See the
+[delayed relay controls](testing.md#delayed-relay-shutdown) for the retained
+failure and separate local credit comparison.
+
 ## Origin
 
 `Origin` is a server-side policy. The browser sets it; the client cannot.

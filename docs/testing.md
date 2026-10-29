@@ -339,8 +339,9 @@ overflow and relay sequence gap (#485). Its reset and nonresponding controls
 pass. The original failure remains under `/tmp/session452-native43-original`.
 A separate one-packet-per-frame control passes every check. The slower pass
 leaves the original reliable receive failure open. These results establish
-no SDK code change needed for the measured semantic closes. Engine coverage
-and remote qualification remain open in #482, #403 and #355.
+the semantic closes on those local paths. A delayed browser control below
+exposes a separate send/close race. Engine coverage and remote qualification
+remain open in #482, #403 and #355.
 
 ### Native WebSocket receive boundary
 
@@ -411,6 +412,45 @@ native/Web cohort passes graceful shutdown, reset, nonresponding close, cached
 metadata, retirement and fresh mesh recovery at the original four-per-frame
 rate. Three new Godot 4.3 Web shutdown controls also pass. Remote-network
 and Godot 4.3 native receive qualification remain open.
+
+### Delayed relay shutdown
+
+Add `--network-delay-ms 50` to the active-shutdown command to delay each TCP
+direction by 50 ms. This includes relay data and signaling. Mesh UDP and HTTP
+control stay local. The workload, close deadlines and exact gameplay checks
+stay unchanged. This is local network emulation; real remote paths need their
+own qualification.
+
+Use `--network-chunk-bytes 127` to bound each proxy read and write. TCP may
+coalesce these writes before Godot reads them. This does not promise a matching
+engine read size or WebSocket frame fragmentation. Queue slots use a 1 MiB
+payload budget per direction, capped at 8192 chunks. Reports retain the
+effective byte/count bounds, bytes, chunk counts, peak queue size and observed
+delay for each physical connection. A full queue can add TCP backpressure.
+EOF follows queued data. Socket errors and cleanup cancellations stay visible.
+Each passing case must forward both directions on at least four connections
+and meet the requested minimum delay.
+
+The proxy's loopback integration tests are opt-in:
+`python -m unittest tests.test_delayed_tcp_proxy`. They cover large exact
+binary streams, half-close replies, actual delay, reset and idle teardown.
+
+Browser logs include socket state reads and close callbacks. On the original
+4.4.1 delayed run, both browser sockets were CLOSING while the engine reported
+OPEN. A send returned FAILED; the SDK discarded the peer before close 4000
+arrived about 80 ms later. The transport now refuses further sends and polls
+for that callback for at most one second, then falls back to one failure.
+Text and binary refusals use the same rule. All strict receipt, shutdown,
+cached metadata, retirement and fresh-gameplay checks remain required.
+
+The repaired 4.4.1 native/Web 50 ms cohort passes all six shutdown cases.
+Native 4.3 still fails exact relay receipts in all three delayed controls;
+its matched 32 KiB local body-credit controls pass. The 4.7.2 small-write
+cohort preserves shutdown and mesh checks, but its Web graceful case drops
+relay packets after restart (#488). Both seats expect sequence 24 and receive
+26/27 after engine buffer errors. Its matched 32 KiB body-credit cohort passes
+all three cases. Credit changes the local offered work; it does not repair or
+qualify the original uncredited receive boundary. Every failure stays retained.
 
 ## Controlled lifecycle publication
 

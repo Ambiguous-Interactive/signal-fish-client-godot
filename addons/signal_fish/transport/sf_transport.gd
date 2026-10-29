@@ -23,8 +23,10 @@ func poll() -> void:
 	pass
 
 
-## Contract: `ERR_BUSY` is the sanctioned non-terminal backpressure refusal
-## (drop, stay live, no `failed`); every other non-OK return must emit `failed`.
+## `ERR_BUSY` refuses a frame while keeping the session live. A send failure
+## on an open session emits `failed`. A browser send/close race may report
+## `closed` after bounded polling. Sends on a closing or ended session can
+## return `ERR_UNCONFIGURED` without another terminal signal.
 func send_text(_text: String) -> Error:
 	push_error("SFTransport.send_text() must be implemented by a transport adapter")
 	return ERR_UNAVAILABLE

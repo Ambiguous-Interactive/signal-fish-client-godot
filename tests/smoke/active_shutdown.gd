@@ -602,6 +602,27 @@ class ReceiveObserver:
 	var _max_interval_us := 0
 	var _wire_bytes := 0
 
+	func send_text(text: String) -> Error:
+		var before := get_ready_state()
+		var error := super.send_text(text)
+		if error != OK:
+			print(
+				(
+					"ACTIVE_SHUTDOWN_SEND_REFUSED "
+					+ JSON.stringify(
+						{
+							"seat": seat_index,
+							"connection": connection_index,
+							"tick_ms": Time.get_ticks_msec(),
+							"before": before,
+							"after": get_ready_state(),
+							"error": error
+						}
+					)
+				)
+			)
+		return error
+
 	func poll() -> void:
 		var started := Time.get_ticks_usec()
 		if started < pause_until_us:

@@ -32,6 +32,10 @@ var _close_requested := false
 var _requested_close_code := 1000
 var _requested_close_reason := ""
 var _warned_nonpositive_drain_cap := false
+# Browser readyState can be CLOSING before Godot receives onclose (#482).
+var _send_close_grace_ms := 1000 if OS.has_feature("web") else 0
+var _pending_send_failure := ""
+var _send_failure_deadline_ms := 0
 
 
 func connect_to_url(url: String) -> Error:
@@ -58,6 +62,14 @@ func poll() -> void:
 	if _peer != polled_peer or _is_terminal():
 		return
 	_handle_polled_state(_peer.get_ready_state())
+	if (
+		_peer == polled_peer
+		and not _is_terminal()
+		and _peer.get_ready_state() != WebSocketPeer.STATE_CLOSED
+		and not _pending_send_failure.is_empty()
+		and Time.get_ticks_msec() >= _send_failure_deadline_ms
+	):
+		_fail_current_session(_pending_send_failure)
 
 
 func send_text(text: String) -> Error:
@@ -67,7 +79,7 @@ func send_text(text: String) -> Error:
 		return ERR_BUSY
 	var error: Error = _peer.send_text(text)
 	if error != OK:
-		_fail_current_session("failed to send WebSocket text frame: %s" % error_string(error))
+		_handle_send_error(error, "text")
 	return error
 
 
@@ -78,8 +90,17 @@ func send_binary(bytes: PackedByteArray) -> Error:
 		return ERR_BUSY
 	var error: Error = _peer.send_binary(bytes)
 	if error != OK:
-		_fail_current_session("failed to send WebSocket binary frame: %s" % error_string(error))
+		_handle_send_error(error, "binary")
 	return error
+
+
+func _handle_send_error(error: Error, frame: String) -> void:
+	var message := "failed to send WebSocket %s frame: %s" % [frame, error_string(error)]
+	if error == FAILED and _send_close_grace_ms > 0:
+		_pending_send_failure = message
+		_send_failure_deadline_ms = Time.get_ticks_msec() + _send_close_grace_ms
+	else:
+		_fail_current_session(message)
 
 
 func get_buffered_amount() -> int:
@@ -129,6 +150,8 @@ func _reset_session_flags() -> void:
 	_closed_emitted = false
 	_failed_emitted = false
 	_close_requested = false
+	_pending_send_failure = ""
+	_send_failure_deadline_ms = 0
 
 
 func _make_peer() -> SFWebSocketPeerAdapterScript:
@@ -279,7 +302,10 @@ func _over_send_cap() -> bool:
 
 func _can_send() -> bool:
 	return (
-		_peer != null and not _is_terminal() and _peer.get_ready_state() == WebSocketPeer.STATE_OPEN
+		_peer != null
+		and not _is_terminal()
+		and _pending_send_failure.is_empty()
+		and _peer.get_ready_state() == WebSocketPeer.STATE_OPEN
 	)
 
 
