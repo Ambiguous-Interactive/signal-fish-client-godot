@@ -370,11 +370,12 @@ source hashes and engine hashes for every attempt.
 
 On Linux ARM64, the new controls retain these results:
 
-| Engine | Default buffer | 512 KiB buffer | 512 KiB, two packets | 32 KiB body credit |
-| ------ | -------------- | -------------- | -------------------- | ------------------ |
-| 4.3    | Fails: 16/65   | Pass: 65/65    | Fails: 3/65          | Pass: 65/65        |
-| 4.4.1  | Pass: 65/65    | Pass: 65/65    | Pass: 65/65          | Pass: 65/65        |
-| 4.7.2  | Pass: 65/65    | Pass: 65/65    | Pass: 65/65          | Pass: 65/65        |
+| Engine       | Default buffer | 512 KiB buffer | 512 KiB, two packets | 32 KiB body credit |
+| ------------ | -------------- | -------------- | -------------------- | ------------------ |
+| 4.3          | Fails: 16/65   | Pass: 65/65    | Fails: 3/65          | Pass: 65/65        |
+| 4.4.1        | Pass: 65/65    | Pass: 65/65    | Pass: 65/65          | Pass: 65/65        |
+| 4.7.2        | Pass: 65/65    | Pass: 65/65    | Pass: 65/65          | Pass: 65/65        |
+| 4.3 backport | Pass: 65/65    | Pass: 65/65    | Pass: 65/65          | Pass: 65/65        |
 
 The default byte setting is 65535 in all three engines. Matching the newer
 engines to 2048 queued packets also passes. The changed default packet count
@@ -392,9 +393,57 @@ credit, capacity and the later sentinel stay unchanged. TCP may coalesce the
 writes. Godot 4.4-beta1 passes the original control but truncates fragmented
 messages: a 512 KiB run receives 65/65 messages with 127-byte bodies instead of
 4096 bytes. The exact-byte check fails from packet zero. Godot 4.4.1 and 4.7.2
-pass the same fragmented controls. Any 4.3 backport must also include and qualify
-the [fragmented-message assembly repair](https://github.com/godotengine/godot/commit/a2f5eb9cf095a8d942d9518a2ef5848cd47ce8f1).
+pass the same fragmented controls. A 4.3 backport also needs the
+[message-completion callback repair](https://github.com/godotengine/godot/commit/d798068a0816a66b80b8096aa77212468c0155c4)
+the
+[fragmented-message assembly repair](https://github.com/godotengine/godot/commit/a2f5eb9cf095a8d942d9518a2ef5848cd47ce8f1),
+and the
+[closing-buffer lifetime repair](https://github.com/godotengine/godot/commit/81181c594170057612eb1bf3224858a474f19722).
+The assembly change alone still commits individual fragments. Clearing the
+receive buffers before the close handshake blocks its socket reads.
 The beta is a historical negative control; it adds no support promise.
+
+Add `--fragment-control=ping` or `--fragment-control=pong` with a positive
+fragment size to place a nonempty control frame inside each fragmented
+message (#491). Control bytes must stay out of the delivered text. Official Godot
+4.4.1 and 4.7.2 fail this exact-byte control even when all 65 packets arrive.
+The buffered Godot 4.3 capacity control preserves the message bytes.
+
+Apply the experimental native backport to a clean Godot 4.3-stable source
+checkout with:
+
+```sh
+python scripts/backport-websocket-43.py --source /path/to/godot \
+  --report /tmp/websocket-backport.json
+```
+
+The script pins the source revision and all four upstream commits. It records
+patch and source hashes, rejects conflicting edits, and supports `--check`.
+Build the engine separately and retain its command, log and binary hash.
+The experimental patch also keeps interleaved Ping/Pong bytes out of the
+fragmented message and clears pending assembly on connection replacement.
+This patch does not change the Web callback receive boundary.
+Issue #492 covers a separate direct-peer reuse failure. Run
+`godot --headless --path . --script tests/smoke/run_websocket_fragment_reuse.gd`
+to replace a closing peer after an unfinished fragment. The fresh text must
+be exactly five bytes. Official 4.4.1/4.7.2 retain stale assembly length and
+return an empty packet with a buffer error. The SDK creates a fresh engine peer
+for each session; this direct-reuse result does not establish an SDK reconnect
+defect.
+
+Use `--import-godot /path/to/official-godot-4.3` in the active-shutdown driver
+to import with an editor and run a native template build via `--godot`.
+Both engine binaries are hashed in the retained results.
+
+The locally built 4.3 template passes all three active-shutdown modes with
+the original uncredited four-per-frame sends, 50 ms TCP delay, 127-byte proxy
+writes and a 100 ms polling hold. Receive capacity stays at 65535 bytes.
+Exact relay prefixes, semantic/reset/nonresponding close outcomes, cached
+mesh retirement and fresh exact gameplay remain required. This qualifies
+the tested native build and local workload; upstream and remote qualification
+remain open. A new matched official 4.3 shutdown control also passes;
+that passing comparison does not explain the retained overflow history.
+The finite burst controls keep the native receive-boundary failure explicit.
 
 ### Web WebSocket receive boundary
 
@@ -455,6 +504,27 @@ The active-gameplay driver also accepts these comparison controls:
 - `--inbound-buffer-bytes` and `--max-queued-packets`: set the engine capacities.
   Zero preserves each engine's default. A Web property value does not establish
   the browser's backing queue capacity.
+
+Add `--relay-credit-transport app-ack --relay-credit-bytes 32768` for an
+application ACK comparison. Each receiver sends a cumulative exact-prefix
+receipt through `GameData`. Only a validated receipt from the current remote
+player, room and gameplay generation advances the sender's byte window.
+A missing or corrupt data packet stops new ACK progress. The default `local`
+credit mode keeps the shared-process receipt counter. ACK records retain
+physical connections, sent/received prefixes and window peaks.
+
+Application ACKs add protocol traffic and change the transmitted schedule.
+This is an opt-in drill control, with unchanged 4096-byte data bodies. It
+establishes no SDK-wide delivery guarantee. Preserve the original uncredited
+failures and qualify real remote paths separately.
+
+On Linux ARM64, the 32 KiB application ACK control passes all three shutdown
+cases on native Godot 4.3 and Web Godot 4.4.1/4.7.2 with 50 ms TCP delay, 127-byte
+proxy writes and a 100 ms initial polling hold. All exact mesh, cached
+retirement and fresh-gameplay checks pass. A matched uncredited Web run
+retains a scoped rejected callback and relay gap from 151 to 152; both seats
+still preserve the semantic shutdown close. The engine receive defect remains
+open. The application ACK control qualifies its bounded local workload.
 
 Logs identify the seat and physical connection, reported capacities, poll
 intervals and duration, queued packet peaks, total received frame bytes, first

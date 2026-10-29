@@ -155,7 +155,14 @@ def prepare(
         preset.read_text().replace('include_filter=""', 'include_filter="shutdown-options.json"')
     )
     interop.checked(
-        [args.godot, "--headless", "--path", str(project), "--editor", "--import"],
+        [
+            args.import_godot or args.godot,
+            "--headless",
+            "--path",
+            str(project),
+            "--editor",
+            "--import",
+        ],
         directory / "import.log",
     )
     if runtime == "web":
@@ -220,6 +227,7 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
         "relay_packets_per_frame": args.relay_packets_per_frame,
         "relay_packets_per_second": args.relay_packets_per_second,
         "relay_credit_bytes": args.relay_credit_bytes,
+        "relay_credit_transport": args.relay_credit_transport,
         "receive_pause_ms": args.receive_pause_ms,
         "inbound_buffer_bytes": args.inbound_buffer_bytes,
         "max_queued_packets": args.max_queued_packets,
@@ -365,6 +373,9 @@ def main() -> int:
     parser.add_argument("--server-config", type=Path, required=True)
     parser.add_argument("--server-revision", required=True)
     parser.add_argument("--godot", default="godot")
+    parser.add_argument(
+        "--import-godot", help="Editor binary for importing a native template build"
+    )
     parser.add_argument("--native-extension", type=Path)
     parser.add_argument("--chromium", type=Path)
     parser.add_argument("--runtime", choices=("all", "native", "web"), default="all")
@@ -373,6 +384,7 @@ def main() -> int:
     parser.add_argument("--relay-packets-per-frame", type=int, choices=range(1, 17), default=4)
     parser.add_argument("--relay-packets-per-second", type=int, default=0)
     parser.add_argument("--relay-credit-bytes", type=int, default=0)
+    parser.add_argument("--relay-credit-transport", choices=("local", "app-ack"), default="local")
     parser.add_argument("--inbound-buffer-bytes", type=int, default=0)
     parser.add_argument("--max-queued-packets", type=int, default=0)
     parser.add_argument("--receive-pause-ms", type=int, default=0)
@@ -390,6 +402,8 @@ def main() -> int:
         parser.error("Receive pause must be between 0 and 1000 milliseconds")
     if args.relay_packets_per_second < 0 or args.relay_credit_bytes < 0:
         parser.error("Relay rate and payload-byte credit must be nonnegative")
+    if args.relay_credit_transport == "app-ack" and args.relay_credit_bytes == 0:
+        parser.error("Application ACK credit requires a positive --relay-credit-bytes window")
     if 0 < args.relay_credit_bytes < 4096:
         parser.error("Relay credit must admit at least one 4096-byte body")
     if args.inbound_buffer_bytes < 0 or args.max_queued_packets < 0:
@@ -398,6 +412,8 @@ def main() -> int:
         parser.error("Receive capacity must admit a 4096-byte body and one packet")
     if args.runtime in ("all", "native") and args.native_extension is None:
         parser.error("--native-extension is required for native or all runtime")
+    if args.import_godot is not None and args.runtime != "native":
+        parser.error("--import-godot is only supported for native template builds")
     if os.name != "posix":
         parser.error("This local process control requires POSIX signals")
     args.server_binary = args.server_binary.resolve()
@@ -417,12 +433,14 @@ def main() -> int:
         "relay_packets_per_frame": args.relay_packets_per_frame,
         "relay_packets_per_second": args.relay_packets_per_second,
         "relay_credit_bytes": args.relay_credit_bytes,
+        "relay_credit_transport": args.relay_credit_transport,
         "receive_pause_ms": args.receive_pause_ms,
         "inbound_buffer_bytes": args.inbound_buffer_bytes,
         "max_queued_packets": args.max_queued_packets,
         "network_delay_ms": args.network_delay_ms,
         "network_chunk_bytes": args.network_chunk_bytes,
         "trace_receive": args.trace_receive,
+        "import_engine_sha256": interop.setup_identities([args.import_godot or args.godot]),
         "client_revision": subprocess.check_output(  # noqa: S603
             [shutil.which("git") or "git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=30
         ).strip(),

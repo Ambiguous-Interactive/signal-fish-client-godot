@@ -17,6 +17,7 @@ const WS_GUID := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 var received_text: Array[String] = []
 var received_binary: Array[PackedByteArray] = []
 var client_close_codes: Array[int] = []
+var received_pongs: Array[PackedByteArray] = []
 
 var _server: TCPServer = null
 var _connection: StreamPeerTCP = null
@@ -61,8 +62,8 @@ func send_text_frame(text: String) -> Error:
 
 
 ## Sends one text message in RFC 6455 fragments for receive-boundary controls.
-func send_text_fragments(text: String, fragment_bytes: int) -> Error:
-	if fragment_bytes <= 0:
+func send_text_fragments(text: String, fragment_bytes: int, control_opcode: int = 0) -> Error:
+	if fragment_bytes <= 0 or control_opcode not in [0, OP_PING, OP_PONG]:
 		return ERR_INVALID_PARAMETER
 	var bytes := text.to_utf8_buffer()
 	if bytes.is_empty():
@@ -73,6 +74,10 @@ func send_text_fragments(text: String, fragment_bytes: int) -> Error:
 		var error := _send_frame(opcode, bytes.slice(offset, end), end == bytes.size())
 		if error != OK:
 			return error
+		if offset == 0 and end < bytes.size() and control_opcode != 0:
+			var control_error := _send_frame(control_opcode, "interleaved-control".to_utf8_buffer())
+			if control_error != OK:
+				return control_error
 	return OK
 
 
@@ -252,7 +257,9 @@ func _handle_frame(opcode: int, payload: PackedByteArray) -> void:
 				_send_frame(OP_CLOSE, payload)
 		OP_PING:
 			_send_frame(OP_PONG, payload)
-		OP_CONTINUATION, OP_PONG:
+		OP_PONG:
+			received_pongs.append(payload.duplicate())
+		OP_CONTINUATION:
 			pass
 
 

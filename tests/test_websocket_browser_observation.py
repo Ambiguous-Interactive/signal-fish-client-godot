@@ -181,5 +181,83 @@ class BrowserFailureTests(unittest.TestCase):
                     self.assertIs(report["receive_evidence"]["trace_complete"], False)
 
 
+class BackportApplicatorTests(unittest.TestCase):
+    def test_real_git_apply_preserves_pin_and_exact_source_contract(self) -> None:
+        script = SCRIPT.parent / "backport-websocket-43.py"
+        spec = importlib.util.spec_from_file_location("websocket_backport", script)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not load {script}")
+        backport = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(backport)
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            backport.git(source, "init", "--quiet")
+            path = source / "peer.cpp"
+            original = "before\n" + "unchanged\n" * 12
+            path.write_text(original)
+            backport.git(source, "add", "peer.cpp")
+            commit = backport.git(
+                source,
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            )
+            self.assertEqual(commit.returncode, 0, commit.stderr)
+            revision = backport.git(source, "rev-parse", "HEAD").stdout.strip()
+            path.write_text(original.replace("before", "after"))
+            patch_file = source / "backport.patch"
+            patch_file.write_text(
+                backport.git(
+                    source,
+                    "diff",
+                    "--full-index",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-color",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    "--diff-algorithm=myers",
+                    "--no-indent-heuristic",
+                    "--unified=3",
+                    "--",
+                    "peer.cpp",
+                ).stdout
+            )
+            backport.git(source, "checkout", "--", "peer.cpp")
+            with (
+                patch.object(backport, "BASE", revision),
+                patch.object(backport, "PATCH", patch_file),
+            ):
+                self.assertEqual(backport.apply(source, True)["status"], "applicable")
+                self.assertEqual(path.read_text(), original)
+                self.assertEqual(backport.apply(source, False)["status"], "applied")
+                self.assertEqual(backport.apply(source, False)["status"], "already_applied")
+                patched = path.read_text()
+                path.write_text(patched + "extra local edit\n")
+                with self.assertRaisesRegex(ValueError, "additional local changes"):
+                    backport.apply(source, False)
+                self.assertEqual(path.read_text(), patched + "extra local edit\n")
+                path.write_text(patched)
+                backport.git(source, "add", "peer.cpp")
+                with self.assertRaisesRegex(ValueError, "staged changes"):
+                    backport.apply(source, False)
+                backport.git(source, "reset", "HEAD", "--", "peer.cpp")
+                path.write_text(original + "extra baseline edit\n")
+                with self.assertRaisesRegex(ValueError, "local changes"):
+                    backport.apply(source, False)
+            with (
+                patch.object(backport, "BASE", "unsupported"),
+                self.assertRaisesRegex(ValueError, "HEAD must be"),
+            ):
+                backport.apply(source, False)
+
+
 if __name__ == "__main__":
     unittest.main()
