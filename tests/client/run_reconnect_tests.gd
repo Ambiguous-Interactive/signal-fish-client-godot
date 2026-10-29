@@ -12,6 +12,7 @@ const SignalFishClientScript = preload("res://addons/signal_fish/signal_fish_cli
 const SignalFishConfigScript = preload("res://addons/signal_fish/signal_fish_config.gd")
 const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const ReplayDecodeTests = preload("res://tests/client/replay_decode_tests.gd")
+const SendCloseRaceTests = preload("res://tests/client/send_close_race_tests.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_A := ClientFixtures.PLAYER_A
@@ -99,6 +100,7 @@ func _run() -> void:
 		_test_handshake_send_failure_resolves_attempt,
 		_test_handshake_send_failure_killing_link_cascades,
 		_test_refused_authenticate_resolves_the_dial,
+		_test_handshake_close_races,
 		_test_auto_reconnect_exhaustion_emits_connection_failed,
 		_test_redial_from_exhaustion_handler_keeps_the_fresh_identity,
 		_test_failure_driven_exhaustion_and_budget_recovery,
@@ -1374,6 +1376,11 @@ func _test_refused_authenticate_resolves_the_dial() -> void:
 		SignalFishClientScript.ConnectionState.FAILED, killed.get_connection_state(), "ends FAILED"
 	)
 	killed.free()
+	_done()
+
+
+func _test_handshake_close_races() -> void:
+	_failures.append_array(SendCloseRaceTests.run())
 	_done()
 
 

@@ -65,6 +65,8 @@ func _run() -> void:
 		_test_preopen_close_keeps_the_caller_reason_regardless_of_engine_timing,
 		_test_websocket_nonpositive_drain_cap_clamps_to_one,
 		_test_websocket_buffered_send_cap_drops_without_failing,
+		_test_websocket_send_race_preserves_close_and_queued_packets,
+		_test_websocket_send_race_has_a_bounded_fallback,
 	]
 	CompletionGuard.self_check(self, _failures)
 	CompletionGuard.drive(self, cases, _failures)
@@ -984,6 +986,85 @@ func _test_websocket_buffered_send_cap_drops_without_failing() -> void:
 		_assert_equal([], failures, "%s: session stays live" % case[0])
 		peer.buffered_amount = 0
 		_assert_equal(OK, transport.send_text("again"), "%s: send resumes after drain" % case[0])
+	_done()
+
+
+func _test_websocket_send_race_preserves_close_and_queued_packets() -> void:
+	for binary: bool in [false, true]:
+		var transport := SFWebSocketTransportScript.new()
+		var peer := TestWebSocketPeerAdapterScript.new()
+		peer.ready_state = WebSocketPeer.STATE_OPEN
+		peer.send_text_error = FAILED
+		peer.send_binary_error = FAILED
+		transport._peer = peer
+		transport._opened_emitted = true
+		transport._send_close_grace_ms = 1000
+		transport.max_packets_per_poll = 1
+		var events: Array[String] = []
+		transport.failed.connect(func(_error: String) -> void: events.append("failed"))
+		transport.packet_received.connect(
+			func(packet: PackedByteArray, _text: bool) -> void:
+				events.append(packet.get_string_from_utf8())
+		)
+		transport.closed.connect(
+			func(code: int, reason: String) -> void: events.append("%d:%s" % [code, reason])
+		)
+		var error: Error
+		if binary:
+			error = transport.send_binary(PackedByteArray([1]))
+		else:
+			error = transport.send_text("application data")
+		_assert_equal(FAILED, error, "send race returns original refusal")
+		_assert_equal([], events, "send race waits for browser close callback")
+		_assert_equal(ERR_UNCONFIGURED, transport.send_text("late"), "pending text refused")
+		_assert_equal(
+			ERR_UNCONFIGURED, transport.send_binary(PackedByteArray([2])), "pending binary refused"
+		)
+		transport.poll()
+		_assert_equal([], events, "open state leaves close window active")
+		peer.ready_state = WebSocketPeer.STATE_CLOSED
+		peer.close_code = 4000
+		peer.close_reason = "server_shutdown"
+		transport._send_failure_deadline_ms = 0
+		peer.packets = ["first".to_utf8_buffer(), "second".to_utf8_buffer()]
+		transport.poll()
+		_assert_equal(["first"], events, "close race respects receive drain cap")
+		transport.poll()
+		transport.poll()
+		_assert_equal(
+			["first", "second", "4000:server_shutdown"], events, "close metadata wins once"
+		)
+		_assert_equal([], peer.close_calls, "send race keeps peer close metadata")
+	_done()
+
+
+func _test_websocket_send_race_has_a_bounded_fallback() -> void:
+	for case: Array in [[1000, FAILED], [0, FAILED], [1000, ERR_OUT_OF_MEMORY]]:
+		var transport := SFWebSocketTransportScript.new()
+		var peer := TestWebSocketPeerAdapterScript.new()
+		peer.ready_state = WebSocketPeer.STATE_OPEN
+		peer.send_text_error = case[1]
+		transport._peer = peer
+		transport._opened_emitted = true
+		transport._send_close_grace_ms = case[0]
+		var events: Array[String] = []
+		transport.failed.connect(func(_error: String) -> void: events.append("failed"))
+		transport.closed.connect(func(_code: int, _reason: String) -> void: events.append("closed"))
+		_assert_equal(case[1], transport.send_text("data"), "send failure error preserved")
+		if case[0] > 0 and case[1] == FAILED:
+			_assert_equal([], events, "browser failure starts bounded close wait")
+			transport._send_failure_deadline_ms = 0
+		else:
+			_assert_equal(["failed"], events, "other send failures remain immediate")
+		transport.poll()
+		transport.poll()
+		_assert_equal(["failed"], events, "missing callback fails once at bound")
+		_assert_equal(1, peer.close_calls.size(), "fallback closes active peer")
+		transport._reset_session_flags()
+		var fresh := TestWebSocketPeerAdapterScript.new()
+		fresh.ready_state = WebSocketPeer.STATE_OPEN
+		transport._peer = fresh
+		_assert_equal(OK, transport.send_text("fresh"), "new dial clears pending failure")
 	_done()
 
 

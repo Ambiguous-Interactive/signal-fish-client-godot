@@ -47,6 +47,8 @@ released version.
 
 ### Fixed
 
+- Web sends during shutdown preserve the server close code and reason (#482).
+
 - Fix game-start listeners reading an outdated lobby state. Seated clients now
   report finalized state before the callback; spectators keep their read-only role (#468).
 

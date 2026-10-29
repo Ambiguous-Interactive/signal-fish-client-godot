@@ -19,12 +19,45 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
 
+from delayed_tcp_proxy import DelayedTCPProxy
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("interop", ROOT / "scripts/check-webrtc-interop.py")
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError("Could not load WebRTC project preparation")
 interop = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(interop)
+
+WEB_SOCKET_TRACE = """
+(() => {
+  const Original = window.WebSocket;
+  let next = 0;
+  window.WebSocket = class extends Original {
+    constructor(url, protocols) {
+      super(url, protocols);
+      if (!String(url).endsWith('/v3/ws')) return;
+      this.drillConnection = ++next;
+      for (const event of ['open', 'error', 'close']) {
+        this.addEventListener(event, (value) => this.drillTrace(event, value.code));
+      }
+    }
+    drillTrace(event, code) {
+      console.log('ACTIVE_SHUTDOWN_BROWSER_SOCKET ' + JSON.stringify({
+        connection: this.drillConnection, event, code,
+        browser_ms: performance.now(), state: super.readyState
+      }));
+    }
+    get readyState() {
+      const state = super.readyState;
+      if (this.drillConnection && (state === 2 || state === 3) && this.drillSeen !== state) {
+        this.drillSeen = state;
+        this.drillTrace('terminal_state_read');
+      }
+      return state;
+    }
+  };
+})();
+"""
 
 
 def digest(path: Path) -> str:
@@ -143,6 +176,11 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
     config["server"]["drain_grace_secs"] = 3
     (server_directory / "config.json").write_text(json.dumps(config, indent=2) + "\n")
     service = Service(args.server_binary, server_directory, port)
+    proxy = (
+        DelayedTCPProxy(port, args.network_delay_ms, args.network_chunk_bytes)
+        if args.network_delay_ms or args.network_chunk_bytes != 65536
+        else None
+    )
     errors: list[str] = []
 
     class Handler(SimpleHTTPRequestHandler):
@@ -189,6 +227,9 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
     report: dict[str, object] = {"runtime": runtime, "mode": mode, "passed": False}
     output = ""
     try:
+        if proxy is not None:
+            proxy.start()
+            options["service_url"] = f"ws://127.0.0.1:{proxy.port}/v3/ws"
         project = prepare(args, directory, runtime, options)
         report["identities"] = interop.setup_identities([args.godot, "--path", str(project)])
         service.start()
@@ -213,6 +254,7 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
                 )
                 report["browser"] = browser.version
                 page = browser.new_page()
+                page.add_init_script(WEB_SOCKET_TRACE)
                 page.on(
                     "console",
                     lambda message: lines.append(
@@ -248,6 +290,11 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
             if line.startswith("ACTIVE_SHUTDOWN_GENERATION ")
         ]
         report.update(
+            browser_sockets=[
+                json.loads(line.split(" ", 1)[1])
+                for line in output.splitlines()
+                if line.startswith("ACTIVE_SHUTDOWN_BROWSER_SOCKET ")
+            ],
             generations=generations,
             results=records,
             terminals=terminals,
@@ -275,6 +322,23 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
         http.shutdown()
         thread.join(timeout=5)
         http.server_close()
+        if proxy is not None and proxy.thread.is_alive():
+            try:
+                network = proxy.stop()
+                report["network"] = network
+                forwarded = network["forwarded_connections"]
+                minimum = network["minimum_forward_delay_ms"]
+                if (
+                    not isinstance(forwarded, int)
+                    or forwarded < 4
+                    or not isinstance(minimum, (int, float))
+                    or minimum < args.network_delay_ms - 0.1
+                ):
+                    errors.append("Proxy did not qualify four delayed bidirectional connections")
+            except Exception as exc:
+                errors.append(f"proxy stop: {exc}")
+            if proxy.errors or errors:
+                report["passed"] = False
         with service.lock:
             service.stop()
         service.log.close()
@@ -300,7 +364,11 @@ def main() -> int:
     parser.add_argument("--inbound-buffer-bytes", type=int, default=0)
     parser.add_argument("--max-queued-packets", type=int, default=0)
     parser.add_argument("--receive-pause-ms", type=int, default=0)
+    parser.add_argument("--network-delay-ms", type=int, default=0)
+    parser.add_argument("--network-chunk-bytes", type=int, default=65536)
     args = parser.parse_args()
+    if not 0 <= args.network_delay_ms <= 500 or not 1 <= args.network_chunk_bytes <= 65536:
+        parser.error("Network delay must be 0..500 ms and chunk size 1..65536 bytes")
     if not 0 <= args.receive_pause_ms <= 1000:
         parser.error("Receive pause must be between 0 and 1000 milliseconds")
     if args.relay_packets_per_second < 0 or args.relay_credit_bytes < 0:
@@ -330,6 +398,8 @@ def main() -> int:
         "receive_pause_ms": args.receive_pause_ms,
         "inbound_buffer_bytes": args.inbound_buffer_bytes,
         "max_queued_packets": args.max_queued_packets,
+        "network_delay_ms": args.network_delay_ms,
+        "network_chunk_bytes": args.network_chunk_bytes,
         "client_revision": subprocess.check_output(  # noqa: S603
             [shutil.which("git") or "git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=30
         ).strip(),
@@ -337,6 +407,7 @@ def main() -> int:
             str(path.relative_to(ROOT)): digest(path)
             for path in (
                 Path(__file__).resolve(),
+                ROOT / "scripts/delayed_tcp_proxy.py",
                 ROOT / "scripts/check-webrtc-interop.py",
                 ROOT / "tests/smoke/active_shutdown.gd",
                 ROOT / "addons/signal_fish/webrtc/sf_webrtc_mesh.gd",
