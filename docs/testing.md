@@ -432,9 +432,16 @@ to replace a closing peer after an unfinished fragment. The fresh text must
 be exactly five bytes. Official 4.4.1/4.7.2 retain stale assembly length and
 return an empty packet with a buffer error. The SDK creates a fresh engine peer
 for each session; this direct-reuse result does not establish an SDK reconnect
-defect. Add `--partial-type=binary` and `--fresh-type=binary` to check either
-message type independently; the fresh binary body includes zero and non-UTF-8
-bytes.
+defect. Pass script options after Godot's `--` separator:
+
+```sh
+godot --headless --path . \
+  --script tests/smoke/run_websocket_fragment_reuse.gd -- \
+  --partial-type=binary --fresh-type=binary
+```
+
+Choose the partial and fresh message types independently. The fresh binary
+body includes zero and non-UTF-8 bytes.
 
 A separate experimental patch targets Godot 4.4.1-stable
 `49a5bc7b616bd04689a2c89e89bda41f50241464`:
