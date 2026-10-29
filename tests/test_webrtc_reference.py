@@ -976,6 +976,114 @@ console.log(JSON.stringify({error:context.window.referenceError, ...context.wind
         self.assertEqual(result["heartbeat_echo_latency_ms"]["read_to_echo_ms"]["count"], 0)
         self.assertEqual(result["heartbeat_echo_latency_ms"]["callback_to_echo_ms"]["count"], 0)
 
+    def test_reliable_backlog_separates_bulk_control_and_rejected_arrivals(self) -> None:
+        names = [
+            "startup:1:reference:0",
+            "snapshot:1:reference:0",
+            "heartbeat:1:reference:0",
+            "credit:1:reference:godot:8",
+        ]
+        rows = [
+            {"packet": marker, "bytes": size, "ms": at}
+            for marker, size, at in zip(names, [1044, 4120, 90, 28], [10, 11, 12, 13], strict=True)
+        ]
+        callbacks = [{"peer": 7, "id": 1, "label": "reliable", "dropped": 0, "callbacks": rows}]
+        godot = {
+            "receive_timings_dropped": 0,
+            "receive_timings": [
+                {"packet": names[0], "bytes": 1044, "mode": 2, "browser_ms": 14},
+                {"packet": names[2], "bytes": 90, "mode": 2, "browser_ms": 15},
+            ],
+        }
+        drops = {
+            "dropped": 0,
+            "records": [
+                {
+                    "ms": 11.5,
+                    "callback_scope": "engine_onmessage",
+                    "preceding_callback": {"peer": 7, "id": 1, "label": "reliable", **rows[1]},
+                }
+            ],
+        }
+        original = copy.deepcopy((callbacks, godot, drops))
+        report = reference.browser_read_diagnostics(godot, callbacks, 1, drops)
+        result = report["reliable_backlog"]
+        self.assertTrue(result["available"])
+        self.assertEqual(result["peak"]["bytes"], 1162)
+        self.assertEqual(
+            result["peak"]["kinds"],
+            {
+                "startup": {"bytes": 1044, "packets": 1},
+                "heartbeat": {"bytes": 90, "packets": 1},
+                "credit": {"bytes": 28, "packets": 1},
+            },
+        )
+        self.assertEqual(result["terminal"]["bytes"], 28)
+        rejection = result["rejections"][0]
+        self.assertEqual(rejection["packet"], names[1])
+        self.assertEqual(rejection["backlog"]["bytes"], 1044)
+        self.assertEqual(rejection["backlog"]["browser_ms"], 11)
+        heartbeat = result["heartbeats"][0]
+        self.assertEqual(heartbeat["at_callback"]["bytes"], 1134)
+        self.assertEqual(heartbeat["at_read"]["bytes"], 28)
+        self.assertFalse(heartbeat["rejected"])
+        self.assertEqual((callbacks, godot, drops), original)
+        for field in (
+            "callbacks",
+            "reads",
+            "drops",
+            "duplicate",
+            "wrong-mode",
+            "wrong-size",
+            "reversed",
+        ):
+            with self.subTest(incomplete=field):
+                changed_callbacks, changed_godot, changed_drops = copy.deepcopy(original)
+                if field == "callbacks":
+                    changed_callbacks[0]["dropped"] = 1
+                elif field == "reads":
+                    changed_godot["receive_timings_dropped"] = 1
+                elif field == "drops":
+                    changed_drops["dropped"] = 1
+                elif field == "duplicate":
+                    cast(list[dict[str, object]], changed_callbacks[0]["callbacks"]).append(rows[0])
+                elif field == "wrong-mode":
+                    cast(list[dict[str, object]], changed_godot["receive_timings"])[0]["mode"] = 0
+                elif field == "wrong-size":
+                    cast(list[dict[str, object]], changed_godot["receive_timings"])[0]["bytes"] = 1
+                elif field == "reversed":
+                    cast(list[dict[str, object]], changed_godot["receive_timings"])[0][
+                        "browser_ms"
+                    ] = 9
+                result = reference.browser_read_diagnostics(
+                    changed_godot, changed_callbacks, 1, changed_drops
+                )["reliable_backlog"]
+                self.assertFalse(result["available"])
+                self.assertIsNone(result["peak"])
+
+    def test_reliable_backlog_ties_keep_callbacks_before_reads_and_lost_heartbeats(self) -> None:
+        startup = "startup:1:reference:0"
+        heartbeat = "heartbeat:1:reference:0"
+        lost = "heartbeat:1:reference:1"
+        browser = {
+            startup: [{"ms": 10, "bytes": 1044}],
+            heartbeat: [{"ms": 10, "bytes": 90}],
+            lost: [{"ms": 11, "bytes": 90}],
+        }
+        script = {startup: [{"browser_ms": 10}], heartbeat: [{"browser_ms": 12}]}
+        result = reference.reliable_backlog_diagnostics(browser, script, {lost}, True)
+        self.assertEqual(result["peak"]["bytes"], 1134)
+        self.assertEqual(result["terminal"]["bytes"], 0)
+        self.assertEqual(result["terminal"]["browser_ms"], 12)
+        heartbeats = {row["packet"]: row for row in result["heartbeats"]}
+        self.assertEqual(heartbeats[heartbeat]["at_callback"]["bytes"], 1134)
+        self.assertEqual(heartbeats[heartbeat]["at_callback"]["simultaneous_events"], 2)
+        self.assertEqual(heartbeats[heartbeat]["at_callback"]["boundary"], "after_callbacks")
+        self.assertEqual(heartbeats[heartbeat]["at_read"]["boundary"], "after_reads")
+        self.assertTrue(heartbeats[lost]["rejected"])
+        self.assertIsNone(heartbeats[lost]["at_read"])
+        self.assertEqual(heartbeats[lost]["at_callback"]["bytes"], 90)
+
     def test_browser_read_boundary_uses_one_clock_and_keeps_holes(self) -> None:
         def packet(kind: str, sequence: int) -> str:
             return f"{kind}:1:reference:{sequence}"
