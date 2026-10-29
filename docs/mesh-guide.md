@@ -529,6 +529,23 @@ wrong transfer modes, byte mismatches, missing clocks or callback/read trace ove
 backlog totals `null`. `invalid_intervals` and `unmatched_script_packets` keep
 incomplete evidence visible. Native reports set `available` to false.
 
+`reliable_backlog` groups tracked unread payload bytes and packet counts by
+kind at the peak, each matched rejection, and each heartbeat callback/read.
+Startup, snapshots, partial chunks and credits remain separate. A rejected
+arrival has its own byte count and is excluded from these backlog totals.
+Add that size to its `backlog.bytes` to inspect the offered arrival boundary.
+These are observed payload totals; cached packets, physical prefetch timing,
+framing and untracked traffic prevent an exact engine ring occupancy claim.
+
+Heartbeat `at_callback` includes the heartbeat when no rejection was observed;
+`at_read` excludes the consumed heartbeat. Missing reads stay null. `boundary`
+and `simultaneous_events` identify whole callback or read groups at the same
+timestamp. Tied callbacks are grouped before tied reads; an `after_reads`
+snapshot excludes every read in that group.
+Incomplete, ambiguous or truncated traces set `available=false` and leave
+peak/terminal totals null. Compare this breakdown with heartbeat latency and
+the native/command stages before attributing a delay to bulk traffic.
+
 `godot_browser_drops` retains up to 128 engine buffer-drop console errors on
 the browser clock. Each stores the preceding channel callback; the error
 still reaches the original console handler. `first_tracked_buffer_drop` is
@@ -941,6 +958,33 @@ proof, then failed during queued-packet retirement (#471). The matching native c
 completed both generations and service rejoin. This locates those Web reliable
 gaps at engine ingress (#442); retirement, historical heartbeat failures (#440)
 and remote-network qualification (#355) remain open.
+
+New loopback controls use 4 KiB bodies, 100 ms Godot drains and independent
+100 ms positions. The packet-only Web workloads, with and without startup,
+each retain ten scoped rejections and the first reliable hole at snapshot 15.
+At the first rejection, tracked unread payload is 61,924 bytes and the rejected
+snapshot is 4,120 bytes. The 48 KiB no-startup control passes both generations;
+its tracked unread peaks are 41,393 and 45,444 bytes. Startup byte credit also
+preserves all reliable data in the captured phase, then that run fails the
+finite-tail retirement check. Its uniquely enqueued stream-3 message 260 is
+abandoned before transmission selection, with no Web callback (#471).
+
+The matched HTTP/startup Web control preserves both reliable generations but
+fails its initial finite-probe check: uniquely enqueued message 33 expires
+before selection (#458). Both native startup offer roles pass every strict
+check. A 256 KiB capacity control with the original packet-only startup
+workload preserves every reliable packet in both Web offer roles. The
+Godot-offer run passes all checks; the reference-offer run fails on uniquely
+expired initial message 33. These finite failures remain failed overall
+qualifications. Larger receive capacity does not prevent sender expiry.
+
+During the deliberate reference pause, Godot bulk sends/credit stay at 19/8
+for 1.19-1.45 seconds while 11-15 position sends and 11-14 heartbeat reads
+continue. Web heartbeat callback-to-read maxima are 103-167 ms in the paced
+controls. This separates a bulk credit plateau from real-time progress in
+these controls (#396, #440). It leaves the historical failures, real-service
+comparison and remote-network qualification open. These controls use Godot
+4.7.2, Chromium 156, native reference `e8a2d969` and Linux ARM64.
 
 ### Active Godot reader budgets
 

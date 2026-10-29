@@ -10,6 +10,9 @@ released version.
 
 ### Added
 
+- WebRTC assessments show startup, snapshot and control backlogs beside
+  rejected arrivals and heartbeat reads.
+
 - `SFWebRTCMesh.get_safe_multiplayer_peer()` keeps RPC packet bytes and
   transfer modes together during mixed WebRTC traffic (#403).
 

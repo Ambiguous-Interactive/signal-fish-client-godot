@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from itertools import groupby
 from pathlib import Path
 from typing import ClassVar, Protocol, cast
 
@@ -418,6 +419,76 @@ def snapshot_receive_diagnostics(
     }
 
 
+def reliable_backlog_diagnostics(
+    browser: dict[str, list[dict[str, object]]],
+    script: dict[str, list[dict[str, object]]],
+    rejected: set[str],
+    complete: bool,
+) -> dict[str, object]:
+    if not complete:
+        return {
+            "available": False,
+            "peak": None,
+            "terminal": None,
+            "rejections": [],
+            "heartbeats": [],
+        }
+    events: list[tuple[float, int, str]] = []
+    for marker, rows in browser.items():
+        events.append((cast(float, rows[0]["ms"]), 0, marker))
+        if script.get(marker):
+            events.append((cast(float, script[marker][0]["browser_ms"]), 1, marker))
+    pending: dict[str, int] = {}
+    peak: dict[str, object] | None = None
+    rejections: list[dict[str, object]] = []
+    heartbeats: dict[str, dict[str, object]] = {}
+
+    def snapshot(at: float) -> dict[str, object]:
+        kinds: dict[str, dict[str, int]] = {}
+        for marker, size in pending.items():
+            kind = marker.split(":", 1)[0]
+            totals = kinds.setdefault(kind, {"packets": 0, "bytes": 0})
+            totals["packets"] += 1
+            totals["bytes"] += size
+        return {
+            "browser_ms": at,
+            "packets": len(pending),
+            "bytes": sum(pending.values()),
+            "kinds": kinds,
+        }
+
+    events.sort()
+    for (at, read), group in groupby(events, key=lambda event: event[:2]):
+        markers = [marker for _, _, marker in group]
+        for marker in markers:
+            if read:
+                pending.pop(marker)
+            elif marker not in rejected:
+                pending[marker] = cast(int, browser[marker][0]["bytes"])
+        state = snapshot(at)
+        state["boundary"] = "after_reads" if read else "after_callbacks"
+        state["simultaneous_events"] = len(markers)
+        if peak is None or cast(int, state["bytes"]) > cast(int, peak["bytes"]):
+            peak = state
+        for marker in markers:
+            if not read and marker in rejected:
+                rejections.append(
+                    {"packet": marker, "bytes": browser[marker][0]["bytes"], "backlog": state}
+                )
+            if marker.startswith("heartbeat:"):
+                heartbeat = heartbeats.setdefault(
+                    marker, {"packet": marker, "rejected": marker in rejected, "at_read": None}
+                )
+                heartbeat["at_read" if read else "at_callback"] = state
+    return {
+        "available": True,
+        "peak": peak,
+        "terminal": snapshot(events[-1][0]) if events else None,
+        "rejections": rejections,
+        "heartbeats": list(heartbeats.values()),
+    }
+
+
 def browser_read_diagnostics(
     godot: dict[str, object],
     callbacks: list[dict[str, object]],
@@ -628,6 +699,9 @@ def browser_read_diagnostics(
             key: timing_distribution(latencies["heartbeat"], key)
             for key in ("read_to_echo_ms", "callback_to_echo_ms")
         },
+        "reliable_backlog": reliable_backlog_diagnostics(
+            browser, script, set(matching_drops), drop_adjusted_valid
+        ),
         "unread_packets": sorted(browser.keys() - script.keys()),
         "matched_buffer_drop_packets": sorted(matching_drops),
         "unread_without_matched_drop_packets": sorted(
@@ -652,7 +726,7 @@ def browser_read_diagnostics(
         else None,
         "script_trace_dropped": script_dropped,
         "channel_in_buffer_kb": godot.get("channel_in_buffer_kb"),
-        "limits": "Tracks reliable snapshot, partial, startup, initial probe, heartbeat and credit payloads only. Unread bytes can be queued, cached or dropped. Adjusted totals remove only unique peer/label/packet/time/size-matched buffer-drop observations with complete traces and no script receipt. Unresolved drop records keep adjusted totals unavailable. This is not engine ring occupancy; framing and other packets are excluded. Instrumentation reads the browser clock after script reads and heartbeat echo sends. Echo send completion does not prove remote receipt.",
+        "limits": "Tracks reliable snapshot, partial, startup, initial probe, heartbeat and credit payloads only. Unread bytes can be queued, cached or dropped. Adjusted totals remove only unique peer/label/packet/time/size-matched buffer-drop observations with complete traces and no script receipt. Unresolved drop records keep adjusted totals unavailable. Backlog snapshots group retained payloads by kind at peak, rejection and heartbeat callback/read boundaries. Snapshots cover whole tied callback or read groups; callbacks precede reads conservatively. At-read backlog excludes that heartbeat and all other reads at that timestamp. This is not engine ring occupancy; framing, physical prefetch timing and other packets are excluded. Instrumentation reads the browser clock after script reads and heartbeat echo sends. Echo send completion does not prove remote receipt.",
     }
 
 
