@@ -28,7 +28,7 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       and matched local/application ACK credit controls.
 - [ ] Coordinate the interleaved Ping/Pong assembly repair upstream and qualify
       additional stable engines on fragmented gameplay and direct peer reuse
-      (#491, #492; see `docs/testing.md`). Qualify the pinned 4.4.1 assembly
+      (#491, #492; see `docs/testing.md`). Qualify the pinned 4.4.1/4.7.2 assembly
       patch on remote paths and other build targets.
 - [ ] Qualify active gameplay shutdown on remote networks (#482; see `docs/testing.md`). Preserve
       the browser send/close race control, distinct reset and nonresponding

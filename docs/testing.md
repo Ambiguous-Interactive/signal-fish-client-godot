@@ -443,20 +443,25 @@ godot --headless --path . \
 Choose the partial and fresh message types independently. The fresh binary
 body includes zero and non-UTF-8 bytes.
 
-A separate experimental patch targets Godot 4.4.1-stable
-`49a5bc7b616bd04689a2c89e89bda41f50241464`:
+Separate experimental patches target Godot 4.4.1-stable
+`49a5bc7b616bd04689a2c89e89bda41f50241464` and 4.7.2-stable
+`ed1daf0bf001b61586d9930840f2f1394092c079`:
 
 ```sh
-python scripts/repair-websocket-stable.py --source /path/to/godot-4.4.1 \
+python scripts/repair-websocket-stable.py --source /path/to/godot-stable \
   --report /tmp/websocket-assembly.json
 ```
 
-It changes only frame assembly and replacement cleanup. The applicator checks
-the exact revision, rejects conflicting changes and records source and patch
-hashes. `--check` leaves source unchanged. Build and qualify the patched engine
-before use. Official 4.4.1 and 4.7.2 still fail the mixed binary interleaved
-controls and every partial/fresh text/binary reuse pair. Upstream adoption,
+Each patch changes only frame assembly and replacement cleanup. The applicator
+checks the exact revision, selects its patch, rejects conflicting changes and
+records source and patch hashes. `--check` leaves source unchanged. Build and
+qualify the patched engine before use. Official 4.4.1 and 4.7.2 still fail
+the mixed binary interleaved controls and every partial/fresh text/binary reuse pair. Upstream adoption,
 other engine builds and remote gameplay remain open.
+
+For 4.7.2 template builds, add `disable_path_overrides=no` to the SCons command
+to enable `--path` and `--script` for these fixtures. Use the matching official
+editor to import the test project before running a template build.
 
 The locally built 4.4.1 native template passes 31 controls with no engine
 errors: text, binary and alternating messages across no-control/Ping/Pong,
@@ -469,6 +474,15 @@ with the original uncredited four-per-frame sends, 50 ms TCP delay, 127-byte
 proxy writes and a 100 ms polling hold. Exact relay prefixes, cached mesh
 retirement and fresh gameplay receipts remain required. These results qualify
 the pinned Linux ARM64 build and local workload.
+
+The locally built 4.7.2 native template passes the same 31 controls, close
+smoke and all three active SDK shutdown modes with the same uncredited sends,
+TCP delay, proxy writes and polling hold. Every burst delivers 65 exact
+4096-byte packets; each reuse pair delivers five fresh bytes with the correct
+type. A matched official 4.7.2 run passes nine no-control burst cases and fails
+all 18 interleaved-control cases and four reuse pairs. Its active shutdown
+controls pass. These results qualify the tested Linux ARM64 build and local
+workload. Remote paths, other targets and upstream adoption remain open.
 
 Use `--import-godot /path/to/official-godot-4.3` in the active-shutdown driver
 to import with an editor and run a native template build via `--godot`.
