@@ -56,8 +56,8 @@ func close_connection(code: int, reason: String) -> void:
 
 
 ## Sends a text frame as its own TCP write (issue #70 regression helper).
-func send_text_frame(text: String) -> void:
-	_send_frame(OP_TEXT, text.to_utf8_buffer())
+func send_text_frame(text: String) -> Error:
+	return _send_frame(OP_TEXT, text.to_utf8_buffer())
 
 
 func poll() -> void:
@@ -240,10 +240,13 @@ func _handle_frame(opcode: int, payload: PackedByteArray) -> void:
 			pass
 
 
-func _send_frame(opcode: int, payload: PackedByteArray) -> void:
+func _send_frame(opcode: int, payload: PackedByteArray) -> Error:
 	if _connection == null:
-		return
-	_connection.put_data(_frame_bytes(opcode, payload))
+		return ERR_UNCONFIGURED
+	var frame := _frame_bytes(opcode, payload)
+	if _connection == null:
+		return ERR_INVALID_DATA
+	return _connection.put_data(frame)
 
 
 func _frame_bytes(opcode: int, payload: PackedByteArray) -> PackedByteArray:

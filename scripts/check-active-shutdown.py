@@ -180,6 +180,11 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
         "control_url": f"http://127.0.0.1:{http.server_port}",
         "mode": mode,
         "relay_packets_per_frame": args.relay_packets_per_frame,
+        "relay_packets_per_second": args.relay_packets_per_second,
+        "relay_credit_bytes": args.relay_credit_bytes,
+        "receive_pause_ms": args.receive_pause_ms,
+        "inbound_buffer_bytes": args.inbound_buffer_bytes,
+        "max_queued_packets": args.max_queued_packets,
     }
     report: dict[str, object] = {"runtime": runtime, "mode": mode, "passed": False}
     output = ""
@@ -290,7 +295,22 @@ def main() -> int:
     parser.add_argument("--mode", choices=("all", "graceful", "reset", "stall"), default="all")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--relay-packets-per-frame", type=int, choices=range(1, 17), default=4)
+    parser.add_argument("--relay-packets-per-second", type=int, default=0)
+    parser.add_argument("--relay-credit-bytes", type=int, default=0)
+    parser.add_argument("--inbound-buffer-bytes", type=int, default=0)
+    parser.add_argument("--max-queued-packets", type=int, default=0)
+    parser.add_argument("--receive-pause-ms", type=int, default=0)
     args = parser.parse_args()
+    if not 0 <= args.receive_pause_ms <= 1000:
+        parser.error("Receive pause must be between 0 and 1000 milliseconds")
+    if args.relay_packets_per_second < 0 or args.relay_credit_bytes < 0:
+        parser.error("Relay rate and payload-byte credit must be nonnegative")
+    if 0 < args.relay_credit_bytes < 4096:
+        parser.error("Relay credit must admit at least one 4096-byte body")
+    if args.inbound_buffer_bytes < 0 or args.max_queued_packets < 0:
+        parser.error("Receive capacity must be nonnegative; zero uses the engine default")
+    if 0 < args.inbound_buffer_bytes < 4096:
+        parser.error("Receive capacity must admit a 4096-byte body and one packet")
     if args.runtime in ("all", "native") and args.native_extension is None:
         parser.error("--native-extension is required for native or all runtime")
     if os.name != "posix":
@@ -305,6 +325,11 @@ def main() -> int:
         "server_binary_sha256": digest(args.server_binary),
         "server_config_input_sha256": digest(args.server_config),
         "relay_packets_per_frame": args.relay_packets_per_frame,
+        "relay_packets_per_second": args.relay_packets_per_second,
+        "relay_credit_bytes": args.relay_credit_bytes,
+        "receive_pause_ms": args.receive_pause_ms,
+        "inbound_buffer_bytes": args.inbound_buffer_bytes,
+        "max_queued_packets": args.max_queued_packets,
         "client_revision": subprocess.check_output(  # noqa: S603
             [shutil.which("git") or "git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=30
         ).strip(),
