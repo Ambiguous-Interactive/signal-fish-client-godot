@@ -356,7 +356,8 @@ It writes 64 exact 4096-byte messages, holds client polling for 100 ms, then
 drains. A later sentinel exposes an interior gap after a dropped burst tail.
 Every write must succeed. Every received packet must match its bytes, string
 mode and sequence. The final count must be 65. Engine errors remain failures.
-The control has a 10-second watchdog. It is opt-in because the original Godot
+The watchdog covers the five-second connection window, each batch hold/read
+window and the final sentinel read. It is opt-in because the original Godot
 4.3 failure must remain visible.
 
 Use `-- --credit=32768` to split the same finite work into batches bounded by

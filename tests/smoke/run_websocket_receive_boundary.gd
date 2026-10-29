@@ -3,6 +3,10 @@ extends SceneTree
 const ServerScript = preload("res://tests/smoke/ws_test_server.gd")
 const BODY_BYTES := 4096
 const PACKETS := 64
+const CONNECT_TIMEOUT_MS := 5000
+const READ_TIMEOUT_MS := 1000
+const BATCH_HOLD_MS := 100
+const WATCHDOG_MARGIN_MS := 1000
 
 var _server := ServerScript.new()
 var _peer := WebSocketPeer.new()
@@ -13,26 +17,50 @@ var _failures: Array[String] = []
 var _last_poll_us := 0
 var _started := Time.get_ticks_msec()
 var _sent := 0
+var _batch_packets := PACKETS
+var _watchdog_ms := CONNECT_TIMEOUT_MS
 
 
 func _initialize() -> void:
 	for argument: String in OS.get_cmdline_user_args():
-		if argument.begins_with("--capacity="):
-			_peer.inbound_buffer_size = argument.get_slice("=", 1).to_int()
-		elif argument.begins_with("--max-queued-packets="):
-			_peer.max_queued_packets = argument.get_slice("=", 1).to_int()
-		elif argument.begins_with("--credit="):
-			_credit_bytes = argument.get_slice("=", 1).to_int()
-		else:
+		var option := argument.get_slice("=", 0)
+		if option not in ["--capacity", "--max-queued-packets", "--credit"]:
 			_failures.append("unknown argument: " + argument)
+			continue
+		if not argument.begins_with(option + "="):
+			_failures.append(option + " requires =integer")
+			continue
+		var value := argument.substr(option.length() + 1)
+		if not value.is_valid_int():
+			_failures.append(option + " must be an integer")
+			continue
+		var number := value.to_int()
+		if option == "--credit":
+			_credit_bytes = number
+		elif number <= 0:
+			_failures.append(option + " must be positive")
+		elif option == "--capacity":
+			_peer.inbound_buffer_size = number
+		else:
+			_peer.max_queued_packets = number
 	if _credit_bytes < 0 or _credit_bytes > 0 and _credit_bytes < BODY_BYTES:
 		_failures.append("credit must be zero or admit one complete body")
+	if _failures.is_empty():
+		if _credit_bytes > 0:
+			_batch_packets = mini(PACKETS, int(_credit_bytes / float(BODY_BYTES)))
+		var batches := ceili(PACKETS / float(_batch_packets))
+		_watchdog_ms = (
+			CONNECT_TIMEOUT_MS
+			+ batches * (BATCH_HOLD_MS + READ_TIMEOUT_MS)
+			+ READ_TIMEOUT_MS
+			+ WATCHDOG_MARGIN_MS
+		)
 	call_deferred("_run")
 
 
 func _process(_delta: float) -> bool:
 	_server.poll()
-	if Time.get_ticks_msec() - _started > 10000:
+	if Time.get_ticks_msec() - _started > _watchdog_ms:
 		_failures.append("watchdog")
 		_finish()
 	return false
@@ -86,7 +114,7 @@ func _run() -> void:
 		_failures.append("connect failed")
 		_finish()
 		return
-	var deadline := Time.get_ticks_msec() + 5000
+	var deadline := Time.get_ticks_msec() + CONNECT_TIMEOUT_MS
 	while _peer.get_ready_state() == WebSocketPeer.STATE_CONNECTING:
 		_poll()
 		if Time.get_ticks_msec() >= deadline:
@@ -100,9 +128,7 @@ func _run() -> void:
 		return
 	var sent := 0
 	while sent < PACKETS:
-		var batch := PACKETS - sent
-		if _credit_bytes > 0:
-			batch = mini(batch, int(_credit_bytes / float(BODY_BYTES)))
+		var batch := mini(PACKETS - sent, _batch_packets)
 		for sequence: int in range(sent, sent + batch):
 			if _server.send_text_frame(_body(sequence)) != OK:
 				_failures.append("burst send failed")
@@ -111,9 +137,9 @@ func _run() -> void:
 			_sent += 1
 		sent += batch
 		# Hold the consumer while the complete finite burst reaches the socket.
-		await create_timer(0.1).timeout
+		await create_timer(BATCH_HOLD_MS / 1000.0).timeout
 		_poll()
-		var batch_deadline := Time.get_ticks_msec() + 1000
+		var batch_deadline := Time.get_ticks_msec() + READ_TIMEOUT_MS
 		while _received < sent and Time.get_ticks_msec() < batch_deadline:
 			await process_frame
 			_poll()
@@ -125,7 +151,7 @@ func _run() -> void:
 		_failures.append("sentinel send failed")
 	else:
 		_sent += 1
-	deadline = Time.get_ticks_msec() + 1000
+	deadline = Time.get_ticks_msec() + READ_TIMEOUT_MS
 	while Time.get_ticks_msec() < deadline and _received < PACKETS + 1:
 		await process_frame
 		_poll()
@@ -145,6 +171,7 @@ func _finish() -> void:
 					"capacity": _peer.inbound_buffer_size,
 					"max_queued_packets": _peer.max_queued_packets,
 					"body_bytes": BODY_BYTES,
+					"watchdog_ms": _watchdog_ms,
 					"target_packets": PACKETS + 1,
 					"offered_packets": _sent,
 					"credit_bytes": _credit_bytes,
