@@ -466,9 +466,10 @@ editor to import the test project before running a template build.
 To check both bundled patches against local pinned sources, run:
 
 ```sh
+PYTHONPATH=tests \
 SF_WEBSOCKET_GODOT_44_SOURCE=/path/to/godot-4.4.1 \
 SF_WEBSOCKET_GODOT_47_SOURCE=/path/to/godot-4.7.2 \
-python -m unittest tests.test_websocket_browser_observation.BackportApplicatorTests.test_bundled_patches_apply_to_pinned_sources
+python -m unittest test_websocket_browser_observation.BackportApplicatorTests.test_bundled_patches_apply_to_pinned_sources
 ```
 
 This opt-in test uses temporary local clones to check, apply and repeat each
@@ -644,7 +645,7 @@ Each passing case must forward both directions on at least four connections
 and meet the requested minimum delay.
 
 The proxy's loopback integration tests are opt-in:
-`python -m unittest tests.test_delayed_tcp_proxy`. They cover large exact
+`PYTHONPATH=tests python -m unittest test_delayed_tcp_proxy`. They cover large exact
 binary streams, half-close replies, actual delay, reset and idle teardown.
 
 Browser logs include socket state reads and close callbacks. On the original
