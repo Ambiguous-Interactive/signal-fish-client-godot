@@ -40,8 +40,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       capture heartbeat pause failures with packet interval summaries: #440).
 - [ ] Repair the Web reliable receive boundary using scoped engine-rejection
       identities and matched byte-window controls (#442). Keep rejected arrivals
-      separate from queued callbacks. Qualify the matched startup/byte-window
-      controls through real service sessions and remote networks.
+      separate from queued callbacks. Compare the retained source-pinned service
+      startup/byte-window controls with remote-network sessions.
       Reproduce the historical
       heartbeat pause failure and compare shared-clock read latency with native
       emission and application drain delays (#440). Keep every reliable receipt
