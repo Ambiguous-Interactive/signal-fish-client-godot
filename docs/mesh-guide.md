@@ -984,7 +984,9 @@ continue. Web heartbeat callback-to-read maxima are 103-167 ms in the paced
 controls. This separates a bulk credit plateau from real-time progress in
 these controls (#396, #440). It leaves the historical failures, real-service
 comparison and remote-network qualification open. These controls use Godot
-4.7.2, Chromium 156, native reference `e8a2d969` and Linux ARM64.
+4.7.2, Chromium 156, native reference `e8a2d969` and Linux ARM64. Native
+gameplay uses the opt-in repaired extension described below. Other local
+checks overlapped parts of this shared-host cohort.
 
 ### Active Godot reader budgets
 
