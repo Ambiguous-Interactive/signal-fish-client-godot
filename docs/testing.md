@@ -451,6 +451,18 @@ before use. Official 4.4.1 and 4.7.2 still fail the mixed binary interleaved
 controls and every partial/fresh text/binary reuse pair. Upstream adoption,
 other engine builds and remote gameplay remain open.
 
+The locally built 4.4.1 native template passes 31 controls with no engine
+errors: text, binary and alternating messages across no-control/Ping/Pong,
+default byte limits, two queued packets and local 32 KiB credit, plus all
+four partial/fresh message-type pairs. Every burst delivers 65 exact packets
+with matching types. Reuse delivers exactly five fresh bytes. The same build
+passes the standard WebSocket smoke with client/server close handshakes.
+Its active SDK drill passes semantic shutdown, reset and nonresponding controls
+with the original uncredited four-per-frame sends, 50 ms TCP delay, 127-byte
+proxy writes and a 100 ms polling hold. Exact relay prefixes, cached mesh
+retirement and fresh gameplay receipts remain required. These results qualify
+the pinned Linux ARM64 build and local workload.
+
 Use `--import-godot /path/to/official-godot-4.3` in the active-shutdown driver
 to import with an editor and run a native template build via `--godot`.
 Both engine binaries are hashed in the retained results.
