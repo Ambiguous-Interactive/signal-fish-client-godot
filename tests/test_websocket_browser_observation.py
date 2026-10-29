@@ -214,6 +214,140 @@ class BrowserFailureTests(unittest.TestCase):
 
 
 class BackportApplicatorTests(unittest.TestCase):
+    @unittest.skipUnless(
+        os.environ.get("SF_WEBSOCKET_GODOT_44_SOURCE")
+        and os.environ.get("SF_WEBSOCKET_GODOT_47_SOURCE"),
+        "requires local pinned Godot 4.4.1 and 4.7.2 source checkouts",
+    )
+    def test_bundled_patches_apply_to_pinned_sources(self) -> None:
+        modules = []
+        for name in ("repair-websocket-stable", "backport-websocket-43"):
+            spec = importlib.util.spec_from_file_location(name, SCRIPT.parent / (name + ".py"))
+            if spec is None or spec.loader is None:
+                raise RuntimeError(f"Could not load {name}")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            modules.append(module)
+        stable, backport = modules
+        with tempfile.TemporaryDirectory() as directory:
+            for version, base in (
+                ("44", "49a5bc7b616bd04689a2c89e89bda41f50241464"),
+                ("47", "ed1daf0bf001b61586d9930840f2f1394092c079"),
+            ):
+                with self.subTest(version=version):
+                    source = Path(os.environ["SF_WEBSOCKET_GODOT_" + version + "_SOURCE"]).resolve()
+                    fixture = Path(directory) / version
+                    commands = [
+                        (
+                            source,
+                            (
+                                "clone",
+                                "--quiet",
+                                "--shared",
+                                "--no-checkout",
+                                str(source),
+                                str(fixture),
+                            ),
+                        ),
+                        (fixture, ("reset", "--quiet")),
+                        (
+                            fixture,
+                            (
+                                "checkout",
+                                "--",
+                                "modules/websocket/wsl_peer.cpp",
+                                "modules/websocket/wsl_peer.h",
+                            ),
+                        ),
+                    ]
+                    for repository, arguments in commands:
+                        result = backport.git(repository, *arguments)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                    checked = stable.apply(fixture, True)
+                    self.assertEqual(checked["base"], base)
+                    self.assertEqual(checked["status"], "applicable")
+                    self.assertEqual(stable.apply(fixture, False)["status"], "applied")
+                    self.assertEqual(stable.apply(fixture, False)["status"], "already_applied")
+
+    def test_stable_repair_selects_the_exact_revision_patch(self) -> None:
+        script = SCRIPT.parent / "repair-websocket-stable.py"
+        spec = importlib.util.spec_from_file_location("websocket_stable", script)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not load {script}")
+        stable = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stable)
+        source_blobs = {
+            "49a5bc7b616bd04689a2c89e89bda41f50241464": "1a1f52a8a06b5867fc1c14e416f78f2a14fa908f",
+            "ed1daf0bf001b61586d9930840f2f1394092c079": "ae3e34fc42aa1c6458c80673216727bb36a70f92",
+        }
+        for revision, blob in source_blobs.items():
+            with self.subTest(source_revision=revision):
+                bundled = script.parent / "patches" / stable.PATCHES[revision]
+                self.assertIn("index " + blob + "..", bundled.read_text())
+        backport_spec = importlib.util.spec_from_file_location(
+            "websocket_stable_git", SCRIPT.parent / "backport-websocket-43.py"
+        )
+        if backport_spec is None or backport_spec.loader is None:
+            raise RuntimeError("Could not load backport applicator")
+        backport = importlib.util.module_from_spec(backport_spec)
+        backport_spec.loader.exec_module(backport)
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            fixtures = []
+            patches = {}
+
+            def git(source: Path, *args: str) -> str:
+                result = backport.git(source, *args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return cast(str, result.stdout)
+
+            for version in ("4.4.1", "4.7.2"):
+                source = parent / version
+                source.mkdir()
+                git(source, "init", "--quiet")
+                original = version + "\nbefore\n"
+                path = source / "peer.cpp"
+                path.write_text(original)
+
+                git(source, "add", "peer.cpp")
+                git(
+                    source,
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    version,
+                )
+                revision = git(source, "rev-parse", "HEAD").strip()
+                changed = original.replace("before", "after")
+                path.write_text(changed)
+                patch_file = parent / (version + ".patch")
+                patch_file.write_text(git(source, "diff", "--full-index"))
+                git(source, "checkout", "--", "peer.cpp")
+                patches[revision] = str(patch_file)
+                fixtures.append((source, path, original, changed, revision))
+            with patch.object(stable, "PATCHES", patches):
+                for source, path, original, changed, revision in fixtures:
+                    with self.subTest(revision=revision):
+                        self.assertEqual(stable.apply(source, True)["status"], "applicable")
+                        self.assertEqual(path.read_text(), original)
+                        result = stable.apply(source, False)
+                        self.assertEqual(result["status"], "applied")
+                        self.assertEqual(result["base"], revision)
+                        self.assertEqual(result["issues"], [491, 492])
+                        self.assertEqual(path.read_text(), changed)
+                        self.assertEqual(stable.apply(source, False)["status"], "already_applied")
+            with (
+                patch.object(stable, "PATCHES", {}),
+                self.assertRaisesRegex(ValueError, "pinned Godot"),
+            ):
+                stable.apply(fixtures[0][0], False)
+
     def test_explicit_source_wins_over_an_outer_repository_environment(self) -> None:
         script = SCRIPT.parent / "backport-websocket-43.py"
         spec = importlib.util.spec_from_file_location("websocket_backport_env", script)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the opt-in native WebSocket assembly repair to Godot 4.4.1 source."""
+"""Apply the opt-in native WebSocket assembly repair to pinned stable Godot source."""
 
 from __future__ import annotations
 
@@ -8,8 +8,10 @@ import importlib.util
 import json
 from pathlib import Path
 
-BASE = "49a5bc7b616bd04689a2c89e89bda41f50241464"
-PATCH = Path(__file__).resolve().parent / "patches/godot-44-websocket-assembly.patch"
+PATCHES = {
+    "49a5bc7b616bd04689a2c89e89bda41f50241464": "godot-44-websocket-assembly.patch",
+    "ed1daf0bf001b61586d9930840f2f1394092c079": "godot-47-websocket-assembly.patch",
+}
 
 
 def apply(source: Path, check_only: bool) -> dict[str, object]:
@@ -19,8 +21,13 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
         raise ValueError(f"Could not load {script}")
     backport = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(backport)
+    revision = backport.git(source, "rev-parse", "HEAD")
+    base = revision.stdout.strip()
+    if revision.returncode or base not in PATCHES:
+        raise ValueError("source HEAD must be a pinned Godot 4.4.1 or 4.7.2 stable revision")
+    patch = script.parent / "patches" / PATCHES[base]
     return {
-        **backport.apply_patch(source, check_only, BASE, PATCH),
+        **backport.apply_patch(source, check_only, base, patch),
         "issues": [491, 492],
         "scope": "experimental native assembly repair; build and runtime qualification required",
     }
