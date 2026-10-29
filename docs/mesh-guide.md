@@ -1016,14 +1016,19 @@ to check 32 immediate reliable packets. For the HTTP credit hold, replace
 `--credit-transport webrtc` with `--credit-transport http
 --http-credit-delay-ms 1500`. Check the hold evidence before accepting that
 control. Compare native runs with `--runtime native --offerer both`.
+For the capacity control, set
+`--snapshot-window-bytes 0 --startup-burst --channel-in-buffer-kb 256`.
+Omit `--channel-in-buffer-kb` to keep the engine default.
 
-Eight local service histories at client `fd19955` use Godot 4.7.2 official,
-Chromium 156.0.8078.4, the reference above and Linux ARM64. The retained service
+The first eight session451 service histories at client `fd19955` use official
+Godot 4.7.2, Chromium 156.0.8078.4, the reference above and Linux ARM64. The retained service
 binary has SHA-256 `cb29f6a667a308663fba635a3f100e2b81946fb342f450f6bbf43c066ba2b138`;
 its build revision is unverified. The native gameplay seats use the opt-in
 repaired extension described below. All attempts are retained locally under
 `/tmp/session451-service-*`; their independent audit and binary hashes are in
 `progress/session451-artifacts/`. These paths are local evidence.
+The table records only these eight new histories. Earlier service and loopback
+failures above remain retained.
 
 | Control                                                 | Observed result                                                                                                                    |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
