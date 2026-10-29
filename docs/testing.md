@@ -546,8 +546,12 @@ message; the default 4096-byte workload stays available.
 The reuse fixture accepts `--replacement=closing|aborted|handshake` and
 `--queued-before-partial=true`. It checks that a complete unread packet and
 unfinished fragment are retired before the fresh connection's five-byte
-message. These controls extend #485, #491 and #492. Remote networks and
-upstream adoption remain open.
+message.
+
+The rebuilt Linux ARM64 templates for 4.3, 4.4.1 and 4.7.2 each pass 84
+receive/reuse controls, WebSocket close smoke and all three active SDK
+shutdown modes. These local results extend #485, #491 and #492. Remote
+networks and upstream adoption remain open.
 
 ### Web WebSocket receive boundary
 
