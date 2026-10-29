@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -18,14 +19,39 @@ UPSTREAM = [
     "a2f5eb9cf095a8d942d9518a2ef5848cd47ce8f1",
 ]
 PATCH = Path(__file__).resolve().parent / "patches/godot-43-websocket-receive.patch"
+REPOSITORY_ENV = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+)
 
 
 def git(source: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     executable = shutil.which("git")
     if executable is None:
         raise ValueError("git is required")
+    environment = os.environ.copy()
+    for name in REPOSITORY_ENV:
+        environment.pop(name, None)
     return subprocess.run(  # noqa: S603
-        [executable, "-C", str(source), *arguments], capture_output=True, text=True, check=False
+        [executable, "-C", str(source), *arguments],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
     )
 
 

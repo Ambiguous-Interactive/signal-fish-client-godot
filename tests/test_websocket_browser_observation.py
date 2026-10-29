@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -182,6 +183,102 @@ class BrowserFailureTests(unittest.TestCase):
 
 
 class BackportApplicatorTests(unittest.TestCase):
+    def test_explicit_source_wins_over_an_outer_repository_environment(self) -> None:
+        script = SCRIPT.parent / "backport-websocket-43.py"
+        spec = importlib.util.spec_from_file_location("websocket_backport_env", script)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not load {script}")
+        backport = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(backport)
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            source = parent / "source"
+            outer = parent / "outer"
+            source.mkdir()
+            backport.git(source, "init", "--quiet")
+            original = "before\n" + "unchanged\n" * 12
+            (source / "peer.cpp").write_text(original)
+            backport.git(source, "add", "peer.cpp")
+            committed = backport.git(
+                source,
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            )
+            self.assertEqual(committed.returncode, 0, committed.stderr)
+            revision = backport.git(source, "rev-parse", "HEAD").stdout.strip()
+            cloned = backport.git(parent, "clone", "--quiet", str(source), str(outer))
+            self.assertEqual(cloned.returncode, 0, cloned.stderr)
+            changed = original.replace("before", "after")
+            (source / "peer.cpp").write_text(changed)
+            patch_file = parent / "receive.patch"
+            patch_file.write_text(backport.git(source, "diff", "--full-index").stdout)
+            backport.git(source, "checkout", "--", "peer.cpp")
+            locations = {
+                "GIT_DIR": str(outer / ".git"),
+                "GIT_WORK_TREE": str(outer),
+                "GIT_COMMON_DIR": str(outer / ".git"),
+                "GIT_INDEX_FILE": str(outer / ".git/index"),
+            }
+            extended = {
+                **locations,
+                "GIT_OBJECT_DIRECTORY": str(outer / ".git/objects"),
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(parent / "missing-objects"),
+                "GIT_IMPLICIT_WORK_TREE": "0",
+                "GIT_NAMESPACE": "outer-session",
+                "GIT_PREFIX": "outer-prefix/",
+                "GIT_SHALLOW_FILE": str(parent / "missing-shallow"),
+                "GIT_GRAFT_FILE": str(parent / "missing-grafts"),
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_REPLACE_REF_BASE": "refs/outer-replace/",
+                "GIT_CONFIG": str(outer / ".git/config"),
+                "GIT_CONFIG_PARAMETERS": "'core.worktree=" + str(outer) + "'",
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "core.worktree",
+                "GIT_CONFIG_VALUE_0": str(outer),
+            }
+            for environment in (locations, extended):
+                with self.subTest(variables=sorted(environment)):
+                    for repository in (source, outer):
+                        backport.git(repository, "reset", "--hard", "HEAD")
+                    outer_index = (outer / ".git/index").read_bytes()
+                    polluted = {
+                        **environment,
+                        "SF_BACKPORT_TEST_SENTINEL": "preserved",
+                        "GIT_TERMINAL_PROMPT": "0",
+                        "GIT_SSH_COMMAND": "preserved-command",
+                    }
+                    with (
+                        patch.object(backport, "BASE", revision),
+                        patch.object(backport, "PATCH", patch_file),
+                        patch.dict(os.environ, polluted),
+                    ):
+                        before_environment = dict(os.environ)
+                        marker = backport.git(
+                            source,
+                            "-c",
+                            'alias.sf-env=!test "$SF_BACKPORT_TEST_SENTINEL" = preserved && test "$GIT_TERMINAL_PROMPT" = 0 && test "$GIT_SSH_COMMAND" = preserved-command',
+                            "sf-env",
+                        )
+                        self.assertEqual(marker.returncode, 0, marker.stderr)
+                        self.assertEqual(backport.apply(source, False)["status"], "applied")
+                        staged = backport.git(source, "add", "peer.cpp")
+                        self.assertEqual(staged.returncode, 0, staged.stderr)
+                        self.assertEqual(dict(os.environ), before_environment)
+                        top = backport.git(source, "rev-parse", "--show-toplevel")
+                        self.assertEqual(top.stdout.strip(), str(source))
+                    self.assertEqual((outer / ".git/index").read_bytes(), outer_index)
+                    self.assertEqual((source / "peer.cpp").read_text(), changed)
+                    self.assertEqual((outer / "peer.cpp").read_text(), original)
+                    self.assertEqual(backport.git(source, "show", ":peer.cpp").stdout, changed)
+
     def test_real_git_apply_preserves_pin_and_exact_source_contract(self) -> None:
         script = SCRIPT.parent / "backport-websocket-43.py"
         spec = importlib.util.spec_from_file_location("websocket_backport", script)

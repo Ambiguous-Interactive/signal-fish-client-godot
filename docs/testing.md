@@ -394,7 +394,7 @@ writes. Godot 4.4-beta1 passes the original control but truncates fragmented
 messages: a 512 KiB run receives 65/65 messages with 127-byte bodies instead of
 4096 bytes. The exact-byte check fails from packet zero. Godot 4.4.1 and 4.7.2
 pass the same fragmented controls. A 4.3 backport also needs the
-[message-completion callback repair](https://github.com/godotengine/godot/commit/d798068a0816a66b80b8096aa77212468c0155c4)
+[message-completion callback repair](https://github.com/godotengine/godot/commit/d798068a0816a66b80b8096aa77212468c0155c4),
 the
 [fragmented-message assembly repair](https://github.com/godotengine/godot/commit/a2f5eb9cf095a8d942d9518a2ef5848cd47ce8f1),
 and the
