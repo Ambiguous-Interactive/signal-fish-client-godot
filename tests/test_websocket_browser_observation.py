@@ -230,7 +230,10 @@ class BackportApplicatorTests(unittest.TestCase):
             modules.append(module)
         stable, backport = modules
         with tempfile.TemporaryDirectory() as directory:
-            for version in ("44", "47"):
+            for version, base in (
+                ("44", "49a5bc7b616bd04689a2c89e89bda41f50241464"),
+                ("47", "ed1daf0bf001b61586d9930840f2f1394092c079"),
+            ):
                 with self.subTest(version=version):
                     source = Path(os.environ["SF_WEBSOCKET_GODOT_" + version + "_SOURCE"]).resolve()
                     fixture = Path(directory) / version
@@ -260,7 +263,9 @@ class BackportApplicatorTests(unittest.TestCase):
                     for repository, arguments in commands:
                         result = backport.git(repository, *arguments)
                         self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(stable.apply(fixture, True)["status"], "applicable")
+                    checked = stable.apply(fixture, True)
+                    self.assertEqual(checked["base"], base)
+                    self.assertEqual(checked["status"], "applicable")
                     self.assertEqual(stable.apply(fixture, False)["status"], "applied")
                     self.assertEqual(stable.apply(fixture, False)["status"], "already_applied")
 
