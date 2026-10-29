@@ -221,6 +221,14 @@ class BackportApplicatorTests(unittest.TestCase):
             raise RuntimeError(f"Could not load {script}")
         stable = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(stable)
+        source_blobs = {
+            "49a5bc7b616bd04689a2c89e89bda41f50241464": "1a1f52a8a06b5867fc1c14e416f78f2a14fa908f",
+            "ed1daf0bf001b61586d9930840f2f1394092c079": "ae3e34fc42aa1c6458c80673216727bb36a70f92",
+        }
+        for revision, blob in source_blobs.items():
+            with self.subTest(source_revision=revision):
+                bundled = script.parent / "patches" / stable.PATCHES[revision]
+                self.assertIn("index " + blob + "..", bundled.read_text())
         backport_spec = importlib.util.spec_from_file_location(
             "websocket_stable_git", SCRIPT.parent / "backport-websocket-43.py"
         )
