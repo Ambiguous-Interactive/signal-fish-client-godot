@@ -1,11 +1,9 @@
 class_name SignalFishClient
 extends Node
 
-## GDScript Signal Fish v2 client (PLAN §4.2). Configure with a
-## [SignalFishConfig], connect over WebSocket, and drive gameplay through the
-## typed send methods plus one signal per server event. Everything is polled:
-## call [method poll] (or leave [member SignalFishConfig.auto_poll] on) —
-## there are no threads and no blocking calls, so web exports work unchanged.
+## GDScript Signal Fish client. Configure with [SignalFishConfig] and use typed
+## methods and event signals. Drive [method poll] or enable
+## [member SignalFishConfig.auto_poll]. Calls never block and work on web.
 
 signal connected
 signal disconnected(code: int, reason: String)
@@ -828,8 +826,7 @@ func _wire_transport_signals() -> void:
 
 
 func _on_transport_opened() -> void:
-	# A `connected` handler may close the client synchronously; never resurrect
-	# a session that already moved past CONNECTING.
+	# A connected handler can end the session before authentication (#73).
 	if (
 		_connection_state
 		in [ConnectionState.CLOSING, ConnectionState.CLOSED, ConnectionState.FAILED]
@@ -852,10 +849,7 @@ func _on_transport_opened() -> void:
 		and _connection_state == ConnectionState.CONNECTED
 		and not _defer_handshake_close()
 	):
-		# A refused authenticate (e.g. the backpressure cap) leaves the dial
-		# with nothing in flight (issue #73): resolve it like a transport
-		# failure instead of stalling. A consumer handler that closed inside
-		# the error signal left CLOSING, and its cascade owns the teardown.
+		# A refused auth needs a terminal event unless its handler redialed (#73).
 		_on_transport_failed("authenticate send failed")
 
 
@@ -866,11 +860,10 @@ func _send_reconnect() -> Error:
 	return _send_envelope(envelope, "reconnect")
 
 
-func _fail_reconnect_handshake() -> void:
-	# Resolve the refused request while keeping a closing socket for its
-	# terminal metadata. Other refusals terminate the attempt (#482).
-	var failed_transport := transport
-	_clear_reconnect_credentials()
+func _fail_reconnect_handshake(failed_transport: SFTransportScript) -> void:
+	# Keep closing handshakes for terminal metadata; resolve other refusals (#482).
+	if transport == failed_transport or transport == null:
+		_clear_reconnect_credentials()
 	reconnection_failed.emit("reconnect handshake send failed", SFErrorCodesScript.Code.NONE)
 	if transport == failed_transport and not _defer_handshake_close():
 		_terminate_reconnection_attempt()
@@ -915,6 +908,12 @@ func _string_list_or_null(values: PackedStringArray) -> Variant:
 
 
 func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
+	if (
+		_connection_state == ConnectionState.CLOSING
+		and transport != null
+		and transport.get_ready_state() == WebSocketPeer.STATE_CLOSED
+	):
+		_reset_heartbeat()
 	if payload.size() > _config.max_inbound_frame_bytes:
 		_emit_protocol_error(
 			(
@@ -1066,8 +1065,9 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 						_session_state = SessionState.AUTHENTICATED
 						_reset_heartbeat()
 						_reconnect_handshake_sent = true
+						var reconnect_transport := transport
 						if _send_reconnect() != OK:
-							_fail_reconnect_handshake()
+							_fail_reconnect_handshake(reconnect_transport)
 				else:
 					_session_state = SessionState.AUTHENTICATED
 					authenticated.emit(event.args[0], event.args[1], event.args[2])

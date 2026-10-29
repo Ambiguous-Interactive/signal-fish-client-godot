@@ -64,6 +64,14 @@ static func run() -> Array[String]:
 				transport.peer.ready_state = WebSocketPeer.STATE_CLOSED
 				transport.peer.close_code = 4000
 				transport.peer.close_reason = "server_shutdown"
+				transport.max_packets_per_poll = 1
+				var pong := MessagesScript.encode({"type": "Pong"}).to_utf8_buffer()
+				transport.peer.packets = [pong, pong]
+				transport.peer.packet_is_text = [true, true]
+				config.auto_poll = true
+				client._process(config.pong_timeout_sec + 1.0)
+				if not events.is_empty() or transport.peer.packets.size() != 1:
+					failures.append(label + ": close watchdog beat the observed close drain")
 			transport._send_failure_deadline_ms = 0
 			client.poll()
 			client.poll()
@@ -101,22 +109,84 @@ static func run() -> Array[String]:
 	if redialing.get_connection_state() != ClientScript.ConnectionState.CONNECTED:
 		failures.append("refused-auth handler redial was failed by the old send")
 	redialing.free()
-	var closing_client := ClientScript.new()
-	var closing_config := ConfigScript.new()
-	closing_config.app_id = "test-app"
-	closing_config.auto_poll = false
-	closing_config.heartbeat_interval_sec = 0.0
-	closing_config.pong_timeout_sec = 0.25
-	closing_client.configure(closing_config)
-	var unresponsive := ClosingWithoutTimer.new()
-	closing_client.transport = unresponsive
-	closing_client.connect_to_server("ws://example.test/socket")
-	unresponsive.inject_open()
-	closing_client._process(1.0)
-	if closing_client.get_connection_state() != ClientScript.ConnectionState.FAILED:
-		failures.append("closing adapter without a send timer bypassed the client close watchdog")
-	closing_client.free()
+	for state: int in [WebSocketPeer.STATE_CLOSING, WebSocketPeer.STATE_CLOSED]:
+		var closing_client := ClientScript.new()
+		var closing_config := ConfigScript.new()
+		closing_config.app_id = "test-app"
+		closing_config.auto_poll = false
+		closing_config.heartbeat_interval_sec = 0.0
+		closing_config.pong_timeout_sec = 0.25
+		closing_client.configure(closing_config)
+		var unresponsive := ClosingWithoutTimer.new()
+		unresponsive.terminal_state = state as WebSocketPeer.State
+		closing_client.transport = unresponsive
+		closing_client.connect_to_server("ws://example.test/socket")
+		unresponsive.inject_open()
+		closing_client._process(1.0)
+		if closing_client.get_connection_state() != ClientScript.ConnectionState.FAILED:
+			failures.append("silent adapter bypassed the client close watchdog: " + str(state))
+		closing_client.free()
+	_check_reentrant_reconnect(failures)
 	return failures
+
+
+static func _check_reentrant_reconnect(failures: Array[String]) -> void:
+	for open_fresh: bool in [false, true]:
+		var client := ClientScript.new()
+		var config := ConfigScript.new()
+		config.app_id = "test-app"
+		config.endpoint_url = "ws://example.test/socket"
+		config.auto_poll = false
+		client.configure(config)
+		var old := FakeScript.new()
+		var fresh := FakeScript.new()
+		client.transport = old
+		if client.reconnect(Fixtures.PLAYER_A, Fixtures.ROOM_ID, "old-token") != OK:
+			failures.append("reentrant reconnect setup dial failed")
+			client.free()
+			continue
+		old.inject_open()
+		var dial_errors: Array[int] = []
+		var attempts: Array[String] = []
+		client.connection_failed.connect(
+			func(_error: String) -> void:
+				client.transport = fresh
+				dial_errors.append(
+					client.reconnect(Fixtures.PLAYER_B, Fixtures.ROOM_ID, "fresh-token")
+				)
+				if open_fresh:
+					fresh.inject_open()
+		)
+		client.reconnection_failed.connect(
+			func(reason: String, _code: int) -> void: attempts.append(reason)
+		)
+		old.fail_on_send = true
+		old.inject_server_message({"type": "Authenticated", "data": Fixtures.authenticated_data()})
+		var label := "reentrant reconnect open=%s" % open_fresh
+		if dial_errors != [OK]:
+			failures.append(label + ": handler redial failed")
+		if attempts.size() != 1:
+			failures.append(label + ": old attempt lost its failure notification")
+		if client.transport != fresh:
+			failures.append(label + ": old send terminated the replacement transport")
+		var expected_state := (
+			ClientScript.ConnectionState.CONNECTED
+			if open_fresh
+			else ClientScript.ConnectionState.CONNECTING
+		)
+		if client.get_connection_state() != expected_state:
+			failures.append(label + ": old send changed replacement connection state")
+		if not open_fresh:
+			fresh.inject_open()
+		fresh.inject_server_message(
+			{"type": "Authenticated", "data": Fixtures.authenticated_data()}
+		)
+		var expected := MessagesScript.encode(
+			MessagesScript.reconnect(Fixtures.PLAYER_B, Fixtures.ROOM_ID, "fresh-token")
+		)
+		if fresh.sent_text.size() != 2 or fresh.sent_text.back() != expected:
+			failures.append(label + ": replacement handshake lost its fresh credentials")
+		client.free()
 
 
 class ClosingTransport:
@@ -130,7 +200,8 @@ class ClosingTransport:
 
 class ClosingWithoutTimer:
 	extends FakeScript
+	var terminal_state := WebSocketPeer.STATE_CLOSING
 
 	func send_text(_text: String) -> Error:
-		_ready_state = WebSocketPeer.STATE_CLOSING
+		_ready_state = terminal_state
 		return FAILED
