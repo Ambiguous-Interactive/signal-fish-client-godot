@@ -48,8 +48,8 @@ func _initialize() -> void:
 			_peer.max_queued_packets = number
 	if _credit_bytes < 0 or _credit_bytes > 0 and _credit_bytes < BODY_BYTES:
 		_failures.append("credit must be zero or admit one complete body")
-	if _fragment_bytes < 0 or _fragment_bytes > BODY_BYTES:
-		_failures.append("fragment bytes must be zero or at most one body")
+	if _fragment_bytes < 0 or _fragment_bytes >= BODY_BYTES:
+		_failures.append("fragment bytes must be zero or smaller than one body")
 	if _failures.is_empty():
 		if _credit_bytes > 0:
 			_batch_packets = mini(PACKETS, int(_credit_bytes / float(BODY_BYTES)))

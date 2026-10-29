@@ -261,6 +261,9 @@ def main() -> int:
             finally:
                 try:
                     report["receive_trace"] = page.evaluate("window.websocketReceiveSnapshot()")
+                except Exception as exc:
+                    report["receive_trace_error"] = f"{type(exc).__name__}: {exc}"
+                    report["receive_trace"] = {}
                 finally:
                     browser.close()
         records = [
@@ -279,6 +282,7 @@ def main() -> int:
             len(records) == 1
             and records[0].get("passed") is True
             and evidence["reliable_delivery"] is True
+            and not report.get("receive_trace_error")
             and not server_errors
             and not any("ERROR" in line or "Dropping data" in line for line in lines)
         )

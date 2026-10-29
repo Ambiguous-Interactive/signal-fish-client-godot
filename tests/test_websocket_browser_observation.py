@@ -2,9 +2,15 @@
 
 import copy
 import importlib.util
+import io
+import json
+import sys
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import cast
+from unittest.mock import Mock, patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/check-websocket-web-receive.py"
 SPEC = importlib.util.spec_from_file_location("websocket_receive", SCRIPT)
@@ -103,6 +109,76 @@ class ReceiveEvidenceTests(unittest.TestCase):
                 evidence = drill.receive_evidence(trace, result, commands)
                 self.assertFalse(evidence["trace_complete"])
                 self.assertFalse(evidence["reliable_delivery"])
+
+
+class BrowserFailureTests(unittest.TestCase):
+    def test_snapshot_failure_preserves_run_failure_and_always_closes_browser(self) -> None:
+        for primary in ("navigation", "timeout", "crash", "snapshot_only"):
+            with self.subTest(primary=primary), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "attempt"
+                page = Mock()
+                page.evaluate.side_effect = RuntimeError("snapshot context lost")
+                browser = Mock(version="test browser")
+                browser.new_page.return_value = page
+                playwright = Mock()
+                playwright.chromium.launch.return_value = browser
+                context = Mock()
+                context.__enter__ = Mock(return_value=playwright)
+                context.__exit__ = Mock(return_value=False)
+                expected_error = None
+                if primary == "navigation":
+                    page.goto.side_effect = RuntimeError("navigation context lost")
+                    expected_error = "RuntimeError: navigation context lost"
+                elif primary == "timeout":
+                    expected_error = "RuntimeError: Web finite burst did not finish"
+                elif primary == "crash":
+                    page.wait_for_timeout.side_effect = RuntimeError("page crashed")
+                    expected_error = "RuntimeError: page crashed"
+                else:
+
+                    def complete(_url: str, observed_page: Mock = page) -> None:
+                        for call in observed_page.on.call_args_list:
+                            if call.args[0] == "console":
+                                call.args[1](
+                                    Mock(
+                                        type="log",
+                                        text='WEBSOCKET_WEB_RESULT {"passed":true,"received":[]}',
+                                    )
+                                )
+
+                    page.goto.side_effect = complete
+                clock = iter((0.0, 1000.0)) if primary == "timeout" else None
+                with (
+                    patch.object(
+                        sys,
+                        "argv",
+                        [str(SCRIPT), "--godot", sys.executable, "--output", str(output)],
+                    ),
+                    patch.object(
+                        drill, "ThreadingHTTPServer", return_value=Mock(server_port=12345)
+                    ) as server,
+                    patch.object(drill.threading, "Thread") as thread,
+                    patch.object(drill.subprocess, "run"),
+                    patch.object(drill.time, "monotonic", side_effect=clock, return_value=0.0),
+                    patch("playwright.sync_api.sync_playwright", return_value=context),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(drill.main(), 1)
+                report = json.loads((output / "assessment.json").read_text())
+                self.assertIs(report["passed"], False)
+                self.assertEqual(report.get("error"), expected_error)
+                self.assertEqual(
+                    report["receive_trace_error"], "RuntimeError: snapshot context lost"
+                )
+                self.assertEqual(report["receive_trace"], {})
+                browser.close.assert_called_once_with()
+                server.return_value.shutdown.assert_called_once_with()
+                server.return_value.server_close.assert_called_once_with()
+                thread.return_value.join.assert_called_once_with(timeout=5)
+                if primary == "snapshot_only":
+                    self.assertNotIn("error", report)
+                    self.assertIs(report["results"][0]["passed"], True)
+                    self.assertIs(report["receive_evidence"]["trace_complete"], False)
 
 
 if __name__ == "__main__":
