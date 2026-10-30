@@ -1,8 +1,23 @@
 diff --git a/modules/websocket/wsl_peer.cpp b/modules/websocket/wsl_peer.cpp
-index 1a1f52a8a06b5867fc1c14e416f78f2a14fa908f..d922710e7717486994567694839e6444be26b1d2 100644
+index 1a1f52a8a06b5867fc1c14e416f78f2a14fa908f..4f1819eb2e9642c9ac2ab50e06831a217820d60f 100644
 --- a/modules/websocket/wsl_peer.cpp
 +++ b/modules/websocket/wsl_peer.cpp
-@@ -594,9 +594,10 @@ ssize_t WSLPeer::_wsl_recv_callback(wslay_event_context_ptr ctx, uint8_t *data,
+@@ -570,8 +570,12 @@ ssize_t WSLPeer::_wsl_recv_callback(wslay_event_context_ptr ctx, uint8_t *data,
+ 		wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+ 		return -1;
+ 	}
+-	// Make sure we don't read more than what our buffer can hold.
+-	size_t buffer_limit = MIN(peer->in_buffer.payload_space_left(), peer->in_buffer.packets_space_left() * 2); // The minimum size of a websocket message is 2 bytes.
++	int payload_limit = peer->in_buffer.payload_space_left();
++	if (payload_limit == 0 && peer->pending_message.payload_size == (size_t)peer->inbound_buffer_size && peer->in_buffer.packets_left() == 0) {
++		// Finish a full fragmented message or process control frames. The cumulative message limit rejects extra payload before its chunk callback.
++		payload_limit = 1; // Do not prefetch bytes from the next message.
++	}
++	size_t buffer_limit = MIN(payload_limit, peer->in_buffer.packets_space_left() * 2); // The minimum size of a websocket message is 2 bytes.
+ 	size_t to_read = MIN(len, buffer_limit);
+ 	if (to_read == 0) {
+ 		wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
+@@ -594,9 +598,10 @@ ssize_t WSLPeer::_wsl_recv_callback(wslay_event_context_ptr ctx, uint8_t *data,
  void WSLPeer::_wsl_recv_start_callback(wslay_event_context_ptr ctx, const struct wslay_event_on_frame_recv_start_arg *arg, void *user_data) {
  	WSLPeer *peer = (WSLPeer *)user_data;
  	uint8_t op = arg->opcode;
@@ -14,7 +29,7 @@ index 1a1f52a8a06b5867fc1c14e416f78f2a14fa908f..d922710e7717486994567694839e6444
  		pm.opcode = op;
  	}
  }
-@@ -604,7 +605,7 @@ void WSLPeer::_wsl_recv_start_callback(wslay_event_context_ptr ctx, const struct
+@@ -604,7 +609,7 @@ void WSLPeer::_wsl_recv_start_callback(wslay_event_context_ptr ctx, const struct
  void WSLPeer::_wsl_frame_recv_chunk_callback(wslay_event_context_ptr ctx, const struct wslay_event_on_frame_recv_chunk_arg *arg, void *user_data) {
  	WSLPeer *peer = (WSLPeer *)user_data;
  	PendingMessage &pm = peer->pending_message;
@@ -23,7 +38,7 @@ index 1a1f52a8a06b5867fc1c14e416f78f2a14fa908f..d922710e7717486994567694839e6444
  		// Only write the payload.
  		peer->in_buffer.write_packet(arg->data, arg->data_length, nullptr);
  		pm.payload_size += arg->data_length;
-@@ -917,6 +918,7 @@ void WSLPeer::_clear() {
+@@ -917,6 +922,7 @@ void WSLPeer::_clear() {
  	was_string = 0;
  	in_buffer.clear();
  	packet_buffer.clear();
@@ -48,3 +63,16 @@ index 2d3f9b8111b0beb1269c6390f0c8320a4cedd3ee..dd0a29f61c9a19882fe90b53bfff9f3d
  		}
  	};
  
+diff --git a/thirdparty/wslay/wslay_event.c b/thirdparty/wslay/wslay_event.c
+index 4c29fe400056c0f482cc7055a87316f8126a2570..f18387305081c63e70f015c0436045b205507589 100644
+--- a/thirdparty/wslay/wslay_event.c
++++ b/thirdparty/wslay/wslay_event.c
+@@ -564,6 +564,8 @@ int wslay_event_recv(wslay_event_context_ptr ctx) {
+             ctx->read_enabled = 0;
+             return (int)r;
+           }
++        } else {
++          ctx->imsg->msg_length += iocb.payload_length;
+         }
+       }
+       /* If RSV1 bit is set then it is too early for utf-8 validation */

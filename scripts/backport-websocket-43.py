@@ -114,7 +114,17 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
     return {
         **apply_patch(source, check_only, BASE, PATCH),
         "upstream_commits": UPSTREAM,
+        "close_reference": {
+            "commit": "49a5bc7b616bd04689a2c89e89bda41f50241464",
+            "path": "modules/websocket/wsl_peer.cpp",
+            "function": "WSLPeer::poll",
+        },
         "local_repairs": [
+            {
+                "issue": 496,
+                "change": "Finish full fragmented messages and enforce cumulative byte limits",
+                "cause": "A full payload queue blocks final continuation headers",
+            },
             {
                 "issue": 491,
                 "change": "Exclude interleaved control-frame bytes from message assembly",
