@@ -25,6 +25,7 @@ var wire_writes := 0
 var wire_bytes := 0
 var wire_split_headers := 0
 var wire_retired_bytes := 0
+var wire_retired_continuation_bytes := 0
 var wire_error := OK
 
 var _wire_queue: Array[PackedByteArray] = []
@@ -70,6 +71,7 @@ func wire_report() -> Dictionary:
 		"split_headers": wire_split_headers,
 		"pending_bytes": _wire_pending,
 		"retired_bytes": wire_retired_bytes,
+		"retired_continuation_bytes": wire_retired_continuation_bytes,
 		"error": wire_error
 	}
 
@@ -185,6 +187,10 @@ func _drop_dead_connection() -> void:
 
 func _drop_connection() -> void:
 	wire_retired_bytes += _wire_pending
+	for index: int in range(_wire_queue.size()):
+		var frame := _wire_queue[index]
+		if (frame[0] & 0x0f) == OP_CONTINUATION:
+			wire_retired_continuation_bytes += frame.size() - (_wire_offset if index == 0 else 0)
 	_wire_queue.clear()
 	_wire_offset = 0
 	_wire_pending = 0

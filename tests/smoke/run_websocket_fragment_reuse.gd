@@ -197,8 +197,8 @@ func _run() -> void:
 
 
 func _finish() -> void:
-	if _pending_wire_before_replace and _server.wire_retired_bytes == 0:
-		_failures.append("old queued output was not retired")
+	if _pending_wire_before_replace and _server.wire_retired_continuation_bytes == 0:
+		_failures.append("old queued continuation was not retired")
 	if _server.wire_error != OK:
 		_failures.append("paced socket write failed")
 	print(
