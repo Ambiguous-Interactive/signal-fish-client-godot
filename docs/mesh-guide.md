@@ -2090,9 +2090,20 @@ python scripts/check-webrtc-reference.py --runtime native \
   --output /tmp/mesh-reference-attempt
 ```
 
-Finite channel configuration does not prove expiry under loss or delay.
-Web exports, remote networks, other build targets and upstream adoption
-remain open. The zero-byte script packet contract remains tracked in #437.
+The tested Linux ARM64 build passes all twelve engine controls, nine native
+lifetime controls and the two-sender exact-byte metadata scene. Native
+reference sessions pass both offer roles with the engine reader and safe
+adapter, across two generations each. Every generation retains all 128
+reliable snapshot chunks and acknowledgements, binary payload checks,
+required-channel teardown and fresh-link recovery. Gameplay lifetimes are
+unset for reliable and 1 ms for ordered/unordered channels. WebSocket smoke
+also passes.
+
+One unordered binary sample is absent in a safe-adapter phase. The drill
+permits unreliable gaps; these results do not identify their cause. Finite
+channel configuration does not prove expiry under loss or delay. Web exports,
+remote networks, other build targets and upstream adoption remain open. The
+zero-byte script packet contract remains tracked in #437.
 
 ### Mixed-mode packet metadata
 
