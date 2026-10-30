@@ -578,8 +578,8 @@ The boundaries group adds 55 cases for large gameplay and control bodies:
   Ping requires an exact 125-byte Pong.
 - Maximum-length close reasons contain 123 UTF-8 bytes. ASCII and mixed
   two-/three-/four-byte text are checked in both directions with an empty
-  packet queue or an unfinished full-buffer message. The received client
-  close frame must preserve the exact reason bytes as well as the code.
+  packet queue or an unfinished full-buffer message. Client-initiated close
+  frames must preserve the exact reason bytes as well as the code.
 
 The receive-limit fixture accepts `--capacity=131071`,
 `--message-type=unicode`, `--tail-bytes=1|2|3` and `--control-bytes=125`.

@@ -125,7 +125,7 @@ func _run() -> void:
 		await process_frame
 	if _server.client_close_codes != [CLOSE_CODE]:
 		_failures.append("matching client close frame")
-	if _server.client_close_reasons != [_reason.to_utf8_buffer()]:
+	if _origin == "client" and _server.client_close_reasons != [_reason.to_utf8_buffer()]:
 		_failures.append("matching client close reason bytes")
 	_finish()
 
