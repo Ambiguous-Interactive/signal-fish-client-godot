@@ -34,7 +34,7 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       Include maximum-length ASCII and mixed Unicode close reasons.
 - [ ] Follow Godot #124973/#124974 for assembly/reuse repair and qualify
       additional stable engines on fragmented gameplay and direct peer reuse
-      (#491, #492; see `docs/testing.md`). Qualify the pinned 4.4.1/4.7.2 assembly
+      (#491, #492; see `docs/testing.md`). Qualify the pinned 4.4.1/4.5.2/4.7.2 assembly
       patch on remote paths and other build targets.
 - [ ] Qualify active gameplay shutdown on remote networks (#482; see `docs/testing.md`). Preserve
       the browser send/close race control, distinct reset and nonresponding

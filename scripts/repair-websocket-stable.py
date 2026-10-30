@@ -10,6 +10,7 @@ from pathlib import Path
 
 PATCHES = {
     "49a5bc7b616bd04689a2c89e89bda41f50241464": "godot-44-websocket-assembly.patch",
+    "6ce3de25aa58466e14ef354703ba8d9791a417da": "godot-45-websocket-assembly.patch",
     "ed1daf0bf001b61586d9930840f2f1394092c079": "godot-47-websocket-assembly.patch",
 }
 
@@ -24,7 +25,7 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
     revision = backport.git(source, "rev-parse", "HEAD")
     base = revision.stdout.strip()
     if revision.returncode or base not in PATCHES:
-        raise ValueError("source HEAD must be a pinned Godot 4.4.1 or 4.7.2 stable revision")
+        raise ValueError("source HEAD must be a pinned Godot 4.4.1, 4.5.2 or 4.7.2 stable revision")
     patch = script.parent / "patches" / PATCHES[base]
     return {
         **backport.apply_patch(source, check_only, base, patch),
