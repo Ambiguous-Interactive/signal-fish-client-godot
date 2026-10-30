@@ -444,7 +444,8 @@ Choose the partial and fresh message types independently. The fresh binary
 body includes zero and non-UTF-8 bytes.
 
 Separate experimental patches target Godot 4.4.1-stable
-`49a5bc7b616bd04689a2c89e89bda41f50241464` and 4.7.2-stable
+`49a5bc7b616bd04689a2c89e89bda41f50241464`, 4.5.2-stable
+`6ce3de25aa58466e14ef354703ba8d9791a417da` and 4.7.2-stable
 `ed1daf0bf001b61586d9930840f2f1394092c079`:
 
 ```sh
@@ -459,15 +460,24 @@ qualify the patched engine before use. Official 4.4.1 and 4.7.2 still fail
 the mixed binary interleaved controls and every partial/fresh text/binary reuse pair. Upstream adoption,
 other engine builds and remote gameplay remain open.
 
+The experimental 4.5.2 Linux ARM64 template passes all seven standalone
+reproductions below. Official 4.5.2 fails the four defect cases and passes
+the three comparison controls. These checks cover fragmented Ping/Pong bytes,
+CLOSING peer reuse, full-buffer completion and split Unicode close reasons
+(#491, #492, #496, #498). The build also passes all 181 paced and large-boundary
+cases, normal WebSocket smoke and all three delayed active shutdown/recovery
+modes. Other build targets and remote networks remain open.
+
 For 4.7.2 template builds, add `disable_path_overrides=no` to the SCons command
 to enable `--path` and `--script` for these fixtures. Use the matching official
 editor to import the test project before running a template build.
 
-To check both bundled patches against local pinned sources, run:
+To check all three bundled patches against local pinned sources, run:
 
 ```sh
 PYTHONPATH=tests \
 SF_WEBSOCKET_GODOT_44_SOURCE=/path/to/godot-4.4.1 \
+SF_WEBSOCKET_GODOT_45_SOURCE=/path/to/godot-4.5.2 \
 SF_WEBSOCKET_GODOT_47_SOURCE=/path/to/godot-4.7.2 \
 python -m unittest test_websocket_browser_observation.BackportApplicatorTests.test_bundled_patches_apply_to_pinned_sources
 ```
