@@ -259,6 +259,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", type=Path, help="Native engine or template to test")
     parser.add_argument("--importer", type=Path, help="Godot editor for fixture import")
+    parser.add_argument("--runner", type=Path, help="Optional emulator for the tested engine")
+    parser.add_argument(
+        "--runner-arg",
+        action="append",
+        default=[],
+        help="Emulator argument (repeatable; use = for flags)",
+    )
     parser.add_argument("--output", type=Path, help="New directory; every attempt is kept")
     parser.add_argument(
         "--suite", choices=["all", "assembly", "close", "boundaries"], default="all"
@@ -269,7 +276,15 @@ def main() -> int:
     parser.add_argument("--case", action="append", help="Run named cases only (repeatable)")
     args = parser.parse_args()
     if args.export_repro:
-        if args.godot or args.importer or args.output or args.case or args.suite != "all":
+        if (
+            args.godot
+            or args.importer
+            or args.output
+            or args.case
+            or args.runner
+            or args.runner_arg
+            or args.suite != "all"
+        ):
             parser.error("--export-repro cannot be combined with runtime options")
         if args.export_repro.exists():
             parser.error("reproduction archive already exists")
@@ -282,6 +297,12 @@ def main() -> int:
         return 0
     if not args.godot or not args.importer or not args.output:
         parser.error("--godot, --importer and --output are required for runtime checks")
+    if args.runner_arg and not args.runner:
+        parser.error("--runner-arg requires --runner")
+    runner = args.runner.resolve() if args.runner else None
+    if runner and not runner.is_file():
+        parser.error("runner must be an executable file")
+    prefix = [str(runner), *args.runner_arg] if runner else []
     selected = [
         case
         for case in cases()
@@ -321,6 +342,9 @@ def main() -> int:
         "importer_sha256": digest(importer),
         "fixtures_sha256": {name: digest(target / name) for name in sources},
         "project_sha256": digest(project / "project.godot"),
+        "runner": str(runner) if runner else None,
+        "runner_sha256": digest(runner) if runner else None,
+        "runner_args": args.runner_arg,
     }
     (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     imported = run(
@@ -335,6 +359,7 @@ def main() -> int:
             log = args.output / f"{name}.log"
             report = run(
                 [
+                    *prefix,
                     str(binary),
                     "--headless",
                     "--path",

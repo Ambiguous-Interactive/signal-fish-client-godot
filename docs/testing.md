@@ -590,6 +590,21 @@ python scripts/check-websocket-native-receive.py \
 
 Use a new output directory for every attempt. Reports retain commands, logs,
 fixture hashes, executable hashes, exact result records and timeout failures.
+To test a cross-compiled engine with QEMU, use an explicit runner:
+
+```sh
+python scripts/check-websocket-native-receive.py \
+  --godot /path/to/x86-64-template --importer /path/to/native-editor \
+  --runner /usr/bin/qemu-x86_64 \
+  --runner-arg=-L --runner-arg=/usr/x86_64-linux-gnu \
+  --output /tmp/native-receive-x86-attempt
+```
+
+The importer runs on the host. Reports keep the target engine hash, runner hash
+and runner arguments separately. Keep the cross compiler and sysroot versions
+with the build record. Emulation results apply to local emulation; physical
+hardware and remote networks need separate qualification.
+
 Use `--suite=assembly`, `--suite=close` or `--suite=boundaries` to select a
 group; `--case=NAME` selects individual cases. The full matrix has 181 cases.
 The boundaries group adds 55 cases for large gameplay and control bodies:
