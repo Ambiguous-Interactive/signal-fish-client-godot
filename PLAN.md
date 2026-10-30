@@ -25,14 +25,14 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Qualify the experimental Godot 4.3 WebSocket receive backport and engine upgrades on
       remote networks (#485; see `docs/testing.md`). Preserve the retained
       byte/count rejections, exact delivered prefix, full-buffer empty-fragment progress (#496),
-      fragmented-message assembly
+      fragmented-message assembly (Godot #124973/#124975)
       and matched local/application ACK credit controls, including 64-bit frame
       lengths and Unicode continuation boundaries.
-- [ ] Coordinate valid Unicode WebSocket close-reason handling upstream and
+- [ ] Follow Godot #124976 for valid Unicode WebSocket close reasons and
       qualify other targets and remote networks (#498; see `docs/testing.md`).
       Preserve paced close reasons, full-buffer completion and peer reuse.
       Include maximum-length ASCII and mixed Unicode close reasons.
-- [ ] Coordinate the interleaved Ping/Pong assembly repair upstream and qualify
+- [ ] Follow Godot #124973/#124974 for assembly/reuse repair and qualify
       additional stable engines on fragmented gameplay and direct peer reuse
       (#491, #492; see `docs/testing.md`). Qualify the pinned 4.4.1/4.7.2 assembly
       patch on remote paths and other build targets.
