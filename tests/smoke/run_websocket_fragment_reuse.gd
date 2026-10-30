@@ -13,10 +13,16 @@ var _fresh_type := "text"
 var _replacement := "closing"
 var _queued_before_partial := false
 var _retired_queued := 0
+var _pending_wire_before_replace := false
 
 
 func _initialize() -> void:
 	for argument: String in OS.get_cmdline_user_args():
+		var wire_option := _server.configure_wire_argument(argument)
+		if wire_option != ERR_UNAVAILABLE:
+			if wire_option != OK:
+				_failures.append("invalid paced-write option: " + argument)
+			continue
 		var option := argument.get_slice("=", 0)
 		var value := argument.get_slice("=", 1)
 		if not argument.begins_with(option + "="):
@@ -26,6 +32,11 @@ func _initialize() -> void:
 				_failures.append("replacement must be closing, aborted or handshake")
 			else:
 				_replacement = value
+		elif option == "--pending-wire-before-replace":
+			if value not in ["true", "false"]:
+				_failures.append("pending-wire-before-replace must be true or false")
+			else:
+				_pending_wire_before_replace = value == "true"
 		elif option == "--queued-before-partial":
 			if value not in ["true", "false"]:
 				_failures.append("queued-before-partial must be true or false")
@@ -37,6 +48,10 @@ func _initialize() -> void:
 			_partial_type = value
 		else:
 			_fresh_type = value
+	if _pending_wire_before_replace and _replacement == "handshake":
+		_failures.append("pending wire replacement requires closing or aborted")
+	if _pending_wire_before_replace and _server.wire_chunk_bytes == 0:
+		_failures.append("pending wire replacement requires paced writes")
 	call_deferred("_run")
 
 
@@ -120,6 +135,11 @@ func _run() -> void:
 		return
 	if _peer.get_available_packet_count() != _retired_queued:
 		_failures.append("unfinished fragment became packet")
+	if _pending_wire_before_replace:
+		if _server._send_frame(ServerScript.OP_CONTINUATION, PackedByteArray()) != OK:
+			_failures.append("pending old continuation send")
+			_finish()
+			return
 	_peer.close(-1 if _replacement == "aborted" else 3400, "replace")
 	_closing_state = _peer.get_ready_state()
 	if _replacement == "aborted":
@@ -177,6 +197,10 @@ func _run() -> void:
 
 
 func _finish() -> void:
+	if _pending_wire_before_replace and _server.wire_retired_continuation_bytes == 0:
+		_failures.append("old queued continuation was not retired")
+	if _server.wire_error != OK:
+		_failures.append("paced socket write failed")
 	print(
 		(
 			"REDIAL_RESULT "
@@ -190,8 +214,10 @@ func _finish() -> void:
 					"fresh": _fresh,
 					"replacement": _replacement,
 					"retired_queued": _retired_queued,
+					"pending_wire_before_replace": _pending_wire_before_replace,
 					"partial_type": _partial_type,
 					"fresh_type": _fresh_type,
+					"wire": _server.wire_report(),
 					"engine": Engine.get_version_info()["string"]
 				}
 			)

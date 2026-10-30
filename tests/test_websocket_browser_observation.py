@@ -340,7 +340,7 @@ class BackportApplicatorTests(unittest.TestCase):
                         result = stable.apply(source, False)
                         self.assertEqual(result["status"], "applied")
                         self.assertEqual(result["base"], revision)
-                        self.assertEqual(result["issues"], [485, 491, 492, 496])
+                        self.assertEqual(result["issues"], [485, 491, 492, 496, 498])
                         self.assertEqual(path.read_text(), changed)
                         self.assertEqual(stable.apply(source, False)["status"], "already_applied")
             with (

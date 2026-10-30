@@ -25,6 +25,11 @@ var _finished := false
 
 func _initialize() -> void:
 	for argument: String in OS.get_cmdline_user_args():
+		var wire_option := _server.configure_wire_argument(argument)
+		if wire_option != ERR_UNAVAILABLE:
+			if wire_option != OK:
+				_failures.append("invalid paced-write option: " + argument)
+			continue
 		var option := argument.get_slice("=", 0)
 		var value := argument.substr(option.length() + 1)
 		if not argument.begins_with(option + "="):
@@ -108,7 +113,15 @@ func _run() -> void:
 		_finish()
 		return
 	_initial_offered = true
-	var deadline := Time.get_ticks_msec() + 100
+	var deadline := Time.get_ticks_msec() + PHASE_TIMEOUT_MS
+	while _server.wire_report()["pending_bytes"] > 0 and Time.get_ticks_msec() < deadline:
+		_peer.poll()
+		await process_frame
+	if _server.wire_report()["pending_bytes"] != 0:
+		_failures.append("initial fragment write timeout")
+		_finish()
+		return
+	deadline = Time.get_ticks_msec() + 100
 	while Time.get_ticks_msec() < deadline:
 		_peer.poll()
 		await process_frame
@@ -195,12 +208,15 @@ func _finish() -> void:
 	if _finished:
 		return
 	_finished = true
+	if _server.wire_error != OK:
+		_failures.append("paced socket write failed")
 	print(
 		(
 			"FRAGMENT_LIMIT_RESULT "
 			+ JSON.stringify(
 				{
 					"passed": _failures.is_empty(),
+					"wire": _server.wire_report(),
 					"engine": Engine.get_version_info()["string"],
 					"capacity": _capacity,
 					"message_type": _message_type,

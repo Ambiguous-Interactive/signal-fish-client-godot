@@ -553,6 +553,53 @@ receive/reuse controls, WebSocket close smoke and all three active SDK
 shutdown modes. These local results extend #485, #491 and #492. Remote
 networks and upstream adoption remain open.
 
+### Paced native WebSocket reads and close reasons
+
+Use the opt-in native runner to split frame headers and bodies across local
+TCP writes. It covers full-buffer completion (#496), Ping/Pong separation
+(#491), peer replacement (#492), and valid Unicode close reasons (#498):
+
+```sh
+python scripts/check-websocket-native-receive.py \
+  --godot /path/to/repaired-template --importer /path/to/godot-editor \
+  --output /tmp/native-receive-attempt
+```
+
+Use a new output directory for every attempt. Reports retain commands, logs,
+fixture hashes, executable hashes, exact result records and timeout failures.
+Use `--suite=assembly` or `--suite=close` to select a group; `--case=NAME`
+selects individual cases. The full matrix has 126 cases.
+
+The three receive/reuse fixtures accept `--wire-chunk-bytes=1` and
+`--wire-delay-ms=10`. The sender queues frame bytes, writes at most one chunk
+per server poll, honors partial writes and retires queued output when the
+connection changes. Delay alone selects 65536-byte chunks. The default sender
+writes each complete frame immediately. Reports include successful writes,
+bytes, split headers, pending bytes, retired bytes and write errors.
+TCP can coalesce writes; this is local scheduling qualification.
+
+The new close fixture checks exact code 3400 and valid empty, ASCII, two-,
+three-, four-byte and mixed UTF-8 reasons. For a focused reproduction:
+
+```sh
+godot --headless --path . \
+  --script tests/smoke/run_websocket_close_reason.gd -- \
+  --wire-chunk-bytes=3 --wire-delay-ms=10 --reason=two --origin=server
+```
+
+Use `--origin=client` for a client close with a paced server echo and
+`--full-fragment=true` to close with an unfinished 31-byte message filling
+the receive buffer. Both directions require the exact close reason, terminal
+state, no application packet and the matching client close code.
+
+Bundled wslay skips the first two close-payload bytes during every receive
+chunk's UTF-8 validation. Those status bytes occur once per close frame.
+A valid Unicode reason split across reads can therefore produce code 1007.
+The current experimental 4.3/4.4.1/4.7.2 patches skip only the status bytes
+that remain at the accumulated payload offset. Rebuild from the current
+patches; earlier repaired binaries still contain this close-reason defect.
+Upstream adoption, other targets and remote networks remain open.
+
 ### Web WebSocket receive boundary
 
 Issue #488 has a separate engine-only browser control. It needs Godot Web

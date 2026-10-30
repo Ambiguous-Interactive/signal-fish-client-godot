@@ -19,11 +19,61 @@ var received_binary: Array[PackedByteArray] = []
 var client_close_codes: Array[int] = []
 var received_pongs: Array[PackedByteArray] = []
 
+var wire_chunk_bytes := 0
+var wire_delay_ms := 0
+var wire_writes := 0
+var wire_bytes := 0
+var wire_split_headers := 0
+var wire_retired_bytes := 0
+var wire_retired_continuation_bytes := 0
+var wire_error := OK
+
+var _wire_queue: Array[PackedByteArray] = []
+var _wire_offset := 0
+var _wire_pending := 0
+var _wire_next_ms := 0
 var _server: TCPServer = null
 var _connection: StreamPeerTCP = null
 var _buffer := PackedByteArray()
 var _handshake_done := false
 var _close_frame_sent := false
+
+
+## Consumes optional paced-write fixture arguments; unknown options return ERR_UNAVAILABLE.
+func configure_wire_argument(argument: String) -> Error:
+	var option := argument.get_slice("=", 0)
+	if option not in ["--wire-chunk-bytes", "--wire-delay-ms"]:
+		return ERR_UNAVAILABLE
+	var value := argument.substr(option.length() + 1)
+	if not argument.begins_with(option + "=") or not value.is_valid_int():
+		return ERR_INVALID_PARAMETER
+	var number := value.to_int()
+	if option == "--wire-chunk-bytes":
+		if number < 1 or number > 65536:
+			return ERR_INVALID_PARAMETER
+		wire_chunk_bytes = number
+	else:
+		if number < 0 or number > 100:
+			return ERR_INVALID_PARAMETER
+		wire_delay_ms = number
+		if wire_delay_ms > 0 and wire_chunk_bytes == 0:
+			wire_chunk_bytes = 65536
+	return OK
+
+
+## Returns paced-send observations before connection cleanup.
+func wire_report() -> Dictionary:
+	return {
+		"chunk_bytes": wire_chunk_bytes,
+		"delay_ms": wire_delay_ms,
+		"writes": wire_writes,
+		"bytes": wire_bytes,
+		"split_headers": wire_split_headers,
+		"pending_bytes": _wire_pending,
+		"retired_bytes": wire_retired_bytes,
+		"retired_continuation_bytes": wire_retired_continuation_bytes,
+		"error": wire_error
+	}
 
 
 func listen() -> Error:
@@ -125,6 +175,7 @@ func poll() -> void:
 		if not _handshake_done:
 			return
 	_process_frames()
+	_flush_wire()
 
 
 func _drop_dead_connection() -> void:
@@ -135,6 +186,15 @@ func _drop_dead_connection() -> void:
 
 
 func _drop_connection() -> void:
+	wire_retired_bytes += _wire_pending
+	for index: int in range(_wire_queue.size()):
+		var frame := _wire_queue[index]
+		if (frame[0] & 0x0f) == OP_CONTINUATION:
+			wire_retired_continuation_bytes += frame.size() - (_wire_offset if index == 0 else 0)
+	_wire_queue.clear()
+	_wire_offset = 0
+	_wire_pending = 0
+	_wire_next_ms = 0
 	if _connection != null:
 		_connection.disconnect_from_host()
 		_connection = null
@@ -291,7 +351,40 @@ func _send_frame(opcode: int, payload: PackedByteArray, final: bool = true) -> E
 	var frame := _frame_bytes(opcode, payload, final)
 	if _connection == null:
 		return ERR_INVALID_DATA
-	return _connection.put_data(frame)
+	if wire_chunk_bytes == 0:
+		return _connection.put_data(frame)
+	if _wire_pending + frame.size() > MAX_BUFFER_BYTES or _wire_queue.size() >= 4096:
+		wire_error = ERR_OUT_OF_MEMORY
+		return wire_error
+	_wire_queue.append(frame)
+	_wire_pending += frame.size()
+	return OK
+
+
+func _flush_wire() -> void:
+	if _wire_queue.is_empty() or Time.get_ticks_msec() < _wire_next_ms:
+		return
+	var frame := _wire_queue[0]
+	var end := mini(_wire_offset + wire_chunk_bytes, frame.size())
+	var result := _connection.put_partial_data(frame.slice(_wire_offset, end))
+	if result[0] != OK:
+		wire_error = result[0]
+		_drop_connection()
+		return
+	var written: int = result[1]
+	if written == 0:
+		return
+	var header_bytes := 2 if (frame[1] & 0x7f) < 126 else 4
+	if _wire_offset < header_bytes and _wire_offset + written < header_bytes:
+		wire_split_headers += 1
+	_wire_offset += written
+	_wire_pending -= written
+	wire_writes += 1
+	wire_bytes += written
+	_wire_next_ms = Time.get_ticks_msec() + wire_delay_ms
+	if _wire_offset == frame.size():
+		_wire_queue.pop_front()
+		_wire_offset = 0
 
 
 func _frame_bytes(opcode: int, payload: PackedByteArray, final: bool = true) -> PackedByteArray:

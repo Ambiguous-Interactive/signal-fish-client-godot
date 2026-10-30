@@ -27,6 +27,11 @@ var _watchdog_ms := CONNECT_TIMEOUT_MS
 
 func _initialize() -> void:
 	for argument: String in OS.get_cmdline_user_args():
+		var wire_option := _server.configure_wire_argument(argument)
+		if wire_option != ERR_UNAVAILABLE:
+			if wire_option != OK:
+				_failures.append("invalid paced-write option: " + argument)
+			continue
 		var option := argument.get_slice("=", 0)
 		if (
 			option
@@ -236,12 +241,15 @@ func _run() -> void:
 
 
 func _finish() -> void:
+	if _server.wire_error != OK:
+		_failures.append("paced socket write failed")
 	print(
 		(
 			"WEBSOCKET_RECEIVE_RESULT "
 			+ JSON.stringify(
 				{
 					"passed": _failures.is_empty(),
+					"wire": _server.wire_report(),
 					"engine": Engine.get_version_info()["string"],
 					"capacity": _peer.inbound_buffer_size,
 					"max_queued_packets": _peer.max_queued_packets,
