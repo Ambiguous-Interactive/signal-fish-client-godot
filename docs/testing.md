@@ -616,6 +616,25 @@ that remain at the accumulated payload offset. Rebuild from the current
 patches; earlier repaired binaries still contain this close-reason defect.
 Upstream adoption, other targets and remote networks remain open.
 
+### Standalone upstream reproductions
+
+Create a small project for engine bug reports:
+
+```sh
+python scripts/check-websocket-native-receive.py \
+  --export-repro /tmp/websocket-repro.zip
+```
+
+Extract the ZIP and follow `README.txt`. The project needs only Godot and
+uses a local raw TCP server. It includes exact-byte Ping/Pong assembly,
+peer replacement, full-buffer completion and split Unicode close controls,
+plus passing comparison commands. `SHA256SUMS` pins every input. The exporter
+refuses an existing archive and accepts no runtime options.
+
+These reports advance #491, #492, #496 and #498. The standalone commands
+retain official-engine failures and repaired-engine passes. Upstream adoption,
+other targets and remote networks remain open.
+
 ### Web WebSocket receive boundary
 
 Issue #488 has a separate engine-only browser control. It needs Godot Web

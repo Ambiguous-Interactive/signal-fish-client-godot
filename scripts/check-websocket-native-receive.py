@@ -9,6 +9,7 @@ import itertools
 import json
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -182,6 +183,58 @@ def cases() -> list[tuple[str, str, list[str]]]:
     return result
 
 
+def reproduction_files() -> dict[str, bytes]:
+    sources = ["ws_test_server.gd", *(fixture[0] for fixture in FIXTURES.values())]
+    files = {f"tests/smoke/{name}": (ROOT / "tests/smoke" / name).read_bytes() for name in sources}
+    files["project.godot"] = (
+        b'config_version=5\n[application]\nconfig/name="WebSocket reproductions"\n'
+        b'[rendering]\nrenderer/rendering_method="gl_compatibility"\n'
+    )
+    commands = {
+        "control-bytes": "run_websocket_receive_boundary.gd -- --fragment-bytes=127 --fragment-control=ping --capacity=524288",
+        "control-baseline": "run_websocket_receive_boundary.gd -- --fragment-bytes=127 --fragment-control=none --capacity=524288",
+        "reuse": "run_websocket_fragment_reuse.gd",
+        "reuse-baseline": "run_websocket_fragment_reuse.gd -- --replacement=handshake",
+        "full-buffer": "run_websocket_fragment_limit.gd",
+        "close-unicode": "run_websocket_close_reason.gd -- --wire-chunk-bytes=3 --wire-delay-ms=10 --reason=two --origin=server",
+        "close-baseline": "run_websocket_close_reason.gd -- --reason=two --origin=server",
+    }
+    lines = [
+        "WebSocket engine reproductions (Godot 4.3+)",
+        "",
+        "Extract this archive. Run commands from the extracted directory.",
+        "Only Godot is required. No addon, extension, service or Python is needed.",
+        "The fixtures bind a raw TCP server to 127.0.0.1 on a free port.",
+        "First import with: godot --headless --editor --path . --quit",
+        "Each command exits 0 on success and 1 on an observed failure.",
+        "Expected: passed=true, exact packet bytes/types and close metadata.",
+        "Official native 4.4.1/4.7.2 fail the four defect cases below.",
+        "The three baseline controls pass. 4.3 passes control-bytes and reuse.",
+        "Paced writes are local scheduling controls; TCP may coalesce them.",
+        "These results do not qualify Web exports or remote networks.",
+        "",
+    ]
+    for name, command in commands.items():
+        lines.extend([name, "godot --headless --path . --script tests/smoke/" + command, ""])
+    files["README.txt"] = ("\n".join(lines) + "\n").encode()
+    files["SHA256SUMS"] = (
+        "".join(
+            f"{hashlib.sha256(body).hexdigest()}  {name}\n" for name, body in sorted(files.items())
+        )
+    ).encode()
+    return files
+
+
+def export_reproduction(destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, body in sorted(reproduction_files().items()):
+            info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, body)
+
+
 def run(command: list[str], log: Path, timeout: int) -> dict[str, object]:
     timed_out = False
     with log.open("w") as stream:
@@ -204,20 +257,31 @@ def run(command: list[str], log: Path, timeout: int) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--godot", type=Path, required=True, help="Native engine or template to test"
-    )
-    parser.add_argument(
-        "--importer", type=Path, required=True, help="Godot editor for fixture import"
-    )
-    parser.add_argument(
-        "--output", type=Path, required=True, help="New directory; every attempt is kept"
-    )
+    parser.add_argument("--godot", type=Path, help="Native engine or template to test")
+    parser.add_argument("--importer", type=Path, help="Godot editor for fixture import")
+    parser.add_argument("--output", type=Path, help="New directory; every attempt is kept")
     parser.add_argument(
         "--suite", choices=["all", "assembly", "close", "boundaries"], default="all"
     )
+    parser.add_argument(
+        "--export-repro", type=Path, help="Write a standalone reproduction ZIP and exit"
+    )
     parser.add_argument("--case", action="append", help="Run named cases only (repeatable)")
     args = parser.parse_args()
+    if args.export_repro:
+        if args.godot or args.importer or args.output or args.case or args.suite != "all":
+            parser.error("--export-repro cannot be combined with runtime options")
+        if args.export_repro.exists():
+            parser.error("reproduction archive already exists")
+        export_reproduction(args.export_repro.resolve())
+        print(
+            json.dumps(
+                {"archive": str(args.export_repro.resolve()), "sha256": digest(args.export_repro)}
+            )
+        )
+        return 0
+    if not args.godot or not args.importer or not args.output:
+        parser.error("--godot, --importer and --output are required for runtime checks")
     selected = [
         case
         for case in cases()
