@@ -2063,9 +2063,10 @@ python scripts/repair-webrtc-mesh.py --source /path/to/godot-4.6.3 \
   --report /tmp/mesh-apply.json
 ```
 
-Build a native engine with GDScript and WebRTC enabled. The template build
-options in [Testing](testing.md) also support this patch. It can coexist with
-the optional WebSocket repair. Keep each report in a new path.
+Build a native engine with GDScript and WebRTC enabled. The reference drill
+also needs `module_multiplayer_enabled=yes`. Start with the template build
+options in [Testing](testing.md) and enable that module. The mesh patch can
+coexist with the optional WebSocket repair. Keep each report in a new path.
 
 ```sh
 /path/to/repaired-godot --headless --path . \
