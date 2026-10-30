@@ -143,7 +143,7 @@ jobs:
               run: python3 -m unittest tests.test_install_playwright_deps
 
             - name: Test transport drill evidence
-              run: .venv-ci/bin/python -m unittest tests.test_webrtc_interop_observation tests.test_webrtc_reference tests.test_websocket_browser_observation
+              run: .venv-ci/bin/python -m unittest tests.test_webrtc_interop_observation tests.test_webrtc_reference tests.test_websocket_browser_observation tests.test_websocket_native_receive
 
     test:
         name: Godot ${{ matrix.godot }} tests
