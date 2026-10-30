@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the experimental Godot 4.6.3 mesh selection and lifetime repair."""
+"""Apply the experimental stable Godot mesh selection and lifetime repair."""
 
 from __future__ import annotations
 
@@ -8,8 +8,10 @@ import importlib.util
 import json
 from pathlib import Path
 
-BASE = "35e80b3a8822a9df9be390814b62f44c0a9c69e8"
-PATCH = Path(__file__).resolve().parent / "patches/godot-46-webrtc-mesh.patch"
+PATCHES = {
+    "35e80b3a8822a9df9be390814b62f44c0a9c69e8": "godot-46-webrtc-mesh.patch",
+    "ed1daf0bf001b61586d9930840f2f1394092c079": "godot-47-webrtc-mesh.patch",
+}
 
 
 def apply(source: Path, check_only: bool) -> dict[str, object]:
@@ -19,8 +21,13 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
         raise ValueError(f"Could not load {script}")
     backport = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(backport)
+    revision = backport.git(source, "rev-parse", "HEAD")
+    base = revision.stdout.strip()
+    if revision.returncode or base not in PATCHES:
+        raise ValueError("source HEAD must be a pinned Godot 4.6.3 or 4.7.2 stable revision")
+    patch = script.parent / "patches" / PATCHES[base]
     return {
-        **backport.apply_patch(source, check_only, BASE, PATCH),
+        **backport.apply_patch(source, check_only, base, patch),
         "issues": [403, 433, 355],
         "lifetime_upstream": "caa386e89570d293c03ad7c723d5fbd7eb1a2717",
         "scope": "experimental mesh repair; build and runtime qualification required",
