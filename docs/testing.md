@@ -472,11 +472,12 @@ For 4.7.2 template builds, add `disable_path_overrides=no` to the SCons command
 to enable `--path` and `--script` for these fixtures. Use the matching official
 editor to import the test project before running a template build.
 
-To check both bundled patches against local pinned sources, run:
+To check all three bundled patches against local pinned sources, run:
 
 ```sh
 PYTHONPATH=tests \
 SF_WEBSOCKET_GODOT_44_SOURCE=/path/to/godot-4.4.1 \
+SF_WEBSOCKET_GODOT_45_SOURCE=/path/to/godot-4.5.2 \
 SF_WEBSOCKET_GODOT_47_SOURCE=/path/to/godot-4.7.2 \
 python -m unittest test_websocket_browser_observation.BackportApplicatorTests.test_bundled_patches_apply_to_pinned_sources
 ```
