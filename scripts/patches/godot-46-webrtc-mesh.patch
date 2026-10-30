@@ -1,0 +1,79 @@
+diff --git a/modules/webrtc/webrtc_multiplayer_peer.cpp b/modules/webrtc/webrtc_multiplayer_peer.cpp
+index 2bf9e086e8009bd5b62c1b2e79e6c6e60facc48b..f52ff4168b853da7d020268ca3b055e68776cdc1 100644
+--- a/modules/webrtc/webrtc_multiplayer_peer.cpp
++++ b/modules/webrtc/webrtc_multiplayer_peer.cpp
+@@ -218,10 +218,10 @@ Error WebRTCMultiplayerPeer::_initialize(int p_self_id, NetworkMode p_mode, cons
+ 
+ 		switch (mode) {
+ 			case TRANSFER_MODE_UNRELIABLE_ORDERED:
+-				cfg["maxPacketLifetime"] = 1;
++				cfg["maxPacketLifeTime"] = 1;
+ 				break;
+ 			case TRANSFER_MODE_UNRELIABLE:
+-				cfg["maxPacketLifetime"] = 1;
++				cfg["maxPacketLifeTime"] = 1;
+ 				cfg["ordered"] = false;
+ 				break;
+ 			case TRANSFER_MODE_RELIABLE:
+@@ -309,7 +309,7 @@ Error WebRTCMultiplayerPeer::add_peer(const Ref<WebRTCPeerConnection> &p_peer, i
+ 	ERR_FAIL_COND_V(peer->channels.get(CH_RELIABLE).is_null(), FAILED);
+ 
+ 	cfg["id"] = 2;
+-	cfg["maxPacketLifetime"] = p_unreliable_lifetime;
++	cfg["maxPacketLifeTime"] = p_unreliable_lifetime;
+ 	peer->channels.get(CH_ORDERED) = p_peer->create_data_channel("ordered", cfg);
+ 	ERR_FAIL_COND_V(peer->channels.get(CH_ORDERED).is_null(), FAILED);
+ 
+@@ -325,6 +325,9 @@ Error WebRTCMultiplayerPeer::add_peer(const Ref<WebRTCPeerConnection> &p_peer, i
+ 	}
+ 
+ 	peer_map[p_peer_id] = peer; // add the new peer connection to the peer_map
++	if (next_packet_peer == p_peer_id) {
++		_find_next_peer();
++	}
+ 
+ 	return OK;
+ }
+@@ -333,6 +336,9 @@ void WebRTCMultiplayerPeer::remove_peer(int p_peer_id) {
+ 	ERR_FAIL_COND(!peer_map.has(p_peer_id));
+ 	Ref<ConnectedPeer> peer = peer_map[p_peer_id];
+ 	peer_map.erase(p_peer_id);
++	if (next_packet_peer == p_peer_id) {
++		_find_next_peer();
++	}
+ 	if (peer->connected) {
+ 		peer->connected = false;
+ 		emit_signal(SNAME("peer_disconnected"), p_peer_id);
+@@ -346,6 +352,9 @@ void WebRTCMultiplayerPeer::disconnect_peer(int p_peer_id, bool p_force) {
+ 	ERR_FAIL_COND(!peer_map.has(p_peer_id));
+ 	if (p_force) {
+ 		peer_map.erase(p_peer_id);
++		if (next_packet_peer == p_peer_id) {
++			_find_next_peer();
++		}
+ 		if (network_mode == MODE_CLIENT && p_peer_id == TARGET_PEER_SERVER) {
+ 			connection_status = CONNECTION_DISCONNECTED;
+ 		}
+@@ -360,16 +369,14 @@ Error WebRTCMultiplayerPeer::get_packet(const uint8_t **r_buffer, int &r_buffer_
+ 		_find_next_peer();
+ 		ERR_FAIL_V(ERR_UNAVAILABLE);
+ 	}
+-	for (Ref<WebRTCDataChannel> &E : peer_map[next_packet_peer]->channels) {
+-		if (E->get_available_packet_count()) {
+-			Error err = E->get_packet(r_buffer, r_buffer_size);
+-			_find_next_peer();
+-			return err;
+-		}
++	Ref<WebRTCDataChannel> channel = peer_map[next_packet_peer]->channels.get(next_packet_channel);
++	if (channel->get_available_packet_count() == 0) {
++		_find_next_peer();
++		return ERR_UNAVAILABLE;
+ 	}
+-	// Channels for that peer were empty. Bug?
++	Error err = channel->get_packet(r_buffer, r_buffer_size);
+ 	_find_next_peer();
+-	ERR_FAIL_V(ERR_BUG);
++	return err;
+ }
+ 
+ Error WebRTCMultiplayerPeer::put_packet(const uint8_t *p_buffer, int p_buffer_size) {
