@@ -121,6 +121,11 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
         },
         "local_repairs": [
             {
+                "issue": 498,
+                "change": "Preserve UTF-8 close reasons across partial socket reads",
+                "cause": "Close validation skips status bytes again in later payload chunks",
+            },
+            {
                 "issue": 496,
                 "change": "Finish full fragmented messages and enforce cumulative byte limits",
                 "cause": "A full payload queue blocks final continuation headers",

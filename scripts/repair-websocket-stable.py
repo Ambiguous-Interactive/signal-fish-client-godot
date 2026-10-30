@@ -28,7 +28,7 @@ def apply(source: Path, check_only: bool) -> dict[str, object]:
     patch = script.parent / "patches" / PATCHES[base]
     return {
         **backport.apply_patch(source, check_only, base, patch),
-        "issues": [485, 491, 492, 496],
+        "issues": [485, 491, 492, 496, 498],
         "scope": "experimental native receive/assembly repair; build and runtime qualification required",
     }
 

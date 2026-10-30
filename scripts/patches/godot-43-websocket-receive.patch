@@ -268,7 +268,7 @@ index bf9f5c852732eb8c612f2adeac7e5c629692d9a2..7b54efbf762cabfb2565df5b478f07e6
  	bool use_tls = true;
  	Ref<TLSOptions> tls_options;
 diff --git a/thirdparty/wslay/wslay_event.c b/thirdparty/wslay/wslay_event.c
-index 4c29fe400056c0f482cc7055a87316f8126a2570..f18387305081c63e70f015c0436045b205507589 100644
+index 4c29fe400056c0f482cc7055a87316f8126a2570..f33174b949595beb29523e94532b947ce726ec32 100644
 --- a/thirdparty/wslay/wslay_event.c
 +++ b/thirdparty/wslay/wslay_event.c
 @@ -564,6 +564,8 @@ int wslay_event_recv(wslay_event_context_ptr ctx) {
@@ -280,3 +280,12 @@ index 4c29fe400056c0f482cc7055a87316f8126a2570..f18387305081c63e70f015c0436045b2
          }
        }
        /* If RSV1 bit is set then it is too early for utf-8 validation */
+@@ -572,7 +574,7 @@ int wslay_event_recv(wslay_event_context_ptr ctx) {
+           ctx->imsg->opcode == WSLAY_CONNECTION_CLOSE) {
+         size_t i;
+         if (ctx->imsg->opcode == WSLAY_CONNECTION_CLOSE) {
+-          i = 2;
++          i = ctx->ipayloadoff < 2 ? 2 - ctx->ipayloadoff : 0;
+         } else {
+           i = 0;
+         }

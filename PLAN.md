@@ -27,6 +27,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       byte/count rejections, exact delivered prefix, full-buffer empty-fragment progress (#496),
       fragmented-message assembly
       and matched local/application ACK credit controls.
+- [ ] Coordinate valid Unicode WebSocket close-reason handling upstream and
+      qualify other targets and remote networks (#498; see `docs/testing.md`).
+      Preserve paced close reasons, full-buffer completion and peer reuse.
 - [ ] Coordinate the interleaved Ping/Pong assembly repair upstream and qualify
       additional stable engines on fragmented gameplay and direct peer reuse
       (#491, #492; see `docs/testing.md`). Qualify the pinned 4.4.1/4.7.2 assembly
