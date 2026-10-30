@@ -631,9 +631,22 @@ peer replacement, full-buffer completion and split Unicode close controls,
 plus passing comparison commands. `SHA256SUMS` pins every input. The exporter
 refuses an existing archive and accepts no runtime options.
 
-These reports advance #491, #492, #496 and #498. The standalone commands
-retain official-engine failures and repaired-engine passes. Upstream adoption,
-other targets and remote networks remain open.
+Upstream reports:
+
+| Failure                                           | Godot issue                                                  |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| Ping/Pong bytes enter fragmented messages (#491)  | [124973](https://github.com/godotengine/godot/issues/124973) |
+| Closing peer replacement retains old state (#492) | [124974](https://github.com/godotengine/godot/issues/124974) |
+| Full-buffer empty continuation stalls (#496)      | [124975](https://github.com/godotengine/godot/issues/124975) |
+| Split Unicode close reasons fail (#498)           | [124976](https://github.com/godotengine/godot/issues/124976) |
+
+The extracted project's seven commands were checked on official and repaired
+4.3/4.4.1/4.7.2 Linux ARM64 engines. All three repaired builds pass every
+command. Official 4.4.1/4.7.2 fail the four defect cases and pass the three
+comparison controls. Buffered 4.3 passes assembly/reuse; its full-buffer case
+drops the following packet. Current Godot master `7be59b46` retains the four
+source paths; no master runtime result is claimed. Upstream adoption, other
+targets and remote networks remain open.
 
 ### Web WebSocket receive boundary
 
