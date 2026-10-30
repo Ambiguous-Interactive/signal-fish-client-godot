@@ -17,6 +17,7 @@ const WS_GUID := "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 var received_text: Array[String] = []
 var received_binary: Array[PackedByteArray] = []
 var client_close_codes: Array[int] = []
+var client_close_reasons: Array[PackedByteArray] = []
 var received_pongs: Array[PackedByteArray] = []
 
 var wire_chunk_bytes := 0
@@ -334,6 +335,7 @@ func _handle_frame(opcode: int, payload: PackedByteArray) -> void:
 		OP_CLOSE:
 			if payload.size() >= 2:
 				client_close_codes.append((payload[0] << 8) | payload[1])
+				client_close_reasons.append(payload.slice(2))
 			if not _close_frame_sent:
 				_close_frame_sent = true
 				_send_frame(OP_CLOSE, payload)
@@ -374,7 +376,8 @@ func _flush_wire() -> void:
 	var written: int = result[1]
 	if written == 0:
 		return
-	var header_bytes := 2 if (frame[1] & 0x7f) < 126 else 4
+	var length_code := frame[1] & 0x7f
+	var header_bytes := 2 if length_code < 126 else (4 if length_code == 126 else 10)
 	if _wire_offset < header_bytes and _wire_offset + written < header_bytes:
 		wire_split_headers += 1
 	_wire_offset += written
@@ -389,15 +392,19 @@ func _flush_wire() -> void:
 
 func _frame_bytes(opcode: int, payload: PackedByteArray, final: bool = true) -> PackedByteArray:
 	var length := payload.size()
-	if length > 0xFFFF:
+	if length > MAX_BUFFER_BYTES - 10:
 		_drop_connection()
 		return PackedByteArray()
 	var header := PackedByteArray([(0x80 if final else 0) | opcode])
 	if length <= 125:
 		header.append(length)
-	else:
+	elif length <= 0xFFFF:
 		header.append(126)
 		header.append((length >> 8) & 0xFF)
 		header.append(length & 0xFF)
+	else:
+		header.append(127)
+		for shift: int in range(56, -1, -8):
+			header.append((length >> shift) & 0xFF)
 	header.append_array(payload)
 	return header

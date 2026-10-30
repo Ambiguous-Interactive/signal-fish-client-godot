@@ -113,6 +113,72 @@ def cases() -> list[tuple[str, str, list[str]]]:
                 ],
             )
         )
+    for kind, control, tail in itertools.product(
+        ["text", "binary", "unicode"], ["none", "ping", "pong"], ["empty", "oversize"]
+    ):
+        result.append(
+            (
+                f"boundary-large-{kind}-{control}-{tail}",
+                "limit",
+                [
+                    "--capacity=131071",
+                    "--wire-chunk-bytes=8191",
+                    "--wire-delay-ms=1",
+                    f"--message-type={kind}",
+                    f"--fragment-control={control}",
+                    "--control-bytes=125",
+                    f"--oversize={'true' if tail == 'oversize' else 'false'}",
+                ],
+            )
+        )
+    for control, tail_bytes in itertools.product(["none", "ping", "pong"], [1, 2, 3]):
+        result.append(
+            (
+                f"boundary-unicode-{control}-{tail_bytes}",
+                "limit",
+                [
+                    "--capacity=131071",
+                    "--wire-chunk-bytes=8191",
+                    "--wire-delay-ms=1",
+                    "--message-type=unicode",
+                    f"--fragment-control={control}",
+                    "--control-bytes=125",
+                    f"--tail-bytes={tail_bytes}",
+                ],
+            )
+        )
+    for chunk, reason, origin, full in itertools.product(
+        [1, 3, 65536], ["max-ascii", "max-mixed"], ["server", "client"], ["false", "true"]
+    ):
+        result.append(
+            (
+                f"boundary-close-{chunk}-{reason}-{origin}-{full}",
+                "close",
+                [
+                    "--capacity=127",
+                    f"--wire-chunk-bytes={chunk}",
+                    "--wire-delay-ms=1",
+                    f"--reason={reason}",
+                    f"--origin={origin}",
+                    f"--full-fragment={full}",
+                ],
+            )
+        )
+    for reason, origin in itertools.product(["max-ascii", "max-mixed"], ["server", "client"]):
+        result.append(
+            (
+                f"boundary-large-close-{reason}-{origin}",
+                "close",
+                [
+                    "--capacity=131071",
+                    "--wire-chunk-bytes=8191",
+                    "--wire-delay-ms=1",
+                    f"--reason={reason}",
+                    f"--origin={origin}",
+                    "--full-fragment=true",
+                ],
+            )
+        )
     return result
 
 
@@ -147,14 +213,26 @@ def main() -> int:
     parser.add_argument(
         "--output", type=Path, required=True, help="New directory; every attempt is kept"
     )
-    parser.add_argument("--suite", choices=["all", "assembly", "close"], default="all")
+    parser.add_argument(
+        "--suite", choices=["all", "assembly", "close", "boundaries"], default="all"
+    )
     parser.add_argument("--case", action="append", help="Run named cases only (repeatable)")
     args = parser.parse_args()
     selected = [
         case
         for case in cases()
         if (args.case is None or case[0] in args.case)
-        and (args.suite == "all" or (case[1] == "close") == (args.suite == "close"))
+        and (
+            args.suite == "all"
+            or args.suite
+            == (
+                "boundaries"
+                if case[0].startswith("boundary-")
+                else "close"
+                if case[1] == "close"
+                else "assembly"
+            )
+        )
     ]
     if not selected or (args.case and set(args.case) - {case[0] for case in selected}):
         parser.error("unknown or empty case selection")

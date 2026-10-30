@@ -567,8 +567,24 @@ python scripts/check-websocket-native-receive.py \
 
 Use a new output directory for every attempt. Reports retain commands, logs,
 fixture hashes, executable hashes, exact result records and timeout failures.
-Use `--suite=assembly` or `--suite=close` to select a group; `--case=NAME`
-selects individual cases. The full matrix has 126 cases.
+Use `--suite=assembly`, `--suite=close` or `--suite=boundaries` to select a
+group; `--case=NAME` selects individual cases. The full matrix has 181 cases.
+The boundaries group adds 55 cases for large gameplay and control bodies:
+
+- 131071-byte messages use 64-bit frame lengths. Text, binary and Unicode
+  bodies require exact full-buffer completion or code 1009 for an extra byte.
+- Unicode characters span continuation boundaries with up to three tail bytes.
+  Interleaved Ping/Pong bodies contain all byte values from 0 through 124.
+  Ping requires an exact 125-byte Pong.
+- Maximum-length close reasons contain 123 UTF-8 bytes. ASCII and mixed
+  two-/three-/four-byte text are checked in both directions with an empty
+  packet queue or an unfinished full-buffer message. Client-initiated close
+  frames must preserve the exact reason bytes as well as the code.
+
+The receive-limit fixture accepts `--capacity=131071`,
+`--message-type=unicode`, `--tail-bytes=1|2|3` and `--control-bytes=125`.
+The close fixture accepts `--reason=max-ascii|max-mixed` and
+`--capacity=127|131071`. These optional controls retain the original cases.
 
 The three receive/reuse fixtures accept `--wire-chunk-bytes=1` and
 `--wire-delay-ms=10`. The sender queues frame bytes, writes at most one chunk
