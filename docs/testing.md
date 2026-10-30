@@ -445,7 +445,8 @@ body includes zero and non-UTF-8 bytes.
 
 Separate experimental patches target Godot 4.4.1-stable
 `49a5bc7b616bd04689a2c89e89bda41f50241464`, 4.5.2-stable
-`6ce3de25aa58466e14ef354703ba8d9791a417da` and 4.7.2-stable
+`6ce3de25aa58466e14ef354703ba8d9791a417da`, 4.6.3-stable
+`35e80b3a8822a9df9be390814b62f44c0a9c69e8` and 4.7.2-stable
 `ed1daf0bf001b61586d9930840f2f1394092c079`:
 
 ```sh
@@ -468,16 +469,28 @@ CLOSING peer reuse, full-buffer completion and split Unicode close reasons
 cases, normal WebSocket smoke and all three delayed active shutdown/recovery
 modes. Other build targets and remote networks remain open.
 
-For 4.7.2 template builds, add `disable_path_overrides=no` to the SCons command
+The experimental 4.6.3 Linux ARM64 template also passes all seven standalone
+commands. A matched unpatched build from the same source revision and build
+options fails all four defect commands and passes the three comparison controls.
+The checksum-verified 4.6.3 release asset fails 108 of the 181 receive cases.
+That asset reports commit `7d41c59c4`; the source builds use `35e80b3a8`.
+Keep these baselines separate. The repaired build passes all 181 receive cases,
+normal WebSocket smoke and all three isolated active shutdown/recovery modes.
+An initial concurrent graceful attempt hit outbound send backpressure; the
+initial stall setup aborted during editor import (exit -6; #447). Retain both
+failed attempts. The isolated passes do not explain either failure.
+
+For 4.6.3 and 4.7.2 template builds, add `disable_path_overrides=no` to the SCons command
 to enable `--path` and `--script` for these fixtures. Use the matching official
 editor to import the test project before running a template build.
 
-To check all three bundled patches against local pinned sources, run:
+To check all four bundled patches against local pinned sources, run:
 
 ```sh
 PYTHONPATH=tests \
 SF_WEBSOCKET_GODOT_44_SOURCE=/path/to/godot-4.4.1 \
 SF_WEBSOCKET_GODOT_45_SOURCE=/path/to/godot-4.5.2 \
+SF_WEBSOCKET_GODOT_46_SOURCE=/path/to/godot-4.6.3 \
 SF_WEBSOCKET_GODOT_47_SOURCE=/path/to/godot-4.7.2 \
 python -m unittest test_websocket_browser_observation.BackportApplicatorTests.test_bundled_patches_apply_to_pinned_sources
 ```

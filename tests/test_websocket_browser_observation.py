@@ -216,7 +216,8 @@ class BrowserFailureTests(unittest.TestCase):
 class BackportApplicatorTests(unittest.TestCase):
     @unittest.skipUnless(
         any(
-            os.environ.get(f"SF_WEBSOCKET_GODOT_{version}_SOURCE") for version in ("44", "45", "47")
+            os.environ.get(f"SF_WEBSOCKET_GODOT_{version}_SOURCE")
+            for version in ("44", "45", "46", "47")
         ),
         "requires a local pinned Godot stable source checkout",
     )
@@ -234,6 +235,7 @@ class BackportApplicatorTests(unittest.TestCase):
             for version, base in (
                 ("44", "49a5bc7b616bd04689a2c89e89bda41f50241464"),
                 ("45", "6ce3de25aa58466e14ef354703ba8d9791a417da"),
+                ("46", "35e80b3a8822a9df9be390814b62f44c0a9c69e8"),
                 ("47", "ed1daf0bf001b61586d9930840f2f1394092c079"),
             ):
                 if not os.environ.get("SF_WEBSOCKET_GODOT_" + version + "_SOURCE"):
@@ -284,6 +286,7 @@ class BackportApplicatorTests(unittest.TestCase):
         source_blobs = {
             "49a5bc7b616bd04689a2c89e89bda41f50241464": "1a1f52a8a06b5867fc1c14e416f78f2a14fa908f",
             "6ce3de25aa58466e14ef354703ba8d9791a417da": "93421cf7d0073fa0b7f4f0176327662eba9c4749",
+            "35e80b3a8822a9df9be390814b62f44c0a9c69e8": "8be31add2aad545b96978dc5267abfa29c9271ee",
             "ed1daf0bf001b61586d9930840f2f1394092c079": "ae3e34fc42aa1c6458c80673216727bb36a70f92",
         }
         for revision, blob in source_blobs.items():
@@ -307,7 +310,7 @@ class BackportApplicatorTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 return cast(str, result.stdout)
 
-            for version in ("4.4.1", "4.5.2", "4.7.2"):
+            for version in ("4.4.1", "4.5.2", "4.6.3", "4.7.2"):
                 source = parent / version
                 source.mkdir()
                 git(source, "init", "--quiet")
