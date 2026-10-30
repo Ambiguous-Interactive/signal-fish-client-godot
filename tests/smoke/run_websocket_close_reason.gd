@@ -9,6 +9,7 @@ var _peer := WebSocketPeer.new()
 var _reason_kind := "two"
 var _origin := "server"
 var _full_fragment := false
+var _capacity := 31
 var _reason := ""
 var _failures: Array[String] = []
 var _opened := false
@@ -27,12 +28,20 @@ func _initialize() -> void:
 		var value := argument.substr(option.length() + 1)
 		if not argument.begins_with(option + "="):
 			_failures.append("option requires =value")
-		elif option == "--reason" and value in ["empty", "ascii", "two", "three", "four", "mixed"]:
+		elif (
+			option == "--reason"
+			and (
+				value
+				in ["empty", "ascii", "two", "three", "four", "mixed", "max-ascii", "max-mixed"]
+			)
+		):
 			_reason_kind = value
 		elif option == "--origin" and value in ["server", "client"]:
 			_origin = value
 		elif option == "--full-fragment" and value in ["true", "false"]:
 			_full_fragment = value == "true"
+		elif option == "--capacity" and value.is_valid_int():
+			_capacity = value.to_int()
 		else:
 			_failures.append("invalid option: " + argument)
 	var reasons := {
@@ -41,9 +50,20 @@ func _initialize() -> void:
 		"two": String.chr(233) + "abc",
 		"three": String.chr(0x20ac) + "abc",
 		"four": String.chr(0x1f41f) + "abc",
-		"mixed": "ok/" + String.chr(233) + String.chr(0x20ac) + String.chr(0x1f41f) + "/end"
+		"mixed": "ok/" + String.chr(233) + String.chr(0x20ac) + String.chr(0x1f41f) + "/end",
+		"max-ascii": "x".repeat(123),
+		"max-mixed":
+		(
+			(String.chr(233) + String.chr(0x20ac) + String.chr(0x1f41f)).repeat(13)
+			+ String.chr(0x1f41f)
+			+ String.chr(233)
+		)
 	}
 	_reason = reasons[_reason_kind]
+	if _capacity < 31 or _capacity > 131071:
+		_failures.append("capacity must be 31..131071")
+	if _reason.to_utf8_buffer().size() + 2 > _capacity:
+		_failures.append("capacity must admit the close payload")
 	call_deferred("_run")
 
 
@@ -59,7 +79,7 @@ func _run() -> void:
 	if not _failures.is_empty():
 		_finish()
 		return
-	_peer.inbound_buffer_size = 31
+	_peer.inbound_buffer_size = _capacity
 	if _server.listen() != OK:
 		_failures.append("listen failed")
 		_finish()
@@ -105,11 +125,16 @@ func _run() -> void:
 		await process_frame
 	if _server.client_close_codes != [CLOSE_CODE]:
 		_failures.append("matching client close frame")
+	if _server.client_close_reasons != [_reason.to_utf8_buffer()]:
+		_failures.append("matching client close reason bytes")
 	_finish()
 
 
 func _fill_fragment() -> bool:
-	if _server._send_frame(ServerScript.OP_BINARY, "x".repeat(31).to_utf8_buffer(), false) != OK:
+	if (
+		_server._send_frame(ServerScript.OP_BINARY, "x".repeat(_capacity).to_utf8_buffer(), false)
+		!= OK
+	):
 		_failures.append("fragment send failed")
 		return false
 	var deadline := Time.get_ticks_msec() + TIMEOUT_MS
@@ -146,12 +171,17 @@ func _finish() -> void:
 					"origin": _origin,
 					"reason_kind": _reason_kind,
 					"full_fragment": _full_fragment,
+					"capacity": _capacity,
 					"opened": _opened,
 					"state": _peer.get_ready_state(),
 					"close_code": _peer.get_close_code(),
 					"reason_hex": _peer.get_close_reason().to_utf8_buffer().hex_encode(),
 					"expected_reason_hex": _reason.to_utf8_buffer().hex_encode(),
 					"client_close_codes": _server.client_close_codes,
+					"client_reason_hex":
+					_server.client_close_reasons.map(
+						func(reason: PackedByteArray) -> String: return reason.hex_encode()
+					),
 					"wire": _server.wire_report(),
 					"failures": _failures
 				}
