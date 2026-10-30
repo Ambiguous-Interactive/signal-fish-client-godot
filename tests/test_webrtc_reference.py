@@ -24,6 +24,65 @@ SPEC.loader.exec_module(reference)
 
 
 class ReferenceEvidenceTests(unittest.TestCase):
+    def test_native_template_import_uses_editor_and_keeps_runtime_engine(self) -> None:
+        for importer in (None, "editor-godot"):
+            with self.subTest(importer=importer), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                extension = directory / "extension"
+                extension.mkdir()
+                args = argparse.Namespace(
+                    native_extension=extension,
+                    godot="runtime-godot",
+                    import_godot=importer,
+                    godot_offer=False,
+                    safe_receive=True,
+                    mixed_traffic=True,
+                    credit_transport="webrtc",
+                )
+                with patch.object(reference.interop, "checked") as checked:
+                    project = reference.prepare(args, directory / "assessment", web=False)
+                checked.assert_called_once_with(
+                    [
+                        importer or "runtime-godot",
+                        "--headless",
+                        "--path",
+                        str(project),
+                        "--editor",
+                        "--import",
+                    ],
+                    directory / "assessment/import.log",
+                )
+                self.assertEqual(args.godot, "runtime-godot")
+
+    def test_import_editor_cli_rejects_web_runtimes_before_preparation(self) -> None:
+        for runtime in ("all", "web"):
+            with (
+                self.subTest(runtime=runtime),
+                patch(
+                    "sys.argv",
+                    [
+                        str(SCRIPT),
+                        "--native-extension",
+                        "/missing",
+                        "--reference-assets",
+                        "/missing",
+                        "--reference-revision",
+                        "test",
+                        "--runtime",
+                        runtime,
+                        "--import-godot",
+                        "editor-godot",
+                    ],
+                ),
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                patch.object(reference, "assess") as assess,
+            ):
+                with self.assertRaises(SystemExit) as error:
+                    reference.main()
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("only supported for native template builds", stderr.getvalue())
+                assess.assert_not_called()
+
     def test_driver_timeout_keeps_completed_http_request_events(self) -> None:
         event = {
             "method": 0,

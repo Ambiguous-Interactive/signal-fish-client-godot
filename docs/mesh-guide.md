@@ -2047,6 +2047,52 @@ and stats continued. A paused browser main thread can stop both timers;
 compare both sample ages with HTTP request ages. These controls validate the
 diagnostics. The cause of the original intermittent stall remains open.
 
+### Experimental native mesh repair
+
+An opt-in patch targets Godot 4.6.3 source
+`35e80b3a8822a9df9be390814b62f44c0a9c69e8`. It reads the channel selected
+for packet metadata and refreshes selection when that peer is removed or
+replaced (#403). It also backports the
+[upstream lifetime-key correction](https://github.com/godotengine/godot/commit/caa386e89570d293c03ad7c723d5fbd7eb1a2717)
+for default and custom channels (#433).
+
+```sh
+python scripts/repair-webrtc-mesh.py --source /path/to/godot-4.6.3 \
+  --check --report /tmp/mesh-check.json
+python scripts/repair-webrtc-mesh.py --source /path/to/godot-4.6.3 \
+  --report /tmp/mesh-apply.json
+```
+
+Build a native engine with GDScript and WebRTC enabled. The template build
+options in [Testing](testing.md) also support this patch. It can coexist with
+the optional WebSocket repair. Keep each report in a new path.
+
+```sh
+/path/to/repaired-godot --headless --path . \
+  --script tests/smoke/webrtc_mesh_engine_probe.gd
+```
+
+The engine probe checks twelve dispatch, selection, peer-retirement and
+channel-configuration controls. Scripted channels report which read callback
+ran; this probe cannot verify packet bytes or transport delivery. Use the
+standalone metadata scene and native reference drill for those checks.
+
+Native template qualification can use a separate editor for imports:
+
+```sh
+python scripts/check-webrtc-reference.py --runtime native \
+  --godot /path/to/repaired-template --import-godot /path/to/editor \
+  --native-extension /path/to/webrtc_native \
+  --native-reference-probe /path/to/godot_qualification \
+  --reference-revision REFERENCE_COMMIT --offerer both \
+  --safe-receive --mixed-traffic --binary-traffic --require-gameplay \
+  --output /tmp/mesh-reference-attempt
+```
+
+Finite channel configuration does not prove expiry under loss or delay.
+Web exports, remote networks, other build targets and upstream adoption
+remain open. The zero-byte script packet contract remains tracked in #437.
+
 ### Mixed-mode packet metadata
 
 Godot 4.3 can return packet bytes from a different channel than the mode

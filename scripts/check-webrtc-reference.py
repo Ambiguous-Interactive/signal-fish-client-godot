@@ -1929,7 +1929,14 @@ def prepare(args: argparse.Namespace, directory: Path, *, web: bool) -> Path:
         preset.read_text().replace('include_filter=""', 'include_filter="reference-options.json"')
     )
     interop.checked(
-        [args.godot, "--headless", "--path", str(project), "--editor", "--import"],
+        [
+            getattr(args, "import_godot", None) or args.godot,
+            "--headless",
+            "--path",
+            str(project),
+            "--editor",
+            "--import",
+        ],
         directory / "import.log",
     )
     if web:
@@ -2255,6 +2262,7 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
         "closing_channel": getattr(args, "closing_channel", "reliable"),
         "closing_seat": getattr(args, "closing_seat", "reference"),
         "godot": args.godot,
+        "import_godot": getattr(args, "import_godot", None) or args.godot,
         "reference_revision": args.reference_revision,
         "reference_backend": "native" if probe else "browser",
         "reference_engine_sha256": hashlib.sha256(
@@ -2545,6 +2553,9 @@ def assess(args: argparse.Namespace, directory: Path, *, web: bool) -> dict[str,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", default="godot")
+    parser.add_argument(
+        "--import-godot", help="Editor binary for importing a native template build"
+    )
     http_backend = parser.add_mutually_exclusive_group()
     http_backend.add_argument(
         "--web-http-fetch",
@@ -2708,6 +2719,8 @@ def main() -> None:
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
     args = parser.parse_args()
+    if args.import_godot is not None and args.runtime != "native":
+        parser.error("--import-godot is only supported for native template builds")
     if args.position_interval_ms and not (
         20 <= args.position_interval_ms <= 200 and args.mixed_traffic
     ):
