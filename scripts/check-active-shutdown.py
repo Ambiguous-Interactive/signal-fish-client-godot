@@ -242,7 +242,13 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
         report["identities"] = interop.setup_identities([args.godot, "--path", str(project)])
         service.start()
         if runtime == "native":
-            command = [args.godot, "--headless", "--path", str(project)]
+            command = [
+                *([str(args.runner), *args.runner_arg] if args.runner else []),
+                args.godot,
+                "--headless",
+                "--path",
+                str(project),
+            ]
             report["command"] = command
             with (directory / "godot.log").open("w") as log:
                 result = subprocess.run(  # noqa: S603
@@ -376,6 +382,13 @@ def main() -> int:
     parser.add_argument(
         "--import-godot", help="Editor binary for importing a native template build"
     )
+    parser.add_argument("--runner", type=Path, help="Optional emulator for the native engine")
+    parser.add_argument(
+        "--runner-arg",
+        action="append",
+        default=[],
+        help="Emulator argument (repeatable; use = for flags)",
+    )
     parser.add_argument("--native-extension", type=Path)
     parser.add_argument("--chromium", type=Path)
     parser.add_argument("--runtime", choices=("all", "native", "web"), default="all")
@@ -414,6 +427,18 @@ def main() -> int:
         parser.error("--native-extension is required for native or all runtime")
     if args.import_godot is not None and args.runtime != "native":
         parser.error("--import-godot is only supported for native template builds")
+    if args.runner_arg and not args.runner:
+        parser.error("--runner-arg requires --runner")
+    if args.runner is not None:
+        if args.runtime != "native" or args.import_godot is None:
+            parser.error("--runner requires --runtime=native and a native --import-godot editor")
+        args.runner = args.runner.resolve()
+        if not args.runner.is_file() or not os.access(args.runner, os.X_OK):
+            parser.error("runner must be an executable file")
+        target = Path(shutil.which(args.godot) or args.godot).resolve()
+        if not target.is_file():
+            parser.error("godot must resolve to a target file when using --runner")
+        args.godot = str(target)
     if os.name != "posix":
         parser.error("This local process control requires POSIX signals")
     args.server_binary = args.server_binary.resolve()
@@ -440,6 +465,9 @@ def main() -> int:
         "network_delay_ms": args.network_delay_ms,
         "network_chunk_bytes": args.network_chunk_bytes,
         "trace_receive": args.trace_receive,
+        "runner": str(args.runner) if args.runner else None,
+        "runner_sha256": digest(args.runner) if args.runner else None,
+        "runner_args": args.runner_arg,
         "import_engine_sha256": interop.setup_identities([args.import_godot or args.godot]),
         "client_revision": subprocess.check_output(  # noqa: S603
             [shutil.which("git") or "git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=30
