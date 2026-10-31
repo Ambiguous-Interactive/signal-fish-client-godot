@@ -135,10 +135,20 @@ jobs:
                   control = {"control-baseline", "reuse-baseline", "close-baseline"}
                   wrong = sorted((defect | control) - set(results))
                   for name in defect | control:
-                      records = results.get(name, {}).get("records", [])
+                      command = results.get(name, {})
+                      records = command.get("records", [])
                       record = records[0] if len(records) == 1 else None
-                      expected = variant == "repaired" or name in control
-                      if record is None or record.get("passed") is not expected:
+                      if command.get("timed_out") or record is None:
+                          wrong.append(name)
+                          continue
+                      if variant == "repaired" or name in control:
+                          if (
+                              command["returncode"] != 0
+                              or not command["passed"]
+                              or record.get("passed") is not True
+                          ):
+                              wrong.append(name)
+                      elif command["returncode"] != 1 or record.get("passed") is not False:
                           wrong.append(name)
                   assert not wrong, f"unexpected results: {sorted(set(wrong))}"
                   print(f"{variant}: all standalone expectations met on x86-64")
