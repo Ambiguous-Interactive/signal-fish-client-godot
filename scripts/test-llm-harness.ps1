@@ -635,15 +635,36 @@ function New-StrayArtifactSandbox {
 
 function Invoke-SandboxGitCommit {
     # Baseline commits inside throwaway sandboxes must not depend on ambient
-    # git config (#515): `commit.gpgsign=true` fails or prompts for a
-    # signature, and a global `core.hooksPath` (e.g. a pre-commit framework
-    # shim) would run foreign hooks inside the sandbox. An empty
-    # `core.hooksPath` disables hook execution entirely — `--no-verify` alone
-    # is not enough because it still runs `prepare-commit-msg`. `--allow-empty`
-    # keeps normalization-only setups deterministic.
+    # git config (#515). Three layers, each covering what the others miss:
+    # global/system config is isolated (newer git runs config-defined
+    # `hook.<name>` hooks no matter what core.hooksPath says), `core.hooksPath`
+    # is emptied (traditional hooks, including prepare-commit-msg, which
+    # `--no-verify` alone does not skip), and signing is disabled. The missing
+    # global config path is deliberate: git treats unreadable global config as
+    # empty. `--allow-empty` keeps normalization-only setups deterministic.
     param([Parameter(Mandatory)][string]$Message)
 
-    & git -c commit.gpgsign=false -c core.hooksPath= commit -q --allow-empty --no-verify -m $Message 2>&1 | Out-Null
+    $prevGlobal = $env:GIT_CONFIG_GLOBAL
+    $prevNoSystem = $env:GIT_CONFIG_NOSYSTEM
+    try {
+        $env:GIT_CONFIG_GLOBAL = Join-Path ([System.IO.Path]::GetTempPath()) "llm-no-global-config-$([Guid]::NewGuid())"
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        & git -c commit.gpgsign=false -c core.hooksPath= commit -q --allow-empty --no-verify -m $Message 2>&1 | Out-Null
+    }
+    finally {
+        if ($null -eq $prevGlobal) {
+            Remove-Item -LiteralPath 'Env:\GIT_CONFIG_GLOBAL' -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:GIT_CONFIG_GLOBAL = $prevGlobal
+        }
+        if ($null -eq $prevNoSystem) {
+            Remove-Item -LiteralPath 'Env:\GIT_CONFIG_NOSYSTEM' -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:GIT_CONFIG_NOSYSTEM = $prevNoSystem
+        }
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "Sandbox git commit '$Message' failed with exit code $LASTEXITCODE."
     }
@@ -1219,7 +1240,8 @@ Assert-Test 'sandbox baseline commits ignore hostile global git config' {
         Assert-TestFileHasNoCarriageReturns -Path $hookPath -Name "foreign $hookName fixture"
         & chmod +x -- $hookPath 2>&1 | Out-Null
     }
-    $configText = "[commit]`n`tgpgsign = true`n[core]`n`thooksPath = $(($foreignHooks -replace '\\', '/'))`n"
+    $configText = "[commit]`n`tgpgsign = true`n[core]`n`thooksPath = $(($foreignHooks -replace '\\', '/'))`n" +
+        "[hook `"config-defined-probe`"]`n`tevent = prepare-commit-msg`n`tcommand = touch '$(($foreignHooks -replace '\\', '/'))/config-hook-ran'; exit 1`n"
     [System.IO.File]::WriteAllText($hostileConfig, $configText, [System.Text.UTF8Encoding]::new($false))
 
     $globalBackup = $env:GIT_CONFIG_GLOBAL
@@ -1250,6 +1272,10 @@ Assert-Test 'sandbox baseline commits ignore hostile global git config' {
             if (Test-Path -LiteralPath $sentinels[$hookName] -PathType Leaf) {
                 throw "A foreign global $hookName hook ran inside the sandbox baseline commit."
             }
+        }
+        $configHookSentinel = Join-Path $foreignHooks 'config-hook-ran'
+        if (Test-Path -LiteralPath $configHookSentinel -PathType Leaf) {
+            throw 'A config-defined global prepare-commit-msg hook ran inside the sandbox baseline commit.'
         }
     }
     finally {
