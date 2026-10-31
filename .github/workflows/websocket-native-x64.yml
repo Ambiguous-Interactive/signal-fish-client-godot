@@ -32,6 +32,9 @@ jobs:
         name: ${{ matrix.variant }} ${{ inputs.engine_label }} on x86-64
         runs-on: ubuntu-24.04
         timeout-minutes: 75
+        defaults:
+            run:
+                shell: bash
         strategy:
             fail-fast: false
             matrix:
@@ -83,14 +86,16 @@ jobs:
 
             - name: Build the engine
               run: |
-                  scons -j"$(nproc)" platform=linuxbsd target=template_debug arch=x86_64 \
-                    dev_build=no debug_symbols=no optimize=size \
-                    modules_enabled_by_default=no module_gdscript_enabled=yes \
-                    module_websocket_enabled=yes module_webrtc_enabled=yes \
-                    disable_3d=yes vulkan=no opengl3=yes x11=no wayland=no \
-                    alsa=no pulseaudio=no dbus=no speechd=no fontconfig=no udev=no \
-                    disable_path_overrides=no \
-                    2>&1 | tee "output/build-${{ matrix.variant }}.log"
+                  (
+                    cd "$SOURCE_DIR"
+                    scons -j"$(nproc)" platform=linuxbsd target=template_debug arch=x86_64 \
+                      dev_build=no debug_symbols=no optimize=size \
+                      modules_enabled_by_default=no module_gdscript_enabled=yes \
+                      module_websocket_enabled=yes module_webrtc_enabled=yes \
+                      disable_3d=yes vulkan=no opengl3=yes x11=no wayland=no \
+                      alsa=no pulseaudio=no dbus=no speechd=no fontconfig=no udev=no \
+                      disable_path_overrides=no
+                  ) 2>&1 | tee "output/build-${{ matrix.variant }}.log"
                   sha256sum "$ENGINE_BIN" | tee "output/engine-sha256.txt"
 
             - name: Run the paced receive suite
