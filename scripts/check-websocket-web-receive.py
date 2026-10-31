@@ -23,8 +23,9 @@ PACKETS = 64
 
 
 class ApplicationCredit:
-    def __init__(self, credit_bytes: int) -> None:
+    def __init__(self, credit_bytes: int, credit_packets: int = 0) -> None:
         self.credit_bytes = credit_bytes
+        self.credit_packets = credit_packets
         self.sent = 0
         self.acknowledged = 0
         self.started = False
@@ -52,6 +53,8 @@ class ApplicationCredit:
             if self.sent == PACKETS and self.acknowledged != PACKETS:
                 break
             if (self.sent - self.acknowledged + 1) * BODY_BYTES > self.credit_bytes:
+                break
+            if self.credit_packets and self.sent - self.acknowledged + 1 > self.credit_packets:
                 break
             self.sent += 1
         self.windows.append(
@@ -135,6 +138,7 @@ def main() -> int:
     parser.add_argument("--capacity", type=int, default=0)
     parser.add_argument("--max-queued-packets", type=int, default=0)
     parser.add_argument("--credit-bytes", type=int, default=0)
+    parser.add_argument("--credit-packets", type=int, default=0)
     parser.add_argument("--credit-transport", choices=("local", "app-ack"), default="local")
     parser.add_argument("--ack-delay-ms", type=int, default=0)
     parser.add_argument("--hold-ms", type=int, default=100)
@@ -143,6 +147,10 @@ def main() -> int:
         parser.error("capacity must admit a body; zero capacity/count keeps engine defaults")
     if args.credit_bytes < 0 or 0 < args.credit_bytes < BODY_BYTES:
         parser.error("credit must be zero or admit one body")
+    if args.credit_packets < 0:
+        parser.error("credit packets must be zero or positive")
+    if args.credit_packets and args.credit_transport != "app-ack":
+        parser.error("credit packets require application ACK credit")
     if args.credit_transport == "app-ack" and args.credit_bytes == 0:
         parser.error("application ACK credit requires a positive byte window")
     if not 0 <= args.ack_delay_ms <= 1000 or (
@@ -174,7 +182,7 @@ def main() -> int:
     (project / "build/web").mkdir(parents=True)
     commands: list[dict[str, object]] = []
     server_errors: list[str] = []
-    application_credit = ApplicationCredit(args.credit_bytes)
+    application_credit = ApplicationCredit(args.credit_bytes, args.credit_packets)
 
     class Handler(SimpleHTTPRequestHandler):
         def log_message(self, _format: str, *_args: object) -> None:
@@ -243,6 +251,8 @@ def main() -> int:
     batch_packets = (
         PACKETS if args.credit_bytes == 0 else min(PACKETS, args.credit_bytes // BODY_BYTES)
     )
+    if args.credit_packets:
+        batch_packets = min(batch_packets, args.credit_packets)
     batches = (PACKETS + batch_packets - 1) // batch_packets
     watchdog_ms = 5000 + batches * (args.hold_ms + args.ack_delay_ms + 1000) + 2000
     options = {
@@ -251,6 +261,7 @@ def main() -> int:
         "capacity": args.capacity,
         "max_queued_packets": args.max_queued_packets,
         "credit_bytes": args.credit_bytes,
+        "credit_packets": args.credit_packets,
         "credit_transport": args.credit_transport,
         "ack_delay_ms": args.ack_delay_ms,
         "hold_ms": args.hold_ms,
@@ -271,7 +282,8 @@ def main() -> int:
             "complete callback message bytes; cumulative exact-prefix WebSocket receipts"
             if args.credit_transport == "app-ack"
             else "local consumer body bytes; no network acknowledgement"
-        ),
+        )
+        + (f"; at most {args.credit_packets} outstanding packets" if args.credit_packets else ""),
     }
     lines: list[str] = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -348,6 +360,14 @@ def main() -> int:
             and all(
                 window["outstanding_bytes"] <= args.credit_bytes
                 for window in application_credit.windows
+            )
+            and (
+                not args.credit_packets
+                or all(
+                    window["offered_packets"] - window["acknowledged_packets"]
+                    <= args.credit_packets
+                    for window in application_credit.windows
+                )
             )
         )
         report["passed"] = (

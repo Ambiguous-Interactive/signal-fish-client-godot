@@ -50,11 +50,16 @@ func _process(_delta: float) -> void:
 				seat.offered += burst
 			for _burst: int in burst:
 				var credit: int = _options.get("relay_credit_bytes", 0)
+				var credit_packets: int = _options.get("relay_credit_packets", 0)
 				var consumed := (
 					seat.relay_acked if _uses_remote_ack() else _other(seat).relay_received
 				)
 				var outstanding := (seat.relay_sent - consumed) * 4096
 				if credit > 0 and outstanding + 4096 > credit:
+					seat.credit_blocked_frames += 1
+					break
+				var outstanding_packets: int = seat.relay_sent - consumed
+				if credit_packets > 0 and outstanding_packets + 1 > credit_packets:
 					seat.credit_blocked_frames += 1
 					break
 				var payload := {"sequence": seat.relay_sent, "body": "0123456789abcdef".repeat(256)}
@@ -69,6 +74,9 @@ func _process(_delta: float) -> void:
 				seat.relay_sent += 1
 				seat.peak_outstanding_body_bytes = maxi(
 					seat.peak_outstanding_body_bytes, outstanding + 4096
+				)
+				seat.peak_outstanding_packets = maxi(
+					seat.peak_outstanding_packets, outstanding_packets + 1
 				)
 		if _hold:
 			continue
@@ -321,6 +329,7 @@ func _connect_generation() -> bool:
 		seat.busy_relay_sends = 0
 		seat.busy_ack_sends = 0
 		seat.peak_outstanding_body_bytes = 0
+		seat.peak_outstanding_packets = 0
 		seat.client.transport = seat.transport
 		_expect(seat.client.connect_to_server(str(_options["service_url"])) == OK, "connect")
 	if not await _wait(
@@ -382,9 +391,14 @@ func _connect_generation() -> bool:
 
 	if _uses_remote_ack():
 		var configured_credit: int = _options["relay_credit_bytes"]
+		var configured_packets: int = _options.get("relay_credit_packets", 0)
 		for seat: Seat in _seats:
 			_expect(seat.acks_received > 0 and seat.relay_acked > 0, "remote ACK credit progress")
 			_expect(seat.peak_outstanding_body_bytes <= configured_credit, "remote ACK byte window")
+			if configured_packets > 0:
+				_expect(
+					seat.peak_outstanding_packets <= configured_packets, "remote ACK packet window"
+				)
 	var evidence: Array[Dictionary] = []
 	for seat: Seat in _seats:
 		evidence.append(
@@ -398,6 +412,7 @@ func _connect_generation() -> bool:
 				"busy_relay_sends": seat.busy_relay_sends,
 				"busy_ack_sends": seat.busy_ack_sends,
 				"peak_outstanding_body_bytes": seat.peak_outstanding_body_bytes,
+				"peak_outstanding_packets": seat.peak_outstanding_packets,
 				"receive": seat.transport.observer.summary(),
 				"first_relay_gap": seat.first_gap.duplicate(),
 				"plan_generation": seat.plan.generation if seat.plan != null else ""
@@ -593,6 +608,7 @@ func _run() -> void:
 				"busy_relay_sends": seat.busy_relay_sends,
 				"busy_ack_sends": seat.busy_ack_sends,
 				"peak_outstanding_body_bytes": seat.peak_outstanding_body_bytes,
+				"peak_outstanding_packets": seat.peak_outstanding_packets,
 				"receive": seat.transport.observer.summary(),
 				"first_relay_gap": seat.first_gap.duplicate(),
 				"mesh_received": seat.received.duplicate()
@@ -676,6 +692,7 @@ class Seat:
 	var busy_relay_sends := 0
 	var busy_ack_sends := 0
 	var peak_outstanding_body_bytes := 0
+	var peak_outstanding_packets := 0
 	var authenticated := false
 	var ready := false
 	var plan: SessionScript.SessionPlanInfo

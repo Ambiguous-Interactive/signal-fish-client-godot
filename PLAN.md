@@ -17,11 +17,11 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Repair and qualify Web WebSocket callback receive overflow after service
-      recovery (#488; see `docs/testing.md`). Use scoped rejection identities
-      and the engine-only finite-burst control with WebSocket prefix receipts.
-      Qualify its full-message byte window on remote networks. Preserve the
-      original delayed workload and separate local body-credit controls.
+- [ ] Qualify the #488 Web receive boundary on remote networks (see
+      `docs/testing.md`). Carry the scoped rejection identities, the engine-only
+      finite-burst control with WebSocket prefix receipts, and the byte/packet
+      application ACK windows. Preserve the original delayed workload and
+      separate local body-credit controls.
 - [ ] Qualify the experimental Godot 4.3 WebSocket receive backport and engine upgrades on
       remote networks (#485; see `docs/testing.md`). Preserve the retained
       byte/count rejections, exact delivered prefix, full-buffer empty-fragment progress (#496),

@@ -227,6 +227,7 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
         "relay_packets_per_frame": args.relay_packets_per_frame,
         "relay_packets_per_second": args.relay_packets_per_second,
         "relay_credit_bytes": args.relay_credit_bytes,
+        "relay_credit_packets": args.relay_credit_packets,
         "relay_credit_transport": args.relay_credit_transport,
         "receive_pause_ms": args.receive_pause_ms,
         "inbound_buffer_bytes": args.inbound_buffer_bytes,
@@ -397,6 +398,7 @@ def main() -> int:
     parser.add_argument("--relay-packets-per-frame", type=int, choices=range(1, 17), default=4)
     parser.add_argument("--relay-packets-per-second", type=int, default=0)
     parser.add_argument("--relay-credit-bytes", type=int, default=0)
+    parser.add_argument("--relay-credit-packets", type=int, default=0)
     parser.add_argument("--relay-credit-transport", choices=("local", "app-ack"), default="local")
     parser.add_argument("--inbound-buffer-bytes", type=int, default=0)
     parser.add_argument("--max-queued-packets", type=int, default=0)
@@ -415,6 +417,8 @@ def main() -> int:
         parser.error("Receive pause must be between 0 and 1000 milliseconds")
     if args.relay_packets_per_second < 0 or args.relay_credit_bytes < 0:
         parser.error("Relay rate and payload-byte credit must be nonnegative")
+    if args.relay_credit_packets < 0:
+        parser.error("Relay packet credit must be nonnegative")
     if args.relay_credit_transport == "app-ack" and args.relay_credit_bytes == 0:
         parser.error("Application ACK credit requires a positive --relay-credit-bytes window")
     if 0 < args.relay_credit_bytes < 4096:
@@ -458,6 +462,7 @@ def main() -> int:
         "relay_packets_per_frame": args.relay_packets_per_frame,
         "relay_packets_per_second": args.relay_packets_per_second,
         "relay_credit_bytes": args.relay_credit_bytes,
+        "relay_credit_packets": args.relay_credit_packets,
         "relay_credit_transport": args.relay_credit_transport,
         "receive_pause_ms": args.receive_pause_ms,
         "inbound_buffer_bytes": args.inbound_buffer_bytes,

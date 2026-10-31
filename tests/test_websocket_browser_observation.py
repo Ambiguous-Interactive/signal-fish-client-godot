@@ -142,6 +142,30 @@ class ApplicationCreditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             credit.receive("ack:1")
 
+    def test_packet_window_bounds_outstanding_packets_independent_of_bytes(self) -> None:
+        for packets in (1, 2, 3):
+            with self.subTest(packets=packets):
+                credit = drill.ApplicationCredit(32 * 4096, packets)
+                self.assertEqual(list(credit.receive("start")), list(range(packets)))
+                self.assertEqual(credit.sent - credit.acknowledged, packets)
+                self.assertEqual(
+                    list(credit.receive(f"ack:{packets}")), list(range(packets, packets * 2))
+                )
+                self.assertEqual(credit.sent - credit.acknowledged, packets)
+        roomy = drill.ApplicationCredit(32 * 4096, 8)
+        self.assertEqual(list(roomy.receive("start")), list(range(8)))
+        self.assertEqual(list(roomy.receive("ack:8")), list(range(8, 16)))
+
+    def test_packet_window_still_honors_sentinel_and_byte_window(self) -> None:
+        credit = drill.ApplicationCredit(128 * 4096, 2)
+        self.assertEqual(list(credit.receive("start")), list(range(2)))
+        for prefix in range(2, 64, 2):
+            self.assertEqual(list(credit.receive(f"ack:{prefix}")), [prefix, prefix + 1])
+        self.assertEqual(list(credit.receive("ack:64")), [64])
+        tight = drill.ApplicationCredit(8 * 4096, 64)
+        self.assertEqual(list(tight.receive("start")), list(range(8)))
+        self.assertEqual(tight.sent - tight.acknowledged, 8)
+
 
 class BrowserFailureTests(unittest.TestCase):
     def test_snapshot_failure_preserves_run_failure_and_always_closes_browser(self) -> None:
