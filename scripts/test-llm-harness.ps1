@@ -40,6 +40,17 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Every git call in this suite (sandbox setup, artifact discovery,
+# real-checkout scans) resolves repository state from the working directory.
+# A caller's git environment variables would silently redirect those
+# commands at other object stores or indexes (#418 review).
+foreach ($gitVar in @(
+        'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
+        'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES'
+    )) {
+    Remove-Item -LiteralPath "Env:\$gitVar" -ErrorAction SilentlyContinue
+}
+
 $ScriptsDir = $PSScriptRoot
 $ModulePath = Join-Path $ScriptsDir 'lib/LlmHarness.psm1'
 Import-Module $ModulePath -Force
@@ -591,6 +602,35 @@ function Resolve-TestGitPath {
     )
 
     return (Resolve-LlmGitPath -RepoRoot $RepoRoot -GitPath $GitPath)
+}
+
+function New-StrayArtifactSandbox {
+    # Stray-artifact self-tests must not create sentinel files in the real
+    # checkout: concurrent formatter checks scan untracked files and fail on
+    # them (#418). Tests run the helpers against this throwaway repo instead.
+    param([string]$Prefix = 'llm-stray-sandbox')
+
+    $repoRoot = Split-Path -Parent $ScriptsDir
+    $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("$Prefix-$([Guid]::NewGuid())")
+    New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+
+    $gitignore = Join-Path $repoRoot '.gitignore'
+    if (Test-Path -LiteralPath $gitignore -PathType Leaf) {
+        Copy-Item -LiteralPath $gitignore -Destination (Join-Path $sandbox '.gitignore') -Force
+    }
+
+    # Discovery tests read the index, so an initial `git add` mirrors a real
+    # checkout; no commit, which keeps gpgsign and hooks out of the setup.
+    Push-Location $sandbox
+    try {
+        & git init -q --initial-branch=main 2>&1 | Out-Null
+        & git add -A 2>&1 | Out-Null
+    }
+    finally {
+        Pop-Location
+    }
+
+    return $sandbox
 }
 
 # --- Read-LlmFrontmatter ---------------------------------------------------
@@ -1509,14 +1549,21 @@ Assert-Test 'stray-artifact pathspec expansion recurses basename patterns' {
 }
 
 Assert-Test 'staging artifact helper default patterns find non-ignored editor artifacts' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         return  # git unavailable; skip silently in this test (linter has its own check).
     }
-    $tempName = "llm-harness-default-pattern-$([Guid]::NewGuid()).swp"
-    $tempPath = Join-Path $repoRoot $tempName
-    [System.IO.File]::WriteAllText($tempPath, 'sentinel')
+    $repoRoot = New-StrayArtifactSandbox
     try {
+        $tempName = "llm-harness-default-pattern-$([Guid]::NewGuid()).swp"
+        $tempPath = Join-Path $repoRoot $tempName
+        [System.IO.File]::WriteAllText($tempPath, 'sentinel')
+        $trackedName = "llm-harness-default-pattern-$([Guid]::NewGuid()).swp"
+        $trackedPath = Join-Path $repoRoot $trackedName
+        [System.IO.File]::WriteAllText($trackedPath, 'sentinel')
+        & git -C $repoRoot add -- $trackedName
+        if ($LASTEXITCODE -ne 0) {
+            throw "git add failed for $trackedName."
+        }
         $artifacts = @(Get-LlmStagingArtifacts -RepoRoot $repoRoot)
         $found = @($artifacts | Where-Object { $_.Path -eq $tempName })
         if ($found.Count -ne 1) {
@@ -1525,29 +1572,44 @@ Assert-Test 'staging artifact helper default patterns find non-ignored editor ar
         if ($found[0].IsTracked) {
             throw "$tempName should be reported as IsTracked=false."
         }
+        $staged = @($artifacts | Where-Object { $_.Path -eq $trackedName })
+        if ($staged.Count -ne 1) {
+            throw "Expected Get-LlmStagingArtifacts default patterns to find staged $trackedName; got: $($artifacts.Path -join ', ')"
+        }
+        if (-not $staged[0].IsTracked) {
+            throw "$trackedName should be reported as IsTracked=true."
+        }
     }
     finally {
-        Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
 Assert-Test 'stray helpers find nested basename-style editor artifacts' {
-    $repoRoot = Split-Path -Parent $ScriptsDir
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         return  # git unavailable; skip silently in this test (linter has its own check).
     }
-    $tempDirName = "llm-harness-recursive-stray-$([Guid]::NewGuid())"
-    $nestedDir = Join-Path (Join-Path (Join-Path $repoRoot $tempDirName) 'deep') 'nested'
-    New-Item -ItemType Directory -Path $nestedDir -Force | Out-Null
-    $files = @(
-        @{ Rel = "$tempDirName/deep/nested/.DS_Store"; Full = Join-Path $nestedDir '.DS_Store' },
-        @{ Rel = "$tempDirName/deep/nested/.#notes.md"; Full = Join-Path $nestedDir '.#notes.md' },
-        @{ Rel = "$tempDirName/deep/nested/#notes.md#"; Full = Join-Path $nestedDir '#notes.md#' }
-    )
-    foreach ($file in $files) {
-        [System.IO.File]::WriteAllText($file.Full, 'sentinel')
-    }
+    $repoRoot = New-StrayArtifactSandbox
     try {
+        $tempDirName = "llm-harness-recursive-stray-$([Guid]::NewGuid())"
+        $nestedDir = Join-Path (Join-Path (Join-Path $repoRoot $tempDirName) 'deep') 'nested'
+        New-Item -ItemType Directory -Path $nestedDir -Force | Out-Null
+        $stagedDir = Join-Path (Join-Path (Join-Path $repoRoot $tempDirName) 'deep') 'staged'
+        New-Item -ItemType Directory -Path $stagedDir -Force | Out-Null
+        $files = @(
+            @{ Rel = "$tempDirName/deep/nested/.DS_Store"; Full = Join-Path $nestedDir '.DS_Store' },
+            @{ Rel = "$tempDirName/deep/nested/.#notes.md"; Full = Join-Path $nestedDir '.#notes.md' },
+            @{ Rel = "$tempDirName/deep/nested/#notes.md#"; Full = Join-Path $nestedDir '#notes.md#' }
+        )
+        foreach ($file in $files) {
+            [System.IO.File]::WriteAllText($file.Full, 'sentinel')
+        }
+        $trackedRel = "$tempDirName/deep/staged/.#tracked.md"
+        [System.IO.File]::WriteAllText((Join-Path $stagedDir '.#tracked.md'), 'sentinel')
+        & git -C $repoRoot add -- $trackedRel
+        if ($LASTEXITCODE -ne 0) {
+            throw "git add failed for $trackedRel."
+        }
         $patterns = @('.DS_Store', '.#*', '#*#')
         $stagingArtifacts = @(Get-LlmStagingArtifacts -RepoRoot $repoRoot -Patterns $patterns)
         $strayArtifacts = @(Get-LlmStrayWorkingTreeArtifacts -RepoRoot $repoRoot -Patterns $patterns)
@@ -1559,9 +1621,21 @@ Assert-Test 'stray helpers find nested basename-style editor artifacts' {
                 throw "Expected Get-LlmStrayWorkingTreeArtifacts to find nested artifact $($file.Rel); got: $($strayArtifacts.Path -join ', ')"
             }
         }
+        foreach ($entry in @(
+                @{ Name = 'Get-LlmStagingArtifacts'; Items = $stagingArtifacts },
+                @{ Name = 'Get-LlmStrayWorkingTreeArtifacts'; Items = $strayArtifacts }
+            )) {
+            $trackedFound = @($entry.Items | Where-Object { $_.Path -eq $trackedRel })
+            if ($trackedFound.Count -ne 1) {
+                throw "Expected $($entry.Name) to find staged artifact $trackedRel; got: $(@($entry.Items.Path) -join ', ')"
+            }
+            if (-not $trackedFound[0].IsTracked) {
+                throw "$trackedRel should be reported as IsTracked=true."
+            }
+        }
     }
     finally {
-        Remove-Item -LiteralPath (Join-Path $repoRoot $tempDirName) -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -3446,14 +3520,14 @@ Assert-Test 'Get-LlmStrayWorkingTreeArtifacts finds gitignored .tmp files' {
     if (-not (Get-Command Get-LlmStrayWorkingTreeArtifacts -ErrorAction SilentlyContinue)) {
         throw 'Get-LlmStrayWorkingTreeArtifacts is not exported from the shared module.'
     }
-    $repoRoot = Split-Path -Parent $ScriptsDir
-    # `.gitignore` already includes `*.tmp`, so this file is gitignored.
-    # The standard helper (Get-LlmStagingArtifacts) cannot see it; the
-    # stray helper must, because it passes `--ignored`.
-    $tempName = "llm-harness-stray-test-$([Guid]::NewGuid()).tmp"
-    $tempPath = Join-Path $repoRoot $tempName
-    [System.IO.File]::WriteAllText($tempPath, 'sentinel')
+    $repoRoot = New-StrayArtifactSandbox
     try {
+        # `.gitignore` already includes `*.tmp`, so this file is gitignored.
+        # The standard helper (Get-LlmStagingArtifacts) cannot see it; the
+        # stray helper must, because it passes `--ignored`.
+        $tempName = "llm-harness-stray-test-$([Guid]::NewGuid()).tmp"
+        $tempPath = Join-Path $repoRoot $tempName
+        [System.IO.File]::WriteAllText($tempPath, 'sentinel')
         $strays = @(Get-LlmStrayWorkingTreeArtifacts -RepoRoot $repoRoot -Patterns @('*.tmp'))
         $found = @($strays | Where-Object { $_.Path -eq $tempName })
         if ($found.Count -ne 1) {
@@ -3467,7 +3541,7 @@ Assert-Test 'Get-LlmStrayWorkingTreeArtifacts finds gitignored .tmp files' {
         }
     }
     finally {
-        Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
