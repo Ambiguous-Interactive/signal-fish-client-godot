@@ -294,6 +294,16 @@ The default relay rate is four packets per frame per seat.
 `--relay-packets-per-frame 1` selects a slower comparison. Keep its result
 separate from the original offered rate.
 
+For a native engine built for another CPU, add `--runner /path/to/emulator`
+and repeat `--runner-arg=VALUE` for each argument. For QEMU x86-64 on ARM64,
+use `--runner /usr/bin/qemu-x86_64 --runner-arg=-L
+--runner-arg=/usr/x86_64-linux-gnu`. This requires `--runtime native` and
+`--import-godot /path/to/native-editor`. Only gameplay runs through the
+emulator. The importer runs directly. Use an extension bundle containing
+libraries for both CPUs. Provenance records the emulator hash and arguments
+beside the engine, extension and importer hashes. Keep emulation results
+separate from physical hardware results.
+
 Each control first exchanges 32 exact mesh packets per mode and direction.
 The RPC peer caches an unreliable packet before a later reliable arrival.
 The drill checks both packets' bytes and modes, then caches another packet
@@ -488,9 +498,24 @@ stall and code 1007 for a valid Unicode close. All three comparison controls
 pass. These are local emulation results. Physical x86-64 hardware and remote
 networks remain open.
 
+The 4.7.2 repair also passes all seven standalone commands on Linux x86-64
+under QEMU 8.2.2 on ARM64. Matched builds use revision
+`ed1daf0bf001b61586d9930840f2f1394092c079` and identical compiler options.
+The unpatched build reproduces all four defects and passes all three comparison
+controls. This covers fragmented Ping/Pong bytes (#491), peer reuse (#492),
+full-buffer completion (#496) and Unicode close reasons (#498).
+The repair passes all 181 receive cases, SDK WebSocket smoke and all three
+active shutdown/recovery modes (#482). The active drill uses 50 ms proxy delay,
+127-byte chunks and a 100 ms receive pause with the original deadlines.
+Each mode preserves exact mesh traffic across both connection generations
+and an exact delivered relay prefix. Physical x86-64 hardware, remote networks
+and upstream adoption remain open.
+
 For 4.6.3 and 4.7.2 template builds, add `disable_path_overrides=no` to the SCons command
 to enable `--path` and `--script` for these fixtures. Use the matching official
-editor to import the test project before running a template build.
+editor to import the test project before running a template build. The active
+shutdown drill also needs `module_multiplayer_enabled=yes` alongside GDScript,
+WebSocket and WebRTC.
 
 To check all four bundled patches against local pinned sources, run:
 
