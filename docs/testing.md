@@ -389,6 +389,7 @@ window and the final sentinel read. It is opt-in because the original Godot
 Use `-- --credit=32768` to split the same finite work into batches bounded by
 local consumer body bytes. Use `-- --capacity=524288` for a larger byte buffer,
 or add `--max-queued-packets=2` to isolate the packet-count boundary.
+This native byte credit bounds bytes only; it does not bound packet count.
 Credit uses direct local consumer observations; it adds no network ACK protocol.
 The script prints each poll, packet and final verdict. Keep logs, commands,
 source hashes and engine hashes for every attempt.
@@ -890,7 +891,8 @@ open. The application ACK control qualifies its bounded local workload.
 
 Logs identify the seat and physical connection, reported capacities, poll
 intervals and duration, queued packet peaks, total received frame bytes, first
-relay gap, offered target, credit blocks and peak outstanding body bytes.
+relay gap, offered target, credit blocks from either window, and peak
+outstanding body bytes and packets.
 All original shutdown, cached-packet and exact mesh checks remain required.
 Keep rate, credit, pause and capacity changes separate in reports.
 
