@@ -40,11 +40,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Every git call in this suite (sandbox setup, artifact discovery) resolves
-# the repository from the working directory. A caller's GIT_DIR or
-# GIT_WORK_TREE would silently redirect those commands at the wrong
-# repository (#418 review).
-foreach ($gitVar in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')) {
+# Every git call in this suite (sandbox setup, artifact discovery,
+# real-checkout scans) resolves repository state from the working directory.
+# A caller's git environment variables would silently redirect those
+# commands at other object stores or indexes (#418 review).
+foreach ($gitVar in @(
+        'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
+        'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES'
+    )) {
     Remove-Item -LiteralPath "Env:\$gitVar" -ErrorAction SilentlyContinue
 }
 
