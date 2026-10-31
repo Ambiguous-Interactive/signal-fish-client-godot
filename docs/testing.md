@@ -650,6 +650,13 @@ Use `--case=read-control-none`, `--case=read-control-ping` and
 keep each fragmented 4095-byte message below the receive capacity. They isolate
 control-frame assembly from the full-buffer completion cases.
 
+On Linux ARM64, official 4.7.2 fails both roomy Ping/Pong controls with a
+three-byte read cap: a 4095-byte message arrives with 4114 bytes. The no-control
+case passes. With the same cap, a complete-frame Unicode close write becomes
+code 1007 in both directions; ASCII and empty reasons pass. The repaired
+4.3, 4.4.1 and 4.7.2 builds pass the roomy controls. These results qualify
+local syscall boundaries.
+
 To test a cross-compiled engine with QEMU, use an explicit runner:
 
 ```sh
