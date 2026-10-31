@@ -59,6 +59,9 @@ func _process(_delta: float) -> void:
 					break
 				var payload := {"sequence": seat.relay_sent, "body": "0123456789abcdef".repeat(256)}
 				var error := seat.client.send_game_data(payload)
+				if error == ERR_BUSY:
+					seat.busy_relay_sends += 1
+					break
 				if error != OK:
 					seat.refused.append({"error": error, "tick_ms": Time.get_ticks_msec()})
 					_expect(_shutdown_requested, "send refused before shutdown")
@@ -245,6 +248,9 @@ func _flush_ack(seat: Seat) -> void:
 		}
 	}
 	var error := seat.client.send_game_data(payload)
+	if error == ERR_BUSY:
+		seat.busy_ack_sends += 1
+		return
 	if error != OK:
 		seat.refused.append({"error": error, "tick_ms": Time.get_ticks_msec(), "frame": "ack"})
 		_expect(_shutdown_requested, "ACK send refused before shutdown")
@@ -312,6 +318,8 @@ func _connect_generation() -> bool:
 		seat.first_gap.clear()
 		seat.offered = 0
 		seat.credit_blocked_frames = 0
+		seat.busy_relay_sends = 0
+		seat.busy_ack_sends = 0
 		seat.peak_outstanding_body_bytes = 0
 		seat.client.transport = seat.transport
 		_expect(seat.client.connect_to_server(str(_options["service_url"])) == OK, "connect")
@@ -387,6 +395,8 @@ func _connect_generation() -> bool:
 				"relay_offered": seat.offered,
 				"application_ack": _ack_summary(seat),
 				"credit_blocked_frames": seat.credit_blocked_frames,
+				"busy_relay_sends": seat.busy_relay_sends,
+				"busy_ack_sends": seat.busy_ack_sends,
 				"peak_outstanding_body_bytes": seat.peak_outstanding_body_bytes,
 				"receive": seat.transport.observer.summary(),
 				"first_relay_gap": seat.first_gap.duplicate(),
@@ -524,20 +534,30 @@ func _run() -> void:
 		else:
 			_expect(seat.failures == ["heartbeat close timeout"], "bounded nonresponding close")
 			_expect(not retry and seat.trace.is_empty(), "user close stops retry")
-		_expect(seat.protocol_errors.size() <= 1 and seat.refused.size() <= 1, "one refused send")
+		_expect(seat.refused.size() <= 1, "one refused application send")
 		var refused_application := 0
+		var refused_status := 0
 		for reason: String in seat.protocol_errors:
 			if reason.begins_with("send_game_data send failed:"):
 				refused_application += 1
 			else:
+				refused_status += 1
 				_expect(
 					(
-						mode == "reset"
-						and reason == "send_transport_status send failed: Failed"
-						and seat.failures == ["failed to send WebSocket text frame: Failed"]
+						(
+							mode in ["graceful", "reset"]
+							and seat.closes.size() == 1
+							and reason == "send_transport_status send failed: Unconfigured"
+						)
+						or (
+							mode == "reset"
+							and reason == "send_transport_status send failed: Failed"
+							and seat.failures == ["failed to send WebSocket text frame: Failed"]
+						)
 					),
 					"shutdown transport-status diagnostic"
 				)
+		_expect(refused_status <= 1, "one refused transport-status send")
 		_expect(refused_application == seat.refused.size(), "application refusal diagnostic")
 		for refused: Dictionary in seat.refused:
 			_expect(refused["error"] in [ERR_UNCONFIGURED, FAILED], "shutdown send result")
@@ -570,6 +590,8 @@ func _run() -> void:
 				"relay_offered": seat.offered,
 				"application_ack": _ack_summary(seat),
 				"credit_blocked_frames": seat.credit_blocked_frames,
+				"busy_relay_sends": seat.busy_relay_sends,
+				"busy_ack_sends": seat.busy_ack_sends,
 				"peak_outstanding_body_bytes": seat.peak_outstanding_body_bytes,
 				"receive": seat.transport.observer.summary(),
 				"first_relay_gap": seat.first_gap.duplicate(),
@@ -585,6 +607,8 @@ func _run() -> void:
 				and seat.failures == results[_seats.find(seat)]["failures"]
 				and seat.relay_sent == results[_seats.find(seat)]["relay_sent"]
 				and seat.acks_sent == results[_seats.find(seat)]["application_ack"]["sent"]
+				and seat.busy_relay_sends == results[_seats.find(seat)]["busy_relay_sends"]
+				and seat.busy_ack_sends == results[_seats.find(seat)]["busy_ack_sends"]
 			),
 			"no duplicate terminal"
 		)
@@ -649,6 +673,8 @@ class Seat:
 	var transport := ReceiveTransport.new()
 	var offered := 0
 	var credit_blocked_frames := 0
+	var busy_relay_sends := 0
+	var busy_ack_sends := 0
 	var peak_outstanding_body_bytes := 0
 	var authenticated := false
 	var ready := false

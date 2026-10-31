@@ -74,13 +74,21 @@ func _phase_ok(result: Variant, label: String) -> bool:
 
 func _smoke_echo_round_trip_and_client_close() -> bool:
 	_start_server()
-	_reset_transport()
+	_reset_transport(16)
 	_assert_equal(
 		OK, _transport.connect_to_url("ws://127.0.0.1:%d" % _server.get_port()), "smoke connect"
 	)
 	if not await _wait_until(func() -> bool: return _opened_count == 1, "transport open"):
 		return false
 	_assert_equal(WebSocketPeer.STATE_OPEN, _transport.get_ready_state(), "smoke open state")
+	_assert_equal(
+		ERR_INVALID_DATA, _transport.send_text(String.chr(0x20ac).repeat(6)), "UTF8 capacity"
+	)
+	_assert_equal(
+		ERR_INVALID_DATA, _transport.send_binary(PackedByteArray(range(17))), "binary capacity"
+	)
+	_assert_equal(WebSocketPeer.STATE_OPEN, _transport.get_ready_state(), "capacity keeps session")
+	_assert_equal([], _failure_messages, "capacity emits no failure")
 
 	_assert_equal(OK, _transport.send_text("hello-smoke"), "smoke send text")
 	if not await _wait_until(
@@ -107,6 +115,12 @@ func _smoke_echo_round_trip_and_client_close() -> bool:
 	_assert_equal(false, _packets[1]["is_text"], "binary echo is_text flag")
 	_assert_equal(binary, _packets[1]["payload"], "binary echo content")
 	_assert_equal(0, _transport.get_buffered_amount(), "buffered amount drained")
+	_assert_equal(OK, _transport.send_text("x".repeat(16)), "exact-capacity text send")
+	if await _wait_until(func() -> bool: return _packets.size() == 3, "exact-capacity echo"):
+		_assert_equal("x".repeat(16), _server.received_text[1], "exact-capacity receipt")
+		_assert_equal(
+			"x".repeat(16).to_utf8_buffer(), _packets[2]["payload"], "exact-capacity echo bytes"
+		)
 
 	_transport.close(3400, "smoke-done")
 	if not await _wait_until(func() -> bool: return _closed_events.size() == 1, "client close"):
@@ -182,12 +196,17 @@ func _smoke_failed_dial_is_terminal() -> bool:
 	return _failures.is_empty()
 
 
-func _reset_transport() -> void:
+func _reset_transport(outbound_limit := 0) -> void:
 	_opened_count = 0
 	_packets = []
 	_closed_events = []
 	_failure_messages = []
-	_transport = SFWebSocketTransportScript.new()
+	if outbound_limit > 0:
+		var limited := LimitedTransport.new()
+		limited.limit = outbound_limit
+		_transport = limited
+	else:
+		_transport = SFWebSocketTransportScript.new()
 	_transport.opened.connect(func() -> void: _opened_count += 1)
 	_transport.packet_received.connect(
 		func(payload: PackedByteArray, is_text: bool) -> void:
@@ -197,6 +216,17 @@ func _reset_transport() -> void:
 		func(code: int, reason: String) -> void: _closed_events.append([code, reason])
 	)
 	_transport.failed.connect(func(error: String) -> void: _failure_messages.append(error))
+
+
+class LimitedTransport:
+	extends "res://addons/signal_fish/transport/sf_websocket_transport.gd"
+	var limit := 16
+
+	# gdscript-private-helper: allow _make_peer
+	func _make_peer() -> SFWebSocketPeerAdapterScript:
+		var peer := WebSocketPeer.new()
+		peer.outbound_buffer_size = limit
+		return SFWebSocketPeerAdapterScript.new(peer)
 
 
 func _start_server() -> void:

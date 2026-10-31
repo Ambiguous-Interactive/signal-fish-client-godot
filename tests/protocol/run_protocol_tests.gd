@@ -115,6 +115,7 @@ func _run() -> void:
 		return
 	var cases: Array[Callable] = [
 		_test_client_encoders_match_fixtures,
+		_test_join_only_admission,
 		_test_server_decoders_match_fixtures,
 		_test_malformed_inputs_decode_to_protocol_error,
 		_test_binary_codec_accepts_base64_payload,
@@ -176,6 +177,33 @@ func _test_allowed_symbols_widen_parity() -> void:
 			SFTypesScript.validate_player_name_rules(envelope["data"]["player_name_rules"]),
 			"%s: validates" % shape[0]
 		)
+	_done()
+
+
+func _test_join_only_admission() -> void:
+	for flag: Variant in [null, false, true]:
+		var message := SFMessagesScript.join_room(
+			"reef-rally", "Alice", "ABC123", null, null, null, null, flag
+		)
+		var expected := {"game_name": "reef-rally", "room_code": "ABC123", "player_name": "Alice"}
+		if flag != null:
+			expected["join_only"] = flag
+		_assert_equal(
+			{"type": "JoinRoom", "data": expected},
+			message,
+			"join_only %s exact envelope" % str(flag)
+		)
+		_assert_equal(false, SFMessagesScript.encode(message).is_empty(), "join_only encodes")
+	for flag: Variant in ["true", 1, {}, []]:
+		var message := SFMessagesScript.join_room(
+			"reef-rally", "Alice", "ABC123", null, null, null, null, flag
+		)
+		_assert_equal("", SFMessagesScript.encode(message), "invalid join_only refused")
+	for code: Variant in [null, ""]:
+		var message := SFMessagesScript.join_room(
+			"reef-rally", "Alice", code, null, null, null, null, true
+		)
+		_assert_equal("", SFMessagesScript.encode(message), "join_only requires code")
 	_done()
 
 

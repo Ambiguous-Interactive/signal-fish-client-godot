@@ -10,6 +10,7 @@ var fail_on_connect := false
 ## return (issue #24 send-failure parity). Both terminal shapes of the
 ## client's reconnect-handshake failure path become fake-testable.
 var fail_on_send := false
+var busy_on_send := false
 ## When true, close() moves to STATE_CLOSING and waits for the peer like the
 ## real transport, instead of terminating the session immediately: the real
 ## transport can sit in CLOSING forever on a silently dead link (issue #126).
@@ -44,6 +45,8 @@ func send_text(text: String) -> Error:
 		return ERR_UNCONFIGURED
 	if fail_on_send:
 		return _fail_send("failed to send WebSocket text frame: fake transport send failure")
+	if busy_on_send:
+		return ERR_BUSY
 	sent_text.append(text)
 	return OK
 
@@ -53,6 +56,8 @@ func send_binary(bytes: PackedByteArray) -> Error:
 		return ERR_UNCONFIGURED
 	if fail_on_send:
 		return _fail_send("failed to send WebSocket binary frame: fake transport send failure")
+	if busy_on_send:
+		return ERR_BUSY
 	sent_binary.append(bytes.duplicate())
 	return OK
 

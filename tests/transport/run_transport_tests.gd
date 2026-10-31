@@ -65,6 +65,9 @@ func _run() -> void:
 		_test_preopen_close_keeps_the_caller_reason_regardless_of_engine_timing,
 		_test_websocket_nonpositive_drain_cap_clamps_to_one,
 		_test_websocket_buffered_send_cap_drops_without_failing,
+		_test_native_send_capacity_preserves_session,
+		_test_websocket_send_error_platform_policy,
+		_test_native_send_byte_capacity,
 		_test_websocket_send_race_preserves_close_and_queued_packets,
 		_test_websocket_send_race_has_a_bounded_fallback,
 	]
@@ -989,6 +992,141 @@ func _test_websocket_buffered_send_cap_drops_without_failing() -> void:
 	_done()
 
 
+func _test_native_send_byte_capacity() -> void:
+	for native: bool in [false, true]:
+		for binary: bool in [false, true]:
+			for capacity: int in [0, 2, 3, 4, 5, 6]:
+				var peer := TestWebSocketPeerAdapterScript.new()
+				peer._native_send_capacity = native
+				peer.ready_state = WebSocketPeer.STATE_OPEN
+				peer.outbound_buffer_size = capacity
+				peer.buffered_amount = 2
+				var transport := SFWebSocketTransportScript.new()
+				transport._peer = peer
+				transport._opened_emitted = true
+				var failures: Array[String] = []
+				transport.failed.connect(func(message: String) -> void: failures.append(message))
+				var bytes := PackedByteArray([0xc3, 0xa9, 0x61])
+				var result: Error = (
+					transport.send_binary(bytes)
+					if binary
+					else transport.send_text(bytes.get_string_from_utf8())
+				)
+				var oversized := native and capacity == 2
+				var busy := native and capacity in [3, 4]
+				var expected: Error = ERR_INVALID_DATA if oversized else ERR_BUSY if busy else OK
+				_assert_equal(expected, result, "full UTF8 frame capacity")
+				_assert_equal(
+					0 if busy or oversized else 1,
+					peer.sent_text.size() + peer.sent_binary.size(),
+					"byte refusal skips engine"
+				)
+				peer.buffered_amount = 0
+				result = (
+					transport.send_binary(bytes)
+					if binary
+					else transport.send_text(bytes.get_string_from_utf8())
+				)
+				_assert_equal(
+					ERR_INVALID_DATA if oversized else OK, result, "same frame after drain"
+				)
+				_assert_equal([], failures, "refused frame preserves session")
+				_assert_equal([], peer.close_calls, "refused frame never closes peer")
+				var expected_sends := 0 if oversized else 1 if busy else 2
+				_assert_equal(
+					expected_sends,
+					peer.sent_text.size() + peer.sent_binary.size(),
+					"exact send count after drain"
+				)
+				for sent: PackedByteArray in peer.sent_binary:
+					_assert_equal(bytes, sent, "retry preserves exact binary bytes")
+				for sent: String in peer.sent_text:
+					_assert_equal(bytes, sent.to_utf8_buffer(), "retry preserves exact text bytes")
+				peer.ready_state = WebSocketPeer.STATE_CLOSED
+				peer.send_text_error = FAILED
+				peer.send_binary_error = FAILED
+				result = (
+					peer.send_binary(bytes)
+					if binary
+					else peer.send_text(bytes.get_string_from_utf8())
+				)
+				_assert_equal(FAILED, result, "closed engine failure stays distinct")
+	_done()
+
+
+func _test_websocket_send_error_platform_policy() -> void:
+	for native: bool in [false, true]:
+		for binary: bool in [false, true]:
+			for error: Error in [FAILED, ERR_OUT_OF_MEMORY]:
+				var transport := SFWebSocketTransportScript.new()
+				var peer := TestWebSocketPeerAdapterScript.new()
+				peer._native_send_capacity = native
+				peer.ready_state = WebSocketPeer.STATE_OPEN
+				peer.send_text_error = error
+				peer.send_binary_error = error
+				transport._peer = peer
+				transport._opened_emitted = true
+				transport._send_close_grace_ms = 0
+				var failures: Array[String] = []
+				transport.failed.connect(func(message: String) -> void: failures.append(message))
+				var actual: Error = (
+					transport.send_binary(PackedByteArray([1]))
+					if binary
+					else transport.send_text("data")
+				)
+				var busy := native and error == ERR_OUT_OF_MEMORY
+				_assert_equal(ERR_BUSY if busy else error, actual, "platform send result")
+				_assert_equal(0 if busy else 1, failures.size(), "only native capacity recovers")
+				_assert_equal(
+					0 if busy else 1, peer.close_calls.size(), "fatal failure closes peer"
+				)
+	_done()
+
+
+func _test_native_send_capacity_preserves_session() -> void:
+	for binary: bool in [false, true]:
+		var transport := SFWebSocketTransportScript.new()
+		var peer := TestWebSocketPeerAdapterScript.new()
+		peer._native_send_capacity = true
+		peer.ready_state = WebSocketPeer.STATE_OPEN
+		peer.send_text_error = ERR_OUT_OF_MEMORY
+		peer.send_binary_error = ERR_OUT_OF_MEMORY
+		transport._peer = peer
+		transport._opened_emitted = true
+		var events: Array[String] = []
+		transport.failed.connect(func(_error: String) -> void: events.append("failed"))
+		transport.closed.connect(
+			func(code: int, reason: String) -> void: events.append("%d:%s" % [code, reason])
+		)
+		transport.packet_received.connect(
+			func(packet: PackedByteArray, _text: bool) -> void:
+				events.append(packet.get_string_from_utf8())
+		)
+		var error: Error = (
+			transport.send_binary(PackedByteArray([1])) if binary else transport.send_text("data")
+		)
+		_assert_equal(ERR_BUSY, error, "native capacity is recoverable")
+		_assert_equal(
+			WebSocketPeer.STATE_OPEN, transport.get_ready_state(), "capacity keeps peer open"
+		)
+		_assert_equal([], events, "capacity emits no terminal signal")
+		peer.send_text_error = OK
+		peer.send_binary_error = OK
+		_assert_equal(OK, transport.send_text("retry"), "text resumes after drain")
+		_assert_equal(OK, transport.send_binary(PackedByteArray([1])), "binary resumes after drain")
+		peer.packets = ["GoingAway".to_utf8_buffer()]
+		peer.ready_state = WebSocketPeer.STATE_CLOSED
+		peer.close_code = 4000
+		peer.close_reason = "server_shutdown"
+		transport.poll()
+		transport.poll()
+		_assert_equal(
+			["GoingAway", "4000:server_shutdown"], events, "capacity preserves close once"
+		)
+		_assert_equal([], peer.close_calls, "capacity never closes the peer")
+	_done()
+
+
 func _test_websocket_send_race_preserves_close_and_queued_packets() -> void:
 	for binary: bool in [false, true]:
 		var transport := SFWebSocketTransportScript.new()
@@ -1044,6 +1182,7 @@ func _test_websocket_send_race_has_a_bounded_fallback() -> void:
 		var peer := TestWebSocketPeerAdapterScript.new()
 		peer.ready_state = WebSocketPeer.STATE_OPEN
 		peer.send_text_error = case[1]
+		peer._native_send_capacity = false
 		transport._peer = peer
 		transport._opened_emitted = true
 		transport._send_close_grace_ms = case[0]

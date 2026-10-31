@@ -35,9 +35,10 @@ the upstream surface diff at re-pin time:
   (`JoinRoom.join_only`, `ProtocolInfo.implementation_version` and
   `.game_data_limits`, `protobuf` now negotiable), but the rust binding
   still pins the v0.9.1 wire commit, so the codec pin above stays.
-  Binding-pending (decode-tolerated; typed surface waits for the rust
-  SDK): `join_only`, `game_data_limits`, and `implementation_version`
-  (survives in `ProtocolInfo.raw`). The published sample corpus
+  `JoinRoom.join_only` is exposed by the Godot builder and room parameters
+  (#509), anchored to server v0.12.0 `92842406`, `src/protocol/messages.rs`
+  and `src/server/room_service.rs`. Typed `game_data_limits` and
+  `implementation_version` remain pending (preserved in `ProtocolInfo.raw`). The sample corpus
   moved (v2-client +2; v3-client +1; v3-server ProtocolInfo line plus a
   second ProtocolInfo); all four files are vendored byte-identically
   under `tests/fixtures/upstream/` and every line must decode

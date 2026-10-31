@@ -98,6 +98,7 @@ func _run() -> void:
 		_test_auto_authenticate_matches_builder_bytes,
 		_test_preauth_guards_block_all_sends,
 		_test_authenticated_args_and_send_surface,
+		_test_join_only_forwarding,
 		_test_duplicate_authenticated_is_once_per_dial,
 		_test_room_lifecycle_state_machine,
 		_test_readiness_roster_updates_before_signal,
@@ -298,6 +299,34 @@ func _test_preauth_guards_block_all_sends() -> void:
 			var fake: SFFakeTransportScript = client.transport
 			_assert_equal(1, fake.sent_text.size(), "only authenticate was sent while guarding")
 		client.free()
+	_done()
+
+
+func _test_join_only_forwarding() -> void:
+	var client := _make_connected_client()
+	var fake: SFFakeTransportScript = client.transport
+	fake.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	var params := SignalFishClientScript.JoinRoomParams.new()
+	params.game_name = "reef-rally"
+	params.player_name = "Alice"
+	params.room_code = "ABC123"
+	for flag: Variant in [null, false, true]:
+		params.join_only = flag
+		_assert_equal(OK, client.join_room(params), "join_only send")
+		var text: String = fake.sent_text.back()
+		var envelope: Dictionary = JSON.parse_string(text)
+		var expected := {"game_name": "reef-rally", "room_code": "ABC123", "player_name": "Alice"}
+		if flag != null:
+			expected["join_only"] = flag
+		_assert_equal(expected, envelope["data"], "join_only forwarded exactly")
+	var sent := fake.sent_text.size()
+	params.join_only = "true"
+	_assert_equal(ERR_INVALID_DATA, client.join_room(params), "invalid join_only refused")
+	params.join_only = true
+	params.room_code = ""
+	_assert_equal(ERR_INVALID_DATA, client.join_room(params), "join_only without code refused")
+	_assert_equal(sent, fake.sent_text.size(), "invalid admission sends no frames")
+	client.free()
 	_done()
 
 
@@ -1099,6 +1128,14 @@ func _test_backpressure_returns_busy_and_drops() -> void:
 	_assert_equal(1, errors.size(), "backpressure emits protocol_error")
 	var backpressure_error: String = errors[0]
 	_assert_string_contains(backpressure_error, "backpressure", "backpressure message")
+	fake.buffered_amount = 0
+	fake.busy_on_send = true
+	_assert_equal(ERR_BUSY, client.send_game_data({"x": 1}), "engine capacity returns busy")
+	_assert_equal(baseline, fake.sent_text.size(), "engine capacity queues nothing")
+	_assert_equal(1, errors.size(), "engine capacity adds no protocol error")
+	_assert_equal(true, client.is_authenticated(), "capacity preserves session")
+	fake.busy_on_send = false
+	_assert_equal(OK, client.send_game_data({"x": 1}), "same data retries after drain")
 	client.free()
 	_done()
 

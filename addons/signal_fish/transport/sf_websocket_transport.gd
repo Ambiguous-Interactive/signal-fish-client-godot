@@ -78,7 +78,7 @@ func send_text(text: String) -> Error:
 	if _over_send_cap():
 		return ERR_BUSY
 	var error: Error = _peer.send_text(text)
-	if error != OK:
+	if error != OK and error != ERR_BUSY and error != ERR_INVALID_DATA:
 		_handle_send_error(error, "text")
 	return error
 
@@ -89,7 +89,7 @@ func send_binary(bytes: PackedByteArray) -> Error:
 	if _over_send_cap():
 		return ERR_BUSY
 	var error: Error = _peer.send_binary(bytes)
-	if error != OK:
+	if error != OK and error != ERR_BUSY and error != ERR_INVALID_DATA:
 		_handle_send_error(error, "binary")
 	return error
 

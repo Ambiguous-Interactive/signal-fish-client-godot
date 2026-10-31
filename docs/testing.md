@@ -73,6 +73,21 @@ live list.
 
 ## Live server acceptance (opt-in)
 
+### Join-only room admission
+
+With an isolated server v0.10.0 or later, run:
+
+```sh
+godot --headless --path . --script tests/smoke/run_join_only_acceptance.gd -- ws://127.0.0.1:3536
+```
+
+For v2 and v3, two join-only requests must each return `ROOM_NOT_FOUND` for
+the same absent room. An explicit `false` then creates that room. An explicit
+`true` joins it, and both players start a game and exchange exact gameplay.
+The deterministic suites also reject invalid flags and a missing room code.
+
+### Spectator and session acceptance
+
 `tests/smoke/run_live_server_acceptance.gd` drives real Godot clients through
 `SFWebSocketTransport`. Use an isolated local server. The drill creates rooms
 and changes their membership. It requires a server with `spectator_relay`
@@ -870,6 +885,56 @@ rate. Three new Godot 4.3 Web shutdown controls also pass. Remote-network
 and Godot 4.3 native receive qualification remain open.
 
 ### Delayed relay shutdown
+
+#### Server v0.12.0 release qualification
+
+The published Linux ARM64 server v0.12.0 archive was checked against its
+published SHA-256. Its source revision is
+[`92842406`](https://github.com/Ambiguous-Interactive/signal-fish-server/tree/92842406fbd3ef94f933fe0a40702fdfb5d3670f).
+The server executable SHA-256 is
+`90d8cd0799ee0e61e20cfbf2da8e5996811c100f7b794560bdd48676fac110d1`.
+
+With 50 ms TCP delay, 127-byte proxy writes, a 100 ms polling hold and the
+original four 4096-byte bodies per frame:
+
+- Repaired native Godot 4.3 passes graceful, reset and stalled-close recovery.
+  Every mode preserves exact relay prefixes, cached mesh retirement and fresh
+  mesh gameplay. An earlier graceful attempt exhausted the native send queue
+  and lost the semantic close. Issue #510 adds recoverable `ERR_BUSY` handling.
+- Repaired native Godot 4.7.2 also passes all three shutdown modes.
+- Official Web Godot 4.7.2 on Chromium 156.0.8078.4 passes graceful shutdown.
+  Its reset and stalled-close runs retain interior relay gaps. Browser socket 2
+  rejects sequences 56-59 in four 4229-byte callbacks; socket 4 rejects 34-35.
+  These are scoped engine callback rejections. Issue #488 remains open.
+- The matched Web application ACK control (`--relay-credit-transport app-ack
+--relay-credit-bytes 32768`) passes all three modes with no callback rejection.
+  This window counts body bytes. Other protocol traffic adds bytes.
+
+Those Web rejection captures preceded the native send-capacity change. A later
+cohort passes all three Web modes with and without ACK credit. After the final
+native capacity update, another uncredited stalled-close control again fails:
+socket 1 rejects five 4229-byte callbacks for sequences 35-39, and delivery jumps
+from 35 to 40. Graceful and reset controls pass in that cohort. Passing schedules
+leave these failures unresolved. The native capacity change does not repair
+Web receive queues.
+
+Reports separate relay and ACK busy attempts. The drill checks that both stop
+after terminal state. During a valid observed close it permits one application
+refusal and one separate transport-status refusal. Close metadata, delivered
+prefixes, retirement and recovery remain strict.
+
+Join-only admission also passes on official Godot 4.3, 4.4.1 and 4.7.2 for
+both protocol versions. Each native engine passes the real WebSocket smoke
+with a 16-byte outbound limit: oversized UTF-8 text and binary frames return
+`ERR_INVALID_DATA`, an exact-capacity frame is delivered, and the close completes.
+
+All attempts, commands, hashes and reports are retained locally under
+`/tmp/session470/` and `progress/session470-artifacts/`. Setup failures and
+attempts that imported intermediate source remain separate. These are local
+Linux ARM64 controls; remote networks, other targets and upstream engine
+adoption remain open for #482, #485 and #488.
+
+#### Delay controls
 
 Add `--network-delay-ms 50` to the active-shutdown command to delay each TCP
 direction by 50 ms. This includes relay data and signaling. Mesh UDP and HTTP
