@@ -23,7 +23,8 @@ func poll() -> void:
 	pass
 
 
-## `ERR_BUSY` refuses a frame while keeping the session live. A send failure
+## `ERR_BUSY` refuses a frame while keeping the session live. `ERR_INVALID_DATA`
+## refuses an oversized frame and keeps the session live. A send failure
 ## on an open session emits `failed`. A browser send/close race may report
 ## `closed` after bounded polling. Sends on a closing or ended session can
 ## return `ERR_UNCONFIGURED` without another terminal signal.

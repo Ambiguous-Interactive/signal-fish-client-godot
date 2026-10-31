@@ -534,20 +534,30 @@ func _run() -> void:
 		else:
 			_expect(seat.failures == ["heartbeat close timeout"], "bounded nonresponding close")
 			_expect(not retry and seat.trace.is_empty(), "user close stops retry")
-		_expect(seat.protocol_errors.size() <= 1 and seat.refused.size() <= 1, "one refused send")
+		_expect(seat.refused.size() <= 1, "one refused application send")
 		var refused_application := 0
+		var refused_status := 0
 		for reason: String in seat.protocol_errors:
 			if reason.begins_with("send_game_data send failed:"):
 				refused_application += 1
 			else:
+				refused_status += 1
 				_expect(
 					(
-						mode == "reset"
-						and reason == "send_transport_status send failed: Failed"
-						and seat.failures == ["failed to send WebSocket text frame: Failed"]
+						(
+							mode in ["graceful", "reset"]
+							and seat.closes.size() == 1
+							and reason == "send_transport_status send failed: Unconfigured"
+						)
+						or (
+							mode == "reset"
+							and reason == "send_transport_status send failed: Failed"
+							and seat.failures == ["failed to send WebSocket text frame: Failed"]
+						)
 					),
 					"shutdown transport-status diagnostic"
 				)
+		_expect(refused_status <= 1, "one refused transport-status send")
 		_expect(refused_application == seat.refused.size(), "application refusal diagnostic")
 		for refused: Dictionary in seat.refused:
 			_expect(refused["error"] in [ERR_UNCONFIGURED, FAILED], "shutdown send result")
@@ -597,6 +607,8 @@ func _run() -> void:
 				and seat.failures == results[_seats.find(seat)]["failures"]
 				and seat.relay_sent == results[_seats.find(seat)]["relay_sent"]
 				and seat.acks_sent == results[_seats.find(seat)]["application_ack"]["sent"]
+				and seat.busy_relay_sends == results[_seats.find(seat)]["busy_relay_sends"]
+				and seat.busy_ack_sends == results[_seats.find(seat)]["busy_ack_sends"]
 			),
 			"no duplicate terminal"
 		)

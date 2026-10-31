@@ -81,8 +81,12 @@ func _smoke_echo_round_trip_and_client_close() -> bool:
 	if not await _wait_until(func() -> bool: return _opened_count == 1, "transport open"):
 		return false
 	_assert_equal(WebSocketPeer.STATE_OPEN, _transport.get_ready_state(), "smoke open state")
-	_assert_equal(ERR_BUSY, _transport.send_text(String.chr(0x20ac).repeat(6)), "UTF8 capacity")
-	_assert_equal(ERR_BUSY, _transport.send_binary(PackedByteArray(range(17))), "binary capacity")
+	_assert_equal(
+		ERR_INVALID_DATA, _transport.send_text(String.chr(0x20ac).repeat(6)), "UTF8 capacity"
+	)
+	_assert_equal(
+		ERR_INVALID_DATA, _transport.send_binary(PackedByteArray(range(17))), "binary capacity"
+	)
 	_assert_equal(WebSocketPeer.STATE_OPEN, _transport.get_ready_state(), "capacity keeps session")
 	_assert_equal([], _failure_messages, "capacity emits no failure")
 

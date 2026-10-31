@@ -995,25 +995,53 @@ func _test_websocket_buffered_send_cap_drops_without_failing() -> void:
 func _test_native_send_byte_capacity() -> void:
 	for native: bool in [false, true]:
 		for binary: bool in [false, true]:
-			for capacity: int in [0, 4, 5, 6]:
+			for capacity: int in [0, 2, 3, 4, 5, 6]:
 				var peer := TestWebSocketPeerAdapterScript.new()
 				peer._native_send_capacity = native
 				peer.ready_state = WebSocketPeer.STATE_OPEN
 				peer.outbound_buffer_size = capacity
 				peer.buffered_amount = 2
+				var transport := SFWebSocketTransportScript.new()
+				transport._peer = peer
+				transport._opened_emitted = true
+				var failures: Array[String] = []
+				transport.failed.connect(func(message: String) -> void: failures.append(message))
 				var bytes := PackedByteArray([0xc3, 0xa9, 0x61])
 				var result: Error = (
-					peer.send_binary(bytes)
+					transport.send_binary(bytes)
 					if binary
-					else peer.send_text(bytes.get_string_from_utf8())
+					else transport.send_text(bytes.get_string_from_utf8())
 				)
-				var busy := native and capacity == 4
-				_assert_equal(ERR_BUSY if busy else OK, result, "full UTF8 frame capacity")
+				var oversized := native and capacity == 2
+				var busy := native and capacity in [3, 4]
+				var expected: Error = ERR_INVALID_DATA if oversized else ERR_BUSY if busy else OK
+				_assert_equal(expected, result, "full UTF8 frame capacity")
 				_assert_equal(
-					0 if busy else 1,
+					0 if busy or oversized else 1,
 					peer.sent_text.size() + peer.sent_binary.size(),
 					"byte refusal skips engine"
 				)
+				peer.buffered_amount = 0
+				result = (
+					transport.send_binary(bytes)
+					if binary
+					else transport.send_text(bytes.get_string_from_utf8())
+				)
+				_assert_equal(
+					ERR_INVALID_DATA if oversized else OK, result, "same frame after drain"
+				)
+				_assert_equal([], failures, "refused frame preserves session")
+				_assert_equal([], peer.close_calls, "refused frame never closes peer")
+				var expected_sends := 0 if oversized else 1 if busy else 2
+				_assert_equal(
+					expected_sends,
+					peer.sent_text.size() + peer.sent_binary.size(),
+					"exact send count after drain"
+				)
+				for sent: PackedByteArray in peer.sent_binary:
+					_assert_equal(bytes, sent, "retry preserves exact binary bytes")
+				for sent: String in peer.sent_text:
+					_assert_equal(bytes, sent.to_utf8_buffer(), "retry preserves exact text bytes")
 				peer.ready_state = WebSocketPeer.STATE_CLOSED
 				peer.send_text_error = FAILED
 				peer.send_binary_error = FAILED

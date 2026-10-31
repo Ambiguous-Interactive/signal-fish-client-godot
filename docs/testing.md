@@ -910,15 +910,23 @@ original four 4096-byte bodies per frame:
 --relay-credit-bytes 32768`) passes all three modes with no callback rejection.
   This window counts body bytes. Other protocol traffic adds bytes.
 
-The recorded Web rejection captures preceded the native send-capacity change.
-Final-source Web runs pass all three modes with and without ACK credit, with
-no rejection or interior gap. These later passes leave the earlier failures
-unresolved. The native capacity change does not repair Web receive queues.
+Those Web rejection captures preceded the native send-capacity change. A later
+cohort passes all three Web modes with and without ACK credit. After the final
+native capacity update, another uncredited stalled-close control again fails:
+socket 1 rejects five 4229-byte callbacks for sequences 35-39, and delivery jumps
+from 35 to 40. Graceful and reset controls pass in that cohort. Passing schedules
+leave these failures unresolved. The native capacity change does not repair
+Web receive queues.
+
+Reports separate relay and ACK busy attempts. The drill checks that both stop
+after terminal state. During a valid observed close it permits one application
+refusal and one separate transport-status refusal. Close metadata, delivered
+prefixes, retirement and recovery remain strict.
 
 Join-only admission also passes on official Godot 4.3, 4.4.1 and 4.7.2 for
 both protocol versions. Each native engine passes the real WebSocket smoke
 with a 16-byte outbound limit: oversized UTF-8 text and binary frames return
-`ERR_BUSY`, an exact-capacity frame is delivered, and the close completes.
+`ERR_INVALID_DATA`, an exact-capacity frame is delivered, and the close completes.
 
 All attempts, commands, hashes and reports are retained locally under
 `/tmp/session470/` and `progress/session470-artifacts/`. Setup failures and

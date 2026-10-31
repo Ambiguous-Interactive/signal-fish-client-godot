@@ -172,7 +172,8 @@ session state.
 - A full native WebSocket send queue returns `ERR_BUSY` without a protocol
   error. Keep polling and retry the same message after capacity becomes available.
   The connection stays open and the refused message is never queued.
-  Reduce any frame that exceeds the engine's `outbound_buffer_size`.
+  A frame that exceeds the engine's `outbound_buffer_size` returns
+  `ERR_INVALID_DATA` with `protocol_error`. Reduce the frame before retrying.
 - Frames over `max_inbound_frame_bytes` are dropped with `protocol_error`.
 - One outbound text/binary frame over `max_outbound_frame_bytes` is refused
   with `protocol_error` and `ERR_INVALID_DATA`, and nothing is queued. The

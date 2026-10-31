@@ -193,8 +193,9 @@ steam.stop()
 
 - Sends are backpressured: over `max_buffered_bytes` -> `ERR_BUSY` +
   `protocol_error`, nothing queued.
-- Native engine send capacity -> `ERR_BUSY`, nothing queued, connection stays
-  open. Poll and retry after capacity returns; oversized frames need shrinking.
+- Native queued send pressure -> `ERR_BUSY`; poll and retry the same frame.
+  A frame over engine capacity -> `ERR_INVALID_DATA` + `protocol_error`.
+  Both refuse without queueing or closing the connection.
 - One outbound frame over `max_outbound_frame_bytes` -> `ERR_INVALID_DATA` +
   `protocol_error`, nothing queued (64 KiB default = upstream server
   default).

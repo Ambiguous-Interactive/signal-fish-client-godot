@@ -29,14 +29,18 @@ func close(code := 1000, reason := "") -> void:
 
 
 func send_text(text: String) -> Error:
-	if _native_send_capacity and _over_send_capacity(text.to_utf8_buffer().size()):
-		return ERR_BUSY
+	if _native_send_capacity:
+		var error := _send_capacity_error(text.to_utf8_buffer().size())
+		if error != OK:
+			return error
 	return _send_result(_send_text(text))
 
 
 func send_binary(bytes: PackedByteArray) -> Error:
-	if _native_send_capacity and _over_send_capacity(bytes.size()):
-		return ERR_BUSY
+	if _native_send_capacity:
+		var error := _send_capacity_error(bytes.size())
+		if error != OK:
+			return error
 	return _send_result(_send_binary(bytes))
 
 
@@ -52,11 +56,17 @@ func _get_outbound_buffer_size() -> int:
 	return _peer.outbound_buffer_size
 
 
-func _over_send_capacity(frame_bytes: int) -> bool:
+func _send_capacity_error(frame_bytes: int) -> Error:
 	if get_ready_state() != WebSocketPeer.STATE_OPEN:
-		return false
+		return OK
 	var capacity := _get_outbound_buffer_size()
-	return capacity > 0 and get_current_outbound_buffered_amount() + frame_bytes > capacity
+	if capacity <= 0:
+		return OK
+	if frame_bytes > capacity:
+		return ERR_INVALID_DATA
+	if get_current_outbound_buffered_amount() + frame_bytes > capacity:
+		return ERR_BUSY
+	return OK
 
 
 func _send_result(error: Error) -> Error:
