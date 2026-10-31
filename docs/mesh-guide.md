@@ -2049,8 +2049,14 @@ diagnostics. The cause of the original intermittent stall remains open.
 
 ### Experimental native mesh repair
 
-An opt-in patch targets Godot 4.6.3 source
-`35e80b3a8822a9df9be390814b62f44c0a9c69e8`. It reads the channel selected
+Opt-in patches target these stable sources:
+
+| Godot | Source revision                            |
+| ----- | ------------------------------------------ |
+| 4.6.3 | `35e80b3a8822a9df9be390814b62f44c0a9c69e8` |
+| 4.7.2 | `ed1daf0bf001b61586d9930840f2f1394092c079` |
+
+The applicator selects the patch from source HEAD. Each patch reads the channel selected
 for packet metadata and refreshes selection when that peer is removed or
 replaced (#403). It also backports the
 [upstream lifetime-key correction](https://github.com/godotengine/godot/commit/caa386e89570d293c03ad7c723d5fbd7eb1a2717)
@@ -2090,8 +2096,8 @@ python scripts/check-webrtc-reference.py --runtime native \
   --output /tmp/mesh-reference-attempt
 ```
 
-The tested Linux ARM64 build passes all twelve engine controls, nine native
-lifetime controls and the two-sender exact-byte metadata scene. Native
+The Godot 4.6.3 and 4.7.2 Linux ARM64 builds pass all twelve engine controls,
+nine native lifetime controls and the two-sender exact-byte metadata scene. Native
 reference sessions pass both offer roles with the engine reader and safe
 adapter, across two generations each. Every generation retains all 128
 reliable snapshot chunks and acknowledgements, binary payload checks,
@@ -2099,8 +2105,8 @@ required-channel teardown and fresh-link recovery. Gameplay lifetimes are
 unset for reliable and 1 ms for ordered/unordered channels. WebSocket smoke
 also passes.
 
-One unordered binary sample is absent in a safe-adapter phase. The drill
-permits unreliable gaps; these results do not identify their cause. Finite
+The runs include unordered binary gaps. The drill permits these gaps;
+these results do not identify their cause. Finite
 channel configuration does not prove expiry under loss or delay. Web exports,
 remote networks, other build targets and upstream adoption remain open. The
 zero-byte script packet contract remains tracked in #437.

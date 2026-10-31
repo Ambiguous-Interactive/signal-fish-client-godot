@@ -51,7 +51,7 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       untraced packet's cause remains open.
 - [ ] Clarify the empty-packet script API contract upstream before qualifying
       zero-byte mesh sends and safe-peer receives (#437).
-- [ ] Qualify the experimental Godot 4.6.3 mesh selection/lifetime repair on
+- [ ] Qualify the experimental Godot 4.6.3/4.7.2 mesh selection/lifetime repair on
       Web, other targets and remote networks; coordinate upstream adoption
       (#403, #433, #355; see `docs/mesh-guide.md`).
       Preserve exact metadata, reliable receipts and replacement links.
