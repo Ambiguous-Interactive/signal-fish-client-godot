@@ -777,7 +777,8 @@ python scripts/check-websocket-native-receive.py \
   --run-repro --output /tmp/standalone-run
 ```
 
-`standalone-report.json` pins engine, importer and optional emulator hashes and
+`standalone-report.json` pins engine and importer hashes and records optional
+emulator paths and arguments. It
 records each command's exit, logs and result records. An engine that crashes a
 command yields no record, so a missing result stays visible. The report states
 facts; callers compare them with the expected matrix.
@@ -788,9 +789,9 @@ The opt-in `WebSocket Native x64` workflow builds a pinned engine revision on
 an x86-64 GitHub runner and qualifies it there. Dispatch it with the pinned
 4.7.2-stable revision to build the repaired engine, run the full paced receive
 suite with a three-byte read cap, and run the seven standalone commands. A
-matched unpatched baseline job runs the same seven commands and must keep the
-four defect failures with one observed result record each, while the three
-comparison controls pass. Both jobs upload build logs, patch reports, engine
+matched unpatched baseline job runs the same seven commands. The four defect
+failures must keep one observed result record each. The three comparison
+controls must pass. Both jobs upload build logs, patch reports, engine
 hashes and per-command evidence.
 
 The first run qualified the pinned 4.7.2-stable repair
@@ -802,8 +803,8 @@ cap; every case observed capped reads. All seven standalone commands pass
 (#491, #492, #496, #498). Repaired binary SHA-256:
 `c422f1a4b40b5b5f52cb6c87cc7984d661bb4925d625c7b390d7c161bf65a27d`. The
 matched unpatched build from the same source and flags reproduces all four
-defect commands with one observed result record each and passes the three
-comparison controls. Unpatched binary SHA-256:
+defect commands with one observed result record each. The three comparison
+controls pass. Unpatched binary SHA-256:
 `e3ffcc28cfa930b4688367ebbabef4037c7255a4ae93d689599c784eaa4c0c6e`. SCons
 4.11.1 builds both engines with the options listed in the workflow. These
 results cover the #485 receive suite, paced writes, large boundaries, close
