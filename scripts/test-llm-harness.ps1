@@ -586,7 +586,7 @@ function New-HookBehaviorSandbox {
         & git config user.email 'test@example.com' 2>&1 | Out-Null
         & git config user.name 'test' 2>&1 | Out-Null
         & git add -A 2>&1 | Out-Null
-        & git commit -q -m 'baseline' 2>&1 | Out-Null
+        Invoke-SandboxGitCommit -Message 'baseline'
     }
     finally {
         Pop-Location
@@ -631,6 +631,43 @@ function New-StrayArtifactSandbox {
     }
 
     return $sandbox
+}
+
+function Invoke-SandboxGitCommit {
+    # Baseline commits inside throwaway sandboxes must not depend on ambient
+    # git config (#515). Three layers, each covering what the others miss:
+    # global/system config is isolated (newer git runs config-defined
+    # `hook.<name>` hooks no matter what core.hooksPath says), `core.hooksPath`
+    # is emptied (traditional hooks, including prepare-commit-msg, which
+    # `--no-verify` alone does not skip), and signing is disabled. The missing
+    # global config path is deliberate: git treats unreadable global config as
+    # empty. `--allow-empty` keeps normalization-only setups deterministic.
+    param([Parameter(Mandatory)][string]$Message)
+
+    $prevGlobal = $env:GIT_CONFIG_GLOBAL
+    $prevNoSystem = $env:GIT_CONFIG_NOSYSTEM
+    try {
+        $env:GIT_CONFIG_GLOBAL = Join-Path ([System.IO.Path]::GetTempPath()) "llm-no-global-config-$([Guid]::NewGuid())"
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        & git -c commit.gpgsign=false -c core.hooksPath= commit -q --allow-empty --no-verify -m $Message 2>&1 | Out-Null
+    }
+    finally {
+        if ($null -eq $prevGlobal) {
+            Remove-Item -LiteralPath 'Env:\GIT_CONFIG_GLOBAL' -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:GIT_CONFIG_GLOBAL = $prevGlobal
+        }
+        if ($null -eq $prevNoSystem) {
+            Remove-Item -LiteralPath 'Env:\GIT_CONFIG_NOSYSTEM' -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:GIT_CONFIG_NOSYSTEM = $prevNoSystem
+        }
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "Sandbox git commit '$Message' failed with exit code $LASTEXITCODE."
+    }
 }
 
 # --- Read-LlmFrontmatter ---------------------------------------------------
@@ -1175,6 +1212,84 @@ Assert-Test 'GitHub config PreCommit validates staged index instead of worktree'
     }
     finally {
         Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} -Behavioral
+
+Assert-Test 'sandbox baseline commits ignore hostile global git config' {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
+    if (-not (Get-Command chmod -ErrorAction SilentlyContinue)) { return }
+
+    # A host with `commit.gpgsign=true` or a global `core.hooksPath` (e.g. a
+    # pre-commit framework shim) must not stall or fail sandbox setup (#515).
+    # Every blocking hook is staged: `--no-verify` skips pre-commit and
+    # commit-msg, but prepare-commit-msg would still run and abort.
+    $tempRoot = [System.IO.Path]::GetTempPath()
+    $hostileConfig = Join-Path $tempRoot "llm-hostile-git-config-$([Guid]::NewGuid()).ini"
+    $foreignHooks = Join-Path $tempRoot "llm-foreign-hooks-$([Guid]::NewGuid())"
+    New-Item -ItemType Directory -Path $foreignHooks -Force | Out-Null
+    $sentinels = @{}
+    foreach ($hookName in @('pre-commit', 'prepare-commit-msg', 'commit-msg')) {
+        $sentinel = Join-Path $foreignHooks "$hookName-ran"
+        $sentinels[$hookName] = $sentinel
+        $hookPath = Join-Path $foreignHooks $hookName
+        Write-TestUtf8NoBomFile `
+            -Path $hookPath `
+            -Content "#!/usr/bin/env sh`ntouch '$(($sentinel -replace '\\', '/'))'`nexit 1`n" `
+            -LfNewlines
+        Assert-TestShebangLineUsesLf -Path $hookPath -Name "foreign $hookName fixture"
+        Assert-TestFileHasNoCarriageReturns -Path $hookPath -Name "foreign $hookName fixture"
+        & chmod +x -- $hookPath 2>&1 | Out-Null
+    }
+    $configText = "[commit]`n`tgpgsign = true`n[core]`n`thooksPath = $(($foreignHooks -replace '\\', '/'))`n" +
+    "[hook `"config-defined-probe`"]`n`tevent = prepare-commit-msg`n`tcommand = touch '$(($foreignHooks -replace '\\', '/'))/config-hook-ran'; exit 1`n"
+    [System.IO.File]::WriteAllText($hostileConfig, $configText, [System.Text.UTF8Encoding]::new($false))
+
+    $globalBackup = $env:GIT_CONFIG_GLOBAL
+    $sandbox = $null
+    try {
+        $env:GIT_CONFIG_GLOBAL = $hostileConfig
+        $sandbox = New-HookBehaviorSandbox -Prefix 'llm-hostile-global-config'
+
+        Push-Location $sandbox
+        try {
+            & git rev-parse --verify -q 'HEAD' 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Sandbox has no baseline commit; the setup commit did not survive hostile global git config.'
+            }
+            $subject = (& git log -1 --format=%s 2>&1 | Out-String).Trim()
+            if ($subject -ne 'baseline') {
+                throw "Expected baseline commit subject 'baseline' but got '$subject'."
+            }
+            $commitObject = (& git cat-file commit 'HEAD' 2>&1 | Out-String)
+            if ($commitObject -match 'gpgsig') {
+                throw 'Baseline commit was GPG-signed despite commit.gpgsign being disabled for sandbox commits.'
+            }
+        }
+        finally {
+            Pop-Location
+        }
+        foreach ($hookName in @('pre-commit', 'prepare-commit-msg', 'commit-msg')) {
+            if (Test-Path -LiteralPath $sentinels[$hookName] -PathType Leaf) {
+                throw "A foreign global $hookName hook ran inside the sandbox baseline commit."
+            }
+        }
+        $configHookSentinel = Join-Path $foreignHooks 'config-hook-ran'
+        if (Test-Path -LiteralPath $configHookSentinel -PathType Leaf) {
+            throw 'A config-defined global prepare-commit-msg hook ran inside the sandbox baseline commit.'
+        }
+    }
+    finally {
+        if ($null -eq $globalBackup) {
+            Remove-Item -LiteralPath 'Env:\GIT_CONFIG_GLOBAL' -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:GIT_CONFIG_GLOBAL = $globalBackup
+        }
+        Remove-Item -LiteralPath $hostileConfig -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $foreignHooks -Recurse -Force -ErrorAction SilentlyContinue
+        if ($sandbox) {
+            Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 } -Behavioral
 
@@ -4750,7 +4865,7 @@ Assert-Test 'MIN-2: AgentFast install guard catches undefined variables without 
         Push-Location $sandbox
         try {
             & git add -A 2>&1 | Out-Null
-            & git commit -q -m 'baseline' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'baseline'
         }
         finally { Pop-Location }
 
@@ -5001,7 +5116,7 @@ Assert-Test 'adversarial: AgentFast rejects ignored LLM markdown inputs before n
         try {
             Add-Content -LiteralPath (Join-Path $sandbox '.gitignore') -Value "`n$ignoredRel`n"
             & git add -- '.gitignore' 2>&1 | Out-Null
-            & git commit -q -m 'ignore AgentFast LLM markdown probe' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'ignore AgentFast LLM markdown probe'
         }
         finally {
             Pop-Location
@@ -5116,7 +5231,7 @@ Assert-Test 'adversarial: PreCommit AutoFix does not stage context prose when ge
                 throw "Failed to normalize generated files in sandbox: $($genOutput -join '; ')"
             }
             & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
-            & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'normalized generated baseline'
         }
         finally {
             Pop-Location
@@ -5181,7 +5296,7 @@ Assert-Test 'final-review: PreCommit AutoFix stages only generated context block
                 throw "Failed to normalize generated files in sandbox: $($genOutput -join '; ')"
             }
             & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
-            & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'normalized generated baseline'
         }
         finally {
             Pop-Location
@@ -5263,7 +5378,7 @@ Assert-Test 'final-review: PreCommit AutoFix rejects untracked LLM markdown gene
                 throw "Failed to normalize generated files in sandbox: $($genOutput -join '; ')"
             }
             & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
-            & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'normalized generated baseline'
         }
         finally {
             Pop-Location
@@ -5342,12 +5457,12 @@ Assert-Test 'final-review: PreCommit AutoFix rejects ignored untracked LLM markd
                 throw "Failed to normalize generated files in sandbox: $($genOutput -join '; ')"
             }
             & git add -- '.llm/index.md' '.llm/context.md' 2>&1 | Out-Null
-            & git commit -q -m 'normalized generated baseline' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'normalized generated baseline'
 
             Add-Content -LiteralPath (Join-Path $sandbox '.gitignore') `
                 -Value "`n.llm/skills/ignored-generation-probe.md`n"
             & git add -- '.gitignore' 2>&1 | Out-Null
-            & git commit -q -m 'ignore ignored LLM markdown probe' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'ignore ignored LLM markdown probe'
         }
         finally {
             Pop-Location
@@ -5502,7 +5617,7 @@ Assert-Test 'MIN-3: installed shim self-heals a corrupt run-llm-hooks.ps1 via gi
         Push-Location $sandbox
         try {
             & git add -A 2>&1 | Out-Null
-            & git commit -q -m 'baseline' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'baseline'
 
             # Install the hook.
             $installer = Join-Path $sandboxScripts 'install-git-hooks.ps1'
@@ -5623,7 +5738,7 @@ Assert-Test 'MIN-4: preflight prunes recovery dirs to 20 most-recent' {
         Push-Location $sandbox
         try {
             & git add -A 2>&1 | Out-Null
-            & git commit -q -m 'baseline' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'baseline'
         }
         finally { Pop-Location }
 
@@ -5712,7 +5827,7 @@ Assert-Test 'MIN-5: AutoFix restores working-tree WIP when HEAD copy is also cor
         Push-Location $sandbox
         try {
             & git add -A 2>&1 | Out-Null
-            & git commit -q -m 'baseline-with-broken-victim' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'baseline-with-broken-victim'
         }
         finally { Pop-Location }
 
@@ -5799,7 +5914,7 @@ Assert-Test 'MIN-6: preflight refuses AutoFix when recovery dir is read-only' {
         Push-Location $sandbox
         try {
             & git add -A 2>&1 | Out-Null
-            & git commit -q -m 'baseline-clean' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'baseline-clean'
         }
         finally { Pop-Location }
 
@@ -6127,7 +6242,7 @@ Assert-Test 'run-llm-hooks.ps1 detects a parse-corrupt preflight before invoking
         Push-Location $sandbox
         try {
             & git add -A 2>&1 | Out-Null
-            & git commit -q -m 'baseline' 2>&1 | Out-Null
+            Invoke-SandboxGitCommit -Message 'baseline'
         }
         finally { Pop-Location }
         # NOW corrupt preflight.ps1 in the sandbox working tree.
