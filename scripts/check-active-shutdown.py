@@ -435,6 +435,10 @@ def main() -> int:
         args.runner = args.runner.resolve()
         if not args.runner.is_file() or not os.access(args.runner, os.X_OK):
             parser.error("runner must be an executable file")
+        target = Path(shutil.which(args.godot) or args.godot).resolve()
+        if not target.is_file():
+            parser.error("godot must resolve to a target file when using --runner")
+        args.godot = str(target)
     if os.name != "posix":
         parser.error("This local process control requires POSIX signals")
     args.server_binary = args.server_binary.resolve()

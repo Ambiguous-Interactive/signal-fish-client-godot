@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -117,6 +118,7 @@ class ActiveShutdownEmulatorTests(unittest.TestCase):
                 "print('ACTIVE_SHUTDOWN_TERMINAL {}')\n"
                 "print('ACTIVE_SHUTDOWN_RESULT {\"passed\": true}')\n"
             )
+            target.chmod(0o755)
             importer = root / "native importer"
             importer.write_text("native editor identity")
             extension = root / "extension"
@@ -138,7 +140,7 @@ class ActiveShutdownEmulatorTests(unittest.TestCase):
                 "--server-revision",
                 "fixture",
                 "--godot",
-                str(target),
+                target.name,
                 "--import-godot",
                 str(importer),
                 "--native-extension",
@@ -159,6 +161,7 @@ class ActiveShutdownEmulatorTests(unittest.TestCase):
 
             with (
                 patch.object(sys, "argv", command),
+                patch.dict(os.environ, {"PATH": str(root) + os.pathsep + os.environ["PATH"]}),
                 patch.object(active, "Service", return_value=service),
                 patch.object(active, "ThreadingHTTPServer", return_value=http),
                 patch.object(active.interop, "prepare", side_effect=prepared),
@@ -213,6 +216,15 @@ class ActiveShutdownEmulatorTests(unittest.TestCase):
                     sys.executable,
                     "--runner",
                     str(root / "missing"),
+                ],
+                [
+                    "--runtime=native",
+                    "--import-godot",
+                    sys.executable,
+                    "--runner",
+                    sys.executable,
+                    "--godot",
+                    str(root / "missing-target"),
                 ],
             ):
                 with (
