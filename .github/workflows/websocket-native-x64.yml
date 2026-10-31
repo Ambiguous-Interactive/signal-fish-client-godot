@@ -35,8 +35,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                variant: [repaired, baseline]
-        if: matrix.variant != 'baseline' || inputs.run_baseline
+                variant: ${{ fromJSON(inputs.run_baseline && '["repaired", "baseline"]' || '["repaired"]') }}
         env:
             GODOT_REVISION: ${{ inputs.engine_revision }}
             GODOT_LABEL: ${{ inputs.engine_label }}
