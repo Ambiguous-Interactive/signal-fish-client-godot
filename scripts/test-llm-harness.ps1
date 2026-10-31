@@ -40,6 +40,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Every git call in this suite (sandbox setup, artifact discovery) resolves
+# the repository from the working directory. A caller's GIT_DIR or
+# GIT_WORK_TREE would silently redirect those commands at the wrong
+# repository (#418 review).
+foreach ($gitVar in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')) {
+    Remove-Item -LiteralPath "Env:\$gitVar" -ErrorAction SilentlyContinue
+}
+
 $ScriptsDir = $PSScriptRoot
 $ModulePath = Join-Path $ScriptsDir 'lib/LlmHarness.psm1'
 Import-Module $ModulePath -Force
@@ -608,13 +616,12 @@ function New-StrayArtifactSandbox {
         Copy-Item -LiteralPath $gitignore -Destination (Join-Path $sandbox '.gitignore') -Force
     }
 
+    # Discovery tests read the index, so an initial `git add` mirrors a real
+    # checkout; no commit, which keeps gpgsign and hooks out of the setup.
     Push-Location $sandbox
     try {
         & git init -q --initial-branch=main 2>&1 | Out-Null
-        & git config user.email 'test@example.com' 2>&1 | Out-Null
-        & git config user.name 'test' 2>&1 | Out-Null
         & git add -A 2>&1 | Out-Null
-        & git commit -q --allow-empty --no-verify -m 'baseline' 2>&1 | Out-Null
     }
     finally {
         Pop-Location
@@ -1547,6 +1554,13 @@ Assert-Test 'staging artifact helper default patterns find non-ignored editor ar
         $tempName = "llm-harness-default-pattern-$([Guid]::NewGuid()).swp"
         $tempPath = Join-Path $repoRoot $tempName
         [System.IO.File]::WriteAllText($tempPath, 'sentinel')
+        $trackedName = "llm-harness-default-pattern-$([Guid]::NewGuid()).swp"
+        $trackedPath = Join-Path $repoRoot $trackedName
+        [System.IO.File]::WriteAllText($trackedPath, 'sentinel')
+        & git -C $repoRoot add -- $trackedName
+        if ($LASTEXITCODE -ne 0) {
+            throw "git add failed for $trackedName."
+        }
         $artifacts = @(Get-LlmStagingArtifacts -RepoRoot $repoRoot)
         $found = @($artifacts | Where-Object { $_.Path -eq $tempName })
         if ($found.Count -ne 1) {
@@ -1554,6 +1568,13 @@ Assert-Test 'staging artifact helper default patterns find non-ignored editor ar
         }
         if ($found[0].IsTracked) {
             throw "$tempName should be reported as IsTracked=false."
+        }
+        $staged = @($artifacts | Where-Object { $_.Path -eq $trackedName })
+        if ($staged.Count -ne 1) {
+            throw "Expected Get-LlmStagingArtifacts default patterns to find staged $trackedName; got: $($artifacts.Path -join ', ')"
+        }
+        if (-not $staged[0].IsTracked) {
+            throw "$trackedName should be reported as IsTracked=true."
         }
     }
     finally {
@@ -1570,6 +1591,8 @@ Assert-Test 'stray helpers find nested basename-style editor artifacts' {
         $tempDirName = "llm-harness-recursive-stray-$([Guid]::NewGuid())"
         $nestedDir = Join-Path (Join-Path (Join-Path $repoRoot $tempDirName) 'deep') 'nested'
         New-Item -ItemType Directory -Path $nestedDir -Force | Out-Null
+        $stagedDir = Join-Path (Join-Path (Join-Path $repoRoot $tempDirName) 'deep') 'staged'
+        New-Item -ItemType Directory -Path $stagedDir -Force | Out-Null
         $files = @(
             @{ Rel = "$tempDirName/deep/nested/.DS_Store"; Full = Join-Path $nestedDir '.DS_Store' },
             @{ Rel = "$tempDirName/deep/nested/.#notes.md"; Full = Join-Path $nestedDir '.#notes.md' },
@@ -1577,6 +1600,12 @@ Assert-Test 'stray helpers find nested basename-style editor artifacts' {
         )
         foreach ($file in $files) {
             [System.IO.File]::WriteAllText($file.Full, 'sentinel')
+        }
+        $trackedRel = "$tempDirName/deep/staged/.#tracked.md"
+        [System.IO.File]::WriteAllText((Join-Path $stagedDir '.#tracked.md'), 'sentinel')
+        & git -C $repoRoot add -- $trackedRel
+        if ($LASTEXITCODE -ne 0) {
+            throw "git add failed for $trackedRel."
         }
         $patterns = @('.DS_Store', '.#*', '#*#')
         $stagingArtifacts = @(Get-LlmStagingArtifacts -RepoRoot $repoRoot -Patterns $patterns)
@@ -1587,6 +1616,18 @@ Assert-Test 'stray helpers find nested basename-style editor artifacts' {
             }
             if ($strayArtifacts.Path -notcontains $file.Rel) {
                 throw "Expected Get-LlmStrayWorkingTreeArtifacts to find nested artifact $($file.Rel); got: $($strayArtifacts.Path -join ', ')"
+            }
+        }
+        foreach ($entry in @(
+                @{ Name = 'Get-LlmStagingArtifacts'; Items = $stagingArtifacts },
+                @{ Name = 'Get-LlmStrayWorkingTreeArtifacts'; Items = $strayArtifacts }
+            )) {
+            $trackedFound = @($entry.Items | Where-Object { $_.Path -eq $trackedRel })
+            if ($trackedFound.Count -ne 1) {
+                throw "Expected $($entry.Name) to find staged artifact $trackedRel; got: $(@($entry.Items.Path) -join ', ')"
+            }
+            if (-not $trackedFound[0].IsTracked) {
+                throw "$trackedRel should be reported as IsTracked=true."
             }
         }
     }
