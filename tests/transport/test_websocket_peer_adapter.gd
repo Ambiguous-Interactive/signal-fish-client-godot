@@ -7,6 +7,7 @@ var connect_error := OK
 var send_text_error := OK
 var send_binary_error := OK
 var buffered_amount := 0
+var outbound_buffer_size := 0
 var close_calls: Array[Array] = []
 var sent_text: Array[String] = []
 var sent_binary: Array[PackedByteArray] = []
@@ -41,14 +42,21 @@ func close(code := 1000, reason := "") -> void:
 	ready_state = WebSocketPeer.STATE_CLOSED
 
 
-func send_text(text: String) -> Error:
+# gdscript-private-helper: allow _send_text
+func _send_text(text: String) -> Error:
 	sent_text.append(text)
 	return send_text_error
 
 
-func send_binary(bytes: PackedByteArray) -> Error:
+# gdscript-private-helper: allow _send_binary
+func _send_binary(bytes: PackedByteArray) -> Error:
 	sent_binary.append(bytes.duplicate())
 	return send_binary_error
+
+
+# gdscript-private-helper: allow _get_outbound_buffer_size
+func _get_outbound_buffer_size() -> int:
+	return outbound_buffer_size
 
 
 func get_current_outbound_buffered_amount() -> int:

@@ -51,7 +51,11 @@ serialized by the `Resource` pipeline, and the logger redacts it.
 
 `join_room()` takes a `SignalFishClient.JoinRoomParams` object with the
 fields `game_name`, `player_name`, `room_code`, `max_players`,
-`supports_authority`, `relay_transport`, and `password`.
+`supports_authority`, `relay_transport`, `password`, and `join_only`.
+
+Set `join_only = true` with a room code from a room list or invite. A missing
+room returns `ROOM_NOT_FOUND`. This requires server v0.10.0 or later.
+Leave `join_only` unset or set it to `false` to allow room creation.
 
 ## Lifecycle and state
 
@@ -164,6 +168,10 @@ session state.
 
 - Sends are backpressured. Over `max_buffered_bytes`, a send returns
   `ERR_BUSY`, emits `protocol_error`, and queues nothing.
+- A full native WebSocket send queue returns `ERR_BUSY` without a protocol
+  error. Keep polling and retry the same message after capacity becomes available.
+  The connection stays open and the refused message is never queued.
+  Reduce any frame that exceeds the engine's `outbound_buffer_size`.
 - Frames over `max_inbound_frame_bytes` are dropped with `protocol_error`.
 - One outbound text/binary frame over `max_outbound_frame_bytes` is refused
   with `protocol_error` and `ERR_INVALID_DATA`, and nothing is queued. The

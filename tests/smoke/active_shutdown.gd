@@ -59,6 +59,9 @@ func _process(_delta: float) -> void:
 					break
 				var payload := {"sequence": seat.relay_sent, "body": "0123456789abcdef".repeat(256)}
 				var error := seat.client.send_game_data(payload)
+				if error == ERR_BUSY:
+					seat.busy_sends += 1
+					break
 				if error != OK:
 					seat.refused.append({"error": error, "tick_ms": Time.get_ticks_msec()})
 					_expect(_shutdown_requested, "send refused before shutdown")
@@ -245,6 +248,9 @@ func _flush_ack(seat: Seat) -> void:
 		}
 	}
 	var error := seat.client.send_game_data(payload)
+	if error == ERR_BUSY:
+		seat.busy_sends += 1
+		return
 	if error != OK:
 		seat.refused.append({"error": error, "tick_ms": Time.get_ticks_msec(), "frame": "ack"})
 		_expect(_shutdown_requested, "ACK send refused before shutdown")
@@ -312,6 +318,7 @@ func _connect_generation() -> bool:
 		seat.first_gap.clear()
 		seat.offered = 0
 		seat.credit_blocked_frames = 0
+		seat.busy_sends = 0
 		seat.peak_outstanding_body_bytes = 0
 		seat.client.transport = seat.transport
 		_expect(seat.client.connect_to_server(str(_options["service_url"])) == OK, "connect")
@@ -387,6 +394,7 @@ func _connect_generation() -> bool:
 				"relay_offered": seat.offered,
 				"application_ack": _ack_summary(seat),
 				"credit_blocked_frames": seat.credit_blocked_frames,
+				"busy_sends": seat.busy_sends,
 				"peak_outstanding_body_bytes": seat.peak_outstanding_body_bytes,
 				"receive": seat.transport.observer.summary(),
 				"first_relay_gap": seat.first_gap.duplicate(),
@@ -570,6 +578,7 @@ func _run() -> void:
 				"relay_offered": seat.offered,
 				"application_ack": _ack_summary(seat),
 				"credit_blocked_frames": seat.credit_blocked_frames,
+				"busy_sends": seat.busy_sends,
 				"peak_outstanding_body_bytes": seat.peak_outstanding_body_bytes,
 				"receive": seat.transport.observer.summary(),
 				"first_relay_gap": seat.first_gap.duplicate(),
@@ -649,6 +658,7 @@ class Seat:
 	var transport := ReceiveTransport.new()
 	var offered := 0
 	var credit_blocked_frames := 0
+	var busy_sends := 0
 	var peak_outstanding_body_bytes := 0
 	var authenticated := false
 	var ready := false

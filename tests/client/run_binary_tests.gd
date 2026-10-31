@@ -92,6 +92,12 @@ func _test_send_guards_and_wire_bytes() -> void:
 	var backpressure_error: String = errors[0]
 	_assert_string_contains(backpressure_error, "backpressure", "binary backpressure message")
 	client_transport.buffered_amount = 0
+	client_transport.busy_on_send = true
+	_assert_equal(ERR_BUSY, client.send_game_data_binary(payload), "engine binary capacity busy")
+	_assert_equal(1, client_transport.sent_binary.size(), "engine refusal queues no binary")
+	_assert_equal(1, errors.size(), "engine binary capacity adds no protocol error")
+	_assert_equal(true, client.is_authenticated(), "binary capacity preserves session")
+	client_transport.busy_on_send = false
 	# The boundary is exact: at the cap the frame goes out whole, one byte
 	# over is refused locally. A binary frame the server cannot verify is
 	# farewelled upstream, so oversized bytes must never reach the wire

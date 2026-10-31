@@ -102,8 +102,7 @@ carry the full data-backed plan):
       recorded verdict closing #315 (#322), driven by the #318 harness.
 - [ ] Gated follow-up: CI Steam seat exploration (#319).
 - [ ] When `protocol-sync.yml` flags binding drift past the v0.9.1 wire
-      commit: adopt `JoinRoom.join_only`, typed
-      `ProtocolInfo.implementation_version`/`game_data_limits`, and the
+      commit: adopt typed `ProtocolInfo.implementation_version`/`game_data_limits`, and the
       RoomOperation sender + result correlation (the v0.10.0 surface is
       already decode-tolerated; see `.llm/research/protocol-fixtures.md`).
 

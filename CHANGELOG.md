@@ -10,6 +10,8 @@ released version.
 
 ### Added
 
+- `JoinRoomParams.join_only` lets stale room links return `ROOM_NOT_FOUND` (#509).
+
 - WebRTC assessments show startup, snapshot and control backlogs beside
   rejected arrivals and heartbeat reads.
 
@@ -46,6 +48,8 @@ released version.
   client never acts on them.
 
 ### Fixed
+
+- Native WebSocket send pressure returns `ERR_BUSY` and preserves the connection (#510).
 
 - Web sends during shutdown preserve the server close code and reason (#482).
 

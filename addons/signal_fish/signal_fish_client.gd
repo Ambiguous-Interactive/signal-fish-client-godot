@@ -462,7 +462,8 @@ func join_room(params: JoinRoomParams) -> Error:
 		max_players,
 		params.supports_authority,
 		params.relay_transport,
-		_optional_string(params.password)
+		_optional_string(params.password),
+		params.join_only
 	)
 	return _send_envelope(envelope, "join_room")
 
@@ -542,7 +543,7 @@ func send_game_data_binary(bytes: PackedByteArray) -> Error:
 		)
 		return ERR_INVALID_DATA
 	var error: Error = transport.send_binary(bytes)
-	if error != OK:
+	if error != OK and error != ERR_BUSY:
 		_emit_protocol_error("send_game_data_binary send failed: %s" % error_string(error))
 	return error
 
@@ -753,8 +754,7 @@ func _exit_tree() -> void:
 
 class JoinRoomParams:
 	extends RefCounted
-	## Parameters for [method SignalFishClient.join_room]. Optional fields use
-	## their zero value to mean "omit from the wire".
+	## Parameters for [method SignalFishClient.join_room]; see each field's omission value.
 
 	var game_name: String = ""
 	var player_name: String = ""
@@ -762,9 +762,9 @@ class JoinRoomParams:
 	var max_players: int = 0
 	var supports_authority: Variant = null
 	var relay_transport: Variant = null
-	## Join password for password-protected rooms (upstream `JoinRoom.password`).
-	## Empty = omit from the wire: a password presented to an open room is
-	## refused upstream, and a non-empty value seals a room this join creates.
+	## Set true with a room code to refuse a missing room (#509). Null omits it.
+	var join_only: Variant = null
+	## Empty omits the password; a value seals new rooms and must match existing rooms.
 	var password: String = ""
 
 
@@ -1330,7 +1330,7 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 		)
 		return ERR_INVALID_DATA
 	var error: Error = transport.send_text(wire)
-	if error != OK:
+	if error != OK and error != ERR_BUSY:
 		_emit_protocol_error("%s send failed: %s" % [action, error_string(error)])
 	return error
 

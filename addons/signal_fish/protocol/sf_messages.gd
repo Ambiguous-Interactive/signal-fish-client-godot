@@ -71,7 +71,8 @@ static func join_room(
 	max_players: Variant = null,
 	supports_authority: Variant = null,
 	relay_transport: Variant = null,
-	password: Variant = null
+	password: Variant = null,
+	join_only: Variant = null
 ) -> Dictionary:
 	var data: Dictionary = {}
 	data["game_name"] = game_name
@@ -93,6 +94,13 @@ static func join_room(
 	error = _add_optional_string(data, "password", password)
 	if not error.is_empty():
 		return _invalid_message("JoinRoom", error, data)
+	if join_only != null:
+		error = _add_optional_bool(data, "join_only", join_only)
+		if not error.is_empty():
+			return _invalid_message("JoinRoom", error, data)
+	# Server v0.12.0 92842406, room_service.rs:658 requires a routed code.
+	if join_only == true and (room_code == null or str(room_code).is_empty()):
+		return _invalid_message("JoinRoom", "join_only requires an explicit room_code", data)
 	return SFEnvelopeScript.message("JoinRoom", data)
 
 
