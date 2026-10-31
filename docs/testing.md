@@ -389,6 +389,7 @@ window and the final sentinel read. It is opt-in because the original Godot
 Use `-- --credit=32768` to split the same finite work into batches bounded by
 local consumer body bytes. Use `-- --capacity=524288` for a larger byte buffer,
 or add `--max-queued-packets=2` to isolate the packet-count boundary.
+This native byte credit bounds bytes only; it does not bound packet count.
 Credit uses direct local consumer observations; it adds no network ACK protocol.
 The script prints each poll, packet and final verdict. Keep logs, commands,
 source hashes and engine hashes for every attempt.
@@ -805,7 +806,9 @@ batch control remains the default. This experiment needs a cooperating sender;
 it adds no delivery guarantee to the SDK or the uncredited workload. The window
 must also fit the packet-count limit: on a two-packet queue, a 32 KiB window
 still overflows, while an 8192-byte window admits exactly two bodies. Failed
-byte or order checks release no receipt or credit.
+byte or order checks release no receipt or credit. Add `--credit-packets 2` to
+bound outstanding packets directly; the receiver then consumes and acknowledges
+the same bounded batch.
 
 With Chromium 156 on Linux ARM64, all three supported engines deliver 65/65
 exact messages with a 32 KiB application window, 100 ms polling holds and
@@ -813,6 +816,13 @@ exact messages with a 32 KiB application window, 100 ms polling holds and
 within 32768 bytes. The matched uncredited 4.7.2 run delivers 31/65 messages;
 34 scoped rejections account for every missing receipt. The later sentinel
 arrives. These local measurements preserve the original overflow verdict.
+
+On a two-packet queue, the byte-only 32 KiB window still overflows: the 4.7.2
+run delivers 2/65 messages with six scoped engine rejections. The same byte
+window plus `--credit-packets 2` delivers 65/65 exact messages with at most two
+outstanding packets on all three engines, and no callback is rejected. One
+application window must fit both engine limits; this qualifies the tested local
+paths, not the uncredited workload or remote networks.
 
 Linux ARM64 and Chromium 156 controls retain these results on Web:
 
@@ -842,6 +852,8 @@ The active-gameplay driver also accepts these comparison controls:
   with at most 16 sends per frame to catch up. Zero keeps the original frame rate.
 - `--relay-credit-bytes 32768`: cap outstanding 4096-byte bodies using the other
   local seat's receive count. JSON framing and other protocol traffic add bytes.
+- `--relay-credit-packets 2`: cap outstanding relay packets the same way. Combine
+  it with a byte window so the application contract fits both engine limits.
 - `--receive-pause-ms 100`: hold engine polling after each mesh generation opens.
   Other application and mesh work continues. Zero leaves polling unchanged.
 - `--inbound-buffer-bytes` and `--max-queued-packets`: set the engine capacities.
@@ -854,12 +866,20 @@ receipt through `GameData`. Only a validated receipt from the current remote
 player, room and gameplay generation advances the sender's byte window.
 A missing or corrupt data packet stops new ACK progress. The default `local`
 credit mode keeps the shared-process receipt counter. ACK records retain
-physical connections, sent/received prefixes and window peaks.
+physical connections, sent/received prefixes and window peaks. A packet window
+from `--relay-credit-packets` is enforced on both seats and recorded beside the
+byte-window peaks.
 
 Application ACKs add protocol traffic and change the transmitted schedule.
 This is an opt-in drill control, with unchanged 4096-byte data bodies. It
 establishes no SDK-wide delivery guarantee. Preserve the original uncredited
 failures and qualify real remote paths separately.
+
+On Linux ARM64, the 32 KiB application ACK control with a two-packet window
+passes the Web 4.7.2 stalled-close case against the released v0.12.0 server
+with 50 ms TCP delay, 127-byte proxy writes and a 100 ms initial polling hold.
+Both seats peak at two outstanding packets, keep exact relay prefixes, exact
+mesh receipts in all three modes and the required nonresponding close outcome.
 
 On Linux ARM64, the 32 KiB application ACK control passes all three shutdown
 cases on native Godot 4.3 and Web Godot 4.4.1/4.7.2 with 50 ms TCP delay, 127-byte
@@ -871,7 +891,8 @@ open. The application ACK control qualifies its bounded local workload.
 
 Logs identify the seat and physical connection, reported capacities, poll
 intervals and duration, queued packet peaks, total received frame bytes, first
-relay gap, offered target, credit blocks and peak outstanding body bytes.
+relay gap, offered target, credit blocks from either window, and peak
+outstanding body bytes and packets.
 All original shutdown, cached-packet and exact mesh checks remain required.
 Keep rate, credit, pause and capacity changes separate in reports.
 

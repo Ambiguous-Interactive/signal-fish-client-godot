@@ -123,6 +123,9 @@ func _run_application_credit() -> void:
 		return
 	var credit: int = _options["credit_bytes"]
 	var batch_packets := mini(PACKETS, int(credit / float(BODY_BYTES)))
+	var credit_packets: int = _options.get("credit_packets", 0)
+	if credit_packets > 0:
+		batch_packets = mini(batch_packets, credit_packets)
 	while _received.size() < PACKETS:
 		var target := mini(PACKETS, _received.size() + batch_packets)
 		_sent = target
