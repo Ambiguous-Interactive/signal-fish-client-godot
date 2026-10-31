@@ -1241,7 +1241,7 @@ Assert-Test 'sandbox baseline commits ignore hostile global git config' {
         & chmod +x -- $hookPath 2>&1 | Out-Null
     }
     $configText = "[commit]`n`tgpgsign = true`n[core]`n`thooksPath = $(($foreignHooks -replace '\\', '/'))`n" +
-        "[hook `"config-defined-probe`"]`n`tevent = prepare-commit-msg`n`tcommand = touch '$(($foreignHooks -replace '\\', '/'))/config-hook-ran'; exit 1`n"
+    "[hook `"config-defined-probe`"]`n`tevent = prepare-commit-msg`n`tcommand = touch '$(($foreignHooks -replace '\\', '/'))/config-hook-ran'; exit 1`n"
     [System.IO.File]::WriteAllText($hostileConfig, $configText, [System.Text.UTF8Encoding]::new($false))
 
     $globalBackup = $env:GIT_CONFIG_GLOBAL
