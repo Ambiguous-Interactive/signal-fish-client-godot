@@ -27,7 +27,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       byte/count rejections, exact delivered prefix, full-buffer empty-fragment progress (#496),
       fragmented-message assembly (Godot #124973/#124975)
       and matched local/application ACK credit controls, including 64-bit frame
-      lengths and Unicode continuation boundaries.
+      lengths and Unicode continuation boundaries. Compare forced syscall read
+      boundaries with remote-path results.
 - [ ] Follow Godot #124976 for valid Unicode WebSocket close reasons and
       qualify physical x86-64, other targets and remote networks (#498; see `docs/testing.md`).
       Preserve paced close reasons, full-buffer completion and peer reuse.
