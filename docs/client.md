@@ -55,6 +55,7 @@ fields `game_name`, `player_name`, `room_code`, `max_players`,
 
 Set `join_only = true` with a room code from a room list or invite. A missing
 room returns `ROOM_NOT_FOUND`. This requires server v0.10.0 or later.
+Server v0.9.1 ignores `join_only` and may create a room for an unknown code.
 Leave `join_only` unset or set it to `false` to allow room creation.
 
 ## Lifecycle and state
