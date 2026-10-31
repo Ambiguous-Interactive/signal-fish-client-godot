@@ -623,6 +623,40 @@ python scripts/check-websocket-native-receive.py \
 
 Use a new output directory for every attempt. Reports retain commands, logs,
 fixture hashes, executable hashes, exact result records and timeout failures.
+On native Linux, add a syscall read control to keep TCP coalescing from joining
+all the paced writes into one receive:
+
+```sh
+python scripts/check-websocket-native-receive.py \
+  --godot /path/to/repaired-template --importer /path/to/godot-editor \
+  --recv-cap-bytes=3 --output /tmp/native-receive-cap3
+```
+
+This option requires `cc` and a dynamically linked Linux engine. The runner
+builds a local `LD_PRELOAD` helper that limits each libc `recv` call on both
+fixture endpoints. The editor import runs without the helper. Choose an output
+path without whitespace or colons. The option supports native execution;
+QEMU runs use the write controls above.
+
+Each attempt keeps the helper source, compiled library, build command, hashes,
+child environment and per-case read counters. A case requires observed limited
+reads, a maximum read size within the chosen cap and all existing packet/close
+checks. Missing observations fail the attempt. Existing workloads and deadlines
+stay unchanged. These controls qualify local read boundaries; remote paths
+need separate runs.
+
+Use `--case=read-control-none`, `--case=read-control-ping` and
+`--case=read-control-pong` for the roomy-buffer comparison. These three cases
+keep each fragmented 4095-byte message below the receive capacity. They isolate
+control-frame assembly from the full-buffer completion cases.
+
+On Linux ARM64, official 4.7.2 fails both roomy Ping/Pong controls with a
+three-byte read cap: a 4095-byte message arrives with 4114 bytes. The no-control
+case passes. With the same cap, a complete-frame Unicode close write becomes
+code 1007 in both directions; ASCII and empty reasons pass. The repaired
+4.3, 4.4.1 and 4.7.2 builds pass the roomy controls. These results qualify
+local syscall boundaries.
+
 To test a cross-compiled engine with QEMU, use an explicit runner:
 
 ```sh
@@ -639,7 +673,7 @@ with the build record. Emulation results apply to local emulation; physical
 hardware and remote networks need separate qualification.
 
 Use `--suite=assembly`, `--suite=close` or `--suite=boundaries` to select a
-group; `--case=NAME` selects individual cases. The full matrix has 181 cases.
+group; `--case=NAME` selects individual cases. The full matrix has 184 cases.
 The boundaries group adds 55 cases for large gameplay and control bodies:
 
 - 131071-byte messages use 64-bit frame lengths. Text, binary and Unicode

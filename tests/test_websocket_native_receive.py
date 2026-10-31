@@ -5,6 +5,8 @@ import importlib.util
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -102,6 +104,130 @@ class EmulatorTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, 2)
                 self.assertFalse(output.exists())
                 self.assertFalse((root / "repro.zip").exists())
+
+
+@unittest.skipUnless(sys.platform == "linux" and shutil.which("cc"), "Linux cc required")
+class ReceiveCapTests(unittest.TestCase):
+    def test_invalid_cap_options_leave_no_results(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for extra, output in (
+                (["--recv-cap-bytes=0"], root / "zero"),
+                (["--recv-cap-bytes=65537"], root / "large"),
+                (["--recv-cap-bytes=1", "--runner", sys.executable], root / "emulator"),
+                (["--recv-cap-bytes=1"], root / "has spaces"),
+            ):
+                with (
+                    self.subTest(extra=extra, output=output),
+                    patch.object(
+                        sys,
+                        "argv",
+                        [
+                            str(SCRIPT),
+                            "--godot",
+                            sys.executable,
+                            "--importer",
+                            sys.executable,
+                            "--output",
+                            str(output),
+                            *extra,
+                        ],
+                    ),
+                    redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    drill.main()
+                self.assertEqual(raised.exception.code, 2)
+                self.assertFalse(output.exists())
+
+    def test_real_reads_are_capped_and_bytes_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = root / "cap.so"
+            subprocess.run(  # noqa: S603 - Local fixture compiler and source.
+                [
+                    str(shutil.which("cc")),
+                    "-shared",
+                    "-fPIC",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    str(SCRIPT.with_name("websocket-recv-cap.c")),
+                    "-o",
+                    str(library),
+                    "-ldl",
+                    "-pthread",
+                ],
+                check=True,
+            )
+            for cap in (1, 3, 127):
+                report = root / f"{cap}.json"
+                child = subprocess.run(  # noqa: S603 - Fixed socket fixture.
+                    [
+                        sys.executable,
+                        "-c",
+                        "import socket\n"
+                        "a,b=socket.socketpair()\n"
+                        "body=bytes(range(256))*4\n"
+                        "a.sendall(body)\n"
+                        "received=b''\n"
+                        "while len(received)<len(body):\n"
+                        f" part=b.recv(4096); assert 0<len(part)<={cap}\n"
+                        " received+=part\n"
+                        "assert received==body\n",
+                    ],
+                    env={
+                        **os.environ,
+                        "LD_PRELOAD": str(library),
+                        "SF_RECV_CAP_BYTES": str(cap),
+                        "SF_RECV_CAP_REPORT": str(report),
+                    },
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                self.assertEqual(child.returncode, 0, child.stderr)
+                record = json.loads(report.read_text())
+                self.assertEqual(record["bytes"], 1024)
+                self.assertEqual(record["largest_read"], cap)
+                self.assertGreater(record["limited_reads"], 0)
+
+    def test_unobserved_cap_cannot_pass_a_green_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.write_text(
+                "#!/bin/sh\n"
+                'echo \'CLOSE_REASON_RESULT {"passed":true,'
+                '"wire":{"writes":1,"error":0}}\'\n'
+            )
+            target.chmod(0o755)
+            output = root / "results"
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(SCRIPT),
+                        "--godot",
+                        str(target),
+                        "--importer",
+                        str(target),
+                        "--output",
+                        str(output),
+                        "--case",
+                        "close-1-empty-server",
+                        "--recv-cap-bytes=1",
+                    ],
+                ),
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(drill.main(), 1)
+            summary = json.loads((output / "summary.json").read_text())
+            self.assertTrue(summary["cases"][0]["result"]["passed"])
+            self.assertFalse(summary["cases"][0]["passed"])
+            self.assertEqual(summary["cases"][0]["recv_cap"].get("reads", 0), 0)
 
 
 class ActiveShutdownEmulatorTests(unittest.TestCase):

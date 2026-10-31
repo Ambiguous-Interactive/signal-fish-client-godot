@@ -7,8 +7,10 @@ import argparse
 import hashlib
 import itertools
 import json
+import os
 import shutil
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -27,6 +29,23 @@ def digest(path: Path) -> str:
 
 def cases() -> list[tuple[str, str, list[str]]]:
     result = []
+    for control in ["none", "ping", "pong"]:
+        result.append(
+            (
+                f"read-control-{control}",
+                "burst",
+                [
+                    "--wire-chunk-bytes=65536",
+                    "--capacity=524288",
+                    "--body-bytes=4095",
+                    "--credit=4095",
+                    "--fragment-bytes=127",
+                    f"--fragment-control={control}",
+                    "--message-type=alternating",
+                    "--empty-fragments=true",
+                ],
+            )
+        )
     for profile, capacity, chunk, fragment in [("byte", 31, 1, 9), ("chunk", 4095, 127, 127)]:
         wire = [f"--wire-chunk-bytes={chunk}", "--wire-delay-ms=1"]
         for kind, control, oversize in itertools.product(
@@ -235,12 +254,19 @@ def export_reproduction(destination: Path) -> None:
             archive.writestr(info, body)
 
 
-def run(command: list[str], log: Path, timeout: int) -> dict[str, object]:
+def run(
+    command: list[str], log: Path, timeout: int, env: dict[str, str] | None = None
+) -> dict[str, object]:
     timed_out = False
     with log.open("w") as stream:
         try:
             completed = subprocess.run(  # noqa: S603 - Explicit local engine path and fixed fixture options.
-                command, stdout=stream, stderr=subprocess.STDOUT, timeout=timeout, check=False
+                command,
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+                check=False,
+                env=env,
             )
             returncode = completed.returncode
         except subprocess.TimeoutExpired:
@@ -268,6 +294,11 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path, help="New directory; every attempt is kept")
     parser.add_argument(
+        "--recv-cap-bytes",
+        type=int,
+        help="Linux native only: cap each libc recv call (1..65536); requires cc",
+    )
+    parser.add_argument(
         "--suite", choices=["all", "assembly", "close", "boundaries"], default="all"
     )
     parser.add_argument(
@@ -283,6 +314,7 @@ def main() -> int:
             or args.case
             or args.runner
             or args.runner_arg
+            or args.recv_cap_bytes is not None
             or args.suite != "all"
         ):
             parser.error("--export-repro cannot be combined with runtime options")
@@ -299,6 +331,15 @@ def main() -> int:
         parser.error("--godot, --importer and --output are required for runtime checks")
     if args.runner_arg and not args.runner:
         parser.error("--runner-arg requires --runner")
+    if args.recv_cap_bytes is not None:
+        if not 1 <= args.recv_cap_bytes <= 65536:
+            parser.error("--recv-cap-bytes must be 1..65536")
+        if sys.platform != "linux" or args.runner:
+            parser.error("--recv-cap-bytes requires native Linux without an emulator")
+        if not shutil.which("cc"):
+            parser.error("--recv-cap-bytes requires cc on PATH")
+        if any(character.isspace() or character == ":" for character in str(args.output.resolve())):
+            parser.error("--recv-cap-bytes needs an output path without whitespace or colons")
     runner = args.runner.resolve() if args.runner else None
     if runner and not runner.is_file():
         parser.error("runner must be an executable file")
@@ -347,6 +388,38 @@ def main() -> int:
         "runner_args": args.runner_arg,
     }
     (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    library = args.output.resolve() / "recv-cap.so"
+    if args.recv_cap_bytes is not None:
+        source = ROOT / "scripts/websocket-recv-cap.c"
+        shutil.copy2(source, args.output / source.name)
+        compiled = run(
+            [
+                str(shutil.which("cc")),
+                "-shared",
+                "-fPIC",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                str(args.output.resolve() / source.name),
+                "-o",
+                str(library),
+                "-ldl",
+                "-pthread",
+            ],
+            args.output / "recv-cap-build.log",
+            60,
+        )
+        provenance["recv_cap"] = {
+            "cap_bytes": args.recv_cap_bytes,
+            "source_sha256": digest(source),
+            "compile": compiled,
+            "library_sha256": digest(library) if library.is_file() else None,
+        }
+        (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+        if compiled["returncode"] != 0:
+            print("recv cap compilation failed; see recv-cap-build.log", file=sys.stderr)
+            return 1
     imported = run(
         [str(importer), "--headless", "--editor", "--path", str(project), "--quit"],
         args.output / "import.log",
@@ -357,6 +430,16 @@ def main() -> int:
         for name, kind, options in selected:
             script, marker = FIXTURES[kind]
             log = args.output / f"{name}.log"
+            environment = None
+            receive_report = args.output.resolve() / f"{name}-recv.json"
+            if args.recv_cap_bytes is not None:
+                environment = {
+                    **os.environ,
+                    "LD_PRELOAD": str(library)
+                    + (":" + os.environ["LD_PRELOAD"] if os.environ.get("LD_PRELOAD") else ""),
+                    "SF_RECV_CAP_BYTES": str(args.recv_cap_bytes),
+                    "SF_RECV_CAP_REPORT": str(receive_report),
+                }
             report = run(
                 [
                     *prefix,
@@ -371,7 +454,13 @@ def main() -> int:
                 ],
                 log,
                 90,
+                env=environment,
             )
+            if environment is not None:
+                report["receive_environment"] = {
+                    key: environment[key]
+                    for key in ("LD_PRELOAD", "SF_RECV_CAP_BYTES", "SF_RECV_CAP_REPORT")
+                }
             records = [
                 json.loads(line[len(marker) :])
                 for line in log.read_text(errors="replace").splitlines()
@@ -384,6 +473,18 @@ def main() -> int:
             )
             if name.startswith("byte-"):
                 paced = paced and wire.get("split_headers", 0) > 0
+            observed = True
+            if args.recv_cap_bytes is not None:
+                try:
+                    receive = json.loads(receive_report.read_text())
+                except (OSError, ValueError):
+                    receive = {}
+                observed = (
+                    receive.get("cap_bytes") == args.recv_cap_bytes
+                    and receive.get("limited_reads", 0) > 0
+                    and 0 < receive.get("largest_read", 0) <= args.recv_cap_bytes
+                )
+                report["recv_cap"] = receive
             report.update(
                 case=name,
                 result=result,
@@ -391,7 +492,8 @@ def main() -> int:
                 and not report["engine_errors"]
                 and len(records) == 1
                 and result.get("passed") is True
-                and paced,
+                and paced
+                and observed,
             )
             reports.append(report)
             (args.output / f"{name}.json").write_text(json.dumps(report, indent=2) + "\n")
