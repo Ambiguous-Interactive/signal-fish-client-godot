@@ -637,11 +637,13 @@ function Invoke-SandboxGitCommit {
     # Baseline commits inside throwaway sandboxes must not depend on ambient
     # git config (#515): `commit.gpgsign=true` fails or prompts for a
     # signature, and a global `core.hooksPath` (e.g. a pre-commit framework
-    # shim) would run foreign hooks inside the sandbox. `--allow-empty`
+    # shim) would run foreign hooks inside the sandbox. An empty
+    # `core.hooksPath` disables hook execution entirely — `--no-verify` alone
+    # is not enough because it still runs `prepare-commit-msg`. `--allow-empty`
     # keeps normalization-only setups deterministic.
     param([Parameter(Mandatory)][string]$Message)
 
-    & git -c commit.gpgsign=false commit -q --allow-empty --no-verify -m $Message 2>&1 | Out-Null
+    & git -c commit.gpgsign=false -c core.hooksPath= commit -q --allow-empty --no-verify -m $Message 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Sandbox git commit '$Message' failed with exit code $LASTEXITCODE."
     }
@@ -1198,19 +1200,25 @@ Assert-Test 'sandbox baseline commits ignore hostile global git config' {
 
     # A host with `commit.gpgsign=true` or a global `core.hooksPath` (e.g. a
     # pre-commit framework shim) must not stall or fail sandbox setup (#515).
+    # Every blocking hook is staged: `--no-verify` skips pre-commit and
+    # commit-msg, but prepare-commit-msg would still run and abort.
     $tempRoot = [System.IO.Path]::GetTempPath()
     $hostileConfig = Join-Path $tempRoot "llm-hostile-git-config-$([Guid]::NewGuid()).ini"
     $foreignHooks = Join-Path $tempRoot "llm-foreign-hooks-$([Guid]::NewGuid())"
-    $hookSentinel = Join-Path $foreignHooks 'pre-commit-ran'
     New-Item -ItemType Directory -Path $foreignHooks -Force | Out-Null
-    $hookPath = Join-Path $foreignHooks 'pre-commit'
-    Write-TestUtf8NoBomFile `
-        -Path $hookPath `
-        -Content "#!/usr/bin/env sh`ntouch '$(($hookSentinel -replace '\\', '/'))'`nexit 1`n" `
-        -LfNewlines
-    Assert-TestShebangLineUsesLf -Path $hookPath -Name 'foreign pre-commit fixture'
-    Assert-TestFileHasNoCarriageReturns -Path $hookPath -Name 'foreign pre-commit fixture'
-    & chmod +x -- $hookPath 2>&1 | Out-Null
+    $sentinels = @{}
+    foreach ($hookName in @('pre-commit', 'prepare-commit-msg', 'commit-msg')) {
+        $sentinel = Join-Path $foreignHooks "$hookName-ran"
+        $sentinels[$hookName] = $sentinel
+        $hookPath = Join-Path $foreignHooks $hookName
+        Write-TestUtf8NoBomFile `
+            -Path $hookPath `
+            -Content "#!/usr/bin/env sh`ntouch '$(($sentinel -replace '\\', '/'))'`nexit 1`n" `
+            -LfNewlines
+        Assert-TestShebangLineUsesLf -Path $hookPath -Name "foreign $hookName fixture"
+        Assert-TestFileHasNoCarriageReturns -Path $hookPath -Name "foreign $hookName fixture"
+        & chmod +x -- $hookPath 2>&1 | Out-Null
+    }
     $configText = "[commit]`n`tgpgsign = true`n[core]`n`thooksPath = $(($foreignHooks -replace '\\', '/'))`n"
     [System.IO.File]::WriteAllText($hostileConfig, $configText, [System.Text.UTF8Encoding]::new($false))
 
@@ -1238,8 +1246,10 @@ Assert-Test 'sandbox baseline commits ignore hostile global git config' {
         finally {
             Pop-Location
         }
-        if (Test-Path -LiteralPath $hookSentinel -PathType Leaf) {
-            throw 'A foreign global pre-commit hook ran inside the sandbox baseline commit.'
+        foreach ($hookName in @('pre-commit', 'prepare-commit-msg', 'commit-msg')) {
+            if (Test-Path -LiteralPath $sentinels[$hookName] -PathType Leaf) {
+                throw "A foreign global $hookName hook ran inside the sandbox baseline commit."
+            }
         }
     }
     finally {
