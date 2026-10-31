@@ -48,10 +48,12 @@ jobs:
             IMPORTER: ${{ github.workspace }}/official-godot/godot
         steps:
             - name: Check out repository
-              uses: actions/checkout@v7
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+              with:
+                  persist-credentials: false
 
             - name: Set up Python
-              uses: actions/setup-python@v7
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.0.0
               with:
                   python-version: "3.x"
 
@@ -124,21 +126,21 @@ jobs:
 
                   variant = "${{ matrix.variant }}"
                   report = json.loads(
-                      Path("output/${{ matrix.variant }}-standalone/standalone-report.json").read_text()
+                      Path(
+                          "output/${{ matrix.variant }}-standalone/standalone-report.json"
+                      ).read_text()
                   )
-                  passed = {command["name"]: command["passed"] for command in report["commands"]}
+                  results = {command["name"]: command for command in report["commands"]}
                   defect = {"control-bytes", "reuse", "full-buffer", "close-unicode"}
                   control = {"control-baseline", "reuse-baseline", "close-baseline"}
-                  missing = (defect | control) - set(passed)
-                  assert not missing, f"missing commands: {sorted(missing)}"
-                  if variant == "repaired":
-                      wrong = sorted(name for name, ok in passed.items() if not ok)
-                  else:
-                      wrong = sorted(
-                          [name for name in defect if passed[name]]
-                          + [name for name in control if not passed[name]]
-                      )
-                  assert not wrong, f"unexpected results: {wrong}"
+                  wrong = sorted((defect | control) - set(results))
+                  for name in defect | control:
+                      records = results.get(name, {}).get("records", [])
+                      record = records[0] if len(records) == 1 else None
+                      expected = variant == "repaired" or name in control
+                      if record is None or record.get("passed") is not expected:
+                          wrong.append(name)
+                  assert not wrong, f"unexpected results: {sorted(set(wrong))}"
                   print(f"{variant}: all standalone expectations met on x86-64")
                   PY
 
