@@ -8,6 +8,7 @@ import hashlib
 import itertools
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -254,6 +255,75 @@ def export_reproduction(destination: Path) -> None:
             archive.writestr(info, body)
 
 
+def repro_commands(files: dict[str, bytes], project: Path) -> list[tuple[str, list[str]]]:
+    commands: list[tuple[str, list[str]]] = []
+    name = ""
+    for line in files["README.txt"].decode().splitlines():
+        if line.startswith("godot ") and name:
+            arguments = shlex.split(line)[1:]
+            arguments[arguments.index("--path") + 1] = str(project)
+            commands.append((name, arguments))
+            name = ""
+        elif line.strip():
+            name = line.strip()
+    if not commands:
+        raise ValueError("README lists no reproduction commands")
+    return commands
+
+
+def run_repro(
+    binary: Path, importer: Path, runner: Path | None, runner_args: list[str], output: Path
+) -> dict[str, object]:
+    output.mkdir(parents=True)
+    project = output.resolve() / "project"
+    project.mkdir()
+    files = reproduction_files()
+    for name, body in files.items():
+        target = project / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(body)
+    for line in files["SHA256SUMS"].decode().splitlines():
+        expected, name = line.split("  ", 1)
+        if digest(project / name) != expected:
+            raise ValueError(f"reproduction file mismatch: {name}")
+    prefix = [str(runner), *runner_args] if runner else []
+    imported = run(
+        [str(importer), "--headless", "--editor", "--path", str(project), "--quit"],
+        output / "import.log",
+        90,
+    )
+    results = []
+    for name, arguments in repro_commands(files, project):
+        log = output / f"{name}.log"
+        report = run([*prefix, str(binary), *arguments], log, 90)
+        text = log.read_text(errors="replace")
+        records = [
+            json.loads(line.split(" ", 1)[1]) for line in text.splitlines() if "_RESULT " in line
+        ]
+        report.update(
+            name=name,
+            records=records,
+            passed=report["returncode"] == 0
+            and not report["engine_errors"]
+            and len(records) == 1
+            and records[0].get("passed") is True,
+        )
+        results.append(report)
+        print(f"{name}: {'PASS' if report['passed'] else 'FAIL'}", flush=True)
+    summary: dict[str, object] = {
+        "binary": str(binary),
+        "binary_sha256": digest(binary),
+        "importer": str(importer),
+        "importer_sha256": digest(importer),
+        "runner": str(runner) if runner else None,
+        "runner_args": runner_args,
+        "import": imported,
+        "commands": results,
+    }
+    (output / "standalone-report.json").write_text(json.dumps(summary, indent=2) + "\n")
+    return summary
+
+
 def run(
     command: list[str], log: Path, timeout: int, env: dict[str, str] | None = None
 ) -> dict[str, object]:
@@ -304,8 +374,15 @@ def main() -> int:
     parser.add_argument(
         "--export-repro", type=Path, help="Write a standalone reproduction ZIP and exit"
     )
+    parser.add_argument(
+        "--run-repro",
+        action="store_true",
+        help="Run the standalone reproduction commands against --godot into --output",
+    )
     parser.add_argument("--case", action="append", help="Run named cases only (repeatable)")
     args = parser.parse_args()
+    if args.export_repro and args.run_repro:
+        parser.error("--export-repro and --run-repro are mutually exclusive")
     if args.export_repro:
         if (
             args.godot
@@ -340,9 +417,27 @@ def main() -> int:
             parser.error("--recv-cap-bytes requires cc on PATH")
         if any(character.isspace() or character == ":" for character in str(args.output.resolve())):
             parser.error("--recv-cap-bytes needs an output path without whitespace or colons")
+    if args.run_repro and (args.recv_cap_bytes is not None or args.case or args.suite != "all"):
+        parser.error("--run-repro cannot select cases, suites or receive caps")
     runner = args.runner.resolve() if args.runner else None
     if runner and not runner.is_file():
         parser.error("runner must be an executable file")
+    if args.run_repro:
+        if args.output.exists():
+            parser.error("output already exists; use a new directory to retain each attempt")
+        binary, importer = args.godot.resolve(), args.importer.resolve()
+        if not binary.is_file() or not importer.is_file():
+            parser.error("godot and importer must be executable files")
+        try:
+            summary = run_repro(binary, importer, runner, args.runner_arg, args.output)
+        except ValueError as error:
+            print(f"run-repro failed: {error}", file=sys.stderr)
+            return 1
+        print(json.dumps({"report": str(args.output / "standalone-report.json")}))
+        imported = summary["import"]
+        if not isinstance(imported, dict):
+            return 1
+        return 0 if imported["returncode"] == 0 else 1
     prefix = [str(runner), *args.runner_arg] if runner else []
     selected = [
         case
