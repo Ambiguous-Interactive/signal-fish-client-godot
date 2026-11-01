@@ -34,11 +34,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       `docs/testing.md`).
       Preserve paced close reasons, full-buffer completion and peer reuse.
       Include maximum-length ASCII and mixed Unicode close reasons.
-- [ ] Follow Godot #124973/#124974 for assembly/reuse repair and qualify
-      additional stable engines on fragmented gameplay and direct peer reuse
-      (#491, #492; see `docs/testing.md`). Dispatch the
-      `WebSocket Native x64` workflow for the pinned 4.4.1/4.5.2/4.6.3
-      revisions, then qualify remote paths and other build targets.
+- [ ] Follow Godot #124973/#124974 for assembly/reuse repair on remote paths
+      and other build targets (#491, #492; see `docs/testing.md`). All four
+      pinned stable revisions are qualified on x86-64 CI; upstream adoption
+      remains open.
 - [ ] Qualify active gameplay shutdown on remote networks (#482; see `docs/testing.md`). Preserve
       the browser send/close race control, distinct reset and nonresponding
       close outcomes, plus cached mesh retirement.
