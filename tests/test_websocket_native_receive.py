@@ -329,7 +329,7 @@ class TriageOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target = root / "target"
-            target.write_text("#!/bin/sh\nexit 1\n")
+            target.write_text("#!/bin/sh\necho 'ERROR: suite import failed'\nexit 1\n")
             target.chmod(0o755)
             output = root / "results"
             printed = io.StringIO()
@@ -355,8 +355,8 @@ class TriageOutputTests(unittest.TestCase):
             record = diagnostics[0]
             self.assertEqual(record.get("returncode"), 1)
             self.assertFalse(record.get("timed_out"))
-            self.assertFalse(record.get("engine_errors"))
-            self.assertIn("import_log_tail", record)
+            self.assertTrue(record.get("engine_errors"))
+            self.assertIn("ERROR: suite import failed", record.get("import_log_tail"))
             summary = json.loads((output / "summary.json").read_text())
             self.assertEqual(summary["import"]["returncode"], 1)
             self.assertEqual(summary["cases"], [])
@@ -365,26 +365,34 @@ class TriageOutputTests(unittest.TestCase):
         variants = {
             "nonzero": (
                 "#!/usr/bin/env python3\nimport json, sys\nif '--editor' in sys.argv:\n"
-                " sys.exit(3)\n"
+                " print('ERROR: nonzero import failed')\n sys.exit(3)\n"
                 "print('CLOSE_REASON_RESULT ' + json.dumps({'passed': True,"
                 " 'wire': {'writes': 1, 'error': 0}}))\n",
                 3,
-                False,
+                True,
                 1,
+                "ERROR: nonzero import failed",
             ),
             "error-exit-zero": (
                 "#!/usr/bin/env python3\nimport json, sys\nif '--editor' in sys.argv:\n"
-                " print('ERROR: import failed')\n sys.exit(0)\n"
+                " print('ERROR: engine errors failed the import')\n sys.exit(0)\n"
                 "print('CLOSE_REASON_RESULT ' + json.dumps({'passed': True,"
                 " 'wire': {'writes': 1, 'error': 0}}))\n",
                 0,
                 True,
                 0,
+                "ERROR: engine errors failed the import",
             ),
         }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name, (source, returncode, engine_errors, exit_code) in variants.items():
+            for name, (
+                source,
+                returncode,
+                engine_errors,
+                exit_code,
+                message,
+            ) in variants.items():
                 output = root / f"results-{name}"
                 target = root / f"target-{name}.py"
                 target.write_text(source)
@@ -412,7 +420,7 @@ class TriageOutputTests(unittest.TestCase):
                 self.assertEqual(records[0].get("returncode"), returncode, name)
                 self.assertFalse(records[0].get("timed_out"), name)
                 self.assertEqual(records[0].get("engine_errors"), engine_errors, name)
-                self.assertIn("import_log_tail", records[0], name)
+                self.assertIn(message, records[0].get("import_log_tail"), name)
 
     def test_run_repro_command_failure_prints_diagnostics_without_command(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
