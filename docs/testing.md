@@ -769,6 +769,49 @@ drops the following packet. Current Godot master `7be59b46` retains the four
 source paths; no master runtime result is claimed. Upstream adoption, other
 targets and remote networks remain open.
 
+The driver can also run those seven commands itself and retain one report:
+
+```sh
+python scripts/check-websocket-native-receive.py \
+  --godot /path/to/engine --importer /path/to/editor \
+  --run-repro --output /tmp/standalone-run
+```
+
+`standalone-report.json` pins engine and importer hashes and records optional
+emulator paths and arguments. It
+records each command's exit, logs and result records. An engine that crashes a
+command yields no record, so a missing result stays visible. The report states
+facts; callers compare them with the expected matrix.
+
+### x86-64 CI qualification
+
+The opt-in `WebSocket Native x64` workflow builds a pinned engine revision on
+an x86-64 GitHub runner and qualifies it there. Dispatch it with the pinned
+4.7.2-stable revision to build the repaired engine, run the full paced receive
+suite with a three-byte read cap, and run the seven standalone commands. A
+matched unpatched baseline job runs the same seven commands. The four defect
+failures must keep one observed result record each. The three comparison
+controls must pass. Both jobs upload build logs, patch reports, engine
+hashes and per-command evidence.
+
+The first run qualified the pinned 4.7.2-stable repair
+`ed1daf0bf001b61586d9930840f2f1394092c079` on a virtualized x86-64 host that
+executes the engine natively ([run
+41251544967](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41251544967)).
+The repaired engine passes all 184 paced receive cases with a three-byte read
+cap; every case observed capped reads. All seven standalone commands pass
+(#491, #492, #496, #498). Repaired binary SHA-256:
+`c422f1a4b40b5b5f52cb6c87cc7984d661bb4925d625c7b390d7c161bf65a27d`. The
+matched unpatched build from the same source and flags reproduces all four
+defect commands with one observed result record each. The three comparison
+controls pass. Unpatched binary SHA-256:
+`e3ffcc28cfa930b4688367ebbabef4037c7255a4ae93d689599c784eaa4c0c6e`. SCons
+4.11.1 builds both engines with the options listed in the workflow. These
+results cover the #485 receive suite, paced writes, large boundaries, close
+reasons, peer replacement and local syscall read caps on x86-64. Keep them
+separate from QEMU emulation runs, bare-metal hardware and remote networks;
+upstream adoption and remote-network qualification remain open.
+
 ### Web WebSocket receive boundary
 
 Issue #488 has a separate engine-only browser control. It needs Godot Web
