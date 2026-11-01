@@ -174,7 +174,8 @@ func _poll() -> void:
 						"sequence": sequence,
 						"bytes": bytes.size(),
 						"exact": exact,
-						"exact_mode": exact_mode
+						"exact_mode": exact_mode,
+						"delivered_us": Time.get_ticks_usec()
 					}
 				)
 			)

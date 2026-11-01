@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from itertools import pairwise
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -351,6 +352,38 @@ def run(
     }
 
 
+def delivery_summary(text: str) -> dict[str, object]:
+    packets: list[dict[str, object]] = []
+    intervals: list[int] = []
+    for line in text.splitlines():
+        if line.startswith("WEBSOCKET_RECEIVE_PACKET "):
+            try:
+                packets.append(json.loads(line[len("WEBSOCKET_RECEIVE_PACKET ") :]))
+            except ValueError:
+                packets.append({})
+        elif line.startswith("WEBSOCKET_RECEIVE_POLL "):
+            try:
+                poll = json.loads(line[len("WEBSOCKET_RECEIVE_POLL ") :])
+            except ValueError:
+                continue
+            interval = poll.get("interval_us")
+            if isinstance(interval, int):
+                intervals.append(interval)
+    largest: dict[str, object] | None = None
+    largest_us = 0
+    for previous, current in pairwise(packets):
+        before, after = previous.get("delivered_us"), current.get("delivered_us")
+        if isinstance(before, int) and isinstance(after, int) and after - before > largest_us:
+            largest_us = after - before
+            largest = {"after": previous.get("sequence"), "us": largest_us}
+    return {
+        "packets": len(packets),
+        "polls": len(intervals),
+        "largest_delivery_gap": largest,
+        "largest_poll_interval_us": max(intervals, default=None),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", type=Path, help="Native engine or template to test")
@@ -556,9 +589,10 @@ def main() -> int:
                     key: environment[key]
                     for key in ("LD_PRELOAD", "SF_RECV_CAP_BYTES", "SF_RECV_CAP_REPORT")
                 }
+            text = log.read_text(errors="replace")
             records = [
                 json.loads(line[len(marker) :])
-                for line in log.read_text(errors="replace").splitlines()
+                for line in text.splitlines()
                 if line.startswith(marker)
             ]
             result = records[0] if len(records) == 1 else {}
@@ -590,6 +624,9 @@ def main() -> int:
                 and paced
                 and observed,
             )
+            delivery = delivery_summary(text)
+            if delivery["packets"]:
+                report["delivery"] = delivery
             reports.append(report)
             (args.output / f"{name}.json").write_text(json.dumps(report, indent=2) + "\n")
             print(f"{name}: {'PASS' if report['passed'] else 'FAIL'}", flush=True)
