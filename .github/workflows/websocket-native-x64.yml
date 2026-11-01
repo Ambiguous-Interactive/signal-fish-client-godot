@@ -132,6 +132,25 @@ jobs:
                   ) 2>&1 | tee "output/build-${{ matrix.variant }}.log"
                   sha256sum "$ENGINE_BIN" | tee "output/engine-sha256.txt"
 
+            - name: Probe the engine under Wine
+              if: inputs.build_target == 'windows'
+              run: |
+                  if wine "$ENGINE_BIN" --version > "output/engine-version.log" 2>&1; then
+                    echo "engine --version exited 0"
+                  else
+                    echo "engine --version failed"
+                  fi
+                  WINEDEBUG=+seh wine "$ENGINE_BIN" --version > "output/engine-seh.log" 2>&1 || true
+                  tail -c 4000 "output/engine-seh.log"
+
+            - name: Upload the built engine
+              if: inputs.build_target == 'windows'
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: engine-windows-${{ matrix.variant }}-${{ github.run_id }}
+                  path: ${{ env.ENGINE_BIN }}
+                  if-no-files-found: error
+
             - name: Run the paced receive suite
               if: matrix.variant == 'repaired'
               run: |
