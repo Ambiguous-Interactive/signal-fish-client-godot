@@ -128,6 +128,16 @@ else: print("{}")
         self.assertIn(["container", "rm", "a" * 64], self.calls())
         self.assertFalse(any("--force" in call or "--volumes" in call for call in self.calls()))
 
+    def test_image_removal_rejects_short_digest(self) -> None:
+        short = "sha256:" + "a" * 12
+        result = self.invoke("-Action", "RemoveImage", "-ResourceId", short)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(["image", "rm", short], self.calls())
+        full = "sha256:" + "a" * 64
+        result = self.invoke("-Action", "RemoveImage", "-ResourceId", full)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(["image", "rm", full], self.calls())
+
 
 if __name__ == "__main__":
     unittest.main()

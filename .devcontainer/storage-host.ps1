@@ -109,7 +109,7 @@ if ($Action -ne 'Report') {
             }
         }
         { $_ -in 'RemoveContainer', 'RemoveImage' } {
-            if ($ResourceId -notmatch '^(sha256:)?[a-f0-9]{12,64}$') { throw 'Supply one exact resource ID.' }
+            if ($ResourceId -notmatch '^([a-f0-9]{12,64}|(sha256:)?[a-f0-9]{64})$') { throw 'Supply one exact resource ID.' }
             $verb = if ($Action -eq 'RemoveContainer') { 'container' } else { 'image' }
             if ($PSCmdlet.ShouldProcess($ResourceId, "Remove selected $verb without force")) {
                 $report.maintenance = Read-Native docker @($verb, 'rm', $ResourceId)
