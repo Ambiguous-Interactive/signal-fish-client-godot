@@ -352,6 +352,16 @@ def clean(
     return result
 
 
+def _maintain(root: Path, now: Callable[[], float]) -> None:
+    try:
+        result = clean(root, apply=True, now=now())
+    except (OSError, ValueError) as exc:
+        print(f"WARN: scratch maintenance failed: {exc}", file=sys.stderr)
+        return
+    if result["over_budget"] or result["errors"]:
+        print(f"WARN: scratch maintenance: {json.dumps(result)}", file=sys.stderr)
+
+
 @contextlib.contextmanager
 def managed_output(
     output: Path | None,
@@ -367,7 +377,7 @@ def managed_output(
     root = root_path(
         root or Path(os.environ.get("SF_SCRATCH_ROOT", str(DEFAULT_ROOT))), create=True
     )
-    clean(root, apply=True, now=now())
+    _maintain(root, now)
     path = Path(tempfile.mkdtemp(prefix="run-", dir=root))
     try:
         with lock(path / ".active") as acquired:
@@ -384,9 +394,7 @@ def managed_output(
             finally:
                 write_record(path, {**data, "state": state, "updated": now()})
     finally:
-        result = clean(root, apply=True, now=now())
-        if result["over_budget"] or result["errors"]:
-            print(f"WARN: scratch maintenance: {json.dumps(result)}", file=sys.stderr)
+        _maintain(root, now)
 
 
 def set_pin(root: Path, name: str, pin: bool) -> None:

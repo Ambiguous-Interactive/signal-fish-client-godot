@@ -1,5 +1,7 @@
 """Deterministic storage policy regressions: python3 scripts/test_storage.py."""
 
+import contextlib
+import io
 import json
 import os
 import queue
@@ -62,6 +64,37 @@ class ScratchPolicy(unittest.TestCase):
             raise RuntimeError("fixture")
         self.assertEqual(json.loads((path / ".run.json").read_text())["state"], "failed")
         self.assertIn(str(path), storage.clean(self.root, budget=0)["candidates"])
+
+    def test_maintenance_io_failure_does_not_fail_successful_run(self) -> None:
+        warnings = io.StringIO()
+        with (
+            patch.object(storage, "clean", side_effect=OSError("maintenance unavailable")),
+            contextlib.redirect_stderr(warnings),
+            storage.managed_output(None, root=self.root) as path,
+        ):
+            (path / "result").write_text("success")
+        self.assertEqual(json.loads((path / ".run.json").read_text())["state"], "completed")
+        self.assertIn("WARN", warnings.getvalue())
+
+    def test_maintenance_io_failure_preserves_run_exception(self) -> None:
+        error = RuntimeError("experiment failed")
+        with (
+            patch.object(storage, "clean", side_effect=OSError("maintenance unavailable")),
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(RuntimeError) as failure,
+            storage.managed_output(None, root=self.root),
+        ):
+            raise error
+        self.assertIs(failure.exception, error)
+
+    def test_required_registration_failure_stays_fatal(self) -> None:
+        with (
+            patch.object(storage, "write_record", side_effect=OSError("registration failed")),
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaisesRegex(OSError, "registration failed"),
+            storage.managed_output(None, root=self.root),
+        ):
+            self.fail("Unregistered run must not start")
 
     def test_explicit_output_is_unmanaged(self) -> None:
         explicit = Path(self.folder.name) / "explicit"

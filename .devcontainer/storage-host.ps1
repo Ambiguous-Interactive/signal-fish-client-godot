@@ -111,6 +111,15 @@ if ($Action -ne 'Report') {
         { $_ -in 'RemoveContainer', 'RemoveImage' } {
             if ($ResourceId -notmatch '^([a-f0-9]{12,64}|(sha256:)?[a-f0-9]{64})$') { throw 'Supply one exact resource ID.' }
             $verb = if ($Action -eq 'RemoveContainer') { 'container' } else { 'image' }
+            if ($Action -eq 'RemoveContainer') {
+                $inventory = Read-Native docker @('ps', '-a', '--no-trunc', '--format', '{{.ID}}')
+                if ($inventory.exit_code -ne 0) { throw 'Could not enumerate containers.' }
+                $containerMatches = @($inventory.output -split '\s+' | Where-Object {
+                        $_ -match '^[a-f0-9]{64}$' -and $_.StartsWith($ResourceId)
+                    })
+                if ($containerMatches.Count -ne 1) { throw 'Container ID must match exactly one container.' }
+                $ResourceId = $containerMatches[0]
+            }
             if ($PSCmdlet.ShouldProcess($ResourceId, "Remove selected $verb without force")) {
                 $report.maintenance = Read-Native docker @($verb, 'rm', $ResourceId)
             }

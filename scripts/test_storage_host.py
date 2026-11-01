@@ -31,6 +31,7 @@ elif sys.argv[1:3] == ["container", "inspect"]: print("sha256:" + "a" * 64)
 elif sys.argv[1:3] == ["image", "inspect"]: print(os.environ.get("DOCKER_TEST_SIZE", "12345"))
 elif "inspect" in sys.argv: print("Name: fake-builder\\nDriver: docker")
 elif "-q" in sys.argv: print(os.environ.get("DOCKER_TEST_RUNNING", ""))
+elif sys.argv[1:] == ["ps", "-a", "--no-trunc", "--format", "{{.ID}}"]: print(os.environ.get("DOCKER_TEST_CONTAINERS", "a" * 64))
 else: print("{}")
 """)
         docker.chmod(0o755)
@@ -127,6 +128,21 @@ else: print("{}")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(["container", "rm", "a" * 64], self.calls())
         self.assertFalse(any("--force" in call or "--volumes" in call for call in self.calls()))
+
+    def test_container_prefix_is_resolved_before_removal(self) -> None:
+        prefix = "a" * 12
+        result = self.invoke("-Action", "RemoveContainer", "-ResourceId", prefix)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(["container", "rm", "a" * 64], self.calls())
+        self.assertNotIn(["container", "rm", prefix], self.calls())
+
+    def test_container_prefix_must_have_one_match(self) -> None:
+        for identifiers in ("", "a" * 12 + "1" * 52 + "\n" + "a" * 12 + "2" * 52):
+            with self.subTest(identifiers=identifiers):
+                self.env["DOCKER_TEST_CONTAINERS"] = identifiers
+                result = self.invoke("-Action", "RemoveContainer", "-ResourceId", "a" * 12)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(any(call[:2] == ["container", "rm"] for call in self.calls()))
 
     def test_image_removal_rejects_short_digest(self) -> None:
         short = "sha256:" + "a" * 12
