@@ -405,6 +405,14 @@ def envelope(record: dict[str, object]) -> dict[str, object]:
     return {key: value for key, value in record.items() if key != "command"}
 
 
+def import_diagnostics(record: dict[str, object], log: Path) -> dict[str, object]:
+    try:
+        tail = log.read_text(errors="replace")[-400:]
+    except OSError:
+        tail = ""
+    return {**envelope(record), "import_log_tail": tail}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", type=Path, help="Native engine or template to test")
@@ -491,7 +499,13 @@ def main() -> int:
         if not isinstance(imported, dict):
             return 1
         if imported["returncode"] != 0 or imported["engine_errors"]:
-            print("diagnostics " + json.dumps(envelope(imported), sort_keys=True), flush=True)
+            print(
+                "diagnostics "
+                + json.dumps(
+                    import_diagnostics(imported, args.output / "import.log"), sort_keys=True
+                ),
+                flush=True,
+            )
         print(json.dumps({"report": str(args.output / "standalone-report.json")}))
         return 0 if imported["returncode"] == 0 else 1
     prefix = [str(runner), *args.runner_arg] if runner else []
@@ -663,7 +677,11 @@ def main() -> int:
                 )
     passed = len(reports) == len(selected) and all(report["passed"] for report in reports)
     if not reports:
-        print("diagnostics " + json.dumps(envelope(imported), sort_keys=True), flush=True)
+        print(
+            "diagnostics "
+            + json.dumps(import_diagnostics(imported, args.output / "import.log"), sort_keys=True),
+            flush=True,
+        )
     summary = {"passed": passed, "import": imported, "cases": reports}
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return 0 if passed else 1

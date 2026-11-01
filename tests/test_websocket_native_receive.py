@@ -346,23 +346,73 @@ class TriageOutputTests(unittest.TestCase):
             ]
             with patch.object(sys, "argv", command), redirect_stdout(printed):
                 self.assertEqual(drill.main(), 1)
-            self.assertEqual(
-                [
-                    line
-                    for line in printed.getvalue().splitlines()
-                    if line.startswith("diagnostics ")
-                ],
-                [
-                    "diagnostics "
-                    + json.dumps(
-                        {"engine_errors": False, "returncode": 1, "timed_out": False},
-                        sort_keys=True,
-                    )
-                ],
-            )
+            diagnostics = [
+                json.loads(line.split(" ", 1)[1])
+                for line in printed.getvalue().splitlines()
+                if line.startswith("diagnostics ")
+            ]
+            self.assertEqual(len(diagnostics), 1)
+            record = diagnostics[0]
+            self.assertEqual(record.get("returncode"), 1)
+            self.assertFalse(record.get("timed_out"))
+            self.assertFalse(record.get("engine_errors"))
+            self.assertIn("import_log_tail", record)
             summary = json.loads((output / "summary.json").read_text())
             self.assertEqual(summary["import"]["returncode"], 1)
             self.assertEqual(summary["cases"], [])
+
+    def test_run_repro_import_failures_print_diagnostics(self) -> None:
+        variants = {
+            "nonzero": (
+                "#!/usr/bin/env python3\nimport json, sys\nif '--editor' in sys.argv:\n"
+                " sys.exit(3)\n"
+                "print('CLOSE_REASON_RESULT ' + json.dumps({'passed': True,"
+                " 'wire': {'writes': 1, 'error': 0}}))\n",
+                3,
+                False,
+                1,
+            ),
+            "error-exit-zero": (
+                "#!/usr/bin/env python3\nimport json, sys\nif '--editor' in sys.argv:\n"
+                " print('ERROR: import failed')\n sys.exit(0)\n"
+                "print('CLOSE_REASON_RESULT ' + json.dumps({'passed': True,"
+                " 'wire': {'writes': 1, 'error': 0}}))\n",
+                0,
+                True,
+                0,
+            ),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, (source, returncode, engine_errors, exit_code) in variants.items():
+                output = root / f"results-{name}"
+                target = root / f"target-{name}.py"
+                target.write_text(source)
+                target.chmod(0o755)
+                printed = io.StringIO()
+                command = [
+                    str(SCRIPT),
+                    "--godot",
+                    str(target),
+                    "--importer",
+                    str(target),
+                    "--output",
+                    str(output),
+                    "--run-repro",
+                ]
+                with patch.object(sys, "argv", command), redirect_stdout(printed):
+                    self.assertEqual(drill.main(), exit_code, name)
+                diagnostics = [
+                    json.loads(line.split(" ", 1)[1])
+                    for line in printed.getvalue().splitlines()
+                    if line.startswith("diagnostics ")
+                ]
+                records = [record for record in diagnostics if "name" not in record]
+                self.assertEqual(len(records), 1, name)
+                self.assertEqual(records[0].get("returncode"), returncode, name)
+                self.assertFalse(records[0].get("timed_out"), name)
+                self.assertEqual(records[0].get("engine_errors"), engine_errors, name)
+                self.assertIn("import_log_tail", records[0], name)
 
     def test_run_repro_command_failure_prints_diagnostics_without_command(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
