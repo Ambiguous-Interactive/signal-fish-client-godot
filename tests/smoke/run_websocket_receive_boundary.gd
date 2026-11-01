@@ -159,20 +159,24 @@ func _poll() -> void:
 	_last_poll_us = started
 	print("WEBSOCKET_RECEIVE_POLL " + JSON.stringify(observation))
 	var queued: Array[PackedByteArray] = []
-	var arrival_us := PackedInt64Array()
+	var arrivals := PackedInt64Array()
+	var modes: Array[bool] = []
+	var errors: Array[int] = []
 	while _peer.get_available_packet_count() > 0:
 		queued.append(_peer.get_packet())
-		arrival_us.append(Time.get_ticks_usec())
+		arrivals.append(Time.get_ticks_usec())
+		modes.append(_peer.was_string_packet())
+		errors.append(_peer.get_packet_error())
 	for index: int in queued.size():
 		var bytes := queued[index]
-		var delivered_us := arrival_us[index]
+		var delivered_us := arrivals[index]
 		var sequence := bytes.slice(0, 8).get_string_from_ascii().to_int()
 		var exact := bytes == _body(_received)
-		var exact_mode := _peer.was_string_packet() == _is_text(_received)
+		var exact_mode := modes[index] == _is_text(_received)
 		if not exact and _first_gap.is_empty():
 			_first_gap_expected = _received
 			_first_gap = {"expected": _received, "received": sequence, "poll": observation}
-		if _peer.get_packet_error() != OK or not exact_mode or not exact:
+		if errors[index] != OK or not exact_mode or not exact:
 			if _failures.is_empty():
 				_failures.append("exact receive prefix")
 		print(
