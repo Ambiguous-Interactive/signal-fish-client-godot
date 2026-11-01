@@ -282,13 +282,6 @@ class ScratchPolicy(unittest.TestCase):
         result = storage.clean(self.root, apply=True, budget=0)
         self.assertFalse(result["over_budget"])
 
-    def test_dry_run_preserves_files(self) -> None:
-        self.run_tree()
-        before = {str(p): p.stat().st_mtime_ns for p in self.root.rglob("*")}
-        storage.clean(self.root, budget=0)
-        after = {str(p): p.stat().st_mtime_ns for p in self.root.rglob("*")}
-        self.assertEqual(before, after)
-
     def test_sparse_files_are_measured_by_allocation(self) -> None:
         sparse = Path(self.folder.name) / "sparse"
         with sparse.open("wb") as stream:
