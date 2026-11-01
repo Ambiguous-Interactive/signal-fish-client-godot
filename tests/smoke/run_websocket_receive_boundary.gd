@@ -185,13 +185,12 @@ func _poll() -> void:
 
 
 func _record_pending_wait(expected: int, started_ms: int, deadline_ms: int) -> void:
-	_pending_waits.append(
-		{
-			"expected": expected,
-			"waited_ms": Time.get_ticks_msec() - started_ms,
-			"deadline_margin_ms": deadline_ms - Time.get_ticks_msec(),
-		}
-	)
+	var wait: Dictionary = {
+		"expected": expected,
+		"waited_ms": Time.get_ticks_msec() - started_ms,
+		"deadline_margin_ms": deadline_ms - Time.get_ticks_msec(),
+	}
+	_pending_waits.append(wait)
 
 
 func _run() -> void:
