@@ -859,6 +859,45 @@ controls (#491, #492, #496, #498). Repaired binary SHA-256:
 Unpatched binary SHA-256:
 `759cb4131ba251ee3e93593179a64f40e26d6acfc6d79661af1f9f02ad3e2874`.
 
+The pinned 4.5.2-stable repair `6ce3de25aa58466e14ef354703ba8d9791a417da`
+passes the same uncapped checks on Windows x86-64 under Wine ([run
+41278234161](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41278234161)).
+All 184 paced receive cases pass and all seven standalone commands pass
+(#491, #492, #496, #498). The unpatched baseline reproduces the four defect
+commands and passes the three controls. Repaired binary SHA-256:
+`4266d1d6ddae49e6967b3ae7073525a79f7f847ac5859346c3aedb42a13b5ef4`.
+Unpatched binary SHA-256:
+`daa3a46b4f1f146a4cd2fa96690bea3ba9e773713ce5600f8fbad3697b9decc4`.
+
+The pinned 4.6.3-stable repair `35e80b3a8822a9df9be390814b62f44c0a9c69e8`
+passes the same uncapped checks on Windows x86-64 under Wine ([run
+41278235547](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41278235547)).
+All 184 paced receive cases pass and all seven standalone commands pass
+(#491, #492, #496, #498). The unpatched baseline reproduces the four defect
+commands and passes the three controls. Repaired binary SHA-256:
+`5fc7e44f8cdd2dbaef133ba13fe61febbcc3d6d5cb2a1e91a7ca7882d64ea85c`.
+Unpatched binary SHA-256:
+`a00ba934fa2255a486a5a87b95682caba39db1524931a3da8d8c7fb10bd1ccc4`.
+
+The pinned 4.4.1-stable repair `49a5bc7b616bd04689a2c89e89bda41f50241464`
+passes the same uncapped checks on Windows x86-64 under Wine ([run
+41280052786](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41280052786)).
+All 184 paced receive cases pass and all seven standalone commands pass
+(#491, #492, #496, #498). Repaired binary SHA-256:
+`90739b2e631da58757dc5fa723ca858fbe3c372a841269cb18b8992cc36305ca`. The
+unpatched baseline in [run
+41278232278](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41278232278)
+reproduces the four defect commands and passes the three controls. Unpatched
+binary SHA-256:
+`f74caff33936d986323b2bff0620cb4d46144a268849d5a241995679ee89778a`. An
+earlier repaired build of the same revision in that run (SHA-256
+`93713f1b1bee33d9dd356c92c80cb1af04dfb0b6e7d3d6f7c4522f7270d9f6f8`) lost one
+complete `chunk-burst-alternating-pong` message after 40 exact packets: the
+server wire report drained 174250 bytes with no error and no retirement, so
+the engine dropped one assembled message under uncapped reads. The repeat run
+delivered all 65 packets; the single observed loss stays open pending
+recurrence.
+
 ### Web WebSocket receive boundary
 
 Issue #488 has a separate engine-only browser control. It needs Godot Web
