@@ -786,9 +786,10 @@ facts; callers compare them with the expected matrix.
 ### x86-64 CI qualification
 
 The opt-in `WebSocket Native x64` workflow builds a pinned engine revision on
-an x86-64 GitHub runner and qualifies it there. Dispatch it with the pinned
-4.7.2-stable revision to build the repaired engine, run the full paced receive
-suite with a three-byte read cap, and run the seven standalone commands. A
+an x86-64 GitHub runner and qualifies it there. Dispatch it with a pinned
+stable revision to build the repaired engine, run the full paced receive
+suite with a three-byte read cap, and run the seven standalone commands. Set
+the matching official release label for the fixture import. A
 matched unpatched baseline job runs the same seven commands. The four defect
 failures must keep one observed result record each. The three comparison
 controls must pass. Both jobs upload build logs, patch reports, engine
@@ -809,8 +810,38 @@ controls pass. Unpatched binary SHA-256:
 4.11.1 builds both engines with the options listed in the workflow. These
 results cover the #485 receive suite, paced writes, large boundaries, close
 reasons, peer replacement and local syscall read caps on x86-64. Keep them
-separate from QEMU emulation runs, bare-metal hardware and remote networks;
+separate from QEMU emulation runs. Bare-metal hardware, other build targets,
 upstream adoption and remote-network qualification remain open.
+
+The pinned 4.4.1-stable repair `49a5bc7b616bd04689a2c89e89bda41f50241464`
+passes the same checks on x86-64 ([run
+41256780905](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41256780905)).
+All 184 paced receive cases pass with capped reads and all seven standalone
+commands pass (#491, #492, #496, #498). Repaired binary SHA-256:
+`3db399d851cd054152024c902107521eeb42155845c9b22f07747caa16fe093f`. The
+unpatched baseline reproduces the four defect commands and passes the three
+controls. Unpatched binary SHA-256:
+`d01959e694c2c4c16855ab1faa4c8d4b4d15f01440d3a20c1c37bb7bf49d92a7`.
+
+The pinned 4.5.2-stable repair `6ce3de25aa58466e14ef354703ba8d9791a417da`
+passes the same checks on x86-64 ([run
+41256782273](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41256782273)).
+All 184 paced receive cases pass with capped reads and all seven standalone
+commands pass (#491, #492, #496, #498). Repaired binary SHA-256:
+`03cbf9c4f87f5bab3ca22231992fc7abcb72ae1ca518d57d2a812cdab0eb86f7`. The
+unpatched baseline reproduces the four defect commands and passes the three
+controls. Unpatched binary SHA-256:
+`0af7ced3589f5046f9b19d7d1c0fef5b49d2a98142da82758632a8ea7895d4c9`.
+
+The pinned 4.6.3-stable repair `35e80b3a8822a9df9be390814b62f44c0a9c69e8`
+passes the same checks on x86-64 ([run
+41256784292](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41256784292)).
+All 184 paced receive cases pass with capped reads and all seven standalone
+commands pass (#491, #492, #496, #498). Repaired binary SHA-256:
+`7a1432456df8b78940200bf14f5ffc8c49e65cc12986df6814e4518701a59002`. The
+unpatched baseline reproduces the four defect commands and passes the three
+controls. Unpatched binary SHA-256:
+`566db2f263e02fcd266a99535142f156133c151d761f9b905cbbae612eeda466`.
 
 ### Web WebSocket receive boundary
 
