@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import glob
+import json
 import os
 import shutil
 import subprocess
@@ -145,8 +146,34 @@ def ensure_venv() -> None:
         )
 
 
+def clean_scratch() -> None:
+    script = ROOT / "scripts/storage.py"
+    if not script.is_file():
+        return
+    try:
+        result = subprocess.run(  # noqa: S603
+            (sys.executable, str(script), "--json", "clean", "--apply"),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3,
+        )
+        if result.returncode != 0:
+            print(f"WARN: scratch cleanup failed: {result.stderr.strip()}", file=sys.stderr)
+        else:
+            report = json.loads(result.stdout)
+            if report["errors"] or report["over_budget"]:
+                print(
+                    "WARN: scratch budget needs attention; run scripts/storage.py clean.",
+                    file=sys.stderr,
+                )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        print("WARN: scratch cleanup deferred; run scripts/storage.py clean.", file=sys.stderr)
+
+
 def main() -> int:
     ensure_safe_directory()
+    clean_scratch()
     if os.environ.get("SF_DEVCONTAINER_MAINTENANCE") != "1":
         print("==> Container ready. Rebuild to update tools.")
         return 0

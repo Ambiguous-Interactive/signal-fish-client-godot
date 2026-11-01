@@ -7,11 +7,11 @@ import argparse
 import contextlib
 import functools
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 from collections import OrderedDict, deque
@@ -23,6 +23,11 @@ if TYPE_CHECKING:
     from playwright.sync_api import Page, Request
 
 ROOT = Path(__file__).resolve().parents[1]
+STORAGE_SPEC = importlib.util.spec_from_file_location("sf_storage", ROOT / "scripts/storage.py")
+if STORAGE_SPEC is None or STORAGE_SPEC.loader is None:
+    raise RuntimeError("Could not load scratch storage policy")
+storage = importlib.util.module_from_spec(STORAGE_SPEC)
+STORAGE_SPEC.loader.exec_module(storage)
 SCENE = "tests/smoke/webrtc_interop_drill.tscn"
 PROJECT = f"""config_version=5
 [application]
@@ -1497,6 +1502,7 @@ def main() -> None:
     parser.add_argument(
         "--baseline", type=Path, help="Compare a checkout's addon using the same drill and tools"
     )
+    parser.add_argument("--keep-artifacts", action="store_true", help="Pin managed scratch output")
     args = parser.parse_args()
     if args.http_post_delay_ms and (
         not args.multi_peer
@@ -1529,9 +1535,8 @@ def main() -> None:
         not args.safe_receive or args.rpc_traffic
     ):
         parser.error("RPC recovery needs --safe-receive and replaces --rpc-traffic")
-    directory = args.output or Path(tempfile.mkdtemp(prefix="sf-webrtc-interop-"))
-    directory.mkdir(parents=True, exist_ok=True)
-    run(args, directory)
+    with storage.managed_output(args.output, keep=args.keep_artifacts) as directory:
+        run(args, directory)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 """Regression checks: python .devcontainer/test_portability.py."""
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -144,9 +146,30 @@ class Portability(unittest.TestCase):
         self.assertEqual(command[0], "docker")
         self.assertIn("${localWorkspaceFolder}:/workspace", command)
 
+    def test_scratch_timeout_does_not_block_startup(self) -> None:
+        spec = importlib.util.spec_from_file_location("post_start_storage", ROOT / "post-start.py")
+        if spec is None or spec.loader is None:
+            self.fail("post-start.py could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with (
+            patch.object(
+                module.subprocess, "run", side_effect=subprocess.TimeoutExpired("cleanup", 3)
+            ),
+            contextlib.redirect_stderr(io.StringIO()) as errors,
+        ):
+            module.clean_scratch()
+        self.assertIn("cleanup deferred", errors.getvalue())
+
     def test_agents_installed_in_image(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("COPY install-agent-tools.py install-mcp-servers.py", dockerfile)
+        self.assertIn("COPY install-agent-tools.py /usr/local/share/devcontainer/", dockerfile)
+        self.assertIn("COPY install-mcp-servers.py /usr/local/share/devcontainer/", dockerfile)
+        self.assertLess(
+            dockerfile.index("python3 /usr/local/share/devcontainer/install-mcp-servers.py"),
+            dockerfile.index("COPY install-agent-tools.py"),
+        )
+        self.assertIn("mv /tmp/sf-apt-clean /etc/apt/apt.conf.d/docker-clean", dockerfile)
         self.assertIn("python3 /usr/local/share/devcontainer/install-agent-tools.py", dockerfile)
         for package in (
             "@openai/codex",

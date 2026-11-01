@@ -1,0 +1,445 @@
+"""Deterministic storage policy regressions: python3 scripts/test_storage.py."""
+
+import contextlib
+import io
+import json
+import os
+import queue
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import storage
+
+
+class ScratchPolicy(unittest.TestCase):
+    def setUp(self) -> None:
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.root = Path(self.folder.name) / "scratch"
+
+    def run_tree(self, size: int = 16384, clock: float = 100) -> Path:
+        with storage.managed_output(None, root=self.root, now=lambda: clock) as path:
+            (path / "project").mkdir()
+            (path / "project" / "payload").write_bytes(b"x" * size)
+            (path / "summary.json").write_text('{"passed": true}')
+        return path
+
+    def test_age_expiry_keeps_compact_evidence(self) -> None:
+        path = self.run_tree()
+        report = storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertFalse((path / "project").exists())
+        self.assertTrue((path / "evidence" / "summary.json").is_file())
+        self.assertGreater(report["reclaimed_bytes"], 0)
+
+    def test_budget_evicts_oldest_and_dry_run_does_not_write(self) -> None:
+        first = self.run_tree(clock=100)
+        second = self.run_tree(clock=200)
+        report = storage.clean(self.root, budget=60000, now=201)
+        self.assertIn(str(first), report["candidates"])
+        self.assertTrue((first / "project").exists())
+        storage.clean(self.root, apply=True, budget=60000, now=201)
+        self.assertFalse((first / "project").exists())
+        self.assertTrue((second / "project").exists())
+
+    def test_active_and_pinned_are_protected(self) -> None:
+        pinned = self.run_tree()
+        storage.set_pin(self.root, pinned.name, True)
+        with storage.managed_output(None, root=self.root) as active:
+            (active / "payload").write_bytes(b"x" * 16000)
+            report = storage.clean(self.root, apply=True, budget=0)
+            self.assertTrue(active.is_dir())
+            self.assertTrue(pinned.is_dir())
+            self.assertTrue(report["over_budget"])
+
+    def test_failed_run_is_completed_and_retained(self) -> None:
+        with (
+            self.assertRaisesRegex(RuntimeError, "fixture"),
+            storage.managed_output(None, root=self.root) as path,
+        ):
+            raise RuntimeError("fixture")
+        self.assertEqual(json.loads((path / ".run.json").read_text())["state"], "failed")
+        self.assertIn(str(path), storage.clean(self.root, budget=0)["candidates"])
+
+    def test_maintenance_io_failure_does_not_fail_successful_run(self) -> None:
+        warnings = io.StringIO()
+        with (
+            patch.object(storage, "clean", side_effect=OSError("maintenance unavailable")),
+            contextlib.redirect_stderr(warnings),
+            storage.managed_output(None, root=self.root) as path,
+        ):
+            (path / "result").write_text("success")
+        self.assertEqual(json.loads((path / ".run.json").read_text())["state"], "completed")
+        self.assertIn("WARN", warnings.getvalue())
+
+    def test_maintenance_io_failure_preserves_run_exception(self) -> None:
+        error = RuntimeError("experiment failed")
+        with (
+            patch.object(storage, "clean", side_effect=OSError("maintenance unavailable")),
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(RuntimeError) as failure,
+            storage.managed_output(None, root=self.root),
+        ):
+            raise error
+        self.assertIs(failure.exception, error)
+
+    def test_required_registration_failure_stays_fatal(self) -> None:
+        with (
+            patch.object(storage, "write_record", side_effect=OSError("registration failed")),
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaisesRegex(OSError, "registration failed"),
+            storage.managed_output(None, root=self.root),
+        ):
+            self.fail("Unregistered run must not start")
+
+    def test_explicit_output_is_unmanaged(self) -> None:
+        explicit = Path(self.folder.name) / "explicit"
+        with storage.managed_output(explicit, root=self.root) as path:
+            self.assertEqual(path, explicit)
+        self.assertFalse((explicit / ".run.json").exists())
+        self.assertFalse(self.root.exists())
+
+    def test_unknown_and_symlink_entries_survive(self) -> None:
+        self.run_tree()
+        external = Path(self.folder.name) / "external"
+        external.mkdir()
+        (external / "precious").write_text("keep")
+        (self.root / "link").symlink_to(external, target_is_directory=True)
+        (self.root / "unknown").mkdir()
+        storage.clean(self.root, apply=True, budget=0)
+        self.assertTrue((external / "precious").is_file())
+        self.assertTrue((self.root / "unknown").is_dir())
+
+    def test_symlink_root_refused(self) -> None:
+        real = Path(self.folder.name) / "real"
+        real.mkdir()
+        self.root.symlink_to(real, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            storage.clean(self.root, apply=True)
+
+    def test_missing_root_report_does_not_create(self) -> None:
+        self.assertEqual(storage.clean(self.root)["total_bytes"], 0)
+        self.assertFalse(self.root.exists())
+
+    def test_interrupted_process_releases_lock(self) -> None:
+        code = "import os, storage; c=storage.managed_output(None,root=storage.Path(os.environ['TEST_ROOT'])); p=c.__enter__(); os._exit(9)"
+        env = {**os.environ, "TEST_ROOT": str(self.root)}
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code],
+            cwd=Path(storage.__file__).parent,
+            env=env,
+            check=False,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 9)
+        report = storage.clean(self.root, apply=True, budget=0)
+        self.assertFalse(report["over_budget"])
+
+    def test_concurrent_sweep_reports_busy_without_errors(self) -> None:
+        self.run_tree()
+        with storage.lock(self.root / ".sweep"):
+            report = storage.clean(self.root, apply=True, budget=0)
+        self.assertTrue(report["busy"])
+        self.assertEqual(report["errors"], [])
+
+    def test_twenty_experiments_return_to_budget(self) -> None:
+        for index in range(20):
+            self.run_tree(clock=100 + index)
+            report = storage.clean(self.root, apply=True, budget=60000, now=200)
+            self.assertLessEqual(report["remaining_bytes"], 60000)
+
+    def test_pin_rejects_traversal(self) -> None:
+        self.run_tree()
+        with self.assertRaises(ValueError):
+            storage.set_pin(self.root, "../external", True)
+
+    def test_report_marks_missing_paths(self) -> None:
+        report = storage.report_paths([self.root])
+        self.assertIn("error", report["paths"][0])
+
+    def test_active_run_is_protected_across_processes(self) -> None:
+        with storage.managed_output(None, root=self.root) as active:
+            code = "import json,os,storage; print(json.dumps(storage.clean(storage.Path(os.environ['TEST_ROOT']),apply=True,budget=0)))"
+            result = subprocess.run(  # noqa: S603
+                [sys.executable, "-c", code],
+                cwd=Path(storage.__file__).parent,
+                env={**os.environ, "TEST_ROOT": str(self.root)},
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+            self.assertIn(str(active), json.loads(result.stdout)["protected"])
+            self.assertTrue(active.is_dir())
+
+    def test_dry_run_does_not_change_registered_files(self) -> None:
+        self.run_tree()
+        before = {
+            str(p): (p.stat().st_mtime_ns, p.read_bytes())
+            for p in self.root.rglob("*")
+            if p.is_file()
+        }
+        storage.clean(self.root, budget=0)
+        after = {
+            str(p): (p.stat().st_mtime_ns, p.read_bytes())
+            for p in self.root.rglob("*")
+            if p.is_file()
+        }
+        self.assertEqual(before, after)
+
+    def test_existing_evidence_obeys_aggregate_limit(self) -> None:
+        path = self.run_tree()
+        evidence = path / "evidence"
+        for index in range(40):
+            folder = evidence / f"case-{index:02}"
+            folder.mkdir(parents=True)
+            (folder / "summary.json").write_bytes(b"x" * 70000)
+            (folder / "driver.log").write_bytes(b"y" * 30000)
+        storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertFalse((path / "project").exists())
+        retained = [p for p in evidence.rglob("*") if p.is_file()]
+        self.assertLessEqual(sum(p.stat().st_size for p in retained), 1024 * 1024)
+        self.assertTrue(retained)
+        self.assertTrue(
+            all(p.stat().st_size <= (16384 if p.name.endswith(".log") else 65536) for p in retained)
+        )
+
+    def test_existing_evidence_recovers_after_interrupted_truncation(self) -> None:
+        path = self.run_tree()
+        evidence = path / "evidence"
+        evidence.mkdir()
+        (evidence / "summary.json").write_bytes(b"x" * 70000)
+        original_unlink = os.unlink
+
+        def interrupt(
+            name: str | bytes | os.PathLike[str] | os.PathLike[bytes], *, dir_fd: int | None = None
+        ) -> None:
+            if Path(os.fsdecode(name)).name == "summary.json":
+                raise OSError("interrupted evidence update")
+            original_unlink(name, dir_fd=dir_fd)
+
+        with patch("os.unlink", side_effect=interrupt):
+            result = storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertTrue(result["errors"])
+        self.assertTrue((path / "project").is_dir())
+        result = storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertFalse(result["errors"])
+        self.assertFalse((path / "project").exists())
+        self.assertEqual((evidence / "summary.json.tail.txt").stat().st_size, 65536)
+        self.assertFalse((evidence / "summary.json").exists())
+
+    def test_existing_evidence_directory_links_are_unlinked(self) -> None:
+        path = self.run_tree()
+        evidence = path / "evidence"
+        evidence.mkdir()
+        external = Path(self.folder.name) / "external-evidence"
+        external.mkdir()
+        (external / "precious").write_text("keep")
+        outside = evidence / "outside"
+        internal = evidence / "project-link"
+        outside.symlink_to(external, target_is_directory=True)
+        internal.symlink_to(path / "project", target_is_directory=True)
+        result = storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertFalse(result["errors"])
+        self.assertFalse(outside.is_symlink())
+        self.assertFalse(internal.is_symlink())
+        self.assertEqual((external / "precious").read_text(), "keep")
+
+    def test_interrupted_compaction_is_retryable(self) -> None:
+        path = self.run_tree()
+        with patch("shutil.rmtree", side_effect=OSError("interrupted")):
+            report = storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertTrue(report["errors"])
+        report = storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertFalse(report["errors"])
+        self.assertFalse((path / "project").exists())
+        self.assertTrue((path / "evidence" / "summary.json").is_file())
+
+    def test_pin_symlink_refused(self) -> None:
+        path = self.run_tree()
+        external = Path(self.folder.name) / "external"
+        external.write_text("precious")
+        (path / ".keep").symlink_to(external)
+        with self.assertRaises(ValueError):
+            storage.set_pin(self.root, path.name, True)
+        self.assertEqual(external.read_text(), "precious")
+
+    def test_corrupted_metadata_is_protected(self) -> None:
+        path = self.run_tree()
+        (path / ".run.json").write_text("corrupt")
+        report = storage.clean(self.root, apply=True, budget=0)
+        self.assertTrue(report["errors"])
+        self.assertTrue((path / "project").is_dir())
+
+    def test_corrupted_record_counts_as_protected_usage(self) -> None:
+        path = self.run_tree()
+        (path / ".run.json").write_text("corrupt")
+        before = storage.allocated(path)
+        report = storage.clean(self.root, apply=True, budget=0)
+        self.assertEqual(report["total_bytes"], before)
+        self.assertEqual(report["remaining_bytes"], before)
+        self.assertEqual(report["protected_bytes"], before)
+        self.assertIn(str(path), report["protected"])
+        self.assertTrue(report["over_budget"])
+        self.assertEqual(report["candidates"], [])
+        self.assertTrue((path / "project").is_dir())
+
+    @unittest.skipIf(os.geteuid() == 0, "Root can read permission-restricted metadata")
+    def test_unreadable_record_counts_as_protected_usage(self) -> None:
+        path = self.run_tree()
+        marker = path / ".run.json"
+        before = storage.allocated(path)
+        marker.chmod(0)
+        try:
+            report = storage.clean(self.root, apply=True, budget=0)
+        finally:
+            marker.chmod(0o600)
+        self.assertTrue(report["errors"])
+        self.assertEqual(report["total_bytes"], before)
+        self.assertEqual(report["protected_bytes"], before)
+        self.assertTrue(report["over_budget"])
+        self.assertEqual(report["candidates"], [])
+
+    def test_unhashable_metadata_state_does_not_abort_sweep(self) -> None:
+        path = self.run_tree()
+        data = json.loads((path / ".run.json").read_text())
+        data["state"] = []
+        (path / ".run.json").write_text(json.dumps(data))
+        report = storage.clean(self.root, apply=True, budget=0)
+        self.assertTrue(report["errors"])
+        self.assertTrue((path / "project").is_dir())
+        with storage.managed_output(None, root=self.root) as another:
+            self.assertTrue(another.is_dir())
+
+    def test_invalid_metadata_timestamps_do_not_abort_runs(self) -> None:
+        values: tuple[object, ...] = (
+            10**400,
+            float("nan"),
+            float("inf"),
+            -float("inf"),
+            True,
+            [],
+            {},
+            None,
+            "bad",
+        )
+        for value in values:
+            with self.subTest(value=value):
+                path = self.run_tree()
+                data = json.loads((path / ".run.json").read_text())
+                data["updated"] = value
+                (path / ".run.json").write_text(json.dumps(data))
+                try:
+                    report = storage.clean(self.root, apply=True, budget=0)
+                    self.assertTrue(report["errors"])
+                    self.assertTrue((path / "project").is_dir())
+                    with storage.managed_output(None, root=self.root) as another:
+                        self.assertTrue(another.is_dir())
+                finally:
+                    if path.is_dir():
+                        data["updated"] = 100
+                        (path / ".run.json").write_text(json.dumps(data))
+
+    def test_interrupted_removal_keeps_registration_for_retry(self) -> None:
+        path = self.run_tree()
+        storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        original_unlink = os.unlink
+
+        def interrupt(
+            name: str | bytes | os.PathLike[str] | os.PathLike[bytes], *, dir_fd: int | None = None
+        ) -> None:
+            if Path(os.fsdecode(name)).name == "summary.json":
+                raise OSError("interrupted payload removal")
+            original_unlink(name, dir_fd=dir_fd)
+
+        with patch("os.unlink", side_effect=interrupt):
+            report = storage.clean(self.root, apply=True, now=100 + 16 * 86400)
+        self.assertTrue(report["errors"])
+        self.assertTrue((path / ".run.json").is_file())
+        report = storage.clean(self.root, apply=True, now=100 + 16 * 86400)
+        self.assertFalse(report["errors"])
+        self.assertFalse(path.exists())
+
+    def test_other_process_active_lock_is_protected(self) -> None:
+        code = "import storage,time,os; c=storage.managed_output(None,root=storage.Path(os.environ['TEST_ROOT'])); p=c.__enter__(); print(p,flush=True); time.sleep(60)"
+        env = {**os.environ, "TEST_ROOT": str(self.root)}
+        child = subprocess.Popen(  # noqa: S603
+            [sys.executable, "-c", code],
+            cwd=Path(storage.__file__).parent,
+            env=env,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            if child.stdout is None:
+                self.fail("Child output unavailable")
+            output = child.stdout
+            lines: queue.Queue[str] = queue.Queue()
+            reader = threading.Thread(target=lambda: lines.put(output.readline()), daemon=True)
+            reader.start()
+            try:
+                line = lines.get(timeout=10)
+            except queue.Empty:
+                self.fail("Child did not report its run path before the deadline")
+            self.assertTrue(line.strip(), "Child exited before reporting its run path")
+            path = Path(line.strip())
+            result = storage.clean(self.root, apply=True, budget=0)
+            self.assertIn(str(path), result["protected"])
+            self.assertTrue(path.is_dir())
+        finally:
+            child.terminate()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=5)
+            if child.stdout:
+                child.stdout.close()
+        result = storage.clean(self.root, apply=True, budget=0)
+        self.assertFalse(result["over_budget"])
+
+    def test_sparse_files_are_measured_by_allocation(self) -> None:
+        sparse = Path(self.folder.name) / "sparse"
+        with sparse.open("wb") as stream:
+            stream.truncate(100 * storage.GIB)
+        self.assertLess(storage.allocated(sparse), 1024 * 1024)
+
+    def test_server_inventory_retains_local_reference_and_two_newest(self) -> None:
+        servers = Path(self.folder.name) / "bin"
+        architecture = servers / "linux-arm64"
+        architecture.mkdir(parents=True)
+        references = Path(self.folder.name) / "references"
+        references.mkdir()
+        for index in range(4):
+            server = architecture / f"server-{index}"
+            server.mkdir()
+            os.utime(server, (index + 1, index + 1))
+        (references / "active").symlink_to(architecture / "server-0", target_is_directory=True)
+        report = json.loads(json.dumps(storage.server_cache(servers, references)))
+        policy = {Path(p["path"]).name: p["retain_under_local_policy"] for p in report["versions"]}
+        self.assertEqual(
+            policy, {"server-0": True, "server-1": False, "server-2": True, "server-3": True}
+        )
+        self.assertFalse(report["other_container_references_verified"])
+        self.assertEqual(len(list(architecture.iterdir())), 4)
+
+    def test_shared_cache_cleanup_is_explicit_and_bounded(self) -> None:
+        cache = Path(self.folder.name) / "extensionsCache"
+        cache.mkdir()
+        for index in range(3):
+            item = cache / f"extension-{index}"
+            item.write_bytes(b"x" * 8192)
+            os.utime(item, (index + 1, index + 1))
+        report = storage.extension_cache(cache, budget=8192)
+        self.assertEqual(len(report["candidates"]), 2)
+        self.assertEqual(len(list(cache.iterdir())), 3)
+        storage.extension_cache(cache, budget=8192, apply=True)
+        self.assertEqual([p.name for p in cache.iterdir()], ["extension-2"])
+
+
+if __name__ == "__main__":
+    unittest.main()

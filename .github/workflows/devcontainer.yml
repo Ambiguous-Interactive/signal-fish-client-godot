@@ -5,11 +5,19 @@ on:
         paths:
             - ".devcontainer/**"
             - ".github/workflows/devcontainer.yml"
+            - "scripts/storage.py"
+            - "scripts/test_storage*.py"
+            - "scripts/check-webrtc-interop.py"
+            - "scripts/check-webrtc-reference.py"
     push:
         branches: [main]
         paths:
             - ".devcontainer/**"
             - ".github/workflows/devcontainer.yml"
+            - "scripts/storage.py"
+            - "scripts/test_storage*.py"
+            - "scripts/check-webrtc-interop.py"
+            - "scripts/check-webrtc-reference.py"
     workflow_dispatch:
 
 permissions:
@@ -35,7 +43,10 @@ jobs:
             - name: Test bootstrap and offline startup
               env:
                   SF_TEST_DOCKER: "1"
-              run: python3 .devcontainer/test_portability.py
+              run: |
+                  python3 scripts/test_storage.py
+                  python3 scripts/test_storage_host.py
+                  python3 .devcontainer/test_portability.py
             - name: Build and open container
               id: open
               run: |
@@ -53,3 +64,27 @@ jobs:
                     python3 .devcontainer/verify-container-tools.py
                   npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \
                     python3 .devcontainer/post-start.py
+
+            - name: Measure image footprint
+              if: always() && steps.open.outputs.container_id != ''
+              env:
+                  CONTAINER_ID: ${{ steps.open.outputs.container_id }}
+              run: |
+                  python3 .devcontainer/measure-storage.py "$CONTAINER_ID" > "$RUNNER_TEMP/storage-image.json"
+            - name: Measure container storage
+              if: always() && steps.open.outputs.container_id != ''
+              run: |
+                  npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \
+                    python3 scripts/storage.py --json report /tmp /home/vscode /vscode > "$RUNNER_TEMP/storage-container.json"
+            - name: Measure host storage
+              if: always()
+              run: |
+                  pwsh -NoProfile -File .devcontainer/storage-host.ps1 -AsJson > "$RUNNER_TEMP/storage-host.json"
+            - name: Upload storage measurements
+              if: always()
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: storage-${{ matrix.runner }}
+                  path: ${{ runner.temp }}/storage-*.json
+                  retention-days: 7
+                  if-no-files-found: ignore

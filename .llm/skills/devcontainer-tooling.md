@@ -57,8 +57,8 @@ setup.
   so warm rebuilds - including `--no-cache` ones - skip the re-downloads.
   The base image's `docker-clean` deletes `/var/cache/apt/archives/*.deb`
   after every apt operation, so the apt archives mount only works because
-  the Dockerfile removes that hook first; the other mounts have no such
-  in-image cleanup.
+  the Dockerfile removes that hook for the cache-mounted step, then restores
+  it before feature installs. Other mounts have no in-image cleanup.
 - The create-time env guard (`initializeCommand` in `devcontainer.json` +
   `.devcontainer/initialize.py`) materializes `.env.local` from
   `.env.example` on a fresh clone (docker `--env-file` fails the create when
@@ -123,6 +123,14 @@ setup.
 - `.devcontainer/pwsh-profile.ps1` is best-effort terminal polish. It must not
   emit errors if PSReadLine is already loaded, preloaded as an assembly by the
   VS Code PowerShell extension, missing, or too old for optional settings.
+
+## Storage
+
+- Follow `.devcontainer/STORAGE.md` for measurement and cleanup.
+- Use `scripts/storage.py` managed output for exploratory artifacts. The
+  default is seven-day retention and a 10 GiB budget, with active/keep pins
+  protected. Legacy scratch and shared host resources require explicit review.
+- Startup cleanup is bounded to three seconds and warns on failure.
 
 ## MCP Servers
 

@@ -23,6 +23,7 @@ Dockerfile  text eol=lf
 # an interpreter named "pwsh\r" when a script is executed directly.
 .claude/hooks/*.ps1 text eol=lf
 .githooks/*.ps1     text eol=lf
+.devcontainer/storage-host.ps1 text eol=lf
 
 # Godot resources are text but stay as-is to match upstream tooling
 *.gd        text eol=lf
