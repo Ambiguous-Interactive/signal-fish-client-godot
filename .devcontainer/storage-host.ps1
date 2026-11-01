@@ -24,16 +24,16 @@ function Read-Native {
 }
 
 $report = [ordered]@{
-    measured_utc = [DateTime]::UtcNow.ToString('o')
-    accounting = 'Shared layers and filesystem totals overlap. Do not sum categories.'
-    context = Read-Native docker @('context', 'show')
-    version = Read-Native docker @('version', '--format', '{{json .}}')
-    backend = Read-Native docker @('info', '--format', '{{json .Driver}} {{json .DriverStatus}} {{json .DockerRootDir}}')
-    objects = Read-Native docker @('system', 'df', '-v')
-    containers = Read-Native docker @('ps', '-a', '--size', '--format', '{{.ID}} {{.Names}} {{.Image}} {{.Size}}')
-    volumes = Read-Native docker @('volume', 'ls', '--format', '{{.Name}} {{.Driver}}')
-    drives = @(Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free)
-    wsl_version = Read-Native wsl.exe @('--version')
+    measured_utc      = [DateTime]::UtcNow.ToString('o')
+    accounting        = 'Shared layers and filesystem totals overlap. Do not sum categories.'
+    context           = Read-Native docker @('context', 'show')
+    version           = Read-Native docker @('version', '--format', '{{json .}}')
+    backend           = Read-Native docker @('info', '--format', '{{json .Driver}} {{json .DriverStatus}} {{json .DockerRootDir}}')
+    objects           = Read-Native docker @('system', 'df', '-v')
+    containers        = Read-Native docker @('ps', '-a', '--size', '--format', '{{.ID}} {{.Names}} {{.Image}} {{.Size}}')
+    volumes           = Read-Native docker @('volume', 'ls', '--format', '{{.Name}} {{.Driver}}')
+    drives            = @(Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free)
+    wsl_version       = Read-Native wsl.exe @('--version')
     wsl_distributions = Read-Native wsl.exe @('--list', '--verbose')
 }
 $builderArgs = @('buildx')
@@ -68,8 +68,8 @@ namespace SignalFish {
         $allocated = [uint64]$high * 4294967296 + $low
         $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
         $report.virtual_disks += @{
-            path = $item.FullName
-            file_length = $item.Length
+            path            = $item.FullName
+            file_length     = $item.Length
             allocated_bytes = $(if ($low -eq [uint32]::MaxValue -and $errorCode -ne 0) { $null } else { $allocated })
         }
     }
