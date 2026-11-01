@@ -84,7 +84,13 @@ jobs:
               if: inputs.build_target == 'windows'
               run: |
                   sudo apt-get update
-                  sudo apt-get install -y --no-install-recommends mingw-w64 wine wine64
+                  sudo apt-get install -y --no-install-recommends mingw-w64
+                  sudo dpkg --add-architecture i386
+                  sudo mkdir -pm755 /etc/apt/keyrings
+                  sudo wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+                  sudo wget -qNP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
+                  sudo apt-get update
+                  sudo apt-get install -y --install-recommends winehq-stable
                   for tool in x86_64-w64-mingw32-gcc x86_64-w64-mingw32-g++; do
                     if "$tool" -v 2>&1 | grep -q "Thread model: win32"; then
                       posix="$(update-alternatives --list "$tool" | grep posix)"
