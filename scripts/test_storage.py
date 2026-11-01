@@ -188,6 +188,34 @@ class ScratchPolicy(unittest.TestCase):
         with storage.managed_output(None, root=self.root) as another:
             self.assertTrue(another.is_dir())
 
+    def test_invalid_metadata_timestamps_do_not_abort_runs(self) -> None:
+        for value in (
+            10**400,
+            float("nan"),
+            float("inf"),
+            -float("inf"),
+            True,
+            [],
+            {},
+            None,
+            "bad",
+        ):
+            with self.subTest(value=value):
+                path = self.run_tree()
+                data = json.loads((path / ".run.json").read_text())
+                data["updated"] = value
+                (path / ".run.json").write_text(json.dumps(data))
+                try:
+                    report = storage.clean(self.root, apply=True, budget=0)
+                    self.assertTrue(report["errors"])
+                    self.assertTrue((path / "project").is_dir())
+                    with storage.managed_output(None, root=self.root) as another:
+                        self.assertTrue(another.is_dir())
+                finally:
+                    if path.is_dir():
+                        data["updated"] = 100
+                        (path / ".run.json").write_text(json.dumps(data))
+
     def test_interrupted_removal_keeps_registration_for_retry(self) -> None:
         path = self.run_tree()
         storage.clean(self.root, apply=True, now=100 + 8 * 86400)

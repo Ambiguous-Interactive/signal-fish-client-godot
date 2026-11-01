@@ -156,7 +156,15 @@ def record(path: Path) -> RunRecord:
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
         raise ValueError("Unregistered scratch directory")
     updated = data.get("updated")
-    if not isinstance(updated, (float, int)) or not math.isfinite(updated):
+    try:
+        valid_updated = (
+            not isinstance(updated, bool)
+            and isinstance(updated, (float, int))
+            and math.isfinite(updated)
+        )
+    except OverflowError:
+        valid_updated = False
+    if not valid_updated:
         raise ValueError("Run timestamp missing or invalid")
     state = data.get("state")
     if not isinstance(state, str) or state not in {"active", "completed", "failed", "compacted"}:
