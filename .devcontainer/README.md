@@ -5,6 +5,8 @@ Signal Fish Godot client. Built on Ubuntu 24.04 with Godot 4 (headless),
 PowerShell 7, Python, Node LTS, and a curated set of reputable extensions and
 themes.
 
+See [Storage policy](STORAGE.md) for scratch retention, measurement, and host cleanup.
+
 ## Quick start
 
 1. Install [Docker](https://www.docker.com/) and the

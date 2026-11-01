@@ -10,7 +10,6 @@ import math
 import re
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -2718,6 +2717,7 @@ def main() -> None:
         action="store_true",
         help="Fail when any pairing lacks exact probes and snapshots in both generations",
     )
+    parser.add_argument("--keep-artifacts", action="store_true", help="Pin managed scratch output")
     args = parser.parse_args()
     if args.import_godot is not None and args.runtime != "native":
         parser.error("--import-godot is only supported for native template builds")
@@ -2778,66 +2778,66 @@ def main() -> None:
         parser.error("--binary-traffic requires --native-reference-probe")
     if args.native_reference_probe and not args.mixed_traffic:
         parser.error("--native-reference-probe requires --mixed-traffic")
-    directory = args.output or Path(tempfile.mkdtemp(prefix="sf-reference-assessment-"))
-    results = []
-    runtimes = (False, True) if args.runtime == "all" else (args.runtime == "web",)
-    offers = (True, False) if args.offerer == "both" else (args.offerer == "godot",)
-    cases = (
-        [
-            (seat, channel)
-            for seat in ("godot", "reference")
-            for channel in (
-                ("reliable", "ordered", "unreliable")
-                if seat == "godot" or args.native_reference_probe
-                else ("reliable", "unreliable")
-            )
-        ]
-        if args.retirement_matrix
-        else [(args.closing_seat, args.closing_channel)]
-    )
-    for web in runtimes:
-        for godot_offer in offers:
-            args.godot_offer = godot_offer
-            for seat, channel in cases:
-                args.closing_seat, args.closing_channel = seat, channel
-                name = ("web" if web else "native") + (
-                    "-godot-offer" if godot_offer else "-reference-offer"
+    with interop.storage.managed_output(args.output, keep=args.keep_artifacts) as directory:
+        results = []
+        runtimes = (False, True) if args.runtime == "all" else (args.runtime == "web",)
+        offers = (True, False) if args.offerer == "both" else (args.offerer == "godot",)
+        cases = (
+            [
+                (seat, channel)
+                for seat in ("godot", "reference")
+                for channel in (
+                    ("reliable", "ordered", "unreliable")
+                    if seat == "godot" or args.native_reference_probe
+                    else ("reliable", "unreliable")
                 )
-                if args.retirement_matrix:
-                    name += f"-{seat}-{channel}"
-                folder = directory / name
-                if folder.exists():
-                    raise FileExistsError(f"Assessment output already exists: {folder}")
-                try:
-                    result = assess(args, folder, web=web)
-                except Exception as exc:
-                    report_path = folder / "assessment.json"
-                    if report_path.exists():
-                        result = json.loads(report_path.read_text())
-                    else:
-                        result = {
-                            "assessment_complete": False,
-                            "driver_error": f"{type(exc).__name__}: {exc}",
-                            "runtime": "web" if web else "native",
-                            "godot_offer": godot_offer,
-                            "closing_seat": seat,
-                            "closing_channel": channel,
-                        }
-                        result["diagnostics"] = gameplay_diagnostics(result, "")
-                        folder.mkdir(parents=True, exist_ok=True)
-                        report_path.write_text(json.dumps(result, indent=2) + "\n")
-                results.append(result)
-                (directory / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
-                print(
-                    f"{name}: complete={result['assessment_complete']}; gameplay={result.get('gameplay_passed', False)}",
-                    flush=True,
-                )
-    if not all(result["assessment_complete"] for result in results):
-        raise RuntimeError(f"Incomplete reference assessment; see {directory}")
-    if args.require_gameplay and not all(result["gameplay_passed"] for result in results):
-        raise RuntimeError(
-            f"Reference gameplay is unsupported for one or more pairings; see {directory}"
+            ]
+            if args.retirement_matrix
+            else [(args.closing_seat, args.closing_channel)]
         )
+        for web in runtimes:
+            for godot_offer in offers:
+                args.godot_offer = godot_offer
+                for seat, channel in cases:
+                    args.closing_seat, args.closing_channel = seat, channel
+                    name = ("web" if web else "native") + (
+                        "-godot-offer" if godot_offer else "-reference-offer"
+                    )
+                    if args.retirement_matrix:
+                        name += f"-{seat}-{channel}"
+                    folder = directory / name
+                    if folder.exists():
+                        raise FileExistsError(f"Assessment output already exists: {folder}")
+                    try:
+                        result = assess(args, folder, web=web)
+                    except Exception as exc:
+                        report_path = folder / "assessment.json"
+                        if report_path.exists():
+                            result = json.loads(report_path.read_text())
+                        else:
+                            result = {
+                                "assessment_complete": False,
+                                "driver_error": f"{type(exc).__name__}: {exc}",
+                                "runtime": "web" if web else "native",
+                                "godot_offer": godot_offer,
+                                "closing_seat": seat,
+                                "closing_channel": channel,
+                            }
+                            result["diagnostics"] = gameplay_diagnostics(result, "")
+                            folder.mkdir(parents=True, exist_ok=True)
+                            report_path.write_text(json.dumps(result, indent=2) + "\n")
+                    results.append(result)
+                    (directory / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
+                    print(
+                        f"{name}: complete={result['assessment_complete']}; gameplay={result.get('gameplay_passed', False)}",
+                        flush=True,
+                    )
+        if not all(result["assessment_complete"] for result in results):
+            raise RuntimeError(f"Incomplete reference assessment; see {directory}")
+        if args.require_gameplay and not all(result["gameplay_passed"] for result in results):
+            raise RuntimeError(
+                f"Reference gameplay is unsupported for one or more pairings; see {directory}"
+            )
 
 
 if __name__ == "__main__":

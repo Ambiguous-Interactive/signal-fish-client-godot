@@ -38,16 +38,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # indexes once and tries again.
 # The base image's docker-clean deletes /var/cache/apt/archives/*.deb after
 # every apt operation, which would defeat the archives mount; it is removed
-# below before the first install. Trade-off: later apt users (feature
-# installs, manual apt in the container) keep their .deb and pkgcache
-# payloads instead of auto-cleaning them - accepted so warm rebuilds stay
-# download-free.
+# below before the first install, then restored before feature installs.
 # Keep PKGS a plain word list: Docker strips full-line comments before the
 # shell runs, so a comment here cannot document the list at all - grouping
 # notes live in the block comment above.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     set -eux; \
+    cp /etc/apt/apt.conf.d/docker-clean /tmp/sf-apt-clean; \
     rm -f /etc/apt/apt.conf.d/docker-clean; \
     PKGS="\
         ca-certificates \
@@ -86,7 +84,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends ${PKGS} \
         || { echo "==> apt install failed; refreshing indexes and retrying"; \
              apt-get update; \
-             apt-get install -y --no-install-recommends ${PKGS}; }
+             apt-get install -y --no-install-recommends ${PKGS}; }; \
+    mv /tmp/sf-apt-clean /etc/apt/apt.conf.d/docker-clean
 
 # Install Godot 4 editor binary (runs headless via the `--headless` flag).
 # Source: https://github.com/godotengine/godot/releases
@@ -200,7 +199,7 @@ RUN echo 'export PAGER=less' >> /etc/profile.d/sf-defaults.sh \
 COPY --from=node /usr/local/ /usr/local/
 ENV NPM_CONFIG_PREFIX=/home/vscode/.npm-global \
     PATH=/usr/local/bin:/home/vscode/.npm-global/bin:${PATH}
-COPY install-agent-tools.py install-mcp-servers.py /usr/local/share/devcontainer/
+COPY install-mcp-servers.py /usr/local/share/devcontainer/
 COPY --chmod=755 codex-terminal.py /usr/local/bin/codex
 RUN mkdir -p /home/vscode/.npm-global /home/vscode/.cache \
     && chown -R vscode:vscode /home/vscode/.npm-global /home/vscode/.cache
@@ -215,6 +214,7 @@ ADD https://registry.npmjs.org/@openai/codex/latest /tmp/agent-releases/codex.js
 ADD https://registry.npmjs.org/@opencode/cli/latest /tmp/agent-releases/opencode.json
 ADD https://registry.npmjs.org/@nanocollective/nanocoder/latest /tmp/agent-releases/nanocoder.json
 ADD https://registry.npmjs.org/@anthropic-ai/claude-code/latest /tmp/agent-releases/claude.json
+COPY install-agent-tools.py /usr/local/share/devcontainer/
 RUN --mount=type=cache,target=/home/vscode/.npm,uid=1000,gid=1000 \
     python3 /usr/local/share/devcontainer/install-agent-tools.py
 
