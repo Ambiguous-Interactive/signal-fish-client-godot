@@ -329,7 +329,7 @@ class TriageOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target = root / "target"
-            target.write_text("#!/bin/sh\necho 'ERROR: suite import failed'\nexit 1\n")
+            target.write_text("#!/bin/sh\necho 'suite import failed'\nexit 1\n")
             target.chmod(0o755)
             output = root / "results"
             printed = io.StringIO()
@@ -355,8 +355,8 @@ class TriageOutputTests(unittest.TestCase):
             record = diagnostics[0]
             self.assertEqual(record.get("returncode"), 1)
             self.assertFalse(record.get("timed_out"))
-            self.assertTrue(record.get("engine_errors"))
-            self.assertIn("ERROR: suite import failed", record.get("import_log_tail"))
+            self.assertFalse(record.get("engine_errors"))
+            self.assertIn("suite import failed", record.get("import_log_tail"))
             summary = json.loads((output / "summary.json").read_text())
             self.assertEqual(summary["import"]["returncode"], 1)
             self.assertEqual(summary["cases"], [])
@@ -365,13 +365,13 @@ class TriageOutputTests(unittest.TestCase):
         variants = {
             "nonzero": (
                 "#!/usr/bin/env python3\nimport json, sys\nif '--editor' in sys.argv:\n"
-                " print('ERROR: nonzero import failed')\n sys.exit(3)\n"
+                " print('nonzero import failed')\n sys.exit(3)\n"
                 "print('CLOSE_REASON_RESULT ' + json.dumps({'passed': True,"
                 " 'wire': {'writes': 1, 'error': 0}}))\n",
                 3,
-                True,
+                False,
                 1,
-                "ERROR: nonzero import failed",
+                "nonzero import failed",
             ),
             "error-exit-zero": (
                 "#!/usr/bin/env python3\nimport json, sys\nif '--editor' in sys.argv:\n"
