@@ -230,7 +230,7 @@ class ReceiveCapTests(unittest.TestCase):
             self.assertEqual(summary["cases"][0]["recv_cap"].get("reads", 0), 0)
 
 
-class DeliverySummaryTests(unittest.TestCase):
+class TriageOutputTests(unittest.TestCase):
     def test_burst_cases_report_delivery_and_pending_waits(self) -> None:
         gap: dict[str, object] = {
             "packets": 3,
@@ -299,12 +299,205 @@ class DeliverySummaryTests(unittest.TestCase):
                     "--case",
                     "chunk-burst-alternating-none",
                 ]
-                with patch.object(sys, "argv", command), redirect_stdout(io.StringIO()):
+                printed = io.StringIO()
+                with patch.object(sys, "argv", command), redirect_stdout(printed):
                     self.assertEqual(drill.main(), variant["exit"], name)
                 case = json.loads((output / "chunk-burst-alternating-none.json").read_text())
                 self.assertEqual(case["passed"], variant["passed"], name)
                 self.assertEqual(case["delivery"], variant["delivery"], name)
                 self.assertEqual(case["result"]["pending_wait"], variant["pending_wait"], name)
+                lines = {
+                    line.split(" ", 1)[0]: json.loads(line.split(" ", 1)[1])
+                    for line in printed.getvalue().splitlines()
+                    if line.startswith(("delivery ", "diagnostics "))
+                }
+                if variant["passed"]:
+                    self.assertEqual(lines.get("delivery"), variant["delivery"], name)
+                    self.assertNotIn("diagnostics", lines, name)
+                else:
+                    self.assertNotIn("delivery", lines, name)
+                    self.assertEqual(
+                        lines["diagnostics"].get("delivery"), variant["delivery"], name
+                    )
+                    self.assertEqual(
+                        lines["diagnostics"].get("pending_wait"),
+                        variant["pending_wait"],
+                        name,
+                    )
+
+    def test_failed_import_prints_diagnostics_without_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.write_text("#!/bin/sh\necho 'suite import failed'\nexit 1\n")
+            target.chmod(0o755)
+            output = root / "results"
+            printed = io.StringIO()
+            command = [
+                str(SCRIPT),
+                "--godot",
+                str(target),
+                "--importer",
+                str(target),
+                "--output",
+                str(output),
+                "--case",
+                "close-1-empty-server",
+            ]
+            with patch.object(sys, "argv", command), redirect_stdout(printed):
+                self.assertEqual(drill.main(), 1)
+            diagnostics = [
+                json.loads(line.split(" ", 1)[1])
+                for line in printed.getvalue().splitlines()
+                if line.startswith("diagnostics ")
+            ]
+            self.assertEqual(len(diagnostics), 1)
+            record = diagnostics[0]
+            self.assertEqual(record.get("returncode"), 1)
+            self.assertFalse(record.get("timed_out"))
+            self.assertFalse(record.get("engine_errors"))
+            self.assertIn("suite import failed", record.get("import_log_tail"))
+            summary = json.loads((output / "summary.json").read_text())
+            self.assertEqual(summary["import"]["returncode"], 1)
+            self.assertEqual(summary["cases"], [])
+
+    def test_run_repro_import_failures_print_diagnostics(self) -> None:
+        variants = {
+            "nonzero": (
+                "#!/usr/bin/env python3\nimport json, sys\nif '--editor' in sys.argv:\n"
+                " print('nonzero import failed')\n sys.exit(3)\n"
+                "print('CLOSE_REASON_RESULT ' + json.dumps({'passed': True,"
+                " 'wire': {'writes': 1, 'error': 0}}))\n",
+                3,
+                False,
+                1,
+                "nonzero import failed",
+            ),
+            "error-exit-zero": (
+                "#!/usr/bin/env python3\nimport json, sys\nif '--editor' in sys.argv:\n"
+                " print('ERROR: engine errors failed the import')\n sys.exit(0)\n"
+                "print('CLOSE_REASON_RESULT ' + json.dumps({'passed': True,"
+                " 'wire': {'writes': 1, 'error': 0}}))\n",
+                0,
+                True,
+                0,
+                "ERROR: engine errors failed the import",
+            ),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, (
+                source,
+                returncode,
+                engine_errors,
+                exit_code,
+                message,
+            ) in variants.items():
+                output = root / f"results-{name}"
+                target = root / f"target-{name}.py"
+                target.write_text(source)
+                target.chmod(0o755)
+                printed = io.StringIO()
+                command = [
+                    str(SCRIPT),
+                    "--godot",
+                    str(target),
+                    "--importer",
+                    str(target),
+                    "--output",
+                    str(output),
+                    "--run-repro",
+                ]
+                with patch.object(sys, "argv", command), redirect_stdout(printed):
+                    self.assertEqual(drill.main(), exit_code, name)
+                diagnostics = [
+                    json.loads(line.split(" ", 1)[1])
+                    for line in printed.getvalue().splitlines()
+                    if line.startswith("diagnostics ")
+                ]
+                records = [record for record in diagnostics if "name" not in record]
+                self.assertEqual(len(records), 1, name)
+                self.assertEqual(records[0].get("returncode"), returncode, name)
+                self.assertFalse(records[0].get("timed_out"), name)
+                self.assertEqual(records[0].get("engine_errors"), engine_errors, name)
+                self.assertIn(message, records[0].get("import_log_tail"), name)
+
+    def test_run_repro_command_failure_prints_diagnostics_without_command(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "if '--editor' in sys.argv:\n"
+                " exit(0)\n"
+                "print('CLOSE_REASON_RESULT ' + json.dumps({'passed': False,"
+                " 'wire': {'writes': 1, 'error': 0}}))\n"
+                "sys.exit(1)\n"
+            )
+            target.chmod(0o755)
+            output = root / "results"
+            printed = io.StringIO()
+            command = [
+                str(SCRIPT),
+                "--godot",
+                str(target),
+                "--importer",
+                str(target),
+                "--output",
+                str(output),
+                "--run-repro",
+            ]
+            with patch.object(sys, "argv", command), redirect_stdout(printed):
+                self.assertEqual(drill.main(), 0)
+            report = json.loads((output / "standalone-report.json").read_text())
+            expected = [
+                {key: value for key, value in command.items() if key != "command"}
+                for command in report["commands"]
+            ]
+            self.assertTrue(all(not command["passed"] for command in report["commands"]))
+            lines = [
+                json.loads(line.split(" ", 1)[1])
+                for line in printed.getvalue().splitlines()
+                if line.startswith("diagnostics ")
+            ]
+            self.assertEqual(lines, expected)
+
+    def test_failing_case_without_delivery_still_prints_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.write_text(
+                "#!/bin/sh\n"
+                'echo \'CLOSE_REASON_RESULT {"passed":false,'
+                '"wire":{"writes":1,"error":0}}\'\n'
+            )
+            target.chmod(0o755)
+            output = root / "results"
+            printed = io.StringIO()
+            command = [
+                str(SCRIPT),
+                "--godot",
+                str(target),
+                "--importer",
+                str(target),
+                "--output",
+                str(output),
+                "--case",
+                "close-1-empty-server",
+            ]
+            with patch.object(sys, "argv", command), redirect_stdout(printed):
+                self.assertEqual(drill.main(), 1)
+            case = json.loads((output / "close-1-empty-server.json").read_text())
+            self.assertFalse(case["passed"])
+            self.assertNotIn("delivery", case)
+            lines = {
+                line.split(" ", 1)[0]: json.loads(line.split(" ", 1)[1])
+                for line in printed.getvalue().splitlines()
+                if line.startswith(("delivery ", "diagnostics "))
+            }
+            self.assertNotIn("delivery", lines)
+            self.assertEqual(lines["diagnostics"]["passed"], False)
 
     def test_cases_without_delivery_records_carry_no_summary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -910,7 +910,11 @@ deadline expires, the burst result records a `pending_wait` entry with the
 first missing sequence (or the delivery count when no gap was observed), the
 elapsed wait and the deadline margin. A recurrence
 names the stalled packet without log analysis; compare both records with the
-one-second batch deadline before changing any deadline.
+one-second batch deadline before changing any deadline. The suite log prints a
+`delivery` line for every passed burst case, and a failing case in either the
+suite or the standalone log prints a `diagnostics` line with its result
+record, so a red run triages from the CI log alone. The uploaded artifacts
+keep the complete per-case evidence.
 
 ### Web WebSocket receive boundary
 

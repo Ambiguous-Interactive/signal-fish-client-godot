@@ -311,6 +311,9 @@ def run_repro(
         )
         results.append(report)
         print(f"{name}: {'PASS' if report['passed'] else 'FAIL'}", flush=True)
+        if report["passed"]:
+            continue
+        print("diagnostics " + json.dumps(envelope(report), sort_keys=True), flush=True)
     summary: dict[str, object] = {
         "binary": str(binary),
         "binary_sha256": digest(binary),
@@ -382,6 +385,32 @@ def delivery_summary(text: str) -> dict[str, object]:
         "largest_delivery_gap": largest,
         "largest_poll_interval_us": max(intervals, default=None),
     }
+
+
+def case_diagnostics(report: dict[str, object]) -> dict[str, object]:
+    diagnostics: dict[str, object] = {
+        key: report[key] for key in ("returncode", "timed_out", "engine_errors") if key in report
+    }
+    result = report.get("result")
+    if isinstance(result, dict):
+        diagnostics.update(result)
+    for key in ("delivery", "recv_cap"):
+        value = report.get(key)
+        if isinstance(value, dict):
+            diagnostics[key] = value
+    return diagnostics
+
+
+def envelope(record: dict[str, object]) -> dict[str, object]:
+    return {key: value for key, value in record.items() if key != "command"}
+
+
+def import_diagnostics(record: dict[str, object], log: Path) -> dict[str, object]:
+    try:
+        tail = log.read_text(errors="replace")[-400:]
+    except OSError:
+        tail = ""
+    return {**envelope(record), "import_log_tail": tail}
 
 
 def main() -> int:
@@ -466,10 +495,18 @@ def main() -> int:
         except ValueError as error:
             print(f"run-repro failed: {error}", file=sys.stderr)
             return 1
-        print(json.dumps({"report": str(args.output / "standalone-report.json")}))
         imported = summary["import"]
         if not isinstance(imported, dict):
             return 1
+        if imported["returncode"] != 0 or imported["engine_errors"]:
+            print(
+                "diagnostics "
+                + json.dumps(
+                    import_diagnostics(imported, args.output / "import.log"), sort_keys=True
+                ),
+                flush=True,
+            )
+        print(json.dumps({"report": str(args.output / "standalone-report.json")}))
         return 0 if imported["returncode"] == 0 else 1
     prefix = [str(runner), *args.runner_arg] if runner else []
     selected = [
@@ -630,7 +667,21 @@ def main() -> int:
             reports.append(report)
             (args.output / f"{name}.json").write_text(json.dumps(report, indent=2) + "\n")
             print(f"{name}: {'PASS' if report['passed'] else 'FAIL'}", flush=True)
+            if report["passed"]:
+                if kind == "burst":
+                    print("delivery " + json.dumps(delivery, sort_keys=True), flush=True)
+            else:
+                print(
+                    "diagnostics " + json.dumps(case_diagnostics(report), sort_keys=True),
+                    flush=True,
+                )
     passed = len(reports) == len(selected) and all(report["passed"] for report in reports)
+    if not reports:
+        print(
+            "diagnostics "
+            + json.dumps(import_diagnostics(imported, args.output / "import.log"), sort_keys=True),
+            flush=True,
+        )
     summary = {"passed": passed, "import": imported, "cases": reports}
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return 0 if passed else 1
