@@ -158,9 +158,14 @@ func _poll() -> void:
 	}
 	_last_poll_us = started
 	print("WEBSOCKET_RECEIVE_POLL " + JSON.stringify(observation))
+	var queued: Array[PackedByteArray] = []
+	var arrival_us := PackedInt64Array()
 	while _peer.get_available_packet_count() > 0:
-		var bytes := _peer.get_packet()
-		var delivered_us := Time.get_ticks_usec()
+		queued.append(_peer.get_packet())
+		arrival_us.append(Time.get_ticks_usec())
+	for index: int in queued.size():
+		var bytes := queued[index]
+		var delivered_us := arrival_us[index]
 		var sequence := bytes.slice(0, 8).get_string_from_ascii().to_int()
 		var exact := bytes == _body(_received)
 		var exact_mode := _peer.was_string_packet() == _is_text(_received)
