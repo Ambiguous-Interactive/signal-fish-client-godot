@@ -891,12 +891,14 @@ reproduces the four defect commands and passes the three controls. Unpatched
 binary SHA-256:
 `f74caff33936d986323b2bff0620cb4d46144a268849d5a241995679ee89778a`. An
 earlier repaired build of the same revision in that run (SHA-256
-`93713f1b1bee33d9dd356c92c80cb1af04dfb0b6e7d3d6f7c4522f7270d9f6f8`) lost one
-complete `chunk-burst-alternating-pong` message after 40 exact packets: the
-server wire report drained 174250 bytes with no error and no retirement, so
-the engine dropped one assembled message under uncapped reads. The repeat run
-delivered all 65 packets; the single observed loss stays open pending
-recurrence.
+`93713f1b1bee33d9dd356c92c80cb1af04dfb0b6e7d3d6f7c4522f7270d9f6f8`) missed
+the suite's one-second finite-burst deadline once in
+`chunk-burst-alternating-pong`: message 40 needed 1.14 s after message 39
+while earlier messages averaged about 0.5 s, the deadline expired, and the
+harness aborted the remaining bursts and offered only the sentinel. All 41
+offered messages arrived with exact bytes and mode. The repeat run delivered
+all 65 packets; the single deadline miss stays open pending recurrence
+(#520).
 
 ### Web WebSocket receive boundary
 
