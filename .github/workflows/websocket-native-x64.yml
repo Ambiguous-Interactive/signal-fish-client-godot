@@ -42,9 +42,10 @@ permissions:
     contents: read
 
 # Evidence runs are expensive; queue concurrent triggers instead of
-# cancelling one mid-build.
+# cancelling or dropping one.
 concurrency:
     group: ${{ github.workflow }}
+    queue: max
 
 jobs:
     qualify:

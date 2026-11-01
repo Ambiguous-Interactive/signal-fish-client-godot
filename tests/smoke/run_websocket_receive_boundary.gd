@@ -18,6 +18,7 @@ var _message_type := "text"
 var _received := 0
 var _first_gap: Dictionary = {}
 var _failures: Array[String] = []
+var _pending_waits: Array[Dictionary] = []
 var _last_poll_us := 0
 var _started := Time.get_ticks_msec()
 var _sent := 0
@@ -183,6 +184,16 @@ func _poll() -> void:
 		_received += 1
 
 
+func _record_pending_wait(expected: int, started_ms: int, deadline_ms: int) -> void:
+	_pending_waits.append(
+		{
+			"expected": expected,
+			"waited_ms": Time.get_ticks_msec() - started_ms,
+			"deadline_margin_ms": deadline_ms - Time.get_ticks_msec(),
+		}
+	)
+
+
 func _run() -> void:
 	if not _failures.is_empty():
 		_finish()
@@ -220,11 +231,13 @@ func _run() -> void:
 		# Hold the consumer while the complete finite burst reaches the socket.
 		await create_timer(BATCH_HOLD_MS / 1000.0).timeout
 		_poll()
-		var batch_deadline := Time.get_ticks_msec() + READ_TIMEOUT_MS
+		var batch_started := Time.get_ticks_msec()
+		var batch_deadline := batch_started + READ_TIMEOUT_MS
 		while _received < sent and Time.get_ticks_msec() < batch_deadline:
 			await process_frame
 			_poll()
 		if _received != sent:
+			_record_pending_wait(_received, batch_started, batch_deadline)
 			_failures.append("finite burst count")
 			break
 	# A later message exposes an interior gap even when the dropped tail was final.
@@ -233,10 +246,12 @@ func _run() -> void:
 	else:
 		_sent += 1
 	deadline = Time.get_ticks_msec() + READ_TIMEOUT_MS
+	var sentinel_started := Time.get_ticks_msec()
 	while Time.get_ticks_msec() < deadline and _received < PACKETS + 1:
 		await process_frame
 		_poll()
 	if _received != PACKETS + 1:
+		_record_pending_wait(_received, sentinel_started, deadline)
 		_failures.append("complete receive count")
 	_finish()
 
@@ -266,6 +281,7 @@ func _finish() -> void:
 					"credit_scope": "local consumer body bytes; no network acknowledgement",
 					"received": _received,
 					"first_gap": _first_gap,
+					"pending_wait": _pending_waits,
 					"failures": _failures
 				}
 			)

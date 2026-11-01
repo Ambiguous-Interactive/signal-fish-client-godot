@@ -625,7 +625,7 @@ def main() -> int:
                 and observed,
             )
             delivery = delivery_summary(text)
-            if delivery["packets"]:
+            if kind == "burst":
                 report["delivery"] = delivery
             reports.append(report)
             (args.output / f"{name}.json").write_text(json.dumps(report, indent=2) + "\n")
