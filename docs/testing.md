@@ -851,13 +851,13 @@ Ubuntu 24.04 Wine 9.0 cannot start Godot 4.7.x Windows binaries, official
 or self-built. The pinned 4.7.2-stable repair
 `ed1daf0bf001b61586d9930840f2f1394092c079` passes all 184 receive cases
 without read caps ([run
-41271614903](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41271614903)).
+41273388162](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41273388162)).
 All seven standalone commands pass. The matched unpatched baseline
 reproduces the four defect commands and passes the three comparison
 controls (#491, #492, #496, #498). Repaired binary SHA-256:
-`b0d4d9eff5291b7d105ca63a3cb9984b5539ae8e9e6bf186b1b6890e1b7d5a72`.
+`918124422ff1fa405042e8df31f91bfc49acb3ebe9a186a341a70f261634b3b0`.
 Unpatched binary SHA-256:
-`8bb79448ad6d06b171b2401f107c42dc1632cc7d236a58be9b3bf818766fc1a7`.
+`759cb4131ba251ee3e93593179a64f40e26d6acfc6d79661af1f9f02ad3e2874`.
 
 ### Web WebSocket receive boundary
 
