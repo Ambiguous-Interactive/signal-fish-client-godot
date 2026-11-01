@@ -789,7 +789,9 @@ The opt-in `WebSocket Native x64` workflow builds a pinned engine revision on
 an x86-64 GitHub runner and qualifies it there. Dispatch it with a pinned
 stable revision to build the repaired engine, run the full paced receive
 suite with a three-byte read cap, and run the seven standalone commands. Set
-the matching official release label for the fixture import. A
+the matching official release label for the fixture import. A `build_target`
+input selects `linuxbsd` (default) or `windows`; Windows builds
+cross-compile with mingw-w64, run under Wine, and use the uncapped suite. A
 matched unpatched baseline job runs the same seven commands. The four defect
 failures must keep one observed result record each. The three comparison
 controls must pass. Both jobs upload build logs, patch reports, engine
@@ -842,6 +844,20 @@ commands pass (#491, #492, #496, #498). Repaired binary SHA-256:
 unpatched baseline reproduces the four defect commands and passes the three
 controls. Unpatched binary SHA-256:
 `566db2f263e02fcd266a99535142f156133c151d761f9b905cbbae612eeda466`.
+
+The `windows` build target qualifies the repair on Windows x86-64 under
+Wine. The workflow installs current Wine from the WineHQ repository;
+Ubuntu 24.04 Wine 9.0 cannot start Godot 4.7.x Windows binaries, official
+or self-built. The pinned 4.7.2-stable repair
+`ed1daf0bf001b61586d9930840f2f1394092c079` passes all 184 receive cases
+without read caps ([run
+41273388162](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41273388162)).
+All seven standalone commands pass. The matched unpatched baseline
+reproduces the four defect commands and passes the three comparison
+controls (#491, #492, #496, #498). Repaired binary SHA-256:
+`918124422ff1fa405042e8df31f91bfc49acb3ebe9a186a341a70f261634b3b0`.
+Unpatched binary SHA-256:
+`759cb4131ba251ee3e93593179a64f40e26d6acfc6d79661af1f9f02ad3e2874`.
 
 ### Web WebSocket receive boundary
 
