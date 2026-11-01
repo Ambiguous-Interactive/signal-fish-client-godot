@@ -31,6 +31,7 @@ class RunRecord(TypedDict):
 
 class CleanReport(TypedDict):
     root: str
+    busy: bool
     total_bytes: int
     remaining_bytes: int
     reclaimed_bytes: int
@@ -255,6 +256,7 @@ def clean(
     now = time.time() if now is None else now
     result: CleanReport = {
         "root": str(root),
+        "busy": False,
         "total_bytes": 0,
         "remaining_bytes": 0,
         "reclaimed_bytes": 0,
@@ -270,7 +272,7 @@ def clean(
         return result
     with lock(root / ".sweep") as acquired:
         if not acquired:
-            result["errors"].append("Another storage sweep is active")
+            result["busy"] = True
             return result
         entries: list[tuple[float, Path, int, RunRecord]] = []
         for path in sorted(root.iterdir()):

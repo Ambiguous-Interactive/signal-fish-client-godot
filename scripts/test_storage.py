@@ -106,6 +106,13 @@ class ScratchPolicy(unittest.TestCase):
         report = storage.clean(self.root, apply=True, budget=0)
         self.assertFalse(report["over_budget"])
 
+    def test_concurrent_sweep_reports_busy_without_errors(self) -> None:
+        self.run_tree()
+        with storage.lock(self.root / ".sweep"):
+            report = storage.clean(self.root, apply=True, budget=0)
+        self.assertTrue(report["busy"])
+        self.assertEqual(report["errors"], [])
+
     def test_twenty_experiments_return_to_budget(self) -> None:
         for index in range(20):
             self.run_tree(clock=100 + index)
