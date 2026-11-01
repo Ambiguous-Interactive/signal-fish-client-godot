@@ -13,8 +13,16 @@ on:
                 required: true
                 type: string
                 default: 4.7.2-stable
+            build_target:
+                description: SCons platform for the engine build
+                required: true
+                type: choice
+                options:
+                    - linuxbsd
+                    - windows
+                default: linuxbsd
             recv_cap_bytes:
-                description: Per-read byte cap for paced receives (0 disables)
+                description: Per-read byte cap for paced receives (0 disables; Linux only)
                 required: true
                 type: number
                 default: 3
@@ -29,7 +37,7 @@ permissions:
 
 jobs:
     qualify:
-        name: ${{ matrix.variant }} ${{ inputs.engine_label }} on x86-64
+        name: ${{ matrix.variant }} ${{ inputs.engine_label }} ${{ inputs.build_target == 'windows' && 'on windows x86-64' || 'on x86-64' }}
         runs-on: ubuntu-24.04
         timeout-minutes: 75
         defaults:
@@ -42,10 +50,13 @@ jobs:
         env:
             GODOT_REVISION: ${{ inputs.engine_revision }}
             GODOT_LABEL: ${{ inputs.engine_label }}
+            BUILD_TARGET: ${{ inputs.build_target }}
             RECV_CAP: ${{ inputs.recv_cap_bytes }}
             SOURCE_DIR: godot-source
-            ENGINE_BIN: godot-source/bin/godot.linuxbsd.template_debug.x86_64
+            ENGINE_BIN: godot-source/bin/godot.${{ inputs.build_target }}.template_debug.x86_64${{ inputs.build_target == 'windows' && '.exe' || '' }}
             IMPORTER: ${{ github.workspace }}/official-godot/godot
+            WINEDEBUG: ${{ inputs.build_target == 'windows' && '-all' || '' }}
+            WINEDLLOVERRIDES: ${{ inputs.build_target == 'windows' && 'mscoree,mshtml=' || '' }}
         steps:
             - name: Check out repository
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
@@ -69,6 +80,21 @@ jobs:
                     /tmp/godot-cache --target "$IMPORTER"
                   "$IMPORTER" --headless --version
 
+            - name: Install the Windows build toolchain
+              if: inputs.build_target == 'windows'
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends mingw-w64 wine wine64
+                  for tool in x86_64-w64-mingw32-gcc x86_64-w64-mingw32-g++; do
+                    if "$tool" -v 2>&1 | grep -q "Thread model: win32"; then
+                      posix="$(update-alternatives --list "$tool" | grep posix)"
+                      sudo update-alternatives --set "$tool" "$posix"
+                    fi
+                  done
+                  x86_64-w64-mingw32-g++ -v 2>&1 | grep "Thread model"
+                  wine --version
+                  wineboot --init
+
             - name: Prepare evidence directory
               run: mkdir -p output
 
@@ -88,14 +114,20 @@ jobs:
 
             - name: Build the engine
               run: |
+                  platform_args=(platform="$BUILD_TARGET")
+                  if [ "$BUILD_TARGET" = linuxbsd ]; then
+                    platform_args+=(x11=no wayland=no alsa=no pulseaudio=no dbus=no speechd=no fontconfig=no udev=no)
+                  fi
+                  if [ "$BUILD_TARGET" = windows ]; then
+                    platform_args+=(d3d12=no)
+                  fi
                   (
                     cd "$SOURCE_DIR"
-                    scons -j"$(nproc)" platform=linuxbsd target=template_debug arch=x86_64 \
+                    scons -j"$(nproc)" "${platform_args[@]}" target=template_debug arch=x86_64 \
                       dev_build=no debug_symbols=no optimize=size \
                       modules_enabled_by_default=no module_gdscript_enabled=yes \
                       module_websocket_enabled=yes module_webrtc_enabled=yes \
-                      disable_3d=yes vulkan=no opengl3=yes x11=no wayland=no \
-                      alsa=no pulseaudio=no dbus=no speechd=no fontconfig=no udev=no \
+                      disable_3d=yes vulkan=no opengl3=yes \
                       disable_path_overrides=no
                   ) 2>&1 | tee "output/build-${{ matrix.variant }}.log"
                   sha256sum "$ENGINE_BIN" | tee "output/engine-sha256.txt"
@@ -104,24 +136,33 @@ jobs:
               if: matrix.variant == 'repaired'
               run: |
                   cap_args=()
-                  if [ "$RECV_CAP" != "0" ]; then
+                  runner_args=()
+                  if [ "$BUILD_TARGET" = linuxbsd ] && [ "$RECV_CAP" != "0" ]; then
                     cap_args=(--recv-cap-bytes="$RECV_CAP")
+                  fi
+                  if [ "$BUILD_TARGET" = windows ]; then
+                    runner_args=(--runner "$(command -v wine)")
                   fi
                   python3 scripts/check-websocket-native-receive.py \
                     --godot "$ENGINE_BIN" --importer "$IMPORTER" \
-                    "${cap_args[@]}" \
+                    "${cap_args[@]}" "${runner_args[@]}" \
                     --output "output/repaired-suite"
 
             - name: Run the standalone reproductions
               run: |
+                  runner_args=()
+                  if [ "$BUILD_TARGET" = windows ]; then
+                    runner_args=(--runner "$(command -v wine)")
+                  fi
                   python3 scripts/check-websocket-native-receive.py \
                     --godot "$ENGINE_BIN" --importer "$IMPORTER" \
-                    --run-repro --output "output/${{ matrix.variant }}-standalone"
+                    --run-repro "${runner_args[@]}" --output "output/${{ matrix.variant }}-standalone"
 
             - name: Check qualification expectations
               run: |
                   python3 - <<'PY'
                   import json
+                  import os
                   from pathlib import Path
 
                   variant = "${{ matrix.variant }}"
@@ -151,7 +192,7 @@ jobs:
                       elif command["returncode"] != 1 or record.get("passed") is not False:
                           wrong.append(name)
                   assert not wrong, f"unexpected results: {sorted(set(wrong))}"
-                  print(f"{variant}: all standalone expectations met on x86-64")
+                  print(f"{variant}: all standalone expectations met on {os.environ['BUILD_TARGET']} x86-64")
                   PY
 
             - name: Upload qualification evidence
