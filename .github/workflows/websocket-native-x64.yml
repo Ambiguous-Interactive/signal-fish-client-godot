@@ -37,7 +37,7 @@ permissions:
 
 jobs:
     qualify:
-        name: ${{ matrix.variant }} ${{ inputs.engine_label }} ${{ inputs.build_target == 'windows' && 'on windows x86-64' || 'on x86-64' }}
+        name: ${{ matrix.variant }} ${{ inputs.engine_label }} ${{ inputs.build_target == 'windows' && 'on windows x86-64 (Wine)' || 'on x86-64' }}
         runs-on: ubuntu-24.04
         timeout-minutes: 75
         defaults:
@@ -202,7 +202,8 @@ jobs:
                       elif command["returncode"] != 1 or record.get("passed") is not False:
                           wrong.append(name)
                   assert not wrong, f"unexpected results: {sorted(set(wrong))}"
-                  print(f"{variant}: all standalone expectations met on {os.environ['BUILD_TARGET']} x86-64")
+                  suffix = " under Wine" if os.environ["BUILD_TARGET"] == "windows" else ""
+                  print(f"{variant}: all standalone expectations met on {os.environ['BUILD_TARGET']} x86-64{suffix}")
                   PY
 
             - name: Upload qualification evidence
