@@ -71,11 +71,14 @@ jobs:
                   CONTAINER_ID: ${{ steps.open.outputs.container_id }}
               run: |
                   python3 .devcontainer/measure-storage.py "$CONTAINER_ID" > "$RUNNER_TEMP/storage-image.json"
-            - name: Measure container and host storage
+            - name: Measure container storage
               if: always() && steps.open.outputs.container_id != ''
               run: |
                   npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . \
                     python3 scripts/storage.py --json report /tmp /home/vscode /vscode > "$RUNNER_TEMP/storage-container.json"
+            - name: Measure host storage
+              if: always()
+              run: |
                   pwsh -NoProfile -File .devcontainer/storage-host.ps1 -AsJson > "$RUNNER_TEMP/storage-host.json"
             - name: Upload storage measurements
               if: always()
