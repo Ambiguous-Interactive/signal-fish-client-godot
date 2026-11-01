@@ -2,9 +2,11 @@
 
 import json
 import os
+import queue
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -94,7 +96,11 @@ class ScratchPolicy(unittest.TestCase):
         code = "import os, storage; c=storage.managed_output(None,root=storage.Path(os.environ['TEST_ROOT'])); p=c.__enter__(); os._exit(9)"
         env = {**os.environ, "TEST_ROOT": str(self.root)}
         result = subprocess.run(  # noqa: S603
-            [sys.executable, "-c", code], cwd=Path(storage.__file__).parent, env=env, check=False
+            [sys.executable, "-c", code],
+            cwd=Path(storage.__file__).parent,
+            env=env,
+            check=False,
+            timeout=10,
         )
         self.assertEqual(result.returncode, 9)
         report = storage.clean(self.root, apply=True, budget=0)
@@ -171,6 +177,37 @@ class ScratchPolicy(unittest.TestCase):
         self.assertTrue(report["errors"])
         self.assertTrue((path / "project").is_dir())
 
+    def test_unhashable_metadata_state_does_not_abort_sweep(self) -> None:
+        path = self.run_tree()
+        data = json.loads((path / ".run.json").read_text())
+        data["state"] = []
+        (path / ".run.json").write_text(json.dumps(data))
+        report = storage.clean(self.root, apply=True, budget=0)
+        self.assertTrue(report["errors"])
+        self.assertTrue((path / "project").is_dir())
+        with storage.managed_output(None, root=self.root) as another:
+            self.assertTrue(another.is_dir())
+
+    def test_interrupted_removal_keeps_registration_for_retry(self) -> None:
+        path = self.run_tree()
+        storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        original_unlink = os.unlink
+
+        def interrupt(
+            name: str | bytes | os.PathLike[str] | os.PathLike[bytes], *, dir_fd: int | None = None
+        ) -> None:
+            if Path(os.fsdecode(name)).name == "summary.json":
+                raise OSError("interrupted payload removal")
+            original_unlink(name, dir_fd=dir_fd)
+
+        with patch("os.unlink", side_effect=interrupt):
+            report = storage.clean(self.root, apply=True, now=100 + 16 * 86400)
+        self.assertTrue(report["errors"])
+        self.assertTrue((path / ".run.json").is_file())
+        report = storage.clean(self.root, apply=True, now=100 + 16 * 86400)
+        self.assertFalse(report["errors"])
+        self.assertFalse(path.exists())
+
     def test_other_process_active_lock_is_protected(self) -> None:
         code = "import storage,time,os; c=storage.managed_output(None,root=storage.Path(os.environ['TEST_ROOT'])); p=c.__enter__(); print(p,flush=True); time.sleep(60)"
         env = {**os.environ, "TEST_ROOT": str(self.root)}
@@ -184,13 +221,26 @@ class ScratchPolicy(unittest.TestCase):
         try:
             if child.stdout is None:
                 self.fail("Child output unavailable")
-            path = Path(child.stdout.readline().strip())
+            output = child.stdout
+            lines: queue.Queue[str] = queue.Queue()
+            reader = threading.Thread(target=lambda: lines.put(output.readline()), daemon=True)
+            reader.start()
+            try:
+                line = lines.get(timeout=10)
+            except queue.Empty:
+                self.fail("Child did not report its run path before the deadline")
+            self.assertTrue(line.strip(), "Child exited before reporting its run path")
+            path = Path(line.strip())
             result = storage.clean(self.root, apply=True, budget=0)
             self.assertIn(str(path), result["protected"])
             self.assertTrue(path.is_dir())
         finally:
             child.terminate()
-            child.wait(timeout=5)
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=5)
             if child.stdout:
                 child.stdout.close()
         result = storage.clean(self.root, apply=True, budget=0)

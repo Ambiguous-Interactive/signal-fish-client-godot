@@ -57,11 +57,15 @@ else: print("{}")
 
     def test_image_budget_accepts_and_rejects(self) -> None:
         command = [sys.executable, str(SCRIPT.parent / "measure-storage.py"), "a" * 64]
-        result = subprocess.run(command, env=self.env, capture_output=True, text=True, check=False)  # noqa: S603
+        result = subprocess.run(  # noqa: S603
+            command, env=self.env, capture_output=True, text=True, check=False, timeout=30
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["uncompressed_bytes"], 12345)
         env = {**self.env, "DOCKER_TEST_SIZE": str(9 * 1024**3)}
-        result = subprocess.run(command, env=env, capture_output=True, text=True, check=False)  # noqa: S603
+        result = subprocess.run(  # noqa: S603
+            command, env=env, capture_output=True, text=True, check=False, timeout=30
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(json.loads(result.stdout)["within_budget"])
 
@@ -96,6 +100,27 @@ else: print("{}")
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any("exec" in call for call in self.calls()))
+
+    def test_shared_cache_previews_then_applies(self) -> None:
+        self.env["DOCKER_TEST_RUNNING"] = "a" * 64
+        result = self.invoke(
+            "-Action", "CleanExtensions", "-ContainerId", "a" * 64, "-SessionsClosed"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = [call for call in self.calls() if call[:1] == ["exec"]]
+        self.assertEqual(len(commands), 2)
+        self.assertNotIn("--apply", commands[0])
+        self.assertEqual(commands[1][-2:], ["--apply", "--sessions-closed"])
+
+    def test_shared_cache_whatif_never_applies(self) -> None:
+        self.env["DOCKER_TEST_RUNNING"] = "a" * 64
+        result = self.invoke(
+            "-Action", "CleanExtensions", "-ContainerId", "a" * 64, "-SessionsClosed", "-WhatIf"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = [call for call in self.calls() if call[:1] == ["exec"]]
+        self.assertEqual(len(commands), 1)
+        self.assertNotIn("--apply", commands[0])
 
     def test_removal_never_forces_or_removes_volumes(self) -> None:
         result = self.invoke("-Action", "RemoveContainer", "-ResourceId", "a" * 64)

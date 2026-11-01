@@ -158,7 +158,8 @@ def record(path: Path) -> RunRecord:
     updated = data.get("updated")
     if not isinstance(updated, (float, int)) or not math.isfinite(updated):
         raise ValueError("Run timestamp missing or invalid")
-    if data.get("state") not in {"active", "completed", "failed", "compacted"}:
+    state = data.get("state")
+    if not isinstance(state, str) or state not in {"active", "completed", "failed", "compacted"}:
         raise ValueError("Run state missing or invalid")
     return cast(RunRecord, data)
 
@@ -223,6 +224,17 @@ def compact(path: Path) -> None:
             child.unlink()
 
 
+def remove_run(path: Path) -> None:
+    for child in path.iterdir():
+        if child.name == ".run.json":
+            continue
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    shutil.rmtree(path)
+
+
 def clean(
     root: Path = DEFAULT_ROOT,
     *,
@@ -280,7 +292,7 @@ def clean(
                     result["candidates"].append(str(path))
                     if apply:
                         if data.get("state") == "compacted":
-                            shutil.rmtree(path)
+                            remove_run(path)
                             new_size = 0
                         else:
                             compact(path)
@@ -306,7 +318,7 @@ def clean(
                             and record(path).get("state") == "compacted"
                         ):
                             size = allocated(path)
-                            shutil.rmtree(path)
+                            remove_run(path)
                             total -= size
                             if total <= budget:
                                 break
