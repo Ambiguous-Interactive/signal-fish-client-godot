@@ -120,6 +120,11 @@ if ($Action -ne 'Report') {
                 if ($containerMatches.Count -ne 1) { throw 'Container ID must match exactly one container.' }
                 $ResourceId = $containerMatches[0]
             }
+            else {
+                $digest = $ResourceId -replace '^sha256:', ''
+                if ($digest -notmatch '^[a-f0-9]{64}$') { throw 'Image removal requires a full sha256 image ID.' }
+                $ResourceId = "sha256:$digest"
+            }
             if ($PSCmdlet.ShouldProcess($ResourceId, "Remove selected $verb without force")) {
                 $report.maintenance = Read-Native docker @($verb, 'rm', $ResourceId)
             }

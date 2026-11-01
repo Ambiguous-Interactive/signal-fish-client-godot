@@ -183,6 +183,53 @@ def write_record(path: Path, data: RunRecord) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _bound_evidence(root: Path) -> None:
+    if not root.is_dir():
+        raise ValueError("Evidence must be a directory")
+    remaining = 1024 * 1024
+    for base, directories, files in os.walk(root, followlinks=False):
+        directories[:] = sorted(
+            name for name in directories if not (Path(base) / name).is_symlink()
+        )
+        processed: set[str] = set()
+        for name in sorted(files):
+            if name in processed:
+                continue
+            source = Path(base) / name
+            if source.is_symlink() or not source.is_file():
+                source.unlink()
+                continue
+            json_file = name in {"summary.json", "assessment.json", "seats.json"}
+            cap = (
+                65536
+                if json_file or name.endswith(".json.tail.txt")
+                else 16384
+                if name.endswith(".log")
+                else 0
+            )
+            limit = min(remaining, cap)
+            if limit <= 0:
+                source.unlink()
+                continue
+            size = source.stat().st_size
+            if size > limit:
+                with source.open("rb") as stream:
+                    stream.seek(size - limit)
+                    content = stream.read(limit)
+                target = source.with_suffix(".json.tail.txt") if json_file else source
+                with tempfile.NamedTemporaryFile(dir=base, delete=False) as output:
+                    temporary = Path(output.name)
+                    output.write(content)
+                try:
+                    os.replace(temporary, target)
+                    if target != source:
+                        source.unlink()
+                    processed.add(target.name)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            remaining -= min(size, limit)
+
+
 def compact(path: Path) -> None:
     evidence = path / "evidence"
     if evidence.is_symlink():
@@ -224,6 +271,8 @@ def compact(path: Path) -> None:
                     target.write_bytes(content)
                     remaining -= len(content)
             os.replace(staging, evidence)
+    else:
+        _bound_evidence(evidence)
     for child in path.iterdir():
         if child.name in {".run.json", ".active", ".keep", "evidence"}:
             continue

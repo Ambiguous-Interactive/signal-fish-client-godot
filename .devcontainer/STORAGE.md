@@ -89,8 +89,9 @@ newest two versions per architecture plus all versions referenced by any
 container. This helper cannot prove references in stopped containers, so it
 does not delete server versions. Remove an obsolete project container or
 image only by its reviewed ID with `-Action RemoveContainer` or
-`-Action RemoveImage -ResourceId ID`. Removal never uses force or deletes
-volumes. History, credentials, and agent sessions remain outside cleanup.
+`-Action RemoveImage -ResourceId ID`. Image removal requires a full digest
+from `docker image ls --no-trunc`; short image IDs are rejected.
+Removal never uses force or deletes volumes. History, credentials, and agent sessions remain outside cleanup.
 
 CI records image, container, and host measurements for both architectures.
 The initial final-image guard is 8 GiB uncompressed. It excludes writable

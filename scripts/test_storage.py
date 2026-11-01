@@ -191,6 +191,47 @@ class ScratchPolicy(unittest.TestCase):
         }
         self.assertEqual(before, after)
 
+    def test_existing_evidence_obeys_aggregate_limit(self) -> None:
+        path = self.run_tree()
+        evidence = path / "evidence"
+        for index in range(40):
+            folder = evidence / f"case-{index:02}"
+            folder.mkdir(parents=True)
+            (folder / "summary.json").write_bytes(b"x" * 70000)
+            (folder / "driver.log").write_bytes(b"y" * 30000)
+        storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertFalse((path / "project").exists())
+        retained = [p for p in evidence.rglob("*") if p.is_file()]
+        self.assertLessEqual(sum(p.stat().st_size for p in retained), 1024 * 1024)
+        self.assertTrue(retained)
+        self.assertTrue(
+            all(p.stat().st_size <= (16384 if p.name.endswith(".log") else 65536) for p in retained)
+        )
+
+    def test_existing_evidence_recovers_after_interrupted_truncation(self) -> None:
+        path = self.run_tree()
+        evidence = path / "evidence"
+        evidence.mkdir()
+        (evidence / "summary.json").write_bytes(b"x" * 70000)
+        original_unlink = os.unlink
+
+        def interrupt(
+            name: str | bytes | os.PathLike[str] | os.PathLike[bytes], *, dir_fd: int | None = None
+        ) -> None:
+            if Path(os.fsdecode(name)).name == "summary.json":
+                raise OSError("interrupted evidence update")
+            original_unlink(name, dir_fd=dir_fd)
+
+        with patch("os.unlink", side_effect=interrupt):
+            result = storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertTrue(result["errors"])
+        self.assertTrue((path / "project").is_dir())
+        result = storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertFalse(result["errors"])
+        self.assertFalse((path / "project").exists())
+        self.assertEqual((evidence / "summary.json.tail.txt").stat().st_size, 65536)
+        self.assertFalse((evidence / "summary.json").exists())
+
     def test_interrupted_compaction_is_retryable(self) -> None:
         path = self.run_tree()
         with patch("shutil.rmtree", side_effect=OSError("interrupted")):

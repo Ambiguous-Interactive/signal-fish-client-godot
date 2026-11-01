@@ -144,6 +144,15 @@ else: print("{}")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(any(call[:2] == ["container", "rm"] for call in self.calls()))
 
+    def test_image_removal_requires_full_digest_and_normalizes_it(self) -> None:
+        result = self.invoke("-Action", "RemoveImage", "-ResourceId", "a" * 12)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[:2] == ["image", "rm"] for call in self.calls()))
+        result = self.invoke("-Action", "RemoveImage", "-ResourceId", "a" * 64)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(["image", "rm", "sha256:" + "a" * 64], self.calls())
+        self.assertNotIn(["image", "rm", "a" * 64], self.calls())
+
     def test_image_removal_rejects_short_digest(self) -> None:
         short = "sha256:" + "a" * 12
         result = self.invoke("-Action", "RemoveImage", "-ResourceId", short)
