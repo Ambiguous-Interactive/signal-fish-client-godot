@@ -17,6 +17,7 @@ var _fragment_control := "none"
 var _message_type := "text"
 var _received := 0
 var _first_gap: Dictionary = {}
+var _first_gap_expected := -1
 var _failures: Array[String] = []
 var _pending_waits: Array[Dictionary] = []
 var _last_poll_us := 0
@@ -159,10 +160,12 @@ func _poll() -> void:
 	print("WEBSOCKET_RECEIVE_POLL " + JSON.stringify(observation))
 	while _peer.get_available_packet_count() > 0:
 		var bytes := _peer.get_packet()
+		var delivered_us := Time.get_ticks_usec()
 		var sequence := bytes.slice(0, 8).get_string_from_ascii().to_int()
 		var exact := bytes == _body(_received)
 		var exact_mode := _peer.was_string_packet() == _is_text(_received)
 		if not exact and _first_gap.is_empty():
+			_first_gap_expected = _received
 			_first_gap = {"expected": _received, "received": sequence, "poll": observation}
 		if _peer.get_packet_error() != OK or not exact_mode or not exact:
 			if _failures.is_empty():
@@ -176,7 +179,7 @@ func _poll() -> void:
 						"bytes": bytes.size(),
 						"exact": exact,
 						"exact_mode": exact_mode,
-						"delivered_us": Time.get_ticks_usec()
+						"delivered_us": delivered_us
 					}
 				)
 			)
@@ -184,7 +187,8 @@ func _poll() -> void:
 		_received += 1
 
 
-func _record_pending_wait(expected: int, started_ms: int, deadline_ms: int) -> void:
+func _record_pending_wait(fallback: int, started_ms: int, deadline_ms: int) -> void:
+	var expected := _first_gap_expected if _first_gap_expected >= 0 else fallback
 	var wait: Dictionary = {
 		"expected": expected,
 		"waited_ms": Time.get_ticks_msec() - started_ms,
