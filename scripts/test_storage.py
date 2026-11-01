@@ -232,6 +232,23 @@ class ScratchPolicy(unittest.TestCase):
         self.assertEqual((evidence / "summary.json.tail.txt").stat().st_size, 65536)
         self.assertFalse((evidence / "summary.json").exists())
 
+    def test_existing_evidence_directory_links_are_unlinked(self) -> None:
+        path = self.run_tree()
+        evidence = path / "evidence"
+        evidence.mkdir()
+        external = Path(self.folder.name) / "external-evidence"
+        external.mkdir()
+        (external / "precious").write_text("keep")
+        outside = evidence / "outside"
+        internal = evidence / "project-link"
+        outside.symlink_to(external, target_is_directory=True)
+        internal.symlink_to(path / "project", target_is_directory=True)
+        result = storage.clean(self.root, apply=True, now=100 + 8 * 86400)
+        self.assertFalse(result["errors"])
+        self.assertFalse(outside.is_symlink())
+        self.assertFalse(internal.is_symlink())
+        self.assertEqual((external / "precious").read_text(), "keep")
+
     def test_interrupted_compaction_is_retryable(self) -> None:
         path = self.run_tree()
         with patch("shutil.rmtree", side_effect=OSError("interrupted")):

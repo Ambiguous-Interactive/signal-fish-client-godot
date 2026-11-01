@@ -121,7 +121,7 @@ if ($Action -ne 'Report') {
                 $ResourceId = $containerMatches[0]
             }
             else {
-                $digest = $ResourceId -replace '^sha256:', ''
+                $digest = ($ResourceId -replace '^sha256:', '').ToLowerInvariant()
                 if ($digest -notmatch '^[a-f0-9]{64}$') { throw 'Image removal requires a full sha256 image ID.' }
                 $ResourceId = "sha256:$digest"
             }

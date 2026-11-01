@@ -188,9 +188,12 @@ def _bound_evidence(root: Path) -> None:
         raise ValueError("Evidence must be a directory")
     remaining = 1024 * 1024
     for base, directories, files in os.walk(root, followlinks=False):
-        directories[:] = sorted(
-            name for name in directories if not (Path(base) / name).is_symlink()
-        )
+        for name in directories[:]:
+            child = Path(base) / name
+            if child.is_symlink():
+                child.unlink()
+                directories.remove(name)
+        directories.sort()
         processed: set[str] = set()
         for name in sorted(files):
             if name in processed:

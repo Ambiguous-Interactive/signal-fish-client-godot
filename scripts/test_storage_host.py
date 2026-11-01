@@ -153,6 +153,15 @@ else: print("{}")
         self.assertIn(["image", "rm", "sha256:" + "a" * 64], self.calls())
         self.assertNotIn(["image", "rm", "a" * 64], self.calls())
 
+    def test_image_removal_lowercases_digest(self) -> None:
+        for resource in ("A" * 64, "SHA256:" + "A" * 64):
+            with self.subTest(resource=resource):
+                self.log.unlink(missing_ok=True)
+                result = self.invoke("-Action", "RemoveImage", "-ResourceId", resource)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(["image", "rm", "sha256:" + "a" * 64], self.calls())
+                self.assertNotIn(["image", "rm", "sha256:" + "A" * 64], self.calls())
+
     def test_image_removal_rejects_short_digest(self) -> None:
         short = "sha256:" + "a" * 12
         result = self.invoke("-Action", "RemoveImage", "-ResourceId", short)
