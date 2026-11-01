@@ -141,28 +141,13 @@ jobs:
             - name: Probe the engine under Wine
               if: inputs.build_target == 'windows'
               run: |
-                  if wine "$ENGINE_BIN" --version > "output/engine-version.log" 2>&1; then
-                    echo "engine --version exited 0"
-                  else
-                    echo "engine --version failed"
+                  if ! timeout 60 wine "$ENGINE_BIN" --version > "output/engine-version.log" 2>&1; then
+                    echo "engine --version did not exit cleanly:"
+                    tail -n 5 "output/engine-version.log"
+                    exit 1
                   fi
-                  curl -sL -o /tmp/official-win64.zip \
-                    "https://github.com/godotengine/godot/releases/download/${GODOT_LABEL}/Godot_v${GODOT_LABEL}_win64.exe.zip"
-                  unzip -o -q /tmp/official-win64.zip -d /tmp/official-win64 || true
-                  official_exe="$(find /tmp/official-win64 -name '*.exe' | head -n 1)"
-                  echo "official exe: $official_exe"
-                  if [ -n "$official_exe" ]; then
-                    if wine "$official_exe" --version > "output/official-version.log" 2>&1; then
-                      echo "official --version exited 0"
-                    else
-                      echo "official --version failed"
-                    fi
-                    grep -v "wine32\|multiarch" "output/official-version.log" | tail -c 2000
-                  fi
-                  printf 'info share\nbt\nquit\n' | timeout 90 winedbg "$ENGINE_BIN" --version > "output/winedbg.log" 2>&1 || true
-                  grep -v "elf_search_auxv\|wine32\|multiarch" "output/winedbg.log" | tail -c 6000
-                  WINEDEBUG=+loaddll wine "$ENGINE_BIN" --version > "output/loaddll.log" 2>&1 || true
-                  grep "Loaded L" "output/loaddll.log" | tail -40
+                  echo "engine --version: $(tail -n 1 "output/engine-version.log")"
+                  wineserver -k 2>/dev/null || true
 
             - name: Upload the built engine
               if: inputs.build_target == 'windows'
