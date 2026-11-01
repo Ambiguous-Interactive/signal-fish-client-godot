@@ -189,7 +189,7 @@ class ScratchPolicy(unittest.TestCase):
             self.assertTrue(another.is_dir())
 
     def test_invalid_metadata_timestamps_do_not_abort_runs(self) -> None:
-        for value in (
+        values: tuple[object, ...] = (
             10**400,
             float("nan"),
             float("inf"),
@@ -199,7 +199,8 @@ class ScratchPolicy(unittest.TestCase):
             {},
             None,
             "bad",
-        ):
+        )
+        for value in values:
             with self.subTest(value=value):
                 path = self.run_tree()
                 data = json.loads((path / ".run.json").read_text())
