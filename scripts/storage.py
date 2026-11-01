@@ -275,6 +275,7 @@ def clean(
             result["busy"] = True
             return result
         entries: list[tuple[float, Path, int, RunRecord]] = []
+        retained_bytes = 0
         for path in sorted(root.iterdir()):
             if path.is_symlink() or not path.is_dir() or path.is_mount():
                 continue
@@ -284,7 +285,17 @@ def clean(
                 entries.append((data["updated"], path, size, data))
             except (OSError, ValueError) as exc:
                 result["errors"].append(f"Skipped {path}: {exc}")
-        total = sum(entry[2] for entry in entries)
+                allocation_errors: list[str] = []
+                try:
+                    retained = allocated(path, errors=allocation_errors)
+                except (OSError, ValueError) as allocation_error:
+                    retained = 0
+                    allocation_errors.append(str(allocation_error))
+                result["errors"].extend(allocation_errors)
+                result["protected"].append(str(path))
+                result["protected_bytes"] += retained
+                retained_bytes += retained
+        total = retained_bytes + sum(entry[2] for entry in entries)
         result["total_bytes"] = total
         for _updated, path, size, data in sorted(entries):
             try:

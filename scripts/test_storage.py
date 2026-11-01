@@ -184,6 +184,35 @@ class ScratchPolicy(unittest.TestCase):
         self.assertTrue(report["errors"])
         self.assertTrue((path / "project").is_dir())
 
+    def test_corrupted_record_counts_as_protected_usage(self) -> None:
+        path = self.run_tree()
+        (path / ".run.json").write_text("corrupt")
+        before = storage.allocated(path)
+        report = storage.clean(self.root, apply=True, budget=0)
+        self.assertEqual(report["total_bytes"], before)
+        self.assertEqual(report["remaining_bytes"], before)
+        self.assertEqual(report["protected_bytes"], before)
+        self.assertIn(str(path), report["protected"])
+        self.assertTrue(report["over_budget"])
+        self.assertEqual(report["candidates"], [])
+        self.assertTrue((path / "project").is_dir())
+
+    @unittest.skipIf(os.geteuid() == 0, "Root can read permission-restricted metadata")
+    def test_unreadable_record_counts_as_protected_usage(self) -> None:
+        path = self.run_tree()
+        marker = path / ".run.json"
+        before = storage.allocated(path)
+        marker.chmod(0)
+        try:
+            report = storage.clean(self.root, apply=True, budget=0)
+        finally:
+            marker.chmod(0o600)
+        self.assertTrue(report["errors"])
+        self.assertEqual(report["total_bytes"], before)
+        self.assertEqual(report["protected_bytes"], before)
+        self.assertTrue(report["over_budget"])
+        self.assertEqual(report["candidates"], [])
+
     def test_unhashable_metadata_state_does_not_abort_sweep(self) -> None:
         path = self.run_tree()
         data = json.loads((path / ".run.json").read_text())
