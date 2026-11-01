@@ -230,6 +230,110 @@ class ReceiveCapTests(unittest.TestCase):
             self.assertEqual(summary["cases"][0]["recv_cap"].get("reads", 0), 0)
 
 
+class DeliverySummaryTests(unittest.TestCase):
+    def test_burst_cases_report_delivery_and_pending_waits(self) -> None:
+        gap: dict[str, object] = {
+            "packets": 3,
+            "polls": 3,
+            "largest_delivery_gap": {"after": 1, "us": 1140000},
+            "largest_poll_interval_us": 900,
+        }
+        variants: dict[str, dict[str, object]] = {
+            "passing": {
+                "passed": True,
+                "packets": "((1000, 0), (2000, 1), (1142000, 39))",
+                "pending_wait": [],
+                "exit": 0,
+                "delivery": gap,
+            },
+            "gapped": {
+                "passed": False,
+                "packets": "((1000, 0), (2000, 1), (1142000, 39))",
+                "pending_wait": [{"expected": 39, "waited_ms": 1000, "deadline_margin_ms": 0}],
+                "exit": 1,
+                "delivery": gap,
+            },
+            "stalled": {
+                "passed": False,
+                "packets": "()",
+                "pending_wait": [{"expected": 0, "waited_ms": 1000, "deadline_margin_ms": 0}],
+                "exit": 1,
+                "delivery": {
+                    "packets": 0,
+                    "polls": 3,
+                    "largest_delivery_gap": None,
+                    "largest_poll_interval_us": 900,
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, variant in variants.items():
+                output = root / f"results-{name}"
+                target = root / f"target-{name}.py"
+                target.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json, sys\n"
+                    "assert '--headless' in sys.argv\n"
+                    "for start_us in (1000, 2000, 3000):\n"
+                    " print('WEBSOCKET_RECEIVE_POLL ' + json.dumps("
+                    "{'start_us': start_us, 'interval_us': 900, 'duration_us': 5,"
+                    " 'queued_before': 0, 'queued_after': 0}))\n"
+                    "for start_us, sequence in " + str(variant["packets"]) + ":\n"
+                    " print('WEBSOCKET_RECEIVE_PACKET ' + json.dumps("
+                    "{'sequence': sequence, 'bytes': 4095, 'exact': True,"
+                    " 'exact_mode': True, 'delivered_us': start_us}))\n"
+                    "print('WEBSOCKET_RECEIVE_RESULT ' + json.dumps("
+                    "{'passed': " + str(variant["passed"]) + ", 'wire': {'writes': 2,"
+                    " 'error': 0}, 'pending_wait': " + repr(variant["pending_wait"]) + "}))\n"
+                )
+                target.chmod(0o755)
+                command = [
+                    str(SCRIPT),
+                    "--godot",
+                    str(target),
+                    "--importer",
+                    str(target),
+                    "--output",
+                    str(output),
+                    "--case",
+                    "chunk-burst-alternating-none",
+                ]
+                with patch.object(sys, "argv", command), redirect_stdout(io.StringIO()):
+                    self.assertEqual(drill.main(), variant["exit"], name)
+                case = json.loads((output / "chunk-burst-alternating-none.json").read_text())
+                self.assertEqual(case["passed"], variant["passed"], name)
+                self.assertEqual(case["delivery"], variant["delivery"], name)
+                self.assertEqual(case["result"]["pending_wait"], variant["pending_wait"], name)
+
+    def test_cases_without_delivery_records_carry_no_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.write_text(
+                "#!/bin/sh\n"
+                'echo \'CLOSE_REASON_RESULT {"passed":true,'
+                '"wire":{"writes":1,"error":0}}\'\n'
+            )
+            target.chmod(0o755)
+            output = root / "results"
+            command = [
+                str(SCRIPT),
+                "--godot",
+                str(target),
+                "--importer",
+                str(target),
+                "--output",
+                str(output),
+                "--case",
+                "close-1-empty-server",
+            ]
+            with patch.object(sys, "argv", command), redirect_stdout(io.StringIO()):
+                self.assertEqual(drill.main(), 0)
+            case = json.loads((output / "close-1-empty-server.json").read_text())
+            self.assertNotIn("delivery", case)
+
+
 class ActiveShutdownEmulatorTests(unittest.TestCase):
     def test_emulator_keeps_native_importer_and_target_identities_separate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

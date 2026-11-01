@@ -900,6 +900,18 @@ offered messages arrived with exact bytes and mode. The repeat run delivered
 all 65 packets; the single deadline miss stays open pending recurrence
 (#520).
 
+A weekly scheduled run (Mondays 08:00 UTC) keeps that watch active: it builds
+the repaired 4.4.1-stable engine for Windows x86-64 and runs the paced suite
+plus the seven standalone commands without the baseline job. Dispatch runs
+keep every input and both variants. Each burst case report carries a
+`delivery` summary with the packet count, poll count, largest inter-delivery
+gap and largest poll interval, parsed from the fixture log. When a batch
+deadline expires, the burst result records a `pending_wait` entry with the
+first missing sequence (or the delivery count when no gap was observed), the
+elapsed wait and the deadline margin. A recurrence
+names the stalled packet without log analysis; compare both records with the
+one-second batch deadline before changing any deadline.
+
 ### Web WebSocket receive boundary
 
 Issue #488 has a separate engine-only browser control. It needs Godot Web

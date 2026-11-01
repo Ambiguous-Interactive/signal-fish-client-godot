@@ -17,7 +17,9 @@ var _fragment_control := "none"
 var _message_type := "text"
 var _received := 0
 var _first_gap: Dictionary = {}
+var _first_gap_expected := -1
 var _failures: Array[String] = []
+var _pending_waits: Array[Dictionary] = []
 var _last_poll_us := 0
 var _started := Time.get_ticks_msec()
 var _sent := 0
@@ -156,14 +158,25 @@ func _poll() -> void:
 	}
 	_last_poll_us = started
 	print("WEBSOCKET_RECEIVE_POLL " + JSON.stringify(observation))
+	var queued: Array[PackedByteArray] = []
+	var arrivals := PackedInt64Array()
+	var modes: Array[bool] = []
+	var errors: Array[int] = []
 	while _peer.get_available_packet_count() > 0:
-		var bytes := _peer.get_packet()
+		queued.append(_peer.get_packet())
+		arrivals.append(Time.get_ticks_usec())
+		modes.append(_peer.was_string_packet())
+		errors.append(_peer.get_packet_error())
+	for index: int in queued.size():
+		var bytes := queued[index]
+		var delivered_us := arrivals[index]
 		var sequence := bytes.slice(0, 8).get_string_from_ascii().to_int()
 		var exact := bytes == _body(_received)
-		var exact_mode := _peer.was_string_packet() == _is_text(_received)
+		var exact_mode := modes[index] == _is_text(_received)
 		if not exact and _first_gap.is_empty():
+			_first_gap_expected = _received
 			_first_gap = {"expected": _received, "received": sequence, "poll": observation}
-		if _peer.get_packet_error() != OK or not exact_mode or not exact:
+		if errors[index] != OK or not exact_mode or not exact:
 			if _failures.is_empty():
 				_failures.append("exact receive prefix")
 		print(
@@ -174,12 +187,23 @@ func _poll() -> void:
 						"sequence": sequence,
 						"bytes": bytes.size(),
 						"exact": exact,
-						"exact_mode": exact_mode
+						"exact_mode": exact_mode,
+						"delivered_us": delivered_us
 					}
 				)
 			)
 		)
 		_received += 1
+
+
+func _record_pending_wait(fallback: int, started_ms: int, deadline_ms: int) -> void:
+	var expected := _first_gap_expected if _first_gap_expected >= 0 else fallback
+	var wait: Dictionary = {
+		"expected": expected,
+		"waited_ms": Time.get_ticks_msec() - started_ms,
+		"deadline_margin_ms": deadline_ms - Time.get_ticks_msec(),
+	}
+	_pending_waits.append(wait)
 
 
 func _run() -> void:
@@ -219,11 +243,13 @@ func _run() -> void:
 		# Hold the consumer while the complete finite burst reaches the socket.
 		await create_timer(BATCH_HOLD_MS / 1000.0).timeout
 		_poll()
-		var batch_deadline := Time.get_ticks_msec() + READ_TIMEOUT_MS
+		var batch_started := Time.get_ticks_msec()
+		var batch_deadline := batch_started + READ_TIMEOUT_MS
 		while _received < sent and Time.get_ticks_msec() < batch_deadline:
 			await process_frame
 			_poll()
 		if _received != sent:
+			_record_pending_wait(_received, batch_started, batch_deadline)
 			_failures.append("finite burst count")
 			break
 	# A later message exposes an interior gap even when the dropped tail was final.
@@ -232,10 +258,12 @@ func _run() -> void:
 	else:
 		_sent += 1
 	deadline = Time.get_ticks_msec() + READ_TIMEOUT_MS
+	var sentinel_started := Time.get_ticks_msec()
 	while Time.get_ticks_msec() < deadline and _received < PACKETS + 1:
 		await process_frame
 		_poll()
 	if _received != PACKETS + 1:
+		_record_pending_wait(_received, sentinel_started, deadline)
 		_failures.append("complete receive count")
 	_finish()
 
@@ -265,6 +293,7 @@ func _finish() -> void:
 					"credit_scope": "local consumer body bytes; no network acknowledgement",
 					"received": _received,
 					"first_gap": _first_gap,
+					"pending_wait": _pending_waits,
 					"failures": _failures
 				}
 			)

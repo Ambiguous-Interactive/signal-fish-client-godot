@@ -1,6 +1,12 @@
 name: WebSocket Native x64
 
 on:
+    schedule:
+        # Mondays 08:00 UTC: weekly #520 watch (pinned 4.4.1-stable, Windows
+        # x86-64, repaired only; see the fallbacks in the job below and
+        # docs/testing.md). Note: GitHub disables schedule triggers after
+        # ~60 days without repo activity; dispatch runs keep it recoverable.
+        - cron: "0 8 * * 1"
     workflow_dispatch:
         inputs:
             engine_revision:
@@ -35,9 +41,15 @@ on:
 permissions:
     contents: read
 
+# Evidence runs are expensive; queue concurrent triggers instead of
+# cancelling or dropping one.
+concurrency:
+    group: ${{ github.workflow }}
+    queue: max
+
 jobs:
     qualify:
-        name: ${{ matrix.variant }} ${{ inputs.engine_label }} ${{ inputs.build_target == 'windows' && 'on windows x86-64 (Wine)' || 'on x86-64' }}
+        name: ${{ matrix.variant }} ${{ inputs.engine_label || '4.4.1-stable' }} ${{ (inputs.build_target || 'windows') == 'windows' && 'on windows x86-64 (Wine)' || 'on x86-64' }}
         runs-on: ubuntu-24.04
         timeout-minutes: 75
         defaults:
@@ -48,12 +60,12 @@ jobs:
             matrix:
                 variant: ${{ fromJSON(inputs.run_baseline && '["repaired", "baseline"]' || '["repaired"]') }}
         env:
-            GODOT_REVISION: ${{ inputs.engine_revision }}
-            GODOT_LABEL: ${{ inputs.engine_label }}
-            BUILD_TARGET: ${{ inputs.build_target }}
+            GODOT_REVISION: ${{ inputs.engine_revision || '49a5bc7b616bd04689a2c89e89bda41f50241464' }}
+            GODOT_LABEL: ${{ inputs.engine_label || '4.4.1-stable' }}
+            BUILD_TARGET: ${{ inputs.build_target || 'windows' }}
             RECV_CAP: ${{ inputs.recv_cap_bytes }}
             SOURCE_DIR: godot-source
-            ENGINE_BIN: godot-source/bin/godot.${{ inputs.build_target }}.template_debug.x86_64${{ inputs.build_target == 'windows' && '.exe' || '' }}
+            ENGINE_BIN: godot-source/bin/godot.${{ inputs.build_target || 'windows' }}.template_debug.x86_64${{ (inputs.build_target || 'windows') == 'windows' && '.exe' || '' }}
             IMPORTER: ${{ github.workspace }}/official-godot/godot
         steps:
             - name: Check out repository
@@ -79,7 +91,7 @@ jobs:
                   "$IMPORTER" --headless --version
 
             - name: Install the Windows build toolchain
-              if: inputs.build_target == 'windows'
+              if: (inputs.build_target || 'windows') == 'windows'
               run: |
                   sudo apt-get update
                   sudo apt-get install -y --no-install-recommends mingw-w64

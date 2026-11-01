@@ -37,8 +37,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Qualify the Godot #124973/#124974 assembly/reuse repair on remote paths
       and macOS; coordinate upstream adoption (#491, #492; see
       `docs/testing.md`).
-- [ ] Watch the Windows x86-64 suites for recurrence of the single 4.4.1
-      finite-burst deadline miss under Wine (#520).
+- [ ] Triage failed weekly Windows x86-64 watch runs (#520; Mondays 08:00
+      UTC). Read the failed case's `delivery` summary (largest inter-delivery
+      gap) and its `pending_wait` entry (first missing sequence, elapsed
+      wait, deadline margin) before changing any deadline.
 - [ ] Qualify active gameplay shutdown on remote networks (#482; see `docs/testing.md`). Preserve
       the browser send/close race control, distinct reset and nonresponding
       close outcomes, plus cached mesh retirement.
