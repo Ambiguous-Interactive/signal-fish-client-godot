@@ -75,7 +75,7 @@ def local_pin(repo_root: Path) -> tuple[str, Path]:
 def patch_paths(patch_text: str) -> list[str]:
     paths = sorted({match.group(1) for match in PATCH_HEADER_RE.finditer(patch_text)})
     for path in paths:
-        if path.startswith("/") or ".." in Path(path).parts or not path.strip():
+        if path.startswith("/") or ".." in Path(path).parts:
             raise RuntimeError(f"unsafe path in patch header: {path!r}")
     if not paths:
         raise RuntimeError("patch carries no file headers")
@@ -95,9 +95,7 @@ def remote_master() -> str:
     match = GIT_REF_RE.search(result.stdout)
     if match is None:
         raise RuntimeError("git ls-remote returned no parsable master ref")
-    revision = match.group(1)
-    if revision is None:
-        raise RuntimeError("git ls-remote master ref has no revision")
+    revision: str = match.group(1)
     return revision
 
 
