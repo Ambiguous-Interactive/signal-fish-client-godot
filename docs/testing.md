@@ -969,11 +969,11 @@ and the workflow asserts it:
 - At most one sporadic `chunk-reuse-*` failure per run, always the
   stale-continuation retirement check.
 
-Any drift in either direction fails the run with a requalify message.
-Requalify against an adopted upstream revision before retiring a
-documented gap (the resubmission need is tracked in #536). Bare-metal
-hosts, remote networks and upstream adoption stay open after macOS CI
-qualification.
+Any drift in either direction fails the run; a repaired engine that starts
+passing a documented gap names requalification. Requalify against an
+adopted upstream revision before retiring a documented gap (the
+resubmission need is tracked in #536). Bare-metal hosts, remote networks
+and upstream adoption stay open after macOS CI qualification.
 
 ### Web WebSocket receive boundary
 

@@ -141,6 +141,7 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
     else:
         staging.unlink(missing_ok=True)
     staging.mkdir(parents=True)
+    promoted_ok = False
     try:
         with zipfile.ZipFile(path) as archive:
             found = [
@@ -182,6 +183,7 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
             os.replace(app_root, backup)
         try:
             os.replace(promoted, app_root)
+            promoted_ok = True
         except OSError:
             try:
                 if not app_root.exists() and backup.is_dir():
@@ -192,7 +194,9 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
                 os.replace(backup, target / f".Godot.app-lost-{os.getpid()}")
             raise
     finally:
-        if backup.is_dir():
+        if promoted_ok:
+            shutil.rmtree(staging, ignore_errors=True)
+        elif backup.is_dir():
             # The previous bundle still lives in staging after a failed
             # promotion; cleanup would delete the only copy.
             print(f"==> Kept {staging} for recovery")

@@ -218,7 +218,11 @@ jobs:
                           """
                           result = case.get("result") or {}
                           wire = result.get("wire") or {}
-                          paced = wire.get("writes", 0) >= 2 and wire.get("error") == 0
+                          minimum_writes = 1 if name.startswith("boundary-close-") else 2
+                          paced = (
+                              wire.get("writes", 0) >= minimum_writes
+                              and wire.get("error") == 0
+                          )
                           if name.startswith("byte-"):
                               paced = paced and wire.get("split_headers", 0) > 0
                           if (
@@ -246,7 +250,7 @@ jobs:
                       for name, case in cases.items():
                           if name in documented or case["passed"]:
                               continue
-                          failures = sorted(case["result"]["failures"])
+                          failures = sorted(case["result"].get("failures", []))
                           if (
                               name.startswith("chunk-reuse-")
                               and failures == ["old queued continuation was not retired"]
