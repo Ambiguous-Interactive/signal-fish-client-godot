@@ -908,9 +908,13 @@ keep every input and both variants. Each burst case report carries a
 gap and largest poll interval, parsed from the fixture log. When a batch
 deadline expires, the burst result records a `pending_wait` entry with the
 first missing sequence (or the delivery count when no gap was observed), the
-elapsed wait and the deadline margin. A recurrence
-names the stalled packet without log analysis; compare both records with the
-one-second batch deadline before changing any deadline. The suite log prints a
+elapsed wait and the deadline margin. The batch deadline is three seconds
+(#520): healthy Windows x86-64 runs delivered their slowest message within
+563 ms, and the recorded one-off Wine pacing stall needed 1.14 s, so the
+former one-second window left under twice the headroom and let a benign
+stall fail the watch. A red run still names a stall above the deadline or a
+lost message; compare both records with the batch deadline before changing
+any deadline. The suite log prints a
 `delivery` line for every passed burst case, and a failing case in either the
 suite or the standalone log prints a `diagnostics` line with its result
 record, so a red run triages from the CI log alone. The uploaded artifacts

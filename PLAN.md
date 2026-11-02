@@ -38,9 +38,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       and macOS; coordinate upstream adoption (#491, #492; see
       `docs/testing.md`).
 - [ ] Triage failed weekly Windows x86-64 watch runs (#520; Mondays 08:00
-      UTC). Read the failed case's `delivery` summary (largest inter-delivery
-      gap) and its `pending_wait` entry (first missing sequence, elapsed
-      wait, deadline margin) before changing any deadline.
+      UTC). The burst batch deadline is three seconds (#520: healthy worst
+      gap 563 ms, benign Wine stall 1135 ms), so a red run names a stall
+      above that or a real loss. Read the failed case's `delivery` summary
+      and `pending_wait` entry before changing any deadline.
 - [ ] Qualify active gameplay shutdown on remote networks (#482; see `docs/testing.md`). Preserve
       the browser send/close race control, distinct reset and nonresponding
       close outcomes, plus cached mesh retirement.
