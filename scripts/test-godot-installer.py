@@ -132,12 +132,18 @@ class GodotInstallerTests(unittest.TestCase):
                 )
                 with zipfile.ZipFile(archive_path, "w") as archive:
                     archive.writestr("Godot.app/Contents/Info.plist", b"plist")
-                with self.assertRaisesRegex(ValueError, "Expected one Godot binary"):
+                    archive.writestr("Godot.app/Contents/MacOS/Godot", b"#!/bin/sh\nexit 3\n")
+                with self.assertRaisesRegex(RuntimeError, "Godot binary failed to run: exit 3"):
                     installer.install_editor("4.3-stable", cache, target)
                 self.assertEqual([path.name for path in target.iterdir()], ["Godot.app"])
                 self.assertEqual(
                     installed.read_bytes(), b"#!/bin/sh\necho 4.3.stable.official.test\n"
                 )
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("Godot4.app/Contents/MacOS/Godot", b"#!/bin/sh\nexit 3\n")
+                with self.assertRaisesRegex(ValueError, "Expected one Godot binary"):
+                    installer.install_editor("4.3-stable", cache, target)
+                self.assertEqual([path.name for path in target.iterdir()], ["Godot.app"])
                 with zipfile.ZipFile(archive_path, "w") as archive:
                     archive.writestr(
                         "Godot.app/Contents/MacOS/Godot",

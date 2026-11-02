@@ -130,19 +130,25 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
     name = f"Godot_v{version}_macos.universal.zip"
     path = download_archive(version, name, cache_dir, EDITOR_MIN_BYTES)
     print("==> Verifying archive")
+    executable_member = "Godot.app/Contents/MacOS/Godot"
     app_root = target / "Godot.app"
+    if app_root.exists() and not app_root.is_dir():
+        raise ValueError(f"{app_root} exists and is not a directory")
     staging = target / f".godot-app-{os.getpid()}"
-    shutil.rmtree(staging, ignore_errors=True)
+    if staging.is_dir():
+        shutil.rmtree(staging, ignore_errors=True)
+    else:
+        staging.unlink(missing_ok=True)
     staging.mkdir(parents=True)
     try:
         with zipfile.ZipFile(path) as archive:
-            binaries = [
+            found = [
                 member
                 for member in archive.infolist()
-                if not member.is_dir() and member.filename.endswith("Contents/MacOS/Godot")
+                if not member.is_dir() and member.filename == executable_member
             ]
-            if len(binaries) != 1:
-                raise ValueError(f"Expected one Godot binary in {name}, found {len(binaries)}")
+            if len(found) != 1:
+                raise ValueError(f"Expected one Godot binary in {name}, found {len(found)}")
             staging_root = staging.resolve()
             for member in archive.infolist():
                 destination = (staging / member.filename).resolve()
@@ -154,7 +160,7 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(member) as source, destination.open("wb") as output:
                     shutil.copyfileobj(source, output)
-            executable = staging / binaries[0].filename
+            executable = staging / executable_member
         executable.chmod(0o755)
         result = subprocess.run(  # noqa: S603
             [str(executable), "--headless", "--version"],
@@ -164,8 +170,18 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
         )
         if result.returncode != 0:
             raise RuntimeError(f"Godot binary failed to run: {binary_failure(result)}")
-        shutil.rmtree(app_root, ignore_errors=True)
-        os.replace(staging / "Godot.app", app_root)
+        promoted = staging / "Godot.app"
+        if not promoted.is_dir():
+            raise ValueError(f"Archive did not contain Godot.app at its root: {name}")
+        backup = staging / ".previous-Godot.app"
+        if app_root.is_dir():
+            os.replace(app_root, backup)
+        try:
+            os.replace(promoted, app_root)
+        except OSError:
+            if not app_root.exists() and backup.is_dir():
+                os.replace(backup, app_root)
+            raise
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     print(f"==> Installed bundle: {app_root}")
