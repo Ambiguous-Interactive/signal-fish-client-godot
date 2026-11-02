@@ -5,7 +5,9 @@ The master pin in ``scripts/repair-websocket-stable.py`` freezes the upstream
 submission godotengine/godot#125066 at one revision. This script reads the
 current upstream master ref, mirrors the patched files at that revision, and
 checks that the bundled patch still applies, so receive-path drift or upstream
-adoption surfaces as a scheduled CI failure instead of a stale pin.
+adoption surfaces as a scheduled CI failure instead of a stale pin. Adoption
+is decided by reverse-applying the patch, so a partial adoption reports as
+drift.
 
 Network is only used by the default mode; ``--self-test`` is offline.
 """
@@ -14,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,12 +39,48 @@ REVISION_RE = r"[0-9a-f]{40}"
 MASTER_PIN_RE = re.compile(r'"(' + REVISION_RE + r')":\s*"(godot-master-[^"]+)"')
 PATCH_HEADER_RE = re.compile(r"^diff --git a/(\S+) b/(\S+)$", re.M)
 GIT_REF_RE = re.compile(r"^(" + REVISION_RE + r")\trefs/heads/master$", re.M)
-ADOPTION_MARKER = "frame_is_data"
 
 # The bundled patch must keep applying to upstream master. A still-applying
 # patch after master moved stays green: the pin itself is unchanged. Adoption
 # and receive-path drift both demand action, so both fail the check.
 OK_STATUSES = ("current", "applies")
+
+REPOSITORY_ENV = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+)
+
+
+def git(source: Path, *arguments: str, timeout: int = 60) -> subprocess.CompletedProcess[str]:
+    """Run git against one repository, ignoring inherited repository selection."""
+    executable = shutil.which("git")
+    if executable is None:
+        raise RuntimeError("git is required")
+    environment = os.environ.copy()
+    for name in REPOSITORY_ENV:
+        environment.pop(name, None)
+    return subprocess.run(  # noqa: S603
+        [executable, "-C", str(source), *arguments],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+        env=environment,
+    )
 
 
 def read_text(path: Path) -> str:
@@ -73,23 +113,21 @@ def local_pin(repo_root: Path) -> tuple[str, Path]:
 
 
 def patch_paths(patch_text: str) -> list[str]:
-    paths = sorted({match.group(1) for match in PATCH_HEADER_RE.finditer(patch_text)})
-    for path in paths:
-        if path.startswith("/") or ".." in Path(path).parts:
-            raise RuntimeError(f"unsafe path in patch header: {path!r}")
+    paths: set[str] = set()
+    for match in PATCH_HEADER_RE.finditer(patch_text):
+        source: str = match.group(1)
+        destination: str = match.group(2)
+        for path in (source, destination):
+            if path.startswith("/") or ".." in Path(path).parts:
+                raise RuntimeError(f"unsafe path in patch header: {path!r}")
+        paths.add(source)
     if not paths:
         raise RuntimeError("patch carries no file headers")
-    return paths
+    return sorted(paths)
 
 
 def remote_master() -> str:
-    result = subprocess.run(  # noqa: S603
-        ["git", "ls-remote", MASTER_REF_URL, "refs/heads/master"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
+    result = git(Path.cwd(), "ls-remote", MASTER_REF_URL, "refs/heads/master", timeout=120)
     if result.returncode != 0:
         raise RuntimeError(f"git ls-remote failed: {result.stderr.strip()}")
     match = GIT_REF_RE.search(result.stdout)
@@ -124,6 +162,7 @@ def evaluate(
     if master == revision:
         return {"status": "current"}
     patch_text = read_text(patch)
+    patch_path = str(Path(patch).resolve())
     mirrored: dict[str, str] = {}
     for path in patch_paths(patch_text):
         mirrored[path] = fetch_file_fn(master, path)
@@ -133,21 +172,18 @@ def evaluate(
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-        subprocess.run(["git", "init", "-q", str(root)], check=True, timeout=60)  # noqa: S603, S607
-        apply = subprocess.run(  # noqa: S603
-            ["git", "apply", "--check", str(patch.resolve())],  # noqa: S607
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
+        init = git(root, "init", "-q")
+        if init.returncode != 0:
+            raise RuntimeError(f"git init failed: {init.stderr.strip()}")
+        apply = git(root, "apply", "--check", patch_path)
         if apply.returncode == 0:
             status = "applies"
         else:
             reason = next((line for line in apply.stderr.splitlines() if line.strip()), "")
-            adopted = any(ADOPTION_MARKER in body for body in mirrored.values())
-            status = "adopted" if adopted else "drifted"
+            # Reverse-applying cleanly means master carries the complete
+            # patch; a marker alone would miss partial adoptions.
+            reverse = git(root, "apply", "--reverse", "--check", patch_path)
+            status = "adopted" if reverse.returncode == 0 else "drifted"
     result: dict[str, object] = {"status": status, "master": master}
     if apply.returncode != 0:
         result["apply_error"] = reason
@@ -239,8 +275,6 @@ def self_test() -> int:
             "thirdparty/wslay/wslay_event.c",
         ]
     ), paths
-    added = [line for line in patch_text.splitlines() if line.startswith("+")]
-    assert any(ADOPTION_MARKER in line for line in added), "adoption marker left the patch"
 
     for unsafe in ("/etc/passwd", "../escape", "ok/../../up"):
         patch_text_unsafe = patch_text.replace("modules/websocket/wsl_peer.cpp", unsafe)

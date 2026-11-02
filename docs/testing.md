@@ -494,12 +494,13 @@ builds and remote gameplay remain open.
 
 A weekly scheduled run (Mondays 09:00 UTC, `WebSocket Master Pin`) keeps the
 master pin aligned with upstream. It compares the pin with current
-godotengine/godot master, mirrors the patched files at the current master
-revision, and checks that the bundled patch still applies; each run also
-prints the state of godotengine/godot#125066 for review tracking. A moved
-master with an applying patch passes. A red run names the outcome: the
-receive path drifted (rebase the patch, refresh the submission) or the
-repair was adopted (requalify the adopted revision, then retire the pin).
+godotengine/godot master and prints the state of godotengine/godot#125066
+for review tracking. When master moves, it mirrors the patched files at the
+new revision and checks that the bundled patch still applies. A moved master
+with an applying patch passes. A red run names the outcome: the receive path
+drifted (rebase the patch, refresh the submission) or the repair was adopted
+in full (the patch reverse-applies; requalify the adopted revision, then
+retire the pin).
 
 The experimental 4.5.2 Linux ARM64 template passes all seven standalone
 reproductions below. Official 4.5.2 fails the four defect cases and passes

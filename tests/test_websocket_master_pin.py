@@ -76,11 +76,25 @@ class PatchPathTests(unittest.TestCase):
         )
 
     def test_unsafe_paths_are_rejected(self) -> None:
-        for unsafe in ("/etc/passwd", "../escape", "ok/../../up"):
-            with self.subTest(unsafe=unsafe):
-                text = SYNTHETIC_PATCH.replace("one.txt", unsafe)
-                with self.assertRaisesRegex(RuntimeError, "unsafe path"):
-                    watch.patch_paths(text)
+        header = "diff --git a/one.txt b/one.txt"
+        cases = {
+            "absolute source": SYNTHETIC_PATCH.replace(
+                header, "diff --git a//etc/passwd b/one.txt"
+            ),
+            "absolute destination": SYNTHETIC_PATCH.replace(
+                header, "diff --git a/one.txt b//etc/passwd"
+            ),
+            "escaping source": SYNTHETIC_PATCH.replace(header, "diff --git a/../escape b/one.txt"),
+            "escaping destination": SYNTHETIC_PATCH.replace(
+                header, "diff --git a/one.txt b/../escape"
+            ),
+        }
+        for name, text in cases.items():
+            with (
+                self.subTest(case=name),
+                self.assertRaisesRegex(RuntimeError, "unsafe path"),
+            ):
+                watch.patch_paths(text)
 
 
 class EvaluateTests(unittest.TestCase):
@@ -101,8 +115,12 @@ class EvaluateTests(unittest.TestCase):
 
     def test_moved_master_classification(self) -> None:
         cases = {
+            # Pre-image intact: the patch still applies.
             "original\n": "applies",
-            "frame_is_data landed here\n": "adopted",
+            # Exact post-image: the complete patch landed upstream.
+            "repaired\n": "adopted",
+            # A marker with the rest missing is a partial adoption.
+            "frame_is_data landed here\n": "drifted",
             "unrelated drift\n": "drifted",
         }
         for content, expected in cases.items():
