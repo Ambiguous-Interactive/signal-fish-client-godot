@@ -160,9 +160,11 @@ class GodotInstallerTests(unittest.TestCase):
                         "Godot.app/Contents/MacOS/Godot",
                         b"#!/bin/sh\necho 4.4.stable.official.test\n",
                     )
-                with patch.object(installer.os, "replace", side_effect=fail_first_promotion):
-                    with self.assertRaises(OSError):
-                        installer.install_editor("4.3-stable", cache, target)
+                with (
+                    patch.object(installer.os, "replace", side_effect=fail_first_promotion),
+                    self.assertRaises(OSError),
+                ):
+                    installer.install_editor("4.3-stable", cache, target)
                 self.assertEqual(
                     installed.read_bytes(), b"#!/bin/sh\necho 4.3.stable.official.test\n"
                 )
