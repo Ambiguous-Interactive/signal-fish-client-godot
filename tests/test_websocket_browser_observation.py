@@ -312,6 +312,7 @@ class BackportApplicatorTests(unittest.TestCase):
             "6ce3de25aa58466e14ef354703ba8d9791a417da": "93421cf7d0073fa0b7f4f0176327662eba9c4749",
             "35e80b3a8822a9df9be390814b62f44c0a9c69e8": "8be31add2aad545b96978dc5267abfa29c9271ee",
             "ed1daf0bf001b61586d9930840f2f1394092c079": "ae3e34fc42aa1c6458c80673216727bb36a70f92",
+            "95c0fa5fe8a019adc29d074c16b64469b04571f7": "3f45199a4b70530be81641b2c782eb0761eb4440",
         }
         for revision, blob in source_blobs.items():
             with self.subTest(source_revision=revision):

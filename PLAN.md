@@ -35,8 +35,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       Preserve paced close reasons, full-buffer completion and peer reuse.
       Include maximum-length ASCII and mixed Unicode close reasons.
 - [ ] Qualify the Godot #124973/#124974 assembly/reuse repair on remote paths
-      and macOS; coordinate upstream adoption (#491, #492; see
-      `docs/testing.md`).
+      and macOS (#491, #492; see `docs/testing.md`). The upstream repair is
+      filed as [godotengine/godot#125066](https://github.com/godotengine/godot/pull/125066)
+      from master `95c0fa5fe8a019adc29d074c16b64469b04571f7`; track its review,
+      keep the master pin buildable and requalify against adopted revisions.
 - [ ] Triage failed weekly Windows x86-64 watch runs (#520; Mondays 08:00
       UTC). The burst batch deadline is three seconds (#520: worst
       inter-delivery gap 563 ms on healthy runs, benign Wine stall 1135 ms),
