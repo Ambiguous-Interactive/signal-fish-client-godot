@@ -147,14 +147,13 @@ class GodotInstallerTests(unittest.TestCase):
                 def fail_first_promotion(source: Path, destination: Path) -> None:
                     if (
                         not promotion_failed[0]
-                        and source.is_relative_to(target / ".godot-app-")
+                        and source.parent.name.startswith(".godot-app-")
+                        and source.name == "Godot.app"
                         and destination.name == "Godot.app"
                     ):
                         promotion_failed[0] = True
                         raise OSError("promotion forced failure")
                     real_replace(source, destination)
-
-                fail_first_promotion.armed = True
 
                 with zipfile.ZipFile(archive_path, "w") as archive:
                     archive.writestr("Godot.app/Contents/Info.plist", b"plist")
