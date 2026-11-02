@@ -54,7 +54,8 @@ jobs:
             GODOT_LABEL: ${{ inputs.engine_label || '4.4.1-stable' }}
             SOURCE_DIR: godot-source
             ENGINE_BIN: godot-source/bin/godot.macos.template_debug.arm64
-            IMPORTER: ${{ github.workspace }}/official-godot/godot
+            IMPORTER_APP: ${{ github.workspace }}/official-godot
+            IMPORTER: ${{ github.workspace }}/official-godot/Godot.app/Contents/MacOS/Godot
         steps:
             - name: Check out repository
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,7 +73,7 @@ jobs:
             - name: Install official importer
               run: |
                   python3 .devcontainer/install-godot.py editor "$GODOT_LABEL" \
-                    /tmp/godot-cache --target "$IMPORTER"
+                    /tmp/godot-cache --target "$IMPORTER_APP"
                   "$IMPORTER" --headless --version
 
             - name: Prepare evidence directory

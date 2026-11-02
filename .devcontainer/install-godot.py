@@ -68,32 +68,31 @@ def download_archive(version: str, name: str, cache_dir: Path, minimum_bytes: in
     raise RuntimeError("download attempts exhausted")
 
 
+def binary_failure(result: subprocess.CompletedProcess[str]) -> str:
+    tail = [
+        *result.stdout.strip().splitlines()[-2:],
+        *result.stderr.strip().splitlines()[-2:],
+    ]
+    detail = " | ".join(tail) if tail else "no output"
+    return f"exit {result.returncode}: {detail}"
+
+
 def install_editor(version: str, cache_dir: Path, target: Path) -> None:
     if sys.platform == "darwin":
-        name = f"Godot_v{version}_macos.universal.zip"
-    else:
-        architecture = {"x86_64": "linux.x86_64", "aarch64": "linux.arm64"}.get(platform.machine())
-        if architecture is None:
-            raise ValueError(f"Unsupported architecture: {platform.machine()}")
-        name = f"Godot_v{version}_{architecture}.zip"
+        install_macos_editor(version, cache_dir, target)
+        return
+    architecture = {"x86_64": "linux.x86_64", "aarch64": "linux.arm64"}.get(platform.machine())
+    if architecture is None:
+        raise ValueError(f"Unsupported architecture: {platform.machine()}")
+    name = f"Godot_v{version}_{architecture}.zip"
     path = download_archive(version, name, cache_dir, EDITOR_MIN_BYTES)
     print("==> Verifying archive")
     with zipfile.ZipFile(path) as archive:
-        if sys.platform == "darwin":
-            # The macOS release ships a Godot.app bundle; the engine binary
-            # runs standalone outside the bundle.
-            binaries = [
-                member
-                for member in archive.infolist()
-                if not member.is_dir() and member.filename.endswith("Contents/MacOS/Godot")
-            ]
-        else:
-            binaries = [
-                member
-                for member in archive.infolist()
-                if not member.is_dir()
-                and Path(member.filename).name.startswith(f"Godot_v{version}_")
-            ]
+        binaries = [
+            member
+            for member in archive.infolist()
+            if not member.is_dir() and Path(member.filename).name.startswith(f"Godot_v{version}_")
+        ]
         if len(binaries) != 1:
             raise ValueError(f"Expected one Godot binary in {name}, found {len(binaries)}")
         print(f"==> Installing to {target}")
@@ -115,11 +114,61 @@ def install_editor(version: str, cache_dir: Path, target: Path) -> None:
             check=False,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"Godot binary failed to run: {result.stderr.strip()}")
+            raise RuntimeError(f"Godot binary failed to run: {binary_failure(result)}")
         os.replace(part_path, target)
     finally:
         part_path.unlink(missing_ok=True)
     print(f"==> Installed: {result.stdout.strip()}")
+
+
+def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
+    """Install the official macOS editor bundle at target/Godot.app.
+
+    The engine binary is code-signed for Apple platforms and only runs from
+    inside its bundle, so target names the directory that receives Godot.app.
+    """
+    name = f"Godot_v{version}_macos.universal.zip"
+    path = download_archive(version, name, cache_dir, EDITOR_MIN_BYTES)
+    print("==> Verifying archive")
+    app_root = target / "Godot.app"
+    staging = target / f".godot-app-{os.getpid()}"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    try:
+        with zipfile.ZipFile(path) as archive:
+            binaries = [
+                member
+                for member in archive.infolist()
+                if not member.is_dir() and member.filename.endswith("Contents/MacOS/Godot")
+            ]
+            if len(binaries) != 1:
+                raise ValueError(f"Expected one Godot binary in {name}, found {len(binaries)}")
+            staging_root = staging.resolve()
+            for member in archive.infolist():
+                destination = (staging / member.filename).resolve()
+                if not destination.is_relative_to(staging_root):
+                    raise ValueError(f"Unsafe archive member path: {member.filename}")
+                if member.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, destination.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+            executable = staging / binaries[0].filename
+        executable.chmod(0o755)
+        result = subprocess.run(  # noqa: S603
+            [str(executable), "--headless", "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Godot binary failed to run: {binary_failure(result)}")
+        shutil.rmtree(app_root, ignore_errors=True)
+        os.replace(staging / "Godot.app", app_root)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    print(f"==> Installed bundle: {app_root}")
 
 
 def install_templates(version: str, cache_dir: Path, templates_root: Path) -> None:
