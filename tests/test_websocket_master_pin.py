@@ -1,9 +1,11 @@
 """Keep the pinned master WebSocket repair aligned with upstream master."""
 
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/check-websocket-master-pin.py"
 SPEC = importlib.util.spec_from_file_location("websocket_master_pin", SCRIPT)
@@ -36,6 +38,17 @@ class PinSelectionTests(unittest.TestCase):
         revision, patch = watch.local_pin(REPO_ROOT)
         self.assertEqual(revision, PINNED)
         self.assertEqual(patch.name, "godot-master-websocket-assembly.patch")
+        self.assertTrue(patch.is_file())
+
+    def test_local_pin_resolves_a_relative_repo_root(self) -> None:
+        original = Path.cwd()
+        try:
+            os.chdir(REPO_ROOT)
+            revision, patch = watch.local_pin(Path("."))
+        finally:
+            os.chdir(original)
+        self.assertEqual(revision, PINNED)
+        self.assertTrue(patch.is_absolute())
         self.assertTrue(patch.is_file())
 
     def test_local_pin_rejects_a_missing_patch_file(self) -> None:
@@ -98,12 +111,33 @@ class EvaluateTests(unittest.TestCase):
                 self.assertEqual(result["status"], expected)
                 self.assertEqual(result["master"], MOVED)
 
+    def test_drifted_master_reports_the_apply_failure(self) -> None:
+        result = self.evaluate(MOVED, "unrelated drift\n")
+        error = cast("str | None", result.get("apply_error"))
+        self.assertIsInstance(error, str)
+        self.assertIn("patch", cast(str, error))
+
+    def test_a_relative_patch_path_still_applies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            original = Path.cwd()
+            try:
+                os.chdir(tmp)
+                patch = Path("synthetic.patch")
+                patch.write_text(SYNTHETIC_PATCH, encoding="utf-8")
+                result: dict[str, object] = watch.evaluate(
+                    PINNED, patch, MOVED, fetch_file_fn=lambda revision, path: "original\n"
+                )
+            finally:
+                os.chdir(original)
+        self.assertEqual(result["status"], "applies")
+
 
 class PrStateTests(unittest.TestCase):
     def test_parse_pr_keeps_the_review_tracking_fields(self) -> None:
         payload = {
             "state": "open",
-            "draft": False,
+            "merged": False,
+            "merged_at": None,
             "mergeable_state": "unstable",
             "review_comments": 2,
             "updated_at": "2026-11-02T04:00:01Z",
@@ -115,12 +149,21 @@ class PrStateTests(unittest.TestCase):
             {
                 "number": watch.PR_NUMBER,
                 "state": "open",
-                "draft": False,
+                "merged": False,
+                "merged_at": None,
                 "mergeable_state": "unstable",
                 "review_comments": 2,
                 "updated_at": "2026-11-02T04:00:01Z",
             },
         )
+
+    def test_a_merged_pr_stays_distinguishable_from_a_rejected_one(self) -> None:
+        merged = watch.parse_pr(
+            {"state": "closed", "merged": True, "merged_at": "2026-11-03T00:00:00Z"}
+        )
+        rejected = watch.parse_pr({"state": "closed", "merged": False, "merged_at": None})
+        self.assertEqual(merged["merged"], True)
+        self.assertEqual(rejected["merged"], False)
 
     def test_parse_pr_tolerates_missing_and_invalid_payloads(self) -> None:
         self.assertEqual(watch.parse_pr({})["number"], watch.PR_NUMBER)

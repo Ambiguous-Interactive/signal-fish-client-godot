@@ -66,7 +66,7 @@ def extract_unique(pattern: re.Pattern[str], text: str, source: str) -> tuple[st
 def local_pin(repo_root: Path) -> tuple[str, Path]:
     source = REPAIR_SCRIPT
     revision, patch_name = extract_unique(MASTER_PIN_RE, read_text(repo_root / source), str(source))
-    patch = repo_root / "scripts" / "patches" / patch_name
+    patch = (repo_root / "scripts" / "patches" / patch_name).resolve()
     if not patch.is_file():
         raise RuntimeError(f"bundled master patch is missing: {patch}")
     return revision, patch
@@ -106,8 +106,11 @@ def fetch_file(revision: str, path: str) -> str:
     request = urllib.request.Request(  # noqa: S310
         url, headers={"User-Agent": "signal-fish-master-pin-watch"}
     )
-    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
-        raw: bytes = response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+            raw: bytes = response.read()
+    except (urllib.error.URLError, OSError) as exc:
+        raise RuntimeError(f"{url}: {exc}") from exc
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -123,11 +126,9 @@ def evaluate(
     if master == revision:
         return {"status": "current"}
     patch_text = read_text(patch)
-    paths = patch_paths(patch_text)
     mirrored: dict[str, str] = {}
-    for path in paths:
+    for path in patch_paths(patch_text):
         mirrored[path] = fetch_file_fn(master, path)
-    applies = True
     with tempfile.TemporaryDirectory(prefix="master-pin-") as tmp:
         root = Path(tmp)
         for path, content in mirrored.items():
@@ -136,20 +137,23 @@ def evaluate(
             target.write_text(content, encoding="utf-8")
         subprocess.run(["git", "init", "-q", str(root)], check=True, timeout=60)  # noqa: S603, S607
         apply = subprocess.run(  # noqa: S603
-            ["git", "apply", "--check", str(patch)],  # noqa: S607
+            ["git", "apply", "--check", str(patch.resolve())],  # noqa: S607
             cwd=root,
             capture_output=True,
             text=True,
             timeout=60,
             check=False,
         )
-        applies = apply.returncode == 0
-    status = "applies"
-    if not applies:
-        status = (
-            "adopted" if any(ADOPTION_MARKER in body for body in mirrored.values()) else "drifted"
-        )
-    return {"status": status, "master": master, "files": paths}
+        if apply.returncode == 0:
+            status = "applies"
+        else:
+            reason = next((line for line in apply.stderr.splitlines() if line.strip()), "")
+            adopted = any(ADOPTION_MARKER in body for body in mirrored.values())
+            status = "adopted" if adopted else "drifted"
+    result: dict[str, object] = {"status": status, "master": master}
+    if apply.returncode != 0:
+        result["apply_error"] = reason
+    return result
 
 
 def parse_pr(payload: object) -> dict[str, object]:
@@ -158,7 +162,8 @@ def parse_pr(payload: object) -> dict[str, object]:
     return {
         "number": PR_NUMBER,
         "state": payload.get("state"),
-        "draft": payload.get("draft"),
+        "merged": payload.get("merged"),
+        "merged_at": payload.get("merged_at"),
         "mergeable_state": payload.get("mergeable_state"),
         "review_comments": payload.get("review_comments"),
         "updated_at": payload.get("updated_at"),
@@ -200,6 +205,9 @@ def report(result: dict[str, object], pin: str, patch_name: str) -> None:
                 f"master-pin: DRIFTED: master changed the receive path. Rebase the bundled "
                 f"patch and refresh the upstream submission ({PR_NUMBER})."
             )
+        apply_error = result.get("apply_error")
+        if apply_error:
+            print(f"master-pin: git apply: {apply_error}")
     upstream = result.get("upstream_pr")
     if isinstance(upstream, dict) and "error" not in upstream:
         print(f"master-pin: upstream PR #{PR_NUMBER}: {json.dumps(upstream, sort_keys=True)}")
@@ -263,11 +271,11 @@ def self_test() -> int:
     else:
         raise AssertionError("conflicting master pins must be rejected")
 
-    # Offline structural check of the real repo: the applicator must still
-    # select the bundled patch so a rename or regen surfaces here instead of
+    # Offline structural check of the real repo: the pin must still map to
+    # the bundled patch file so a rename or regen surfaces here instead of
     # only in the weekly networked run.
     repair_text = read_text(DEFAULT_REPO_ROOT / REPAIR_SCRIPT)
-    assert patch.name in repair_text, patch.name
+    assert f'"{revision}": "{patch.name}"' in repair_text, (revision, patch.name)
     print("master-pin: self-test passed")
     return 0
 
