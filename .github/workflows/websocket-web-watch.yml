@@ -48,7 +48,7 @@ jobs:
 
             - name: Cache Godot editor
               id: godot-cache
-              uses: actions/cache@v6
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
                   path: /tmp/godot-cache
                   key: godot-web-watch-editor-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
@@ -67,7 +67,7 @@ jobs:
 
             - name: Cache web export templates
               id: templates-cache
-              uses: actions/cache@v6
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
               with:
                   path: ~/.local/share/godot/export_templates
                   key: godot-web-watch-templates-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
