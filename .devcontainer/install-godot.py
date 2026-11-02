@@ -135,6 +135,7 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
     if target.exists() and not target.is_dir():
         raise ValueError(f"{target} exists and is not a directory")
     staging = target / f".godot-app-{os.getpid()}"
+    backup = staging / ".previous-Godot.app"
     if staging.is_dir():
         shutil.rmtree(staging, ignore_errors=True)
     else:
@@ -177,7 +178,6 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
         promoted = staging / "Godot.app"
         if not promoted.is_dir():
             raise ValueError(f"Archive did not contain Godot.app at its root: {name}")
-        backup = staging / ".previous-Godot.app"
         if app_root.is_dir():
             os.replace(app_root, backup)
         try:
@@ -192,7 +192,12 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
                 os.replace(backup, target / f".Godot.app-lost-{os.getpid()}")
             raise
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        if backup.is_dir():
+            # The previous bundle still lives in staging after a failed
+            # promotion; cleanup would delete the only copy.
+            print(f"==> Kept {staging} for recovery")
+        else:
+            shutil.rmtree(staging, ignore_errors=True)
     print(f"==> Installed bundle: {app_root}")
 
 
