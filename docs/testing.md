@@ -472,8 +472,9 @@ body includes zero and non-UTF-8 bytes.
 Separate experimental patches target Godot 4.4.1-stable
 `49a5bc7b616bd04689a2c89e89bda41f50241464`, 4.5.2-stable
 `6ce3de25aa58466e14ef354703ba8d9791a417da`, 4.6.3-stable
-`35e80b3a8822a9df9be390814b62f44c0a9c69e8` and 4.7.2-stable
-`ed1daf0bf001b61586d9930840f2f1394092c079`:
+`35e80b3a8822a9df9be390814b62f44c0a9c69e8`, 4.7.2-stable
+`ed1daf0bf001b61586d9930840f2f1394092c079` and master
+`95c0fa5fe8a019adc29d074c16b64469b04571f7`:
 
 ```sh
 python scripts/repair-websocket-stable.py --source /path/to/godot-stable \
@@ -483,9 +484,13 @@ python scripts/repair-websocket-stable.py --source /path/to/godot-stable \
 Each patch repairs receive progress, frame assembly and replacement cleanup. The applicator
 checks the exact revision, selects its patch, rejects conflicting changes and
 records source and patch hashes. `--check` leaves source unchanged. Build and
-qualify the patched engine before use. Official 4.4.1 and 4.7.2 still fail
-the mixed binary interleaved controls and every partial/fresh text/binary reuse pair. Upstream adoption,
-other engine builds and remote gameplay remain open.
+qualify the patched engine before use. The master pin carries the same repair
+submitted upstream
+([godotengine/godot#125066](https://github.com/godotengine/godot/pull/125066));
+its four defects and evidence map to #491, #492, #496 and #498. Official
+4.4.1 and 4.7.2 still fail
+the mixed binary interleaved controls and every partial/fresh text/binary reuse pair. Further engine
+builds and remote gameplay remain open.
 
 The experimental 4.5.2 Linux ARM64 template passes all seven standalone
 reproductions below. Official 4.5.2 fails the four defect cases and passes
@@ -533,7 +538,7 @@ editor to import the test project before running a template build. The active
 shutdown drill also needs `module_multiplayer_enabled=yes` alongside GDScript,
 WebSocket and WebRTC.
 
-To check all four bundled patches against local pinned sources, run:
+To check the four bundled stable patches against local pinned sources, run:
 
 ```sh
 PYTHONPATH=tests \
@@ -787,9 +792,11 @@ facts; callers compare them with the expected matrix.
 
 The opt-in `WebSocket Native x64` workflow builds a pinned engine revision on
 an x86-64 GitHub runner and qualifies it there. Dispatch it with a pinned
-stable revision to build the repaired engine, run the full paced receive
+stable or master revision to build the repaired engine, run the full paced receive
 suite with a three-byte read cap, and run the seven standalone commands. Set
-the matching official release label for the fixture import. A `build_target`
+the matching official release label for the fixture import; a master dispatch
+uses the nearest official release label because no release matches a master
+SHA. A `build_target`
 input selects `linuxbsd` (default) or `windows`; Windows builds
 cross-compile with mingw-w64, run under Wine, and use the uncapped suite. A
 matched unpatched baseline job runs the same seven commands. The four defect

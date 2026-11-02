@@ -1,0 +1,87 @@
+diff --git a/modules/websocket/wsl_peer.cpp b/modules/websocket/wsl_peer.cpp
+index 3f45199a4b70530be81641b2c782eb0761eb4440..3d673b48761dc28b882d01075370abcf7e2addea 100644
+--- a/modules/websocket/wsl_peer.cpp
++++ b/modules/websocket/wsl_peer.cpp
+@@ -565,8 +565,12 @@ ssize_t WSLPeer::_wsl_recv_callback(wslay_event_context_ptr ctx, uint8_t *data,
+ 		wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+ 		return -1;
+ 	}
+-	// Make sure we don't read more than what our buffer can hold.
+-	size_t buffer_limit = MIN(peer->in_buffer.payload_space_left(), peer->in_buffer.packets_space_left() * 2); // The minimum size of a websocket message is 2 bytes.
++	int payload_limit = peer->in_buffer.payload_space_left();
++	if (payload_limit == 0 && peer->pending_message.payload_size == (size_t)peer->inbound_buffer_size && peer->in_buffer.packets_left() == 0) {
++		// Finish a full fragmented message or process control frames. The cumulative message limit rejects extra payload before its chunk callback.
++		payload_limit = 1; // Do not prefetch bytes from the next message.
++	}
++	size_t buffer_limit = MIN(payload_limit, peer->in_buffer.packets_space_left() * 2); // The minimum size of a websocket message is 2 bytes.
+ 	size_t to_read = MIN(len, buffer_limit);
+ 	if (to_read == 0) {
+ 		wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
+@@ -589,9 +593,10 @@ ssize_t WSLPeer::_wsl_recv_callback(wslay_event_context_ptr ctx, uint8_t *data,
+ void WSLPeer::_wsl_recv_start_callback(wslay_event_context_ptr ctx, const struct wslay_event_on_frame_recv_start_arg *arg, void *user_data) {
+ 	WSLPeer *peer = (WSLPeer *)user_data;
+ 	uint8_t op = arg->opcode;
++	PendingMessage &pm = peer->pending_message;
++	pm.frame_is_data = !wslay_is_ctrl_frame(op);
+ 	if (op == WSLAY_TEXT_FRAME || op == WSLAY_BINARY_FRAME) {
+ 		// Get ready to process a data package.
+-		PendingMessage &pm = peer->pending_message;
+ 		pm.opcode = op;
+ 	}
+ }
+@@ -599,7 +604,7 @@ void WSLPeer::_wsl_recv_start_callback(wslay_event_context_ptr ctx, const struct
+ void WSLPeer::_wsl_frame_recv_chunk_callback(wslay_event_context_ptr ctx, const struct wslay_event_on_frame_recv_chunk_arg *arg, void *user_data) {
+ 	WSLPeer *peer = (WSLPeer *)user_data;
+ 	PendingMessage &pm = peer->pending_message;
+-	if (pm.opcode != 0) {
++	if (pm.opcode != 0 && pm.frame_is_data) {
+ 		// Only write the payload.
+ 		peer->in_buffer.write_packet(arg->data, arg->data_length, nullptr);
+ 		pm.payload_size += arg->data_length;
+@@ -911,6 +916,7 @@ void WSLPeer::_clear() {
+ 	was_string = 0;
+ 	in_buffer.clear();
+ 	packet_buffer.clear();
++	pending_message.clear();
+ 
+ 	// Close code info.
+ 	close_code = -1;
+diff --git a/modules/websocket/wsl_peer.h b/modules/websocket/wsl_peer.h
+index e0cc2cd107b1f7b21737823011e4d802d6c2685d..2c326117035e0e28f5454709777369744e75d677 100644
+--- a/modules/websocket/wsl_peer.h
++++ b/modules/websocket/wsl_peer.h
+@@ -81,10 +81,12 @@ private:
+ 	struct PendingMessage {
+ 		size_t payload_size = 0;
+ 		uint8_t opcode = 0;
++		bool frame_is_data = false;
+ 
+ 		void clear() {
+ 			payload_size = 0;
+ 			opcode = 0;
++			frame_is_data = false;
+ 		}
+ 	};
+ 
+diff --git a/thirdparty/wslay/wslay_event.c b/thirdparty/wslay/wslay_event.c
+index 4c29fe400056c0f482cc7055a87316f8126a2570..f33174b949595beb29523e94532b947ce726ec32 100644
+--- a/thirdparty/wslay/wslay_event.c
++++ b/thirdparty/wslay/wslay_event.c
+@@ -564,6 +564,8 @@ int wslay_event_recv(wslay_event_context_ptr ctx) {
+             ctx->read_enabled = 0;
+             return (int)r;
+           }
++        } else {
++          ctx->imsg->msg_length += iocb.payload_length;
+         }
+       }
+       /* If RSV1 bit is set then it is too early for utf-8 validation */
+@@ -572,7 +574,7 @@ int wslay_event_recv(wslay_event_context_ptr ctx) {
+           ctx->imsg->opcode == WSLAY_CONNECTION_CLOSE) {
+         size_t i;
+         if (ctx->imsg->opcode == WSLAY_CONNECTION_CLOSE) {
+-          i = 2;
++          i = ctx->ipayloadoff < 2 ? 2 - ctx->ipayloadoff : 0;
+         } else {
+           i = 0;
+         }
