@@ -141,20 +141,18 @@ class GodotInstallerTests(unittest.TestCase):
                     installed.read_bytes(), b"#!/bin/sh\necho 4.3.stable.official.test\n"
                 )
 
-                real_replace: Callable[..., int] = installer.os.replace
+                real_replace: Callable[[Path, Path], None] = installer.os.replace
                 promotion_failed = [False]
 
-                def fail_first_promotion(
-                    source: object, destination: object, **kwargs: object
-                ) -> int:
+                def fail_first_promotion(source: Path, destination: Path) -> None:
                     if (
                         not promotion_failed[0]
-                        and str(source).startswith(str(target / ".godot-app-"))
-                        and Path(destination).name == "Godot.app"
+                        and source.is_relative_to(target / ".godot-app-")
+                        and destination.name == "Godot.app"
                     ):
                         promotion_failed[0] = True
                         raise OSError("promotion forced failure")
-                    return real_replace(source, destination, **kwargs)
+                    real_replace(source, destination)
 
                 fail_first_promotion.armed = True
 
