@@ -1,0 +1,35 @@
+name: WebSocket Master Pin
+
+on:
+    schedule:
+        # Mondays 09:00 UTC: check the pinned upstream WebSocket repair
+        # (godotengine/godot#125066) against current master, staggered after
+        # Protocol Sync (06:00), Web Export Smoke (07:00), and the x86-64
+        # watch (08:00). Note: GitHub disables schedule triggers after ~60
+        # days without repo activity; dispatch runs keep it recoverable.
+        - cron: "0 9 * * 1"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+# A scheduled run and a manual dispatch do the same check: the newer run
+# wins, and a hung upstream fetch fails instead of idling to the default.
+concurrency:
+    group: ${{ github.workflow }}
+    cancel-in-progress: true
+
+jobs:
+    watch:
+        name: Check the master pin against upstream master
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v7
+
+            - name: Self-test the pin checker
+              run: python3 scripts/check-websocket-master-pin.py --self-test
+
+            - name: Check the master pin against upstream
+              run: python3 scripts/check-websocket-master-pin.py
