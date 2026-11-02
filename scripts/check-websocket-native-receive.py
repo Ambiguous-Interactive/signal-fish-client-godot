@@ -17,9 +17,9 @@ from itertools import pairwise
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-# Ceiling for one suite case. The burst fixture's own watchdog bounds a
-# starving 64-batch case at about 207 s (issue #520 deadline); the ceiling
-# must stay above it so the fixture prints its result record.
+# Ceiling for one suite case. The burst fixture's own watchdog bounds the
+# 64-batch credit shape at about 207 s worst case (issue #520 deadline); the
+# ceiling must stay above it so the fixture prints its result record.
 SUITE_TIMEOUT_SECONDS = 240
 FIXTURES = {
     "limit": ("run_websocket_fragment_limit.gd", "FRAGMENT_LIMIT_RESULT "),

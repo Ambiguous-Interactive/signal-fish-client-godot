@@ -912,9 +912,9 @@ elapsed wait and the deadline margin. The batch deadline is three seconds
 (#520): healthy Windows x86-64 runs delivered their slowest message within
 563 ms, and the recorded one-off Wine pacing stall needed 1.14 s, so the
 former one-second window left under twice the headroom and let a benign
-stall fail the watch. A red run still names a stall above the deadline or a
-lost message; compare both records with the batch deadline before changing
-any deadline. The suite log prints a
+stall fail the watch. A deadline miss still names a stall above the window
+or a lost message; compare both records with the batch deadline before
+changing any deadline. The suite log prints a
 `delivery` line for every passed burst case, and a failing case in either the
 suite or the standalone log prints a `diagnostics` line with its result
 record, so a red run triages from the CI log alone. The uploaded artifacts
