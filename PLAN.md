@@ -21,7 +21,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       `docs/testing.md`). Carry the scoped rejection identities, the engine-only
       finite-burst control with WebSocket prefix receipts, and the byte/packet
       application ACK windows. Preserve the original delayed workload and
-      separate local body-credit controls.
+      separate local body-credit controls. The receive loss is filed upstream
+      as [godotengine/godot#125073](https://github.com/godotengine/godot/issues/125073);
+      track its progress alongside godotengine/godot#125066.
 - [ ] Qualify the experimental Godot 4.3 WebSocket receive backport and engine upgrades on
       remote networks (#485; see `docs/testing.md`). Preserve the retained
       byte/count rejections, exact delivered prefix, full-buffer empty-fragment progress (#496),

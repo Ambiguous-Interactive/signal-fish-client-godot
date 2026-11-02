@@ -1007,6 +1007,14 @@ receipts; the later sentinel is delivered. A larger finite buffer and local
 credit qualify those controls. The original uncredited receive loss remains
 open. These are local controls; remote networks remain unqualified.
 
+The receive loss is filed upstream as
+[godotengine/godot#125073](https://github.com/godotengine/godot/issues/125073).
+A 2026-11-02 rerun on repository main `1915f97e` pinned the boundary on
+official 4.7.2 Web with default buffers: all 65 browser callbacks arrived,
+the engine delivered 16 (sequences 0-14 and the sentinel) and logged 49
+scoped rejections; the matched 32 KiB application-ACK control delivered
+65/65. Upstream review, repair and adoption remain open.
+
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
 bounded prefix, rejection reason and browser clock while that handler is active.
