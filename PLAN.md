@@ -34,13 +34,15 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       lengths and Unicode continuation boundaries. Compare forced syscall read
       boundaries with remote-path results.
 - [ ] Follow Godot #124976 for valid Unicode WebSocket close reasons and
-      qualify bare-metal x86-64, macOS and remote networks (#498; see
-      `docs/testing.md`).
+      qualify bare-metal x86-64 and remote networks (#498; see
+      `docs/testing.md`). The weekly `WebSocket Native macOS` watch covers
+      the macOS leg on Apple Silicon.
       Preserve paced close reasons, full-buffer completion and peer reuse.
       Include maximum-length ASCII and mixed Unicode close reasons.
 - [ ] Qualify the Godot #124973/#124974 assembly/reuse repair on remote paths
-      and macOS (#491, #492; see `docs/testing.md`). The upstream repair is
-      filed as [godotengine/godot#125066](https://github.com/godotengine/godot/pull/125066)
+      (#491, #492; see `docs/testing.md`; the weekly
+      `WebSocket Native macOS` watch covers the macOS leg on Apple Silicon).
+      The upstream repair is filed as [godotengine/godot#125066](https://github.com/godotengine/godot/pull/125066)
       from master `95c0fa5fe8a019adc29d074c16b64469b04571f7`; track its review,
       keep the master pin buildable (the weekly `WebSocket Master Pin` watch
       surfaces master drift and adoption) and requalify against adopted

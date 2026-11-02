@@ -1,0 +1,164 @@
+name: WebSocket Native macOS
+
+on:
+    schedule:
+        # Mondays 11:00 UTC: weekly macOS qualification of the pinned native
+        # WebSocket receive repair (#491, #492, #496, #498; see
+        # docs/testing.md), staggered after the x86-64 watch (08:00), the
+        # master-pin watch (09:00) and the Web watch (10:00). GitHub disables
+        # schedule triggers after ~60 days without repo activity; dispatch
+        # runs keep it recoverable.
+        - cron: "0 11 * * 1"
+    workflow_dispatch:
+        inputs:
+            engine_revision:
+                description: Pinned Godot source revision to build
+                required: true
+                type: string
+                default: 49a5bc7b616bd04689a2c89e89bda41f50241464
+            engine_label:
+                description: Official editor release tag used for fixture import
+                required: true
+                type: string
+                default: 4.4.1-stable
+            run_baseline:
+                description: Also build the unpatched baseline and run its reproductions
+                required: true
+                type: boolean
+                default: true
+
+permissions:
+    contents: read
+
+# Evidence runs are expensive; queue concurrent triggers instead of
+# cancelling or dropping one.
+concurrency:
+    group: ${{ github.workflow }}
+    queue: max
+
+jobs:
+    qualify:
+        name: ${{ matrix.variant }} ${{ inputs.engine_label || '4.4.1-stable' }} on macos arm64
+        runs-on: macos-15
+        timeout-minutes: 150
+        defaults:
+            run:
+                shell: bash
+        strategy:
+            fail-fast: false
+            matrix:
+                variant: ${{ fromJSON(inputs.run_baseline && '["repaired", "baseline"]' || '["repaired"]') }}
+        env:
+            GODOT_REVISION: ${{ inputs.engine_revision || '49a5bc7b616bd04689a2c89e89bda41f50241464' }}
+            GODOT_LABEL: ${{ inputs.engine_label || '4.4.1-stable' }}
+            SOURCE_DIR: godot-source
+            ENGINE_BIN: godot-source/bin/godot.macos.template_debug.arm64
+            IMPORTER: ${{ github.workspace }}/official-godot/godot
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+              with:
+                  persist-credentials: false
+
+            - name: Set up Python
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.0.0
+              with:
+                  python-version: "3.x"
+
+            - name: Install SCons
+              run: python3 -m pip install "scons==4.11.1"
+
+            - name: Install official importer
+              run: |
+                  python3 .devcontainer/install-godot.py editor "$GODOT_LABEL" \
+                    /tmp/godot-cache --target "$IMPORTER"
+                  "$IMPORTER" --headless --version
+
+            - name: Prepare evidence directory
+              run: mkdir -p output
+
+            - name: Fetch pinned engine source
+              run: |
+                  git init "$SOURCE_DIR"
+                  git -C "$SOURCE_DIR" remote add origin https://github.com/godotengine/godot.git
+                  git -C "$SOURCE_DIR" fetch --depth 1 origin "$GODOT_REVISION"
+                  git -C "$SOURCE_DIR" checkout --detach FETCH_HEAD
+                  test "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$GODOT_REVISION"
+
+            - name: Apply the receive repair patch
+              if: matrix.variant == 'repaired'
+              run: |
+                  python3 scripts/repair-websocket-stable.py --source "$SOURCE_DIR" \
+                    --report "output/repair-report.json"
+
+            - name: Build the engine
+              run: |
+                  (
+                    cd "$SOURCE_DIR"
+                    scons -j"$(sysctl -n hw.ncpu)" platform=macos target=template_debug arch=arm64 \
+                      dev_build=no debug_symbols=no optimize=size \
+                      modules_enabled_by_default=no module_gdscript_enabled=yes \
+                      module_websocket_enabled=yes module_webrtc_enabled=yes \
+                      disable_3d=yes vulkan=no metal=no opengl3=yes \
+                      disable_path_overrides=no
+                  ) 2>&1 | tee "output/build-${{ matrix.variant }}.log"
+                  shasum -a 256 "$ENGINE_BIN" | tee "output/engine-sha256.txt"
+
+            - name: Run the paced receive suite
+              if: matrix.variant == 'repaired'
+              run: |
+                  python3 scripts/check-websocket-native-receive.py \
+                    --godot "$ENGINE_BIN" --importer "$IMPORTER" \
+                    --output "output/repaired-suite"
+
+            - name: Run the standalone reproductions
+              run: |
+                  python3 scripts/check-websocket-native-receive.py \
+                    --godot "$ENGINE_BIN" --importer "$IMPORTER" \
+                    --run-repro --output "output/${{ matrix.variant }}-standalone"
+
+            - name: Check qualification expectations
+              run: |
+                  python3 - <<'PY'
+                  import json
+                  from pathlib import Path
+
+                  variant = "${{ matrix.variant }}"
+                  report = json.loads(
+                      Path(
+                          "output/${{ matrix.variant }}-standalone/standalone-report.json"
+                      ).read_text()
+                  )
+                  results = {command["name"]: command for command in report["commands"]}
+                  defect = {"control-bytes", "reuse", "full-buffer", "close-unicode"}
+                  control = {"control-baseline", "reuse-baseline", "close-baseline"}
+                  wrong = sorted((defect | control) - set(results))
+                  for name in defect | control:
+                      command = results.get(name, {})
+                      records = command.get("records", [])
+                      record = records[0] if len(records) == 1 else None
+                      if command.get("timed_out") or record is None:
+                          wrong.append(name)
+                          continue
+                      if variant == "repaired" or name in control:
+                          if (
+                              command["returncode"] != 0
+                              or not command["passed"]
+                              or record.get("passed") is not True
+                          ):
+                              wrong.append(name)
+                      elif command["returncode"] != 1 or record.get("passed") is not False:
+                          wrong.append(name)
+                  assert not wrong, f"unexpected results: {sorted(set(wrong))}"
+                  print(f"{variant}: all standalone expectations met on macos arm64")
+                  PY
+
+            - name: Upload qualification evidence
+              if: always()
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: websocket-native-macos-${{ matrix.variant }}-${{ github.run_id }}
+                  path: |
+                      output/
+                      !output/**/*.so
+                  if-no-files-found: error
