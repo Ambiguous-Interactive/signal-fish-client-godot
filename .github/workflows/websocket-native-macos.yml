@@ -129,13 +129,16 @@ jobs:
                   from pathlib import Path
 
                   def check_macos_suite() -> list[str]:
-                      """Pinned macOS arm64 state (run 41510773288, 4.4.1-stable).
+                      """Pinned macOS arm64 state (runs 41510773288 + 41516492113).
 
-                      The pinned repair passes 163 of 184 paced cases; the 21
-                      documented gaps below are engine-side macOS deltas under
-                      one-byte paced writes (reuse pong barrier, max-length
-                      close reasons). Any drift in either direction means the
-                      macOS state changed: requalify and update this map.
+                      The pinned repair passes 163 of 184 paced cases; 20
+                      documented gaps are stable across runs: every one-byte
+                      paced byte-reuse case misses the barrier pong (12), and
+                      every one-byte paced maximum-length close reason never
+                      delivers a close code (8). The twelve chunk-paced reuse
+                      cases are sporadic: at most one may fail with the same
+                      retirement reason. Any drift in either direction means
+                      the macOS state changed: requalify and update this map.
                       """
                       documented = {
                           "boundary-close-1-max-ascii-client-false": [
@@ -200,13 +203,11 @@ jobs:
                               "old queued continuation was not retired",
                           ],
                           "byte-reuse-text-text-handshake": ["empty pong barrier"],
-                          "chunk-reuse-text-binary-closing": [
-                              "old queued continuation was not retired",
-                          ],
                       }
                       suite = json.loads(Path("output/repaired-suite/summary.json").read_text())
                       cases = {case["case"]: case for case in suite["cases"]}
                       wrong: list[str] = []
+                      sporadic = []
                       for name, reasons in sorted(documented.items()):
                           case = cases.get(name)
                           if case is None:
@@ -216,10 +217,18 @@ jobs:
                           elif sorted(case["result"]["failures"]) != reasons:
                               wrong.append(f"{name}: {sorted(case['result']['failures'])}")
                       for name, case in cases.items():
-                          if name not in documented and not case["passed"]:
-                              wrong.append(
-                                  f"{name}: new failure {sorted(case['result']['failures'])}"
-                              )
+                          if name in documented or case["passed"]:
+                              continue
+                          failures = sorted(case["result"]["failures"])
+                          if (
+                              name.startswith("chunk-reuse-")
+                              and failures == ["old queued continuation was not retired"]
+                          ):
+                              sporadic.append(f"{name}: {failures}")
+                          else:
+                              wrong.append(f"{name}: new failure {failures}")
+                      if len(sporadic) > 1:
+                          wrong.append(f"more than one sporadic chunk-reuse failure: {sporadic}")
                       imported = suite["import"]
                       if imported["returncode"] != 0 or imported["engine_errors"]:
                           wrong.append("suite fixture import failed")
@@ -256,8 +265,8 @@ jobs:
                       assert not wrong, f"unexpected results: {wrong}"
                       print(
                           "repaired: all standalone commands pass and the documented"
-                          " macOS paced-suite signature is stable (163 pass + 21"
-                          " documented pacing gaps)"
+                          " macOS paced-suite signature is stable (20 stable gaps,"
+                          " at most one sporadic chunk-reuse retirement gap)"
                       )
                   else:
                       assert not wrong, f"unexpected results: {wrong}"
