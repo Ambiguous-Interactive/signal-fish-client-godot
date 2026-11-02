@@ -938,6 +938,22 @@ suite or the standalone log prints a `diagnostics` line with its result
 record, so a red run triages from the CI log alone. The uploaded artifacts
 keep the complete per-case evidence.
 
+### macOS CI qualification
+
+The `WebSocket Native macOS` workflow qualifies the same pinned repairs on
+Apple Silicon (Mondays 11:00 UTC). It builds the repaired engine on a
+`macos-15` runner with the minimal headless feature set (`vulkan=no metal=no
+opengl3=yes`), runs the uncapped 184-case paced receive suite and the seven
+standalone commands, and checks the same expectations as the x86-64 watch.
+The official `macos.universal` editor imports the fixtures. Dispatch runs
+accept a pinned stable or master revision and can add the matched unpatched
+baseline, which must reproduce the four defect commands
+(#491, #492, #496, #498) and pass the three controls. Each run keeps the
+engine revision, binary hash and per-case evidence in its artifacts; run
+summaries are posted on the linked issues manually. Bare-metal hosts,
+remote networks and upstream adoption (tracked by the master-pin watch)
+stay open after macOS CI qualification.
+
 ### Web WebSocket receive boundary
 
 Issue #488 has a separate engine-only browser control. It needs Godot Web

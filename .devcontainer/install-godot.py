@@ -69,18 +69,31 @@ def download_archive(version: str, name: str, cache_dir: Path, minimum_bytes: in
 
 
 def install_editor(version: str, cache_dir: Path, target: Path) -> None:
-    architecture = {"x86_64": "linux.x86_64", "aarch64": "linux.arm64"}.get(platform.machine())
-    if architecture is None:
-        raise ValueError(f"Unsupported architecture: {platform.machine()}")
-    name = f"Godot_v{version}_{architecture}.zip"
+    if sys.platform == "darwin":
+        name = f"Godot_v{version}_macos.universal.zip"
+    else:
+        architecture = {"x86_64": "linux.x86_64", "aarch64": "linux.arm64"}.get(platform.machine())
+        if architecture is None:
+            raise ValueError(f"Unsupported architecture: {platform.machine()}")
+        name = f"Godot_v{version}_{architecture}.zip"
     path = download_archive(version, name, cache_dir, EDITOR_MIN_BYTES)
     print("==> Verifying archive")
     with zipfile.ZipFile(path) as archive:
-        binaries = [
-            member
-            for member in archive.infolist()
-            if not member.is_dir() and Path(member.filename).name.startswith(f"Godot_v{version}_")
-        ]
+        if sys.platform == "darwin":
+            # The macOS release ships a Godot.app bundle; the engine binary
+            # runs standalone outside the bundle.
+            binaries = [
+                member
+                for member in archive.infolist()
+                if not member.is_dir() and member.filename.endswith("Contents/MacOS/Godot")
+            ]
+        else:
+            binaries = [
+                member
+                for member in archive.infolist()
+                if not member.is_dir()
+                and Path(member.filename).name.startswith(f"Godot_v{version}_")
+            ]
         if len(binaries) != 1:
             raise ValueError(f"Expected one Godot binary in {name}, found {len(binaries)}")
         print(f"==> Installing to {target}")
