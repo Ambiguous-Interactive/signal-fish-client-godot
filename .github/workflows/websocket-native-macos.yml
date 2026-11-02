@@ -5,9 +5,10 @@ on:
         # Mondays 11:00 UTC: weekly macOS qualification of the pinned native
         # WebSocket receive repair (#491, #492, #496, #498; see
         # docs/testing.md), staggered after the x86-64 watch (08:00), the
-        # master-pin watch (09:00) and the Web watch (10:00). GitHub disables
-        # schedule triggers after ~60 days without repo activity; dispatch
-        # runs keep it recoverable.
+        # master-pin watch (09:00) and the Web watch (10:00). Dispatch inputs
+        # default to the same pinned revision as the weekly run. GitHub
+        # disables schedule triggers after ~60 days without repo activity;
+        # dispatch runs keep it recoverable.
         - cron: "0 11 * * 1"
     workflow_dispatch:
         inputs:
@@ -56,12 +57,12 @@ jobs:
             IMPORTER: ${{ github.workspace }}/official-godot/godot
         steps:
             - name: Check out repository
-              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   persist-credentials: false
 
             - name: Set up Python
-              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.0.0
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
               with:
                   python-version: "3.x"
 

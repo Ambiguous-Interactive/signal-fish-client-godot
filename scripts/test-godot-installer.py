@@ -122,6 +122,7 @@ class GodotInstallerTests(unittest.TestCase):
                     )
                 installer.install_editor("4.3-stable", cache, target)
                 self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+                self.assertEqual(target.read_bytes(), b"#!/bin/sh\necho 4.3.stable.official.test\n")
                 with zipfile.ZipFile(archive_path, "w") as archive:
                     archive.writestr("Godot.app/Contents/Info.plist", b"plist")
                 with self.assertRaisesRegex(ValueError, "Expected one Godot binary"):
