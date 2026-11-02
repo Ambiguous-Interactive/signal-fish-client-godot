@@ -76,7 +76,9 @@ jobs:
                   "$IMPORTER" --headless --version
 
             - name: Prepare evidence directory
-              run: mkdir -p output
+              run: |
+                  mkdir -p output
+                  printf '%s\n' "$GODOT_REVISION" "$GODOT_LABEL" > output/engine-revision.txt
 
             - name: Fetch pinned engine source
               run: |
