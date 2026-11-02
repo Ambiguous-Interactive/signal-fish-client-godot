@@ -19,8 +19,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # Ceiling for one suite case. The burst fixture's own watchdog bounds the
 # 64-batch credit shape at about 207 s worst case (issue #520 deadline); the
-# ceiling must stay above it so the fixture prints its result record.
-SUITE_TIMEOUT_SECONDS = 240
+# ceiling must stay above it so the fixture prints its result record. Other
+# fixtures keep the 90 s ceiling their phase deadlines always fit.
+BURST_TIMEOUT_SECONDS = 240
+CASE_TIMEOUT_SECONDS = 90
 FIXTURES = {
     "limit": ("run_websocket_fragment_limit.gd", "FRAGMENT_LIMIT_RESULT "),
     "reuse": ("run_websocket_fragment_reuse.gd", "REDIAL_RESULT "),
@@ -622,7 +624,7 @@ def main() -> int:
                     *options,
                 ],
                 log,
-                SUITE_TIMEOUT_SECONDS,
+                BURST_TIMEOUT_SECONDS if kind == "burst" else CASE_TIMEOUT_SECONDS,
                 env=environment,
             )
             if environment is not None:
