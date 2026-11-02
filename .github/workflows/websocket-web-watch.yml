@@ -1,0 +1,235 @@
+name: WebSocket Web Watch
+
+on:
+    schedule:
+        # Mondays 10:00 UTC: weekly #488 Web receive-boundary watch (upstream
+        # godotengine/godot#125073), staggered after the x86-64 watch (08:00)
+        # and the master pin (09:00). The defect run is expected to keep
+        # failing with the filed signature; any change is upstream movement.
+        # Note: GitHub disables schedule triggers after ~60 days without repo
+        # activity; dispatch runs keep it recoverable.
+        - cron: "0 10 * * 1"
+    workflow_dispatch:
+        inputs:
+            engine_version:
+                description: Official Godot release to watch (use a dev snapshot after an upstream fix lands)
+                required: true
+                type: string
+                default: 4.7.2-stable
+
+permissions:
+    contents: read
+
+# Scheduled and dispatched runs do the same check; the newer run wins.
+concurrency:
+    group: ${{ github.workflow }}
+    cancel-in-progress: true
+
+env:
+    GODOT_VERSION: ${{ inputs.engine_version || '4.7.2-stable' }}
+    GODOT_BIN: /tmp/godot-cache/godot
+
+jobs:
+    watch:
+        name: Watch the Web receive boundary
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
+              with:
+                  persist-credentials: false
+
+            - name: Install Godot runtime dependencies
+              run: sudo python3 .devcontainer/install-godot.py runtime-deps
+
+            - name: Cache Godot editor
+              id: godot-cache
+              uses: actions/cache@v6
+              with:
+                  path: /tmp/godot-cache
+                  key: godot-web-watch-editor-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
+
+            - name: Install Godot editor
+              if: steps.godot-cache.outputs.cache-hit != 'true'
+              run: python3 .devcontainer/install-godot.py editor "$GODOT_VERSION" /tmp/godot-cache --target "$GODOT_BIN"
+
+            - name: Expose the Godot binary
+              run: |
+                  echo "$(dirname "$GODOT_BIN")" >> "$GITHUB_PATH"
+                  "$GODOT_BIN" --headless --version
+
+            - name: Prepare evidence directory
+              run: mkdir -p output
+
+            - name: Cache web export templates
+              id: templates-cache
+              uses: actions/cache@v6
+              with:
+                  path: ~/.local/share/godot/export_templates
+                  key: godot-web-watch-templates-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
+
+            - name: Install web export templates
+              if: steps.templates-cache.outputs.cache-hit != 'true'
+              run: python3 .devcontainer/install-godot.py templates "$GODOT_VERSION" /tmp/godot-templates-cache "$HOME/.local/share/godot/export_templates"
+
+            - name: Set up Python
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.0.0
+              with:
+                  python-version: "3.12"
+
+            - name: Install Python Playwright with uv
+              run: python3 scripts/install-ci-venv.py .venv-web-watch requirements-docs-accessibility.txt
+
+            - name: Set up Playwright Chromium
+              uses: ./.github/actions/playwright-chromium
+              with:
+                  python-path: .venv-web-watch/bin/python
+
+            # The uncredited workload must keep failing at the filed
+            # payload-capacity boundary; exit 0 means the engine now delivers
+            # everything (upstream repair) and the watch must stop.
+            - name: Reproduce the Web receive loss (expected to fail)
+              id: defect
+              run: |
+                  rc=0
+                  .venv-web-watch/bin/python scripts/check-websocket-web-receive.py \
+                    --godot "$GODOT_BIN" --output output/defect || rc=$?
+                  echo "exit=$rc" >> "$GITHUB_OUTPUT"
+
+            - name: Run the application ACK control
+              id: control
+              run: |
+                  rc=0
+                  .venv-web-watch/bin/python scripts/check-websocket-web-receive.py \
+                    --godot "$GODOT_BIN" --output output/control \
+                    --credit-transport app-ack --credit-bytes 32768 || rc=$?
+                  echo "exit=$rc" >> "$GITHUB_OUTPUT"
+
+            - name: Check watch expectations
+              run: |
+                  python3 - <<'PY'
+                  import json
+                  import os
+                  from pathlib import Path
+
+                  defect = json.loads(Path("output/defect/assessment.json").read_text())
+                  control = json.loads(Path("output/control/assessment.json").read_text())
+                  defect_exit = "${{ steps.defect.outputs.exit }}"
+                  control_exit = "${{ steps.control.outputs.exit }}"
+                  problems = []
+
+                  # The defect run must fail exactly at the filed
+                  # payload-capacity boundary (godotengine/godot#125073): the
+                  # 65535-byte payload budget keeps the first 15 burst bodies
+                  # (61440 bytes) plus the sentinel and rejects the other 49.
+                  record = defect["results"][0] if len(defect.get("results", [])) == 1 else {}
+                  evidence = defect.get("receive_evidence", {})
+                  received = record.get("received")
+                  if not record:
+                      problems.append(
+                          f"defect run produced no result record (exit {defect_exit})"
+                          + (f": {defect['error']}" if defect.get("error") else "")
+                      )
+                  else:
+                      if record.get("engine", "").startswith(os.environ["GODOT_VERSION"]):
+                          pass
+                      else:
+                          problems.append(
+                              f"defect ran {record.get('engine')!r}, expected"
+                              f" {os.environ['GODOT_VERSION']!r} (wrong binary)"
+                          )
+                      if received == list(range(15)) + [64]:
+                          pass
+                      elif received == list(range(65)):
+                          problems.append(
+                              "defect delivered all 65 (the upstream repair landed: "
+                              "requalify it and close #488)"
+                          )
+                      else:
+                          problems.append(
+                              f"defect delivered {received!r} (the filed boundary moved: "
+                              "investigate godotengine/godot#125073)"
+                          )
+                      if sorted(record.get("failures", [])) != sorted(
+                          ["finite burst count", "complete receive count", "exact receive prefix"]
+                      ):
+                          problems.append(
+                              f"defect failures {record.get('failures')!r} unexpected"
+                          )
+                      if record.get("first_gap") != {"expected": 15, "received": 64}:
+                          problems.append(
+                              f"defect first gap {record.get('first_gap')!r} unexpected"
+                          )
+                      if evidence.get("rejected_sequences") != list(range(15, 64)):
+                          problems.append(
+                              f"defect rejections {evidence.get('rejected_sequences')!r} "
+                              "(a change means upstream engine behavior moved: investigate "
+                              "godotengine/godot#125073)"
+                          )
+                      if evidence.get("trace_complete") is not True:
+                          problems.append("defect receive trace incomplete")
+                      if evidence.get("reliable_delivery") is not False:
+                          problems.append("defect reliable_delivery unexpectedly true")
+                      if defect_exit != "1":
+                          problems.append(f"defect exit {defect_exit} != 1")
+
+                  # The application ACK control must keep delivering all 65:
+                  # a failure points at the fixture, browser or export setup.
+                  control_record = (
+                      control["results"][0] if len(control.get("results", [])) == 1 else {}
+                  )
+                  if control_record.get("received") != list(range(65)):
+                      problems.append(
+                          f"control delivered {control_record.get('received')!r} != all 65 "
+                          "(fixture, browser or export setup broke)"
+                      )
+                  if (
+                      control.get("application_acknowledged_packets") != 64
+                      or control.get("application_sent_packets") != 65
+                  ):
+                      problems.append("control application ACK window incomplete")
+                  if control.get("receive_evidence", {}).get("reliable_delivery") is not True:
+                      problems.append("control reliable_delivery unexpectedly false")
+                  if control_exit != "0":
+                      problems.append(f"control exit {control_exit} != 0")
+
+                  summary = [
+                      "## WebSocket Web Watch",
+                      "",
+                      f"- Engine: {record.get('engine', 'unknown')} (Web export)",
+                      f"- Browser: {defect.get('browser', 'unknown')}",
+                      f"- Defect run: {len(record.get('received', []))}/65 delivered,"
+                      f" {len(evidence.get('rejected_sequences', []))} scoped rejections"
+                      f" (first gap {record.get('first_gap', {}).get('expected')} ->"
+                      f" {record.get('first_gap', {}).get('received')})",
+                      f"- ACK control: {len(control_record.get('received', []))}/65 delivered",
+                      "",
+                  ]
+                  if defect.get("error"):
+                      summary.append(f"- Defect run error: {defect['error']}")
+                  verdict = (
+                      "Watch green: the Web receive loss still reproduces as filed"
+                      " ([godotengine/godot#125073](https://github.com/godotengine/godot/issues/125073))."
+                      if not problems
+                      else "Watch red: " + "; ".join(problems)
+                  )
+                  summary.extend(["", verdict, ""])
+                  with open(
+                      os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8"
+                  ) as step_summary:
+                      step_summary.write("\n".join(summary))
+                  print(verdict)
+                  assert not problems, "; ".join(problems)
+                  PY
+
+            - name: Upload watch evidence
+              if: always()
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: websocket-web-watch-${{ github.run_id }}
+                  path: output/
+                  if-no-files-found: error

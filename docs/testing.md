@@ -1015,6 +1015,15 @@ the engine delivered 16 (sequences 0-14 and the sentinel) and logged 49
 scoped rejections; the matched 32 KiB application-ACK control delivered
 65/65. Upstream review, repair and adoption remain open.
 
+The weekly `WebSocket Web Watch` CI workflow (Mondays 10:00 UTC, plus
+on-demand dispatch) keeps this boundary under watch on x86-64. It reproduces
+the loss on the newest supported official engine, requires the filed
+signature (the first 15 burst bodies plus the sentinel delivered, 49 scoped
+rejections) and the green 32 KiB application-ACK control, and fails when the
+signature moves, flagging either the upstream repair for requalification or
+a behavior change for triage (#488). A dispatch input watches other official
+releases, such as a dev snapshot after an upstream fix lands.
+
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
 bounded prefix, rejection reason and browser clock while that handler is active.
