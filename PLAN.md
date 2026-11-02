@@ -23,7 +23,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       application ACK windows. Preserve the original delayed workload and
       separate local body-credit controls. The receive loss is filed upstream
       as [godotengine/godot#125073](https://github.com/godotengine/godot/issues/125073);
-      track its progress alongside godotengine/godot#125066.
+      the weekly `WebSocket Web Watch` CI run tracks it on x86-64 (alongside
+      the master-pin watch for godotengine/godot#125066), and remote-network
+      qualification remains open.
 - [ ] Qualify the experimental Godot 4.3 WebSocket receive backport and engine upgrades on
       remote networks (#485; see `docs/testing.md`). Preserve the retained
       byte/count rejections, exact delivered prefix, full-buffer empty-fragment progress (#496),
