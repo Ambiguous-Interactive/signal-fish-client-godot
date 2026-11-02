@@ -132,8 +132,8 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
     print("==> Verifying archive")
     executable_member = "Godot.app/Contents/MacOS/Godot"
     app_root = target / "Godot.app"
-    if app_root.exists() and not app_root.is_dir():
-        raise ValueError(f"{app_root} exists and is not a directory")
+    if target.exists() and not target.is_dir():
+        raise ValueError(f"{target} exists and is not a directory")
     staging = target / f".godot-app-{os.getpid()}"
     if staging.is_dir():
         shutil.rmtree(staging, ignore_errors=True)
@@ -162,12 +162,16 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
                     shutil.copyfileobj(source, output)
             executable = staging / executable_member
         executable.chmod(0o755)
-        result = subprocess.run(  # noqa: S603
-            [str(executable), "--headless", "--version"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(  # noqa: S603
+                [str(executable), "--headless", "--version"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(f"Godot binary did not exit: {error}") from error
         if result.returncode != 0:
             raise RuntimeError(f"Godot binary failed to run: {binary_failure(result)}")
         promoted = staging / "Godot.app"
@@ -179,8 +183,13 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
         try:
             os.replace(promoted, app_root)
         except OSError:
-            if not app_root.exists() and backup.is_dir():
-                os.replace(backup, app_root)
+            try:
+                if not app_root.exists() and backup.is_dir():
+                    os.replace(backup, app_root)
+            except OSError:
+                # Keep the previous bundle even when staging cleanup would
+                # otherwise delete the only copy.
+                os.replace(backup, target / f".Godot.app-lost-{os.getpid()}")
             raise
     finally:
         shutil.rmtree(staging, ignore_errors=True)

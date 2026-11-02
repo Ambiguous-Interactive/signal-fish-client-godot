@@ -208,6 +208,29 @@ jobs:
                       cases = {case["case"]: case for case in suite["cases"]}
                       wrong: list[str] = []
                       sporadic = []
+
+                      def failure_shape(name: str, case: dict) -> str | None:
+                          """Describe a case that did not fail cleanly.
+
+                          A documented gap must stay an observed fixture
+                          failure under paced writes: exit 1, one result
+                          record marked failed, no engine error, no timeout.
+                          """
+                          result = case.get("result") or {}
+                          wire = result.get("wire") or {}
+                          paced = wire.get("writes", 0) >= 2 and wire.get("error") == 0
+                          if name.startswith("byte-"):
+                              paced = paced and wire.get("split_headers", 0) > 0
+                          if (
+                              case.get("returncode") != 1
+                              or case.get("timed_out") is not False
+                              or case.get("engine_errors") is not False
+                              or result.get("passed") is not False
+                              or not paced
+                          ):
+                              return "did not fail cleanly under paced writes"
+                          return None
+
                       for name, reasons in sorted(documented.items()):
                           case = cases.get(name)
                           if case is None:
@@ -216,6 +239,10 @@ jobs:
                               wrong.append(f"{name}: repaired engine now passes; requalify macOS")
                           elif sorted(case["result"]["failures"]) != reasons:
                               wrong.append(f"{name}: {sorted(case['result']['failures'])}")
+                          else:
+                              shape = failure_shape(name, case)
+                              if shape:
+                                  wrong.append(f"{name}: {shape}")
                       for name, case in cases.items():
                           if name in documented or case["passed"]:
                               continue
@@ -224,7 +251,11 @@ jobs:
                               name.startswith("chunk-reuse-")
                               and failures == ["old queued continuation was not retired"]
                           ):
-                              sporadic.append(f"{name}: {failures}")
+                              shape = failure_shape(name, case)
+                              if shape:
+                                  wrong.append(f"{name}: {shape}")
+                              else:
+                                  sporadic.append(f"{name}: {failures}")
                           else:
                               wrong.append(f"{name}: new failure {failures}")
                       if len(sporadic) > 1:
