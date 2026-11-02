@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -140,15 +141,18 @@ class GodotInstallerTests(unittest.TestCase):
                     installed.read_bytes(), b"#!/bin/sh\necho 4.3.stable.official.test\n"
                 )
 
-                real_replace = installer.os.replace
+                real_replace: Callable[..., int] = installer.os.replace
+                promotion_failed = [False]
 
-                def fail_first_promotion(source, destination, **kwargs):
+                def fail_first_promotion(
+                    source: object, destination: object, **kwargs: object
+                ) -> int:
                     if (
-                        fail_first_promotion.armed
+                        not promotion_failed[0]
                         and str(source).startswith(str(target / ".godot-app-"))
                         and Path(destination).name == "Godot.app"
                     ):
-                        fail_first_promotion.armed = False
+                        promotion_failed[0] = True
                         raise OSError("promotion forced failure")
                     return real_replace(source, destination, **kwargs)
 
