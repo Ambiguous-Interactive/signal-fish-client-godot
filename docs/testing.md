@@ -909,8 +909,9 @@ gap and largest poll interval, parsed from the fixture log. When a batch
 deadline expires, the burst result records a `pending_wait` entry with the
 first missing sequence (or the delivery count when no gap was observed), the
 elapsed wait and the deadline margin. The batch deadline is three seconds
-(#520): healthy Windows x86-64 runs delivered their slowest message within
-563 ms, and the recorded one-off Wine pacing stall needed 1.14 s, so the
+(#520): the healthy Windows x86-64 runs never needed more than 563 ms
+between consecutive deliveries, and the recorded one-off Wine pacing stall
+needed 1.14 s, so the
 former one-second window left under twice the headroom and let a benign
 stall fail the watch. A deadline miss still names a stall above the window
 or a lost message; compare both records with the batch deadline before

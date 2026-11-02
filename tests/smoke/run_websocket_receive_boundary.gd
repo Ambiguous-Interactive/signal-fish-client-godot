@@ -3,9 +3,10 @@ extends SceneTree
 const ServerScript = preload("res://tests/smoke/ws_test_server.gd")
 const PACKETS := 64
 const CONNECT_TIMEOUT_MS := 5000
-# Three seconds: the healthy Windows x86-64 watch delivered its slowest
-# message within 563 ms, and the benign Wine pacing stall recorded in #520
-# needed 1135 ms, so a one-second window left under twice the headroom.
+# Three seconds: the healthy Windows x86-64 watch runs never needed more
+# than 563 ms between consecutive deliveries, and the benign Wine pacing
+# stall recorded in #520 needed 1135 ms, so a one-second window left under
+# twice the headroom.
 const READ_TIMEOUT_MS := 3000
 const BATCH_HOLD_MS := 100
 const WATCHDOG_MARGIN_MS := 1000
