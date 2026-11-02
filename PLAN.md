@@ -36,17 +36,20 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Follow Godot #124976 for valid Unicode WebSocket close reasons and
       qualify bare-metal x86-64 and remote networks (#498; see
       `docs/testing.md`). The weekly `WebSocket Native macOS` watch covers
-      the macOS leg on Apple Silicon.
+      the macOS leg on Apple Silicon and pins the measured one-byte-paced
+      maximum-length close-reason gap; requalify when it clears.
       Preserve paced close reasons, full-buffer completion and peer reuse.
       Include maximum-length ASCII and mixed Unicode close reasons.
 - [ ] Qualify the Godot #124973/#124974 assembly/reuse repair on remote paths
       (#491, #492; see `docs/testing.md`; the weekly
-      `WebSocket Native macOS` watch covers the macOS leg on Apple Silicon).
-      The upstream repair is filed as [godotengine/godot#125066](https://github.com/godotengine/godot/pull/125066)
-      from master `95c0fa5fe8a019adc29d074c16b64469b04571f7`; track its review,
-      keep the master pin buildable (the weekly `WebSocket Master Pin` watch
-      surfaces master drift and adoption) and requalify against adopted
-      revisions.
+      `WebSocket Native macOS` watch covers the macOS leg on Apple Silicon
+      and pins the measured macOS gaps: barrier pong under one-byte paced
+      reuse writes, with at most one sporadic retirement failure per run).
+      The upstream submission godotengine/godot#125066 was closed unmerged
+      on AI-authorship policy grounds; a policy-compliant resubmission is
+      tracked in #536. Keep the master pin buildable (the weekly
+      `WebSocket Master Pin` watch surfaces master drift) and requalify
+      against an adopted revision.
 - [ ] Triage failed weekly Windows x86-64 watch runs (#520; Mondays 08:00
       UTC). The burst batch deadline is three seconds (#520: worst
       inter-delivery gap 563 ms on healthy runs, benign Wine stall 1135 ms),

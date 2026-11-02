@@ -54,7 +54,8 @@ jobs:
             GODOT_LABEL: ${{ inputs.engine_label || '4.4.1-stable' }}
             SOURCE_DIR: godot-source
             ENGINE_BIN: godot-source/bin/godot.macos.template_debug.arm64
-            IMPORTER: ${{ github.workspace }}/official-godot/godot
+            IMPORTER_APP: ${{ github.workspace }}/official-godot
+            IMPORTER: ${{ github.workspace }}/official-godot/Godot.app/Contents/MacOS/Godot
         steps:
             - name: Check out repository
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,7 +73,7 @@ jobs:
             - name: Install official importer
               run: |
                   python3 .devcontainer/install-godot.py editor "$GODOT_LABEL" \
-                    /tmp/godot-cache --target "$IMPORTER"
+                    /tmp/godot-cache --target "$IMPORTER_APP"
                   "$IMPORTER" --headless --version
 
             - name: Prepare evidence directory
@@ -109,6 +110,7 @@ jobs:
 
             - name: Run the paced receive suite
               if: matrix.variant == 'repaired'
+              continue-on-error: true
               run: |
                   python3 scripts/check-websocket-native-receive.py \
                     --godot "$ENGINE_BIN" --importer "$IMPORTER" \
@@ -125,6 +127,147 @@ jobs:
                   python3 - <<'PY'
                   import json
                   from pathlib import Path
+
+                  def check_macos_suite() -> list[str]:
+                      """Pinned macOS arm64 state (runs 41510773288 + 41516492113).
+
+                      The pinned repair passes 163 of 184 paced cases; 20
+                      documented gaps are stable across runs: every one-byte
+                      paced byte-reuse case misses the barrier pong (12), and
+                      every one-byte paced maximum-length close reason never
+                      delivers a close code (8). The twelve chunk-paced reuse
+                      cases are sporadic: at most one may fail with the same
+                      retirement reason. Any drift in either direction means
+                      the macOS state changed: requalify and update this map.
+                      """
+                      documented = {
+                          "boundary-close-1-max-ascii-client-false": [
+                              "exact close code, reason and empty packet queue",
+                          ],
+                          "boundary-close-1-max-ascii-client-true": [
+                              "unfinished full fragment state",
+                          ],
+                          "boundary-close-1-max-ascii-server-false": [
+                              "exact close code, reason and empty packet queue",
+                              "matching client close frame",
+                          ],
+                          "boundary-close-1-max-ascii-server-true": [
+                              "unfinished full fragment state",
+                          ],
+                          "boundary-close-1-max-mixed-client-false": [
+                              "exact close code, reason and empty packet queue",
+                          ],
+                          "boundary-close-1-max-mixed-client-true": [
+                              "unfinished full fragment state",
+                          ],
+                          "boundary-close-1-max-mixed-server-false": [
+                              "exact close code, reason and empty packet queue",
+                              "matching client close frame",
+                          ],
+                          "boundary-close-1-max-mixed-server-true": [
+                              "unfinished full fragment state",
+                          ],
+                          "byte-reuse-binary-binary-aborted": [
+                              "empty pong barrier",
+                              "old queued continuation was not retired",
+                          ],
+                          "byte-reuse-binary-binary-closing": [
+                              "empty pong barrier",
+                              "old queued continuation was not retired",
+                          ],
+                          "byte-reuse-binary-binary-handshake": ["empty pong barrier"],
+                          "byte-reuse-binary-text-aborted": [
+                              "empty pong barrier",
+                              "old queued continuation was not retired",
+                          ],
+                          "byte-reuse-binary-text-closing": [
+                              "empty pong barrier",
+                              "old queued continuation was not retired",
+                          ],
+                          "byte-reuse-binary-text-handshake": ["empty pong barrier"],
+                          "byte-reuse-text-binary-aborted": [
+                              "empty pong barrier",
+                              "old queued continuation was not retired",
+                          ],
+                          "byte-reuse-text-binary-closing": [
+                              "empty pong barrier",
+                              "old queued continuation was not retired",
+                          ],
+                          "byte-reuse-text-binary-handshake": ["empty pong barrier"],
+                          "byte-reuse-text-text-aborted": [
+                              "empty pong barrier",
+                              "old queued continuation was not retired",
+                          ],
+                          "byte-reuse-text-text-closing": [
+                              "empty pong barrier",
+                              "old queued continuation was not retired",
+                          ],
+                          "byte-reuse-text-text-handshake": ["empty pong barrier"],
+                      }
+                      suite = json.loads(Path("output/repaired-suite/summary.json").read_text())
+                      cases = {case["case"]: case for case in suite["cases"]}
+                      wrong: list[str] = []
+                      sporadic = []
+
+                      def failure_shape(name: str, case: dict) -> str | None:
+                          """Describe a case that did not fail cleanly.
+
+                          A documented gap must stay an observed fixture
+                          failure under paced writes: exit 1, one result
+                          record marked failed, no engine error, no timeout.
+                          """
+                          result = case.get("result") or {}
+                          wire = result.get("wire") or {}
+                          minimum_writes = 1 if name.startswith("boundary-close-") else 2
+                          paced = (
+                              wire.get("writes", 0) >= minimum_writes
+                              and wire.get("error") == 0
+                          )
+                          if name.startswith("byte-"):
+                              paced = paced and wire.get("split_headers", 0) > 0
+                          if (
+                              case.get("returncode") != 1
+                              or case.get("timed_out") is not False
+                              or case.get("engine_errors") is not False
+                              or result.get("passed") is not False
+                              or not paced
+                          ):
+                              return "did not fail cleanly under paced writes"
+                          return None
+
+                      for name, reasons in sorted(documented.items()):
+                          case = cases.get(name)
+                          if case is None:
+                              wrong.append(f"{name}: missing from suite")
+                          elif case["passed"]:
+                              wrong.append(f"{name}: repaired engine now passes; requalify macOS")
+                          elif sorted(case["result"]["failures"]) != reasons:
+                              wrong.append(f"{name}: {sorted(case['result']['failures'])}")
+                          else:
+                              shape = failure_shape(name, case)
+                              if shape:
+                                  wrong.append(f"{name}: {shape}")
+                      for name, case in cases.items():
+                          if name in documented or case["passed"]:
+                              continue
+                          failures = sorted(case["result"].get("failures", []))
+                          if (
+                              name.startswith("chunk-reuse-")
+                              and failures == ["old queued continuation was not retired"]
+                          ):
+                              shape = failure_shape(name, case)
+                              if shape:
+                                  wrong.append(f"{name}: {shape}")
+                              else:
+                                  sporadic.append(f"{name}: {failures}")
+                          else:
+                              wrong.append(f"{name}: new failure {failures}")
+                      if len(sporadic) > 1:
+                          wrong.append(f"more than one sporadic chunk-reuse failure: {sporadic}")
+                      imported = suite["import"]
+                      if imported["returncode"] != 0 or imported["engine_errors"]:
+                          wrong.append("suite fixture import failed")
+                      return wrong
 
                   variant = "${{ matrix.variant }}"
                   report = json.loads(
@@ -152,8 +295,17 @@ jobs:
                               wrong.append(name)
                       elif command["returncode"] != 1 or record.get("passed") is not False:
                           wrong.append(name)
-                  assert not wrong, f"unexpected results: {sorted(set(wrong))}"
-                  print(f"{variant}: all standalone expectations met on macos arm64")
+                  if variant == "repaired":
+                      wrong.extend(check_macos_suite())
+                      assert not wrong, f"unexpected results: {wrong}"
+                      print(
+                          "repaired: all standalone commands pass and the documented"
+                          " macOS paced-suite signature is stable (20 stable gaps,"
+                          " at most one sporadic chunk-reuse retirement gap)"
+                      )
+                  else:
+                      assert not wrong, f"unexpected results: {wrong}"
+                      print("baseline: all standalone expectations met on macos arm64")
                   PY
 
             - name: Upload qualification evidence

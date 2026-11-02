@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -122,12 +123,78 @@ class GodotInstallerTests(unittest.TestCase):
                         b"#!/bin/sh\necho 4.3.stable.official.test\n",
                     )
                 installer.install_editor("4.3-stable", cache, target)
-                self.assertEqual(target.stat().st_mode & 0o777, 0o755)
-                self.assertEqual(target.read_bytes(), b"#!/bin/sh\necho 4.3.stable.official.test\n")
+                installed = target / "Godot.app" / "Contents" / "MacOS" / "Godot"
+                self.assertEqual(installed.stat().st_mode & 0o777, 0o755)
+                self.assertEqual(
+                    installed.read_bytes(), b"#!/bin/sh\necho 4.3.stable.official.test\n"
+                )
+                self.assertEqual(
+                    (target / "Godot.app" / "Contents" / "Info.plist").read_bytes(), b"plist"
+                )
                 with zipfile.ZipFile(archive_path, "w") as archive:
                     archive.writestr("Godot.app/Contents/Info.plist", b"plist")
+                    archive.writestr(
+                        "Godot.app/Contents/MacOS/Godot",
+                        b"#!/bin/sh\necho 4.4.upgraded.official.test\n",
+                    )
+                installer.install_editor("4.3-stable", cache, target)
+                self.assertEqual(
+                    installed.read_bytes(), b"#!/bin/sh\necho 4.4.upgraded.official.test\n"
+                )
+                self.assertEqual([path.name for path in target.iterdir()], ["Godot.app"])
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("Godot.app/Contents/Info.plist", b"plist")
+                    archive.writestr("Godot.app/Contents/MacOS/Godot", b"#!/bin/sh\nexit 3\n")
+                with self.assertRaisesRegex(RuntimeError, "Godot binary failed to run: exit 3"):
+                    installer.install_editor("4.3-stable", cache, target)
+                self.assertEqual([path.name for path in target.iterdir()], ["Godot.app"])
+                self.assertEqual(
+                    installed.read_bytes(), b"#!/bin/sh\necho 4.4.upgraded.official.test\n"
+                )
+
+                real_replace: Callable[[Path, Path], None] = installer.os.replace
+                promotion_failed = [False]
+                promoted_bytes = installed.read_bytes()
+
+                def fail_first_promotion(source: Path, destination: Path) -> None:
+                    if (
+                        not promotion_failed[0]
+                        and source.parent.name.startswith(".godot-app-")
+                        and source.name == "Godot.app"
+                        and destination.name == "Godot.app"
+                    ):
+                        promotion_failed[0] = True
+                        raise OSError("promotion forced failure")
+                    real_replace(source, destination)
+
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("Godot.app/Contents/Info.plist", b"plist")
+                    archive.writestr(
+                        "Godot.app/Contents/MacOS/Godot",
+                        b"#!/bin/sh\necho 4.4.stable.official.test\n",
+                    )
+                with (
+                    patch.object(installer.os, "replace", side_effect=fail_first_promotion),
+                    self.assertRaises(OSError),
+                ):
+                    installer.install_editor("4.3-stable", cache, target)
+                self.assertEqual(installed.read_bytes(), promoted_bytes)
+                self.assertEqual([path.name for path in target.iterdir()], ["Godot.app"])
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("Godot4.app/Contents/MacOS/Godot", b"#!/bin/sh\nexit 3\n")
                 with self.assertRaisesRegex(ValueError, "Expected one Godot binary"):
                     installer.install_editor("4.3-stable", cache, target)
+                self.assertEqual([path.name for path in target.iterdir()], ["Godot.app"])
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr(
+                        "Godot.app/Contents/MacOS/Godot",
+                        b"#!/bin/sh\necho 4.3.stable.official.test\n",
+                    )
+                    archive.writestr("../escape", b"evil")
+                with self.assertRaisesRegex(ValueError, "Unsafe archive member path"):
+                    installer.install_editor("4.3-stable", cache, target)
+                self.assertFalse((root / "escape").exists())
+                self.assertEqual([path.name for path in target.iterdir()], ["Godot.app"])
 
 
 if __name__ == "__main__":
