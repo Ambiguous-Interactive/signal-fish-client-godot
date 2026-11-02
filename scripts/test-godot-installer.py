@@ -101,6 +101,32 @@ class GodotInstallerTests(unittest.TestCase):
                     installer.install_editor("4.3-stable", cache, target)
                 self.assertEqual(target.read_bytes(), good_binary)
 
+    @unittest.skipUnless(os.name == "posix", "editor fixture uses a POSIX executable")
+    def test_editor_installs_macos_bundle_binary(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
+            root = Path(temporary)
+            cache = root / "cache"
+            cache.mkdir()
+            name = "Godot_v4.3-stable_macos.universal.zip"
+            archive_path = cache / name
+            target = root / "godot"
+            with (
+                patch.object(installer, "EDITOR_MIN_BYTES", 1),
+                patch.object(installer.sys, "platform", "darwin"),
+            ):
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("Godot.app/Contents/Info.plist", b"plist")
+                    archive.writestr(
+                        "Godot.app/Contents/MacOS/Godot",
+                        b"#!/bin/sh\necho 4.3.stable.official.test\n",
+                    )
+                installer.install_editor("4.3-stable", cache, target)
+                self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("Godot.app/Contents/Info.plist", b"plist")
+                with self.assertRaisesRegex(ValueError, "Expected one Godot binary"):
+                    installer.install_editor("4.3-stable", cache, target)
+
 
 if __name__ == "__main__":
     unittest.main()
