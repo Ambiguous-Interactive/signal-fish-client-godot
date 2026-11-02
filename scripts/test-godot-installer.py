@@ -89,6 +89,7 @@ class GodotInstallerTests(unittest.TestCase):
             with (
                 patch.object(installer, "EDITOR_MIN_BYTES", 1),
                 patch.object(installer.platform, "machine", return_value="x86_64"),
+                patch.object(installer.sys, "platform", "linux"),
             ):
                 with zipfile.ZipFile(archive_path, "w") as archive:
                     archive.writestr(name, b"#!/bin/sh\necho 4.3.stable.official.test\n")

@@ -949,8 +949,8 @@ The official `macos.universal` editor imports the fixtures. Dispatch runs
 accept a pinned stable or master revision and can add the matched unpatched
 baseline, which must reproduce the four defect commands
 (#491, #492, #496, #498) and pass the three controls. Each run keeps the
-engine revision, binary hash and per-case evidence in its artifacts; first
-run evidence is reported on the linked issues. Bare-metal hosts, remote
+engine revision, binary hash and per-case evidence in its artifacts, with
+run evidence reported on the linked issues. Bare-metal hosts, remote
 networks and upstream adoption (tracked by the master-pin watch) stay open
 after macOS CI qualification.
 
