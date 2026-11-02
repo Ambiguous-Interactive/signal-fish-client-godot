@@ -944,15 +944,36 @@ The `WebSocket Native macOS` workflow qualifies the same pinned repairs on
 Apple Silicon (Mondays 11:00 UTC). It builds the repaired engine on a
 `macos-15` runner with the minimal headless feature set (`vulkan=no metal=no
 opengl3=yes`), runs the uncapped 184-case paced receive suite and the seven
-standalone commands, and checks the same expectations as the x86-64 watch.
-The official `macos.universal` editor imports the fixtures. Dispatch runs
-accept a pinned stable or master revision and can add the matched unpatched
-baseline, which must reproduce the four defect commands
-(#491, #492, #496, #498) and pass the three controls. Each run keeps the
-engine revision, binary hash and per-case evidence in its artifacts; run
-summaries are posted on the linked issues manually. Bare-metal hosts,
-remote networks and upstream adoption (tracked by the master-pin watch)
-stay open after macOS CI qualification.
+standalone commands. The official `macos.universal` editor imports the
+fixtures; its binary runs from inside the extracted `Godot.app` bundle
+(the bare bundle binary will not exec on Apple Silicon). Dispatch runs
+accept a pinned stable or master revision and can add the matched
+unpatched baseline, which must reproduce the four defect commands
+(#491, #492, #496, #498) and pass the three controls.
+
+The pinned 4.4.1-stable repair `49a5bc7b616bd04689a2c89e89bda41f50241464`
+passes all seven standalone commands on macOS arm64 (repaired binary
+SHA-256 `5bfe14836ec8e33390c85cdd145c456819b7240d683f9f3f166f483420a91308`).
+The matched unpatched baseline reproduces the four defect commands and
+passes the three controls on the same runner, so the platform gap sits in
+the engine, not the fixtures. The uncapped paced suite holds a measured
+signature across qualification runs ([41510773288](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41510773288),
+[41516492113](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41516492113)),
+and the workflow asserts it:
+
+- Twenty stable failures: every one-byte-paced `byte-reuse-*` case misses
+  the barrier pong (#492 family), and every one-byte-paced
+  `boundary-close-1-max-*` case never delivers a close code (#498 family).
+  Short close reasons (empty through four-byte Unicode) pass one byte at a
+  time, so the payload-offset close fix itself works on macOS.
+- At most one sporadic `chunk-reuse-*` failure per run, always the
+  stale-continuation retirement check.
+
+Any drift in either direction fails the run with a requalify message.
+Requalify against an adopted upstream revision before retiring a
+documented gap (the resubmission need is tracked in #536). Bare-metal
+hosts, remote networks and upstream adoption stay open after macOS CI
+qualification.
 
 ### Web WebSocket receive boundary
 
