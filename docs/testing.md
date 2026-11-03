@@ -1152,9 +1152,11 @@ a Cloudflare quick tunnel. The repaired engine runs the ten pinned receive
 cases over the tunnel at the lane's forced 3-byte read cap on the default
 Linux dispatch; the baseline runs uncapped, the conditions the
 official-engine pinned signatures were collected under. The repaired engine
-must pass every case. The baseline must
-keep failing its six pinned defect signatures on the same path, so a pass
-cannot come from the path masking a trigger. The gate checks binary identity
+must pass every case. The baseline must keep failing its six pinned defect
+signatures on the same path, so a pass cannot come from the path masking a
+trigger. That requirement applies to a Linux engine family with a pinned
+remote-path map; Windows and unpinned families record defect outcomes as
+collection data. The gate checks binary identity
 by SHA-256, tunnel provenance, paced writes, clean exits and per-case
 verdicts, keyed by engine family for the baseline map.
 
