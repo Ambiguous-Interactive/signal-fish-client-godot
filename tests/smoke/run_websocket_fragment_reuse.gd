@@ -166,6 +166,9 @@ func _run() -> void:
 			_failures.append("pending old continuation send")
 			_finish()
 			return
+		# Hold the frame in the queue until the replacement dial retires it;
+		# a remote redial is too slow to win the flush race on its own.
+		_server.wire_hold_queue = true
 	_peer.close(-1 if _replacement == "aborted" else 3400, "replace")
 	_closing_state = _peer.get_ready_state()
 	if _replacement == "aborted":

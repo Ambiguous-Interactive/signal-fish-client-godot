@@ -180,7 +180,7 @@ func _run() -> void:
 	):
 		_peer.poll()
 		await process_frame
-	_check_result()
+	await _check_result()
 	if not _oversize and _failures.is_empty():
 		await _check_following()
 	_finish()
@@ -213,6 +213,12 @@ func _check_result() -> void:
 	):
 		_failures.append("complete exact bytes and type")
 	if _fragment_control == "ping":
+		# The pong can still be in flight on a remote path when the
+		# message completes; wait within the phase budget before judging.
+		var pong_deadline := Time.get_ticks_msec() + PHASE_TIMEOUT_MS
+		while _server.received_pongs.is_empty() and Time.get_ticks_msec() < pong_deadline:
+			_peer.poll()
+			await process_frame
 		if _server.received_pongs.size() != 1 or _server.received_pongs[0] != _control_bytes:
 			_failures.append("exact pong response missing")
 

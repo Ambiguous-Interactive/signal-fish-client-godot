@@ -1108,22 +1108,26 @@ A 2026-11-03 pre-merge devcontainer run (official 4.7.2-stable native on
 Linux ARM64, one Cloudflare quick tunnel, ten selected cases) matched the
 local 4.7.2 classification exactly: all four controls passed over the
 tunnel, including the 65-packet burst control, and all six defects failed
-with their filed signatures. The remote path added two signals to record:
-the #492 reuse defect also failed the pending-continuation retirement that
-the local run passes, and the #498 maximum-length mixed close reason hit a
-paced-write failure when the engine aborted mid-write. Both need more
-samples before any pin.
+with their filed signatures. The tunnel runs exposed two fixture races.
+The pending #492 continuation could flush to the old tunnel connection
+before the replacement dial, so the retirement check lost its
+precondition; the fixture now holds the queued continuation until the
+replacement retires it, which makes the check deterministic on any path
+(a post-fix tunnel run fails the #492 defect with the filed signature
+alone). The limit fixture's pong check now waits within the phase budget
+before judging, because the pong can still be in flight on a remote path
+when the message completes. The #498 maximum-length mixed close reason
+also hit a paced-write failure when the engine aborted mid-write in one
+tunnel run; the gate rejects paced-write errors as unclean samples.
 
 The first CI run (2026-11-03, run 41591258643, ubuntu-24.04 x86-64,
 official 4.7.2-stable editor binary, one Cloudflare quick tunnel)
 confirmed the same classification from a hosted runner. All four controls
 passed, with the 65-packet burst control delivering every packet over the
-tunnel (largest delivery gap 262 ms against the 3000 ms batch deadline).
-All six defects kept their filed signatures; the #492 reuse defect again
-failed the pending-continuation retirement, and this run showed no
-paced-write failure on the #498 maximum-length case, which stays
-path-dependent. The weekly schedule (Mondays 12:00 UTC) runs both lanes;
-dispatch runs collect extra path samples on demand.
+tunnel (largest delivery gap 262 ms against the 3000 ms batch deadline),
+and all six defects kept their filed signatures. The weekly schedule
+(Mondays 12:00 UTC) runs both lanes; dispatch runs collect extra path
+samples on demand.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
