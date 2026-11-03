@@ -1,10 +1,16 @@
 extends SceneTree
 
 const ServerScript = preload("res://tests/smoke/ws_test_server.gd")
+# Tunnel connects add DNS, TLS and upgrade latency to the loopback budget;
+# the burst fixture's 5000 ms connect budget is the precedent.
+const CONNECT_TIMEOUT_MS := 4000
+const REMOTE_CONNECT_TIMEOUT_MS := 5000
+const PHASE_TIMEOUT_MS := 2000
 var _server := ServerScript.new()
 var _peer := WebSocketPeer.new()
 var _failures: Array[String] = []
 var _started := Time.get_ticks_msec()
+var _watchdog_ms := 12000
 var _opened := 0
 var _closing_state := -1
 var _fresh: Dictionary = {}
@@ -14,6 +20,8 @@ var _replacement := "closing"
 var _queued_before_partial := false
 var _retired_queued := 0
 var _pending_wire_before_replace := false
+var _port := 0
+var _public_origin := ""
 
 
 func _initialize() -> void:
@@ -24,7 +32,7 @@ func _initialize() -> void:
 				_failures.append("invalid paced-write option: " + argument)
 			continue
 		var option := argument.get_slice("=", 0)
-		var value := argument.get_slice("=", 1)
+		var value := argument.substr(option.length() + 1)
 		if not argument.begins_with(option + "="):
 			_failures.append("option requires =value")
 		elif option == "--replacement":
@@ -42,6 +50,13 @@ func _initialize() -> void:
 				_failures.append("queued-before-partial must be true or false")
 			else:
 				_queued_before_partial = value == "true"
+		elif option == "--port" and value.is_valid_int():
+			_port = value.to_int()
+		elif (
+			option == "--public-origin"
+			and (value.begins_with("https://") or value.begins_with("http://"))
+		):
+			_public_origin = value
 		elif option not in ["--partial-type", "--fresh-type"] or value not in ["text", "binary"]:
 			_failures.append("expected --partial-type=text|binary or --fresh-type=text|binary")
 		elif option == "--partial-type":
@@ -52,22 +67,38 @@ func _initialize() -> void:
 		_failures.append("pending wire replacement requires closing or aborted")
 	if _pending_wire_before_replace and _server.wire_chunk_bytes == 0:
 		_failures.append("pending wire replacement requires paced writes")
+	if _port < 0 or _port > 65535:
+		_failures.append("port must be 0..65535")
+	if not _public_origin.is_empty() and _port == 0:
+		_failures.append("public origin requires a fixed port")
+	# The raised tunnel connect budgets need matching watchdog headroom for
+	# both dials plus every phase deadline, including the handshake wait.
+	if not _public_origin.is_empty():
+		_watchdog_ms += (
+			2 * (REMOTE_CONNECT_TIMEOUT_MS - CONNECT_TIMEOUT_MS) + 2 * PHASE_TIMEOUT_MS
+		)
 	call_deferred("_run")
 
 
 func _process(_delta: float) -> bool:
 	_server.poll()
-	if Time.get_ticks_msec() - _started > 12000:
+	if Time.get_ticks_msec() - _started > _watchdog_ms:
 		_failures.append("watchdog")
 		_finish()
 	return false
 
 
 func _open() -> bool:
-	if _peer.connect_to_url("ws://127.0.0.1:%d" % _server.get_port()) != OK:
+	var target := "ws://127.0.0.1:%d" % _server.get_port()
+	if not _public_origin.is_empty():
+		target = _public_origin.replace("https://", "wss://").replace("http://", "ws://")
+	if _peer.connect_to_url(target) != OK:
 		_failures.append("connect failed")
 		return false
-	var deadline := Time.get_ticks_msec() + 4000
+	var connect_timeout := CONNECT_TIMEOUT_MS
+	if not _public_origin.is_empty():
+		connect_timeout = REMOTE_CONNECT_TIMEOUT_MS
+	var deadline := Time.get_ticks_msec() + connect_timeout
 	while (
 		_peer.get_ready_state() == WebSocketPeer.STATE_CONNECTING
 		and Time.get_ticks_msec() < deadline
@@ -87,7 +118,7 @@ func _queue_retired() -> bool:
 	if _server.send_text_frame("retired") != OK:
 		_failures.append("retired send")
 		return false
-	var deadline := Time.get_ticks_msec() + 2000
+	var deadline := Time.get_ticks_msec() + PHASE_TIMEOUT_MS
 	while _peer.get_available_packet_count() == 0 and Time.get_ticks_msec() < deadline:
 		_peer.poll()
 		await process_frame
@@ -101,7 +132,7 @@ func _queue_retired() -> bool:
 func _prepare() -> bool:
 	if not _failures.is_empty():
 		return false
-	if _server.listen() != OK:
+	if _server.listen(_port) != OK:
 		_failures.append("listen")
 		return false
 	return await _open()
@@ -125,7 +156,7 @@ func _run() -> void:
 		_failures.append("barrier ping send")
 		_finish()
 		return
-	var deadline := Time.get_ticks_msec() + 2000
+	var deadline := Time.get_ticks_msec() + PHASE_TIMEOUT_MS
 	while _server.received_pongs.is_empty() and Time.get_ticks_msec() < deadline:
 		_peer.poll()
 		await process_frame
@@ -140,6 +171,9 @@ func _run() -> void:
 			_failures.append("pending old continuation send")
 			_finish()
 			return
+		# Hold the frame in the queue until the replacement dial retires it;
+		# a remote redial is too slow to win the flush race on its own.
+		_server.wire_hold_queue = true
 	_peer.close(-1 if _replacement == "aborted" else 3400, "replace")
 	_closing_state = _peer.get_ready_state()
 	if _replacement == "aborted":
@@ -148,7 +182,7 @@ func _run() -> void:
 	elif _closing_state != WebSocketPeer.STATE_CLOSING:
 		_failures.append("closing state")
 	if _replacement == "handshake":
-		deadline = Time.get_ticks_msec() + 2000
+		deadline = Time.get_ticks_msec() + PHASE_TIMEOUT_MS
 		while (
 			_peer.get_ready_state() != WebSocketPeer.STATE_CLOSED
 			and Time.get_ticks_msec() < deadline
@@ -172,7 +206,7 @@ func _run() -> void:
 	var fresh_opcode := ServerScript.OP_TEXT if _fresh_type == "text" else ServerScript.OP_BINARY
 	if _server._send_frame(fresh_opcode, fresh_bytes) != OK:
 		_failures.append("fresh send")
-	deadline = Time.get_ticks_msec() + 2000
+	deadline = Time.get_ticks_msec() + PHASE_TIMEOUT_MS
 	while _peer.get_available_packet_count() == 0 and Time.get_ticks_msec() < deadline:
 		_peer.poll()
 		await process_frame
@@ -201,28 +235,24 @@ func _finish() -> void:
 		_failures.append("old queued continuation was not retired")
 	if _server.wire_error != OK:
 		_failures.append("paced socket write failed")
-	print(
-		(
-			"REDIAL_RESULT "
-			+ JSON.stringify(
-				{
-					"passed": _failures.is_empty(),
-					"failures": _failures,
-					"opened": _opened,
-					"closing_state": _closing_state,
-					"empty_pongs": _server.received_pongs.size(),
-					"fresh": _fresh,
-					"replacement": _replacement,
-					"retired_queued": _retired_queued,
-					"pending_wire_before_replace": _pending_wire_before_replace,
-					"partial_type": _partial_type,
-					"fresh_type": _fresh_type,
-					"wire": _server.wire_report(),
-					"engine": Engine.get_version_info()["string"]
-				}
-			)
-		)
-	)
+	var record := {
+		"passed": _failures.is_empty(),
+		"failures": _failures,
+		"opened": _opened,
+		"closing_state": _closing_state,
+		"empty_pongs": _server.received_pongs.size(),
+		"fresh": _fresh,
+		"replacement": _replacement,
+		"retired_queued": _retired_queued,
+		"pending_wire_before_replace": _pending_wire_before_replace,
+		"partial_type": _partial_type,
+		"fresh_type": _fresh_type,
+		"wire": _server.wire_report(),
+		"engine": Engine.get_version_info()["string"]
+	}
+	if not _public_origin.is_empty():
+		record["remote_origin"] = _public_origin
+	print("REDIAL_RESULT " + JSON.stringify(record))
 	_peer.close(-1)
 	_server.stop()
 	quit(0 if _failures.is_empty() else 1)

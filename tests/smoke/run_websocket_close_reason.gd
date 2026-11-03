@@ -2,6 +2,9 @@ extends SceneTree
 
 const ServerScript = preload("res://tests/smoke/ws_test_server.gd")
 const TIMEOUT_MS := 2000
+# Tunnel connects add DNS, TLS and upgrade latency to the loopback budget;
+# the burst fixture's 5000 ms connect budget is the precedent.
+const REMOTE_CONNECT_TIMEOUT_MS := 5000
 const CLOSE_CODE := 3400
 
 var _server := ServerScript.new()
@@ -11,6 +14,10 @@ var _origin := "server"
 var _full_fragment := false
 var _capacity := 31
 var _reason := ""
+var _port := 0
+var _public_origin := ""
+# Phase budgets plus the 100 ms settle after a full-fragment fill.
+var _watchdog_ms := 8100
 var _failures: Array[String] = []
 var _opened := false
 var _finished := false
@@ -42,6 +49,13 @@ func _initialize() -> void:
 			_full_fragment = value == "true"
 		elif option == "--capacity" and value.is_valid_int():
 			_capacity = value.to_int()
+		elif option == "--port" and value.is_valid_int():
+			_port = value.to_int()
+		elif (
+			option == "--public-origin"
+			and (value.begins_with("https://") or value.begins_with("http://"))
+		):
+			_public_origin = value
 		else:
 			_failures.append("invalid option: " + argument)
 	var reasons := {
@@ -62,6 +76,13 @@ func _initialize() -> void:
 	_reason = reasons[_reason_kind]
 	if _capacity < 31 or _capacity > 131071:
 		_failures.append("capacity must be 31..131071")
+	if _port < 0 or _port > 65535:
+		_failures.append("port must be 0..65535")
+	if not _public_origin.is_empty() and _port == 0:
+		_failures.append("public origin requires a fixed port")
+	# The raised tunnel connect budget needs matching watchdog headroom.
+	if not _public_origin.is_empty():
+		_watchdog_ms += REMOTE_CONNECT_TIMEOUT_MS - TIMEOUT_MS
 	if _reason.to_utf8_buffer().size() + 2 > _capacity:
 		_failures.append("capacity must admit the close payload")
 	call_deferred("_run")
@@ -69,7 +90,7 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	_server.poll()
-	if not _finished and Time.get_ticks_msec() - _started > 8000:
+	if not _finished and Time.get_ticks_msec() - _started > _watchdog_ms:
 		_failures.append("watchdog")
 		_finish()
 	return false
@@ -80,15 +101,21 @@ func _run() -> void:
 		_finish()
 		return
 	_peer.inbound_buffer_size = _capacity
-	if _server.listen() != OK:
+	if _server.listen(_port) != OK:
 		_failures.append("listen failed")
 		_finish()
 		return
-	if _peer.connect_to_url("ws://127.0.0.1:%d" % _server.get_port()) != OK:
+	var target := "ws://127.0.0.1:%d" % _server.get_port()
+	if not _public_origin.is_empty():
+		target = _public_origin.replace("https://", "wss://").replace("http://", "ws://")
+	if _peer.connect_to_url(target) != OK:
 		_failures.append("connect failed")
 		_finish()
 		return
-	var deadline := Time.get_ticks_msec() + TIMEOUT_MS
+	var connect_timeout := TIMEOUT_MS
+	if not _public_origin.is_empty():
+		connect_timeout = REMOTE_CONNECT_TIMEOUT_MS
+	var deadline := Time.get_ticks_msec() + connect_timeout
 	while (
 		_peer.get_ready_state() == WebSocketPeer.STATE_CONNECTING
 		and Time.get_ticks_msec() < deadline
@@ -161,33 +188,29 @@ func _finish() -> void:
 	_finished = true
 	if _server.wire_error != OK:
 		_failures.append("paced socket write failed")
-	print(
-		(
-			"CLOSE_REASON_RESULT "
-			+ JSON.stringify(
-				{
-					"passed": _failures.is_empty(),
-					"engine": Engine.get_version_info()["string"],
-					"origin": _origin,
-					"reason_kind": _reason_kind,
-					"full_fragment": _full_fragment,
-					"capacity": _capacity,
-					"opened": _opened,
-					"state": _peer.get_ready_state(),
-					"close_code": _peer.get_close_code(),
-					"reason_hex": _peer.get_close_reason().to_utf8_buffer().hex_encode(),
-					"expected_reason_hex": _reason.to_utf8_buffer().hex_encode(),
-					"client_close_codes": _server.client_close_codes,
-					"client_reason_hex":
-					_server.client_close_reasons.map(
-						func(reason: PackedByteArray) -> String: return reason.hex_encode()
-					),
-					"wire": _server.wire_report(),
-					"failures": _failures
-				}
-			)
-		)
-	)
+	var record := {
+		"passed": _failures.is_empty(),
+		"engine": Engine.get_version_info()["string"],
+		"origin": _origin,
+		"reason_kind": _reason_kind,
+		"full_fragment": _full_fragment,
+		"capacity": _capacity,
+		"opened": _opened,
+		"state": _peer.get_ready_state(),
+		"close_code": _peer.get_close_code(),
+		"reason_hex": _peer.get_close_reason().to_utf8_buffer().hex_encode(),
+		"expected_reason_hex": _reason.to_utf8_buffer().hex_encode(),
+		"client_close_codes": _server.client_close_codes,
+		"client_reason_hex":
+		_server.client_close_reasons.map(
+			func(reason: PackedByteArray) -> String: return reason.hex_encode()
+		),
+		"wire": _server.wire_report(),
+		"failures": _failures
+	}
+	if not _public_origin.is_empty():
+		record["remote_origin"] = _public_origin
+	print("CLOSE_REASON_RESULT " + JSON.stringify(record))
 	_peer.close(-1)
 	_server.stop()
 	quit(0 if _failures.is_empty() else 1)

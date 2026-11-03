@@ -28,6 +28,9 @@ var wire_split_headers := 0
 var wire_retired_bytes := 0
 var wire_retired_continuation_bytes := 0
 var wire_error := OK
+## Freezes the paced queue so an in-flight frame can only be retired by the
+## next dial; deterministic teardown races on loopback and remote paths.
+var wire_hold_queue := false
 
 var _wire_queue: Array[PackedByteArray] = []
 var _wire_offset := 0
@@ -77,9 +80,10 @@ func wire_report() -> Dictionary:
 	}
 
 
-func listen() -> Error:
+## Binds 127.0.0.1; port zero picks a free port, a fixed port fronts a tunnel.
+func listen(port: int = 0) -> Error:
 	_server = TCPServer.new()
-	var error: Error = _server.listen(0, "127.0.0.1")
+	var error: Error = _server.listen(port, "127.0.0.1")
 	if error != OK:
 		_server = null
 	return error
@@ -165,6 +169,7 @@ func poll() -> void:
 			_drop_connection()
 		_connection = pending
 		_connection.set_no_delay(true)
+		wire_hold_queue = false
 	_drop_dead_connection()
 	if _connection == null:
 		return
@@ -364,7 +369,7 @@ func _send_frame(opcode: int, payload: PackedByteArray, final: bool = true) -> E
 
 
 func _flush_wire() -> void:
-	if _wire_queue.is_empty() or Time.get_ticks_msec() < _wire_next_ms:
+	if wire_hold_queue or _wire_queue.is_empty() or Time.get_ticks_msec() < _wire_next_ms:
 		return
 	var frame := _wire_queue[0]
 	var end := mini(_wire_offset + wire_chunk_bytes, frame.size())

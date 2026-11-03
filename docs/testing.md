@@ -1088,6 +1088,47 @@ schedule (Mondays 12:00 UTC) follows the other watches; dispatch runs
 collect extra path samples on demand. A same-day pre-merge devcontainer run
 on Godot 4.3 Web also gave the local 16-of-65 counts.
 
+The same workflow fronts the paced native receive suites
+(`check-websocket-native-receive.py`) with the same tunnel. The driver
+options `--port N --public-origin https://host` pass the fixture options
+`--port=N` and `--public-origin=https://host` to every selected case: the
+fixture server binds the tunneled port and the engine connects `wss://` at
+the public host. Result records from tunnel runs carry `remote_origin`.
+The lane runs controls and filed defects for each receive issue class (#491
+fragmented assembly around control frames, #492 peer reuse retention, #496
+full-buffer empty-fragment stall and #498 Unicode close reasons across
+reads). Controls must pass over the remote path, with the driver's full
+per-case verdict. Defect records must be complete, paced and cleanly
+exited; a defect that passes means the path masked its trigger or upstream
+moved, and a fail without the filed signature is new remote-path behavior.
+Both are flagged for triage. Once collected runs settle a stable
+signature, a later change pins it the way the Web lane pins its loss class.
+
+A 2026-11-03 pre-merge devcontainer run (official 4.7.2-stable native on
+Linux ARM64, one Cloudflare quick tunnel, ten selected cases) matched the
+local 4.7.2 classification exactly: all four controls passed over the
+tunnel, including the 65-packet burst control, and all six defects failed
+with their filed signatures. The tunnel runs exposed two fixture races.
+The pending #492 continuation could flush to the old tunnel connection
+before the replacement dial, so the retirement check lost its
+precondition; the fixture now holds the queued continuation until the
+replacement retires it, which makes the check deterministic on any path
+(a post-fix tunnel run fails the #492 defect with the filed signature
+alone). The limit fixture's pong check now waits within the phase budget
+before judging, because the pong can still be in flight on a remote path
+when the message completes. The #498 maximum-length mixed close reason
+also hit a paced-write failure when the engine aborted mid-write in one
+tunnel run; the gate rejects paced-write errors as unclean samples.
+
+The first CI run (2026-11-03, run 41591258643, ubuntu-24.04 x86-64,
+official 4.7.2-stable editor binary, one Cloudflare quick tunnel)
+confirmed the same classification from a hosted runner. All four controls
+passed, with the 65-packet burst control delivering every packet over the
+tunnel (largest delivery gap 262 ms against the 3000 ms batch deadline),
+and all six defects kept their filed signatures. The weekly schedule
+(Mondays 12:00 UTC) runs both lanes; dispatch runs collect extra path
+samples on demand.
+
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
 bounded prefix, rejection reason and browser clock while that handler is active.

@@ -77,6 +77,83 @@ class EmulatorTests(unittest.TestCase):
                 [str(Path(sys.executable).resolve()), "-I", str(target)],
             )
 
+    def test_remote_path_options_fail_before_creating_results(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "results"
+            required = [
+                "--godot",
+                sys.executable,
+                "--importer",
+                sys.executable,
+                "--output",
+                str(output),
+            ]
+            for options in (
+                [*required, "--port=70000"],
+                [*required, "--public-origin=https://tunnel.example"],
+                [*required, "--port=8990", "--public-origin=ftp://tunnel.example"],
+                [
+                    *required,
+                    "--run-repro",
+                    "--port=8990",
+                    "--public-origin=https://tunnel.example",
+                ],
+            ):
+                with (
+                    self.subTest(options=options),
+                    patch.object(sys, "argv", [str(SCRIPT), *options]),
+                    redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    drill.main()
+                self.assertEqual(raised.exception.code, 2)
+                self.assertFalse(output.exists())
+
+    def test_remote_path_options_reach_fixtures_and_provenance(self) -> None:
+        origin = "https://tunnel.example"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target.py"
+            target.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "assert '--headless' in sys.argv\n"
+                "if '--editor' in sys.argv:\n"
+                " sys.exit(0)\n"
+                "assert '--port=8990' in sys.argv\n"
+                f"assert '--public-origin={origin}' in sys.argv\n"
+                "print('CLOSE_REASON_RESULT ' + json.dumps({'passed': True,\n"
+                " 'wire': {'writes': 1, 'error': 0},\n"
+                " 'remote_origin': " + repr(origin) + "}))\n"
+            )
+            target.chmod(0o755)
+            output = root / "results"
+            command = [
+                str(SCRIPT),
+                "--godot",
+                str(target),
+                "--importer",
+                str(target),
+                "--output",
+                str(output),
+                "--case",
+                "close-1-empty-server",
+                "--port",
+                "8990",
+                "--public-origin",
+                origin,
+            ]
+            with patch.object(sys, "argv", command), redirect_stdout(io.StringIO()):
+                self.assertEqual(drill.main(), 0)
+            provenance = json.loads((output / "provenance.json").read_text())
+            self.assertEqual(provenance["port"], 8990)
+            self.assertEqual(provenance["public_origin"], origin)
+            summary = json.loads((output / "summary.json").read_text())
+            case = summary["cases"][0]
+            self.assertTrue(case["passed"])
+            self.assertEqual(case["result"]["remote_origin"], origin)
+
     def test_emulator_options_fail_before_creating_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
