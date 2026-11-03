@@ -318,3 +318,318 @@ jobs:
                       output/
                       tunnel.log
                   if-no-files-found: error
+
+    # Follow-up 3 of #538: the paced native receive suites cross the same
+    # tunnel, advancing the #485/#491/#492/#496/#498 remote-network items.
+    # Controls must pass over the remote path; defect outcomes are
+    # qualification data. A defect that passes means the path masked its
+    # trigger or upstream moved, and the summary flags it for triage. Once
+    # collected runs settle a stable signature, a later change pins it the
+    # way the Web lane pins its loss class.
+    remote-native-watch:
+        name: Watch the paced native receive suites over a remote path
+        runs-on: ubuntu-24.04
+        # Covers the compound worst case: tunnel pre-check wait (~9 min) plus
+        # every case at its fixture watchdog cap (~23 min) plus setup.
+        timeout-minutes: 45
+        defaults:
+            run:
+                shell: bash
+        env:
+            # Controls and filed defects for each receive issue class:
+            # #491 fragmented assembly around control frames, #492 peer reuse
+            # retention, #496 full-buffer empty-fragment stall and #498
+            # Unicode close reasons across reads.
+            NATIVE_CASES: >-
+                read-control-none
+                read-control-ping
+                read-control-pong
+                chunk-reuse-text-text-handshake
+                chunk-reuse-text-text-closing
+                chunk-limit-binary-none-false
+                close-3-ascii-server
+                close-3-mixed-server
+                boundary-close-3-max-ascii-server-false
+                boundary-close-3-max-mixed-server-false
+            NATIVE_CONTROL_CASES: >-
+                read-control-none
+                chunk-reuse-text-text-handshake
+                close-3-ascii-server
+                boundary-close-3-max-ascii-server-false
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Install Godot runtime dependencies
+              run: sudo python3 .devcontainer/install-godot.py runtime-deps
+
+            - name: Cache Godot editor
+              id: godot-cache
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: /tmp/godot-cache
+                  key: godot-remote-native-editor-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
+
+            - name: Install Godot editor
+              if: steps.godot-cache.outputs.cache-hit != 'true'
+              run: python3 .devcontainer/install-godot.py editor "$GODOT_VERSION" /tmp/godot-cache --target "$GODOT_BIN"
+
+            - name: Expose the Godot binary
+              run: |
+                  echo "$(dirname "$GODOT_BIN")" >> "$GITHUB_PATH"
+                  "$GODOT_BIN" --headless --version
+
+            - name: Set up Python
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+              with:
+                  python-version: "3.12"
+
+            - name: Install cloudflared
+              run: |
+                  curl -sSfL -o /tmp/cloudflared \
+                    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"
+                  echo "$CLOUDFLARED_SHA256  /tmp/cloudflared" | sha256sum --check --
+                  chmod +x /tmp/cloudflared
+                  /tmp/cloudflared --version
+
+            - name: Start the remote-path tunnel
+              id: tunnel
+              run: |
+                  /tmp/cloudflared tunnel --no-autoupdate \
+                    --url "http://127.0.0.1:${REMOTE_PORT}" > tunnel.log 2>&1 &
+                  origin=""
+                  for _ in $(seq 1 45); do
+                      origin=$(grep -o "https://[a-z0-9-]*\.trycloudflare\.com" tunnel.log | head -1 || true)
+                      [ -n "$origin" ] && break
+                      sleep 2
+                  done
+                  if [ -z "$origin" ]; then
+                      echo "trycloudflare tunnel did not come up:" >&2
+                      cat tunnel.log >&2
+                      exit 1
+                  fi
+                  echo "origin=$origin" >> "$GITHUB_OUTPUT"
+                  code="000"
+                  for _ in $(seq 1 20); do
+                      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$origin/index.html" || true)
+                      if [ -n "$code" ] && [ "$code" != "000" ]; then
+                          break
+                      fi
+                      sleep 3
+                  done
+                  echo "tunnel $origin reachable; edge answered HTTP ${code:-000}"
+
+            - name: Run the paced native receive suites over the remote path
+              id: native
+              run: |
+                  case_args=()
+                  for case_name in $NATIVE_CASES; do
+                      case_args+=(--case "$case_name")
+                  done
+                  rc=0
+                  python3 scripts/check-websocket-native-receive.py \
+                    --godot "$GODOT_BIN" --importer "$GODOT_BIN" \
+                    --output output/native \
+                    --port "$REMOTE_PORT" \
+                    --public-origin "${{ steps.tunnel.outputs.origin }}" \
+                    "${case_args[@]}" || rc=$?
+                  echo "exit=$rc" >> "$GITHUB_OUTPUT"
+
+            - name: Check remote-path expectations
+              env:
+                  TUNNEL_ORIGIN: ${{ steps.tunnel.outputs.origin }}
+                  NATIVE_EXIT: ${{ steps.native.outputs.exit }}
+              run: |
+                  python3 - <<'PY'
+                  import json
+                  import os
+                  from pathlib import Path
+
+                  role_control = set(os.environ["NATIVE_CONTROL_CASES"].split())
+                  filed_failure = {
+                      "read-control-ping": "exact receive prefix",
+                      "read-control-pong": "exact receive prefix",
+                      "chunk-limit-binary-none-false": "complete message missing",
+                      "chunk-reuse-text-text-closing": "fresh exact bytes",
+                      "close-3-mixed-server": "exact close code, reason and empty packet queue",
+                      "boundary-close-3-max-mixed-server-false": (
+                          "exact close code, reason and empty packet queue"
+                      ),
+                  }
+                  role_defect = set(filed_failure)
+                  origin = os.environ["TUNNEL_ORIGIN"]
+                  version = os.environ["GODOT_VERSION"]
+                  summary = json.loads(Path("output/native/summary.json").read_text())
+                  provenance = json.loads(Path("output/native/provenance.json").read_text())
+                  problems = []
+
+                  imported = summary.get("import", {})
+                  if imported.get("returncode") != 0 or imported.get("engine_errors"):
+                      problems.append("fixture import failed")
+
+                  if provenance.get("public_origin") != origin:
+                      problems.append(
+                          f"provenance origin {provenance.get('public_origin')!r}"
+                          f" != tunnel origin {origin!r}"
+                      )
+                  if provenance.get("port") != int(os.environ["REMOTE_PORT"]):
+                      problems.append(
+                          f"provenance port {provenance.get('port')!r} !="
+                          f" {os.environ['REMOTE_PORT']!r}"
+                      )
+
+                  cases = {case["case"]: case for case in summary.get("cases", [])}
+                  unexpected = sorted(set(cases) - (role_control | role_defect))
+                  missing = sorted((role_control | role_defect) - set(cases))
+                  if unexpected:
+                      problems.append(f"unexpected cases ran: {unexpected}")
+                  if missing:
+                      problems.append(f"cases produced no report: {missing}")
+
+                  # Controls qualify the path: without them a defect record
+                  # proves nothing about the remote network. The driver-level
+                  # passed verdict covers the engine error scan, pacing and
+                  # receive observations, so it is authoritative here.
+                  for name in sorted(role_control):
+                      case = cases.get(name, {})
+                      record = case.get("result") or {}
+                      if case.get("passed") is not True:
+                          detail = record.get("failures") or (
+                              "timed out" if case.get("timed_out") else "no failures recorded"
+                          )
+                          problems.append(f"remote control {name} failed: {detail!r}")
+                      if record.get("engine", "").startswith(version) is not True:
+                          problems.append(
+                              f"remote control {name} ran {record.get('engine')!r},"
+                              f" expected {version!r} (wrong binary)"
+                          )
+                      if record.get("remote_origin") != origin:
+                          problems.append(
+                              f"remote control {name} did not record the tunnel origin"
+                          )
+
+                  # Defect outcomes are the qualification data. Structure is
+                  # gated (a complete paced record with a clean exit); the
+                  # outcome itself is data. A defect that passes at the driver
+                  # level means the path masked its trigger or upstream moved;
+                  # a fail without the filed signature is a new remote-path
+                  # behavior. Both stay green during the data-collection phase
+                  # and are flagged for triage in the summary.
+                  passed_defects = []
+                  novel_defects = []
+                  for name in sorted(role_defect):
+                      case = cases.get(name, {})
+                      record = case.get("result") or {}
+                      if case.get("timed_out") or not record:
+                          problems.append(f"remote defect {name} produced no result record")
+                          continue
+                      if case.get("returncode") not in (0, 1):
+                          problems.append(
+                              f"remote defect {name} exited"
+                              f" {case.get('returncode')!r} (crash invalidates the sample)"
+                          )
+                          continue
+                      if record.get("remote_origin") != origin:
+                          problems.append(
+                              f"remote defect {name} did not record the tunnel origin"
+                          )
+                      wire = record.get("wire", {})
+                      # Mirror the driver's pacing floor: close-kind cases
+                      # need one paced write, the others two.
+                      minimum_writes = (
+                          1
+                          if name.startswith(("close-", "boundary-close-"))
+                          else 2
+                      )
+                      if wire.get("writes", 0) < minimum_writes:
+                          problems.append(
+                              f"remote defect {name} shows no paced writes: {wire!r}"
+                          )
+                      if case.get("passed") is True:
+                          passed_defects.append(name)
+                      elif filed_failure[name] not in record.get("failures", []):
+                          novel_defects.append(name)
+
+                  exit_code = os.environ["NATIVE_EXIT"]
+                  if exit_code not in ("0", "1"):
+                      problems.append(f"suite exit {exit_code} unexpected (crash or abort)")
+
+                  rows = []
+                  for name in sorted(role_control | role_defect):
+                      case = cases.get(name, {})
+                      record = case.get("result") or {}
+                      outcome = (
+                          "pass"
+                          if record.get("passed") is True
+                          else "fail"
+                          if record.get("passed") is False
+                          else "no record"
+                      )
+                      failures = "; ".join(record.get("failures", [])) or "-"
+                      rows.append(
+                          f"| {name} |"
+                          f" {'control' if name in role_control else 'defect'}"
+                          f" | {outcome} | {failures} |"
+                      )
+                  summary_lines = [
+                      "## Paced native receive suites over a remote path",
+                      "",
+                      f"- Engine: official {version} (ubuntu-24.04 x86-64, editor binary)",
+                      f"- Remote path: {origin} (Cloudflare quick tunnel, TLS)",
+                      f"- Suite exit: {exit_code} (1 is expected: defect cases fail on"
+                      " official engines)",
+                      "",
+                      "| Case | Role | Outcome | Failures |",
+                      "| --- | --- | --- | --- |",
+                      *rows,
+                      "",
+                  ]
+                  if passed_defects:
+                      summary_lines.extend(
+                          [
+                              "Defect cases that passed over the remote path:"
+                              f" {', '.join(passed_defects)}. The path masked the"
+                              " trigger or upstream moved; triage the run"
+                              " (collect more samples before pinning).",
+                              "",
+                          ]
+                      )
+                  if novel_defects:
+                      summary_lines.extend(
+                          [
+                              "Defect cases that failed without their filed signature:"
+                              f" {', '.join(novel_defects)}. New remote-path behavior;"
+                              " read the run's per-case logs before pinning.",
+                              "",
+                          ]
+                      )
+                  verdict = (
+                      "Remote path green: every control qualifies its suite over a real"
+                      " remote path and every defect keeps a complete paced record."
+                      if not problems
+                      else "Remote path red: " + "; ".join(problems)
+                  )
+                  summary_lines.extend(["", verdict, ""])
+                  with open(
+                      os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8"
+                  ) as step_summary:
+                      step_summary.write("\n".join(summary_lines))
+                  print(verdict)
+                  assert not problems, "; ".join(problems)
+                  PY
+
+            - name: Stop the tunnel
+              if: always()
+              run: pkill -f "cloudflared tunnel" || true
+
+            - name: Upload remote-path evidence
+              if: always()
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: websocket-remote-native-${{ github.run_id }}
+                  path: |
+                      output/
+                      tunnel.log
+                  if-no-files-found: error
