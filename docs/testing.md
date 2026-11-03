@@ -1072,16 +1072,18 @@ path. The fixture options `--port N` and `--public-origin https://host` point
 the export page and its WebSocket at the public host while the server keeps
 its local bind; the report records `remote_origin`.
 
-First data (2026-11-03, Godot 4.3 Web, Chromium 156, Linux x86-64): the
+First data (2026-11-03, Godot 4.7.2-stable official Web, Chromium 156,
+`WebSocket Remote Path` CI run 41554600823, ubuntu-24.04 x86-64): the
 32 KiB application-ACK control delivered 65/65 exact messages across the
 tunnel with all 65 browser callbacks and the full ACK window. The uncredited
 run reproduced the filed signature over the remote path: 16 delivered
 (sequences 0-14 and the sentinel), 49 scoped rejections, first gap 15 -> 64,
-complete trace. The remote path changed neither the control result nor the
+complete trace. A same-day pre-merge devcontainer run on Godot 4.3 Web gave
+the same counts. The remote path changed neither the control result nor the
 filed boundary. The workflow gates on the remote ACK control and on the
-uncredited run continuing to fail; it records the remote signature for
-pinning after several runs settle. Scheduling follows the other watches once
-the lane is stable.
+uncredited run reaching the boundary with scoped loss; it records the remote
+signature for pinning after several runs settle. Scheduling follows the
+other watches once the lane is stable.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
