@@ -114,6 +114,13 @@ jobs:
               with:
                   persist-credentials: false
 
+            - name: Check the dispatch inputs
+              run: |
+                  if [ "$REPAIR_KIND" = 4.3-backport ] && [ "${GODOT_LABEL#4.3}" = "$GODOT_LABEL" ]; then
+                    echo "repair_kind 4.3-backport needs a 4.3-stable engine_label; got $GODOT_LABEL" >&2
+                    exit 1
+                  fi
+
             - name: Set up Python
               uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
               with:
@@ -353,18 +360,23 @@ jobs:
                   results = {command["name"]: command for command in report["commands"]}
                   defect = {"control-bytes", "reuse", "full-buffer", "close-unicode"}
                   control = {"control-baseline", "reuse-baseline", "close-baseline"}
+                  # Standalone baseline expectations, keyed by the engine
+                  # major.minor of the dispatch label. Official 4.3 passes
+                  # the control-bytes and reuse repros unpatched (collected
+                  # on Linux ARM64, docs/testing.md) and fails the
+                  # full-buffer and close-unicode repros. A repaired build
+                  # must still pass all four.
+                  predates = {"4.3": {"control-bytes", "reuse"}}
+                  baseline_passes = set()
                   label = re.match(r"\d+\.\d+", os.environ["GODOT_LABEL"])
-                  assert label, (
-                    f"engine label {os.environ['GODOT_LABEL']!r} has no major.minor family"
-                  )
-                  # Official engines of a family here pass those repros
-                  # unpatched: the family predates the #491/#492/#496
-                  # regressions, so its baseline fails only close-unicode
-                  # (#498). A repaired build must still pass all four.
-                  predates = {"4.3": {"control-bytes", "reuse", "full-buffer"}}
-                  baseline_passes = (
-                    predates.get(label.group(0), set()) if variant == "baseline" else set()
-                  )
+                  if variant == "baseline" and label:
+                      baseline_passes = predates.get(label.group(0), set())
+                  elif variant == "baseline":
+                      print(
+                          f"engine label {os.environ['GODOT_LABEL']!r} has no"
+                          " major.minor family; the baseline keeps the strict"
+                          " four-failure expectations"
+                      )
                   wrong = sorted((defect | control) - set(results))
                   for name in defect | control:
                       command = results.get(name, {})
@@ -418,7 +430,9 @@ jobs:
                   # as recorded data until collected runs pin it. A None
                   # signature pins a shape the baseline must keep passing:
                   # official 4.3 predates the #491/#492/#496 regressions, so
-                  # only its two #498 close shapes fail (#545).
+                  # only its two #498 close shapes fail (#545; 4.3 runs
+                  # 41684912691 and 41685515285 over the official-engine
+                  # watch tunnels).
                   baseline_documented = {
                       "4.3": {
                           "read-control-ping": None,
