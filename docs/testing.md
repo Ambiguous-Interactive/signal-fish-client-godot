@@ -1114,6 +1114,17 @@ the local run passes, and the #498 maximum-length mixed close reason hit a
 paced-write failure when the engine aborted mid-write. Both need more
 samples before any pin.
 
+The first CI run (2026-11-03, run 41591258643, ubuntu-24.04 x86-64,
+official 4.7.2-stable editor binary, one Cloudflare quick tunnel)
+confirmed the same classification from a hosted runner. All four controls
+passed, with the 65-packet burst control delivering every packet over the
+tunnel (largest delivery gap 262 ms against the 3000 ms batch deadline).
+All six defects kept their filed signatures; the #492 reuse defect again
+failed the pending-continuation retirement, and this run showed no
+paced-write failure on the #498 maximum-length case, which stays
+path-dependent. The weekly schedule (Mondays 12:00 UTC) runs both lanes;
+dispatch runs collect extra path samples on demand.
+
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
 bounded prefix, rejection reason and browser clock while that handler is active.
