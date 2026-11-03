@@ -440,6 +440,13 @@ jobs:
                               f" {case.get('returncode')!r} (crash invalidates the sample)"
                           )
                           continue
+                      if case.get("engine_errors"):
+                          problems.append(
+                              f"remote case {name} contains engine errors:"
+                              f" {case.get('engine_errors')!r} (an engine error"
+                              " invalidates the sample)"
+                          )
+                          continue
                       if record.get("remote_origin") != origin:
                           problems.append(
                               f"remote case {name} did not record the tunnel origin"
