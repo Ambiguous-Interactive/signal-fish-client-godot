@@ -42,6 +42,14 @@ on:
                 required: true
                 type: boolean
                 default: false
+            repair_kind:
+                description: Receive repair applicator (4.3-backport pins 4.3-stable flags)
+                required: true
+                type: choice
+                options:
+                    - stable
+                    - 4.3-backport
+                default: stable
 
 permissions:
     contents: read
@@ -72,6 +80,7 @@ jobs:
             BUILD_TARGET: ${{ inputs.build_target || 'windows' }}
             RECV_CAP: ${{ inputs.recv_cap_bytes }}
             REMOTE_PATH: ${{ inputs.remote_path }}
+            REPAIR_KIND: ${{ inputs.repair_kind || 'stable' }}
             REMOTE_PORT: "8990"
             CLOUDFLARED_VERSION: "2026.10.7"
             CLOUDFLARED_SHA256: 1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
@@ -209,7 +218,11 @@ jobs:
             - name: Apply the receive repair patch
               if: matrix.variant == 'repaired'
               run: |
-                  python3 scripts/repair-websocket-stable.py --source "$SOURCE_DIR" \
+                  applicator="scripts/repair-websocket-stable.py"
+                  if [ "$REPAIR_KIND" = 4.3-backport ]; then
+                    applicator="scripts/backport-websocket-43.py"
+                  fi
+                  python3 "$applicator" --source "$SOURCE_DIR" \
                     --report "output/repair-report.json"
 
             - name: Build the engine
@@ -226,6 +239,12 @@ jobs:
                     target_args+=(d3d12=no)
                     export WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
                   fi
+                  # disable_path_overrides starts in 4.4; the 4.3-stable
+                  # SConstruct predates it (#545).
+                  flag_args=(disable_path_overrides=no)
+                  if [ "$REPAIR_KIND" = 4.3-backport ]; then
+                    flag_args=()
+                  fi
                   (
                     cd "$SOURCE_DIR"
                     scons -j"$(nproc)" platform="$BUILD_TARGET" target=template_debug arch=x86_64 \
@@ -235,7 +254,7 @@ jobs:
                       module_mbedtls_enabled=yes \
                       disable_3d=yes vulkan=no opengl3=yes \
                       "${target_args[@]}" \
-                      disable_path_overrides=no
+                      "${flag_args[@]}"
                   ) 2>&1 | tee "output/build-${{ matrix.variant }}.log"
                   sha256sum "$ENGINE_BIN" | tee "output/engine-sha256.txt"
 
@@ -334,6 +353,18 @@ jobs:
                   results = {command["name"]: command for command in report["commands"]}
                   defect = {"control-bytes", "reuse", "full-buffer", "close-unicode"}
                   control = {"control-baseline", "reuse-baseline", "close-baseline"}
+                  label = re.match(r"\d+\.\d+", os.environ["GODOT_LABEL"])
+                  assert label, (
+                    f"engine label {os.environ['GODOT_LABEL']!r} has no major.minor family"
+                  )
+                  # Official engines of a family here pass those repros
+                  # unpatched: the family predates the #491/#492/#496
+                  # regressions, so its baseline fails only close-unicode
+                  # (#498). A repaired build must still pass all four.
+                  predates = {"4.3": {"control-bytes", "reuse", "full-buffer"}}
+                  baseline_passes = (
+                    predates.get(label.group(0), set()) if variant == "baseline" else set()
+                  )
                   wrong = sorted((defect | control) - set(results))
                   for name in defect | control:
                       command = results.get(name, {})
@@ -342,7 +373,7 @@ jobs:
                       if command.get("timed_out") or record is None:
                           wrong.append(name)
                           continue
-                      if variant == "repaired" or name in control:
+                      if variant == "repaired" or name in control or name in baseline_passes:
                           if (
                               command["returncode"] != 0
                               or not command["passed"]
@@ -384,8 +415,19 @@ jobs:
                   # uncollected: treat a family's first run on a new platform
                   # as collection data before pinning a platform map. A
                   # family without a map keeps its baseline defect outcomes
-                  # as recorded data until collected runs pin it.
+                  # as recorded data until collected runs pin it. A None
+                  # signature pins a shape the baseline must keep passing:
+                  # official 4.3 predates the #491/#492/#496 regressions, so
+                  # only its two #498 close shapes fail (#545).
                   baseline_documented = {
+                      "4.3": {
+                          "read-control-ping": None,
+                          "read-control-pong": None,
+                          "chunk-limit-binary-none-false": None,
+                          "chunk-reuse-text-text-closing": None,
+                          "close-3-mixed-server": close_signature,
+                          "boundary-close-3-max-mixed-server-false": close_signature,
+                      },
                       "4.4": failing_signatures,
                       "4.7": failing_signatures,
                   }
@@ -515,7 +557,15 @@ jobs:
                               for name, signature in documented.items():
                                   case = cases.get(name, {})
                                   record = case.get("result") or {}
-                                  if case.get("passed") is True:
+                                  if signature is None:
+                                      if case.get("passed") is not True:
+                                          problems.append(
+                                              f"baseline defect {name} failed"
+                                              f" {record.get('failures')!r} (the"
+                                              " family predates that regression;"
+                                              " read the run's per-case logs)"
+                                          )
+                                  elif case.get("passed") is True:
                                       problems.append(
                                           f"baseline defect {name} passed over the"
                                           " remote path (the path masked its trigger"
