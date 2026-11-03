@@ -20,7 +20,8 @@ var _control_bytes := CONTROL_BODY.to_utf8_buffer()
 var _body := PackedByteArray()
 var _failures: Array[String] = []
 var _started := Time.get_ticks_msec()
-var _watchdog_ms := 8000
+# Phase budgets plus the 100 ms settle between the initial write and tail.
+var _watchdog_ms := 8100
 var _opened := false
 var _initial_offered := false
 var _final_offered := false
