@@ -1099,10 +1099,12 @@ fragmented assembly around control frames, #492 peer reuse retention, #496
 full-buffer empty-fragment stall and #498 Unicode close reasons across
 reads). Controls must pass over the remote path, with the driver's full
 per-case verdict. Defect records must be complete, paced and cleanly
-exited; a defect that passes means the path masked its trigger or upstream
-moved, and a fail without the filed signature is new remote-path behavior.
-Both are flagged for triage. Once collected runs settle a stable
-signature, a later change pins it the way the Web lane pins its loss class.
+exited. Each defect verdict is pinned per engine to the signature the
+collected runs reproduced: the gate keeps a map keyed by engine
+major.minor. A pinned defect that passes or fails differently means the
+path masked its trigger or upstream moved; requalify the filed issue and
+update the map. Dispatching an engine without a map records its defect
+outcomes as data; collect runs, then add its map.
 
 A 2026-11-03 pre-merge devcontainer run (official 4.7.2-stable native on
 Linux ARM64, one Cloudflare quick tunnel, ten selected cases) matched the
@@ -1120,14 +1122,21 @@ when the message completes. The #498 maximum-length mixed close reason
 also hit a paced-write failure when the engine aborted mid-write in one
 tunnel run; the gate rejects paced-write errors as unclean samples.
 
-The first CI run (2026-11-03, run 41591258643, ubuntu-24.04 x86-64,
-official 4.7.2-stable editor binary, one Cloudflare quick tunnel)
-confirmed the same classification from a hosted runner. All four controls
-passed, with the 65-packet burst control delivering every packet over the
-tunnel (largest delivery gap 262 ms against the 3000 ms batch deadline),
-and all six defects kept their filed signatures. The weekly schedule
-(Mondays 12:00 UTC) runs both lanes; dispatch runs collect extra path
-samples on demand.
+Five dispatched CI runs (2026-11-03, ubuntu-24.04 x86-64, official editor
+binaries, five Cloudflare quick tunnels) pinned the native map. On 4.7.2
+(runs 41591258643 and 41684196081) and 4.4.1 (run 41684522769) all four
+controls passed over every tunnel, with the 65-packet burst control
+delivering every packet (largest delivery gap 262 ms against the 3000 ms
+batch deadline), and all six defects failed with their filed signatures.
+The retired-continuation failure in the first 4.7.2 run was the fixture
+race #541 removed; post-fix runs fail the #492 reuse defect with
+`fresh exact bytes` alone and retire exactly 2 queued bytes. On 4.3 (runs
+41684912691 and 41685515285) the #491/#496/#492 shapes pass: official 4.3
+predates those regressions. The #498 close shapes fail with the filed
+signature on every collected engine. Same-day devcontainer runs on Linux
+ARM64 (4.7.2) matched the CI classification. The weekly schedule (Mondays
+12:00 UTC) runs both lanes; dispatch runs collect extra path samples on
+demand and add maps for new engines.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
