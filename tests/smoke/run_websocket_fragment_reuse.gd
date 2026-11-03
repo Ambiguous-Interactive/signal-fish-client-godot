@@ -1,10 +1,15 @@
 extends SceneTree
 
 const ServerScript = preload("res://tests/smoke/ws_test_server.gd")
+# Tunnel connects add DNS, TLS and upgrade latency to the loopback budget;
+# the burst fixture's 5000 ms connect budget is the precedent.
+const CONNECT_TIMEOUT_MS := 4000
+const REMOTE_CONNECT_TIMEOUT_MS := 5000
 var _server := ServerScript.new()
 var _peer := WebSocketPeer.new()
 var _failures: Array[String] = []
 var _started := Time.get_ticks_msec()
+var _watchdog_ms := 12000
 var _opened := 0
 var _closing_state := -1
 var _fresh: Dictionary = {}
@@ -63,6 +68,10 @@ func _initialize() -> void:
 		_failures.append("pending wire replacement requires paced writes")
 	if _port < 0 or _port > 65535:
 		_failures.append("port must be 0..65535")
+	# The raised tunnel connect budget needs matching watchdog headroom
+	# for both dials.
+	if not _public_origin.is_empty():
+		_watchdog_ms += 2 * (REMOTE_CONNECT_TIMEOUT_MS - CONNECT_TIMEOUT_MS)
 	call_deferred("_run")
 
 
@@ -81,7 +90,10 @@ func _open() -> bool:
 	if _peer.connect_to_url(target) != OK:
 		_failures.append("connect failed")
 		return false
-	var deadline := Time.get_ticks_msec() + 4000
+	var connect_timeout := CONNECT_TIMEOUT_MS
+	if not _public_origin.is_empty():
+		connect_timeout = REMOTE_CONNECT_TIMEOUT_MS
+	var deadline := Time.get_ticks_msec() + connect_timeout
 	while (
 		_peer.get_ready_state() == WebSocketPeer.STATE_CONNECTING
 		and Time.get_ticks_msec() < deadline

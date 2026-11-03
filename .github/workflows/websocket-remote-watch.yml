@@ -536,6 +536,11 @@ jobs:
                               f"remote defect {name} did not record the tunnel origin"
                           )
                       wire = record.get("wire", {})
+                      if wire.get("error") != 0:
+                          problems.append(
+                              f"remote defect {name} has a paced-write error:"
+                              f" {wire!r}"
+                          )
                       # Mirror the driver's pacing floor: close-kind cases
                       # need one paced write, the others two.
                       minimum_writes = (
