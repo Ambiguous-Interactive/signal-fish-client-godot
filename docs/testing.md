@@ -1042,7 +1042,8 @@ Every finite control observes all 65 browser callbacks. The failed byte/count
 controls retain unique engine rejection identities matching the missing script
 receipts; the later sentinel is delivered. A larger finite buffer and local
 credit qualify those controls. The original uncredited receive loss remains
-open. These are local controls; remote networks remain unqualified.
+open. These are local controls; the remote-path lane below starts the remote
+qualification.
 
 The receive loss is filed upstream as
 [godotengine/godot#125073](https://github.com/godotengine/godot/issues/125073).
@@ -1060,6 +1061,27 @@ rejections) and the green 32 KiB application-ACK control, and fails when the
 signature moves, flagging either the upstream repair for requalification or
 a behavior change for triage (#488). A dispatch input watches other official
 releases, such as a dev snapshot after an upstream fix lands.
+
+#### Remote path qualification
+
+The on-demand `WebSocket Remote Path` CI workflow drives the same two controls
+over a real remote network path. A credential-free Cloudflare quick tunnel
+fronts the fixture server, and the browser reaches it through the Cloudflare
+edge over TLS, so every burst frame, command and receipt crosses a remote
+path. The fixture options `--port N` and `--public-origin https://host` point
+the export page and its WebSocket at the public host while the server keeps
+its local bind; the report records `remote_origin`.
+
+First data (2026-11-03, Godot 4.3 Web, Chromium 156, Linux x86-64): the
+32 KiB application-ACK control delivered 65/65 exact messages across the
+tunnel with all 65 browser callbacks and the full ACK window. The uncredited
+run reproduced the filed signature over the remote path: 16 delivered
+(sequences 0-14 and the sentinel), 49 scoped rejections, first gap 15 -> 64,
+complete trace. The remote path changed neither the control result nor the
+filed boundary. The workflow gates on the remote ACK control and on the
+uncredited run continuing to fail; it records the remote signature for
+pinning after several runs settle. Scheduling follows the other watches once
+the lane is stable.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
