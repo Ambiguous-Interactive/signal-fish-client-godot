@@ -107,6 +107,32 @@ jobs:
             - name: Test release workflow
               run: python3 scripts/release_workflow.py self-test
 
+            # Temporary: validate the quick-tunnel lane on a hosted runner
+            # before the remote-path watch merges; removed in the same PR.
+            - name: Temporary quick-tunnel smoke test
+              run: |
+                  curl -sSfL -o /tmp/cloudflared \
+                    "https://github.com/cloudflare/cloudflared/releases/download/2026.10.7/cloudflared-linux-amd64"
+                  echo "1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872  /tmp/cloudflared" | sha256sum --check --
+                  chmod +x /tmp/cloudflared
+                  python3 -m http.server 8990 --bind 127.0.0.1 > http.log 2>&1 &
+                  /tmp/cloudflared tunnel --no-autoupdate \
+                    --url "http://127.0.0.1:8990" > tunnel.log 2>&1 &
+                  origin=""
+                  for _ in $(seq 1 45); do
+                      origin=$(grep -o "https://[a-z0-9-]*\.trycloudflare\.com" tunnel.log | head -1 || true)
+                      [ -n "$origin" ] && break
+                      sleep 2
+                  done
+                  if [ -z "$origin" ]; then
+                      cat tunnel.log
+                      exit 1
+                  fi
+                  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$origin/index.html")
+                  echo "tunnel $origin -> HTTP $code"
+                  pkill -f "cloudflared tunnel" || true
+                  test "$code" = "200"
+
     python-types:
         name: Python types
         runs-on: ubuntu-24.04
