@@ -641,8 +641,8 @@ jobs:
                               " sample)"
                           )
                       exit_note = (
-                          "1 is expected: every pinned defect fails on official"
-                          " engines"
+                          "1 is expected: at least one pinned defect fails on"
+                          " official engines"
                           if expected_exit == "1"
                           else "0 is expected: every pinned defect passes"
                       )

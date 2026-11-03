@@ -1122,8 +1122,8 @@ when the message completes. The #498 maximum-length mixed close reason
 also hit a paced-write failure when the engine aborted mid-write in one
 tunnel run; the gate rejects paced-write errors as unclean samples.
 
-Six dispatched CI runs (2026-11-03, ubuntu-24.04 x86-64, official editor
-binaries, four Cloudflare quick tunnels) pinned the native map. On 4.7.2
+Five dispatched CI runs (2026-11-03, ubuntu-24.04 x86-64, official editor
+binaries, five Cloudflare quick tunnels) pinned the native map. On 4.7.2
 (runs 41591258643 and 41684196081) and 4.4.1 (run 41684522769) all four
 controls passed over every tunnel, with the 65-packet burst control
 delivering every packet (largest delivery gap 262 ms against the 3000 ms
