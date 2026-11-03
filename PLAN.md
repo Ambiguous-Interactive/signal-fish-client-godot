@@ -17,19 +17,11 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Qualify the #488 Web receive boundary on remote networks (see
-      `docs/testing.md`). Carry the scoped rejection identities, the engine-only
-      finite-burst control with WebSocket prefix receipts, and the byte/packet
-      application ACK windows. Preserve the original delayed workload and
-      separate local body-credit controls. The receive loss is filed upstream
-      as [godotengine/godot#125073](https://github.com/godotengine/godot/issues/125073);
-      the weekly `WebSocket Web Watch` CI run tracks it on x86-64 (alongside
-      the master-pin watch for godotengine/godot#125066). The on-demand
-      `WebSocket Remote Path` workflow now drives both controls over a
-      Cloudflare-edge remote path. Follow-ups live in
-      [#538](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/538):
-      collect runs, pin the remote signature, schedule the lane, then extend
-      it to the paced native suites. Physical home-network paths stay open.
+- [ ] Extend the `WebSocket Remote Path` tunnel mechanism to the paced native
+      receive suites (`check-websocket-native-receive.py`; #538), advancing
+      the #485/#491/#492/#496/#498 remote-network items. The Web lane is
+      pinned and scheduled (Mondays 12:00 UTC); physical home-network paths
+      stay open.
 - [ ] Qualify the experimental Godot 4.3 WebSocket receive backport and engine upgrades on
       remote networks (#485; see `docs/testing.md`). Preserve the retained
       byte/count rejections, exact delivered prefix, full-buffer empty-fragment progress (#496),

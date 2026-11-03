@@ -1,8 +1,15 @@
 name: WebSocket Remote Path
 
 on:
-    # Dispatch-only until the remote-path lane proves stable across several
-    # runs; scheduling follows the other watches once pinned (see PLAN.md).
+    schedule:
+        # Mondays 12:00 UTC: weekly #488 remote-path watch (upstream
+        # godotengine/godot#125073), staggered after the macOS watch (11:00).
+        # The defect run must keep failing with scoped loss at the payload
+        # boundary; any change is upstream movement. Dispatch runs collect
+        # extra path samples on demand. Note: GitHub disables schedule
+        # triggers after ~60 days without repo activity; dispatch runs keep
+        # it recoverable.
+        - cron: "0 12 * * 1"
     workflow_dispatch:
         inputs:
             engine_version:
@@ -192,9 +199,13 @@ jobs:
                   # The uncredited workload keeps failing at the payload
                   # boundary. The remote path must not mask it: a pass means
                   # upstream moved (requalify godotengine/godot#125073 and
-                  # close #488). The run must reach the receive boundary and
-                  # show scoped loss; the exact remote signature stays
-                  # recorded, not pinned, until several runs settle it.
+                  # close #488). Four CI runs (two engines, four tunnels)
+                  # each split the burst differently (first gaps 15->64,
+                  # 15->46, 30->64): network segmentation changes which
+                  # frames the engine accepts, so the gate pins the stable
+                  # loss class - the three filed boundary failures, scoped
+                  # rejections with a complete trace, and partial delivery
+                  # below the full burst - instead of one exact pattern.
                   defect_records = defect.get("results", [])
                   if len(defect_records) != 1:
                       problems.append(
@@ -213,7 +224,14 @@ jobs:
                   if defect_record:
                       received = defect_record.get("received", [])
                       rejected = evidence.get("rejected_sequences", [])
-                      if len(received) >= 65 or not rejected:
+                      if sorted(defect_record.get("failures", [])) != sorted(
+                          ["finite burst count", "complete receive count", "exact receive prefix"]
+                      ):
+                          problems.append(
+                              f"remote defect failures {defect_record.get('failures')!r}"
+                              " unexpected"
+                          )
+                      if not 0 < len(received) < 65 or not rejected:
                           problems.append(
                               "remote defect shows no scoped receive loss"
                               f" (delivered {len(received)},"
@@ -221,6 +239,13 @@ jobs:
                           )
                       if evidence.get("trace_complete") is not True:
                           problems.append("remote defect receive trace incomplete")
+                      if evidence.get("reliable_delivery") is not False:
+                          problems.append("remote defect reliable_delivery unexpectedly true")
+                      if evidence.get("unresolved_callback_sequences"):
+                          problems.append(
+                              "remote defect has unresolved browser callbacks:"
+                              f" {evidence.get('unresolved_callback_sequences')!r}"
+                          )
 
                   summary = [
                       "## WebSocket Remote Path",
