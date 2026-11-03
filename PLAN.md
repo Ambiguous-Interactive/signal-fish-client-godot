@@ -17,10 +17,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Collect `WebSocket Remote Path` native-lane runs, then pin the stable
-      defect signature in the workflow gate (#538): controls are already
-      gated green; defect outcomes are recorded per run. Reuse the Web
-      lane's class-pin pattern once several runs (engines, tunnels) agree.
+- [ ] Watch the weekly remote-path lanes; requalify on any pinned
+      signature drift and add maps for new engines (#538). Fold the
+      remote-path results into the #485/#491/#492/#496/#498
+      remote-network qualification.
 - [ ] Qualify the experimental Godot 4.3 WebSocket receive backport and engine upgrades on
       remote networks (#485; see `docs/testing.md`). Preserve the retained
       byte/count rejections, exact delivered prefix, full-buffer empty-fragment progress (#496),
