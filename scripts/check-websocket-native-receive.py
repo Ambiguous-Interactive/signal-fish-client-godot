@@ -448,6 +448,17 @@ def main() -> int:
         help="Run the standalone reproduction commands against --godot into --output",
     )
     parser.add_argument("--case", action="append", help="Run named cases only (repeatable)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="Fixture server bind port (0 picks a free port; fixed ports front a tunnel)",
+    )
+    parser.add_argument(
+        "--public-origin",
+        default="",
+        help="Public base URL that reaches the fixture server, for remote-path runs",
+    )
     args = parser.parse_args()
     if args.export_repro and args.run_repro:
         parser.error("--export-repro and --run-repro are mutually exclusive")
@@ -461,6 +472,8 @@ def main() -> int:
             or args.runner_arg
             or args.recv_cap_bytes is not None
             or args.suite != "all"
+            or args.port
+            or args.public_origin
         ):
             parser.error("--export-repro cannot be combined with runtime options")
         if args.export_repro.exists():
@@ -485,8 +498,17 @@ def main() -> int:
             parser.error("--recv-cap-bytes requires cc on PATH")
         if any(character.isspace() or character == ":" for character in str(args.output.resolve())):
             parser.error("--recv-cap-bytes needs an output path without whitespace or colons")
+    if not 0 <= args.port <= 65535:
+        parser.error("port must be 0..65535; zero binds a free port")
+    origin = args.public_origin.rstrip("/")
+    if origin and not origin.startswith(("https://", "http://")):
+        parser.error("public origin must be an https:// or http:// base URL")
+    if origin and not args.port:
+        parser.error("public origin requires a fixed --port for the tunnel to target")
     if args.run_repro and (args.recv_cap_bytes is not None or args.case or args.suite != "all"):
         parser.error("--run-repro cannot select cases, suites or receive caps")
+    if args.run_repro and (args.port or origin):
+        parser.error("--run-repro always binds a free local port")
     runner = args.runner.resolve() if args.runner else None
     if runner and not runner.is_file():
         parser.error("runner must be an executable file")
@@ -547,6 +569,11 @@ def main() -> int:
         shutil.copy2(ROOT / "tests/smoke" / name, target / name)
     settings = (ROOT / "project.godot").read_text().split("[debug]\n", 1)[1].split("\n[", 1)[0]
     (project / "project.godot").write_text("config_version=5\n[debug]\n" + settings)
+    remote_options: list[str] = []
+    if args.port:
+        remote_options.append(f"--port={args.port}")
+    if origin:
+        remote_options.append(f"--public-origin={origin}")
     provenance = {
         "binary": str(binary),
         "binary_sha256": digest(binary),
@@ -557,6 +584,8 @@ def main() -> int:
         "runner": str(runner) if runner else None,
         "runner_sha256": digest(runner) if runner else None,
         "runner_args": args.runner_arg,
+        "port": args.port,
+        "public_origin": origin,
     }
     (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     library = args.output.resolve() / "recv-cap.so"
@@ -622,6 +651,7 @@ def main() -> int:
                     f"tests/smoke/{script}",
                     "--",
                     *options,
+                    *remote_options,
                 ],
                 log,
                 BURST_TIMEOUT_SECONDS if kind == "burst" else CASE_TIMEOUT_SECONDS,
