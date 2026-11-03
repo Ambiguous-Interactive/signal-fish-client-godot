@@ -117,6 +117,8 @@ func _initialize() -> void:
 		_failures.append("fragment control requires fragmented messages")
 	if _fragment_bytes < 0 or _fragment_bytes >= _body_bytes:
 		_failures.append("fragment bytes must be zero or smaller than one body")
+	if not _public_origin.is_empty() and _port == 0:
+		_failures.append("public origin requires a fixed port")
 	if _failures.is_empty():
 		if _credit_bytes > 0:
 			_batch_packets = mini(PACKETS, int(_credit_bytes / float(_body_bytes)))

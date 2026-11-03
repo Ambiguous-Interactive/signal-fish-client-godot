@@ -68,6 +68,8 @@ func _initialize() -> void:
 		_failures.append("pending wire replacement requires paced writes")
 	if _port < 0 or _port > 65535:
 		_failures.append("port must be 0..65535")
+	if not _public_origin.is_empty() and _port == 0:
+		_failures.append("public origin requires a fixed port")
 	# The raised tunnel connect budget needs matching watchdog headroom
 	# for both dials.
 	if not _public_origin.is_empty():

@@ -70,6 +70,8 @@ func _initialize() -> void:
 		_failures.append("capacity must be 8..131071")
 	if _port < 0 or _port > 65535:
 		_failures.append("port must be 0..65535")
+	if not _public_origin.is_empty() and _port == 0:
+		_failures.append("public origin requires a fixed port")
 	# The raised tunnel connect budget needs matching watchdog headroom.
 	if not _public_origin.is_empty():
 		_watchdog_ms += REMOTE_CONNECT_TIMEOUT_MS - PHASE_TIMEOUT_MS
