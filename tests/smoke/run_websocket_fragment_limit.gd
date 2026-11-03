@@ -72,6 +72,10 @@ func _initialize() -> void:
 	# The raised tunnel connect budget needs matching watchdog headroom.
 	if not _public_origin.is_empty():
 		_watchdog_ms += REMOTE_CONNECT_TIMEOUT_MS - PHASE_TIMEOUT_MS
+	if _fragment_control == "ping":
+		# Ping mode can wait one phase budget for the pong after the
+		# message completes.
+		_watchdog_ms += PHASE_TIMEOUT_MS
 	if _tail_bytes < 0 or _tail_bytes > 3 or (_oversize and _tail_bytes > 0):
 		_failures.append("tail must be 0..3 bytes; oversize requires an empty tail")
 	if _fragment_control != "none" and _capacity < _control_bytes.size():
