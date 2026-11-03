@@ -142,6 +142,12 @@ def main() -> int:
     parser.add_argument("--credit-transport", choices=("local", "app-ack"), default="local")
     parser.add_argument("--ack-delay-ms", type=int, default=0)
     parser.add_argument("--hold-ms", type=int, default=100)
+    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument(
+        "--public-origin",
+        default="",
+        help="Public base URL that reaches the local server, for remote-path runs",
+    )
     args = parser.parse_args()
     if args.capacity < 0 or 0 < args.capacity < BODY_BYTES or args.max_queued_packets < 0:
         parser.error("capacity must admit a body; zero capacity/count keeps engine defaults")
@@ -159,6 +165,13 @@ def main() -> int:
         parser.error("ACK delay must be 0..1000 ms and requires application ACK credit")
     if not 1 <= args.hold_ms <= 1000:
         parser.error("hold must be 1..1000 ms")
+    if not 0 <= args.port <= 65535:
+        parser.error("port must be 0..65535; zero binds an ephemeral port")
+    origin = ""
+    if args.public_origin:
+        origin = args.public_origin.rstrip("/")
+        if not origin.startswith(("https://", "http://")):
+            parser.error("public origin must be an https:// or http:// base URL")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     project = output / "project"
@@ -246,7 +259,7 @@ def main() -> int:
                 server_errors.append(str(exc))
 
     server = ThreadingHTTPServer(
-        ("127.0.0.1", 0), functools.partial(Handler, directory=str(project / "build/web"))
+        ("127.0.0.1", args.port), functools.partial(Handler, directory=str(project / "build/web"))
     )
     batch_packets = (
         PACKETS if args.credit_bytes == 0 else min(PACKETS, args.credit_bytes // BODY_BYTES)
@@ -255,9 +268,15 @@ def main() -> int:
         batch_packets = min(batch_packets, args.credit_packets)
     batches = (PACKETS + batch_packets - 1) // batch_packets
     watchdog_ms = 5000 + batches * (args.hold_ms + args.ack_delay_ms + 1000) + 2000
+    if origin:
+        socket_base = origin.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        page_base = origin
+    else:
+        socket_base = f"ws://127.0.0.1:{server.server_port}"
+        page_base = f"http://127.0.0.1:{server.server_port}"
     options = {
         "watchdog_ms": watchdog_ms,
-        "url": f"ws://127.0.0.1:{server.server_port}/receive-boundary",
+        "url": socket_base + "/receive-boundary",
         "capacity": args.capacity,
         "max_queued_packets": args.max_queued_packets,
         "credit_bytes": args.credit_bytes,
@@ -285,6 +304,8 @@ def main() -> int:
         )
         + (f"; at most {args.credit_packets} outstanding packets" if args.credit_packets else ""),
     }
+    if origin:
+        report["remote_origin"] = origin
     lines: list[str] = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -327,7 +348,7 @@ def main() -> int:
             )
             page.on("pageerror", lambda error: lines.append("PAGE_ERROR " + str(error)))
             try:
-                page.goto(f"http://127.0.0.1:{server.server_port}/index.html")
+                page.goto(page_base + "/index.html")
                 deadline = time.monotonic() + watchdog_ms / 1000 + 10
                 while not any(line.startswith("WEBSOCKET_WEB_RESULT ") for line in lines):
                     if time.monotonic() > deadline:

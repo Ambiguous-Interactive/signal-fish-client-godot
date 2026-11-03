@@ -1,0 +1,263 @@
+name: WebSocket Remote Path
+
+on:
+    # Dispatch-only until the remote-path lane proves stable across several
+    # runs; scheduling follows the other watches once pinned (see PLAN.md).
+    workflow_dispatch:
+        inputs:
+            engine_version:
+                description: Official Godot release to drive (Web export)
+                required: true
+                type: string
+                default: 4.7.2-stable
+
+permissions:
+    contents: read
+
+# Dispatched runs do the same check; the newer run wins.
+concurrency:
+    group: ${{ github.workflow }}
+    cancel-in-progress: true
+
+env:
+    GODOT_VERSION: ${{ inputs.engine_version || '4.7.2-stable' }}
+    GODOT_BIN: /tmp/godot-cache/godot
+    CLOUDFLARED_VERSION: "2026.10.7"
+    CLOUDFLARED_SHA256: 1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+    REMOTE_PORT: "8990"
+
+jobs:
+    remote-watch:
+        name: Watch the Web receive boundary over a remote path
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Install Godot runtime dependencies
+              run: sudo python3 .devcontainer/install-godot.py runtime-deps
+
+            - name: Cache Godot editor
+              id: godot-cache
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: /tmp/godot-cache
+                  key: godot-remote-watch-editor-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
+
+            - name: Install Godot editor
+              if: steps.godot-cache.outputs.cache-hit != 'true'
+              run: python3 .devcontainer/install-godot.py editor "$GODOT_VERSION" /tmp/godot-cache --target "$GODOT_BIN"
+
+            - name: Expose the Godot binary
+              run: |
+                  echo "$(dirname "$GODOT_BIN")" >> "$GITHUB_PATH"
+                  "$GODOT_BIN" --headless --version
+
+            - name: Cache web export templates
+              id: templates-cache
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: ~/.local/share/godot/export_templates
+                  key: godot-remote-watch-templates-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
+
+            - name: Install web export templates
+              if: steps.templates-cache.outputs.cache-hit != 'true'
+              run: python3 .devcontainer/install-godot.py templates "$GODOT_VERSION" /tmp/godot-templates-cache "$HOME/.local/share/godot/export_templates"
+
+            - name: Set up Python
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+              with:
+                  python-version: "3.12"
+
+            - name: Install Python Playwright with uv
+              run: python3 scripts/install-ci-venv.py .venv-remote-watch requirements-docs-accessibility.txt
+
+            - name: Set up Playwright Chromium
+              uses: ./.github/actions/playwright-chromium
+              with:
+                  python-path: .venv-remote-watch/bin/python
+
+            # A credential-free Cloudflare quick tunnel fronts the fixture
+            # server. The browser reaches it through the Cloudflare edge, so
+            # every WebSocket frame crosses a real remote path with TLS.
+            - name: Install cloudflared
+              run: |
+                  curl -sSfL -o /tmp/cloudflared \
+                    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"
+                  echo "$CLOUDFLARED_SHA256  /tmp/cloudflared" | sha256sum --check --
+                  chmod +x /tmp/cloudflared
+                  /tmp/cloudflared --version
+
+            - name: Start the remote-path tunnel
+              id: tunnel
+              run: |
+                  /tmp/cloudflared tunnel --no-autoupdate \
+                    --url "http://127.0.0.1:${REMOTE_PORT}" > tunnel.log 2>&1 &
+                  origin=""
+                  for _ in $(seq 1 45); do
+                      origin=$(grep -o "https://[a-z0-9-]*\.trycloudflare\.com" tunnel.log | head -1 || true)
+                      [ -n "$origin" ] && break
+                      sleep 2
+                  done
+                  if [ -z "$origin" ]; then
+                      echo "trycloudflare tunnel did not come up:" >&2
+                      cat tunnel.log >&2
+                      exit 1
+                  fi
+                  echo "origin=$origin" >> "$GITHUB_OUTPUT"
+                  # The fresh tunnel hostname can lag DNS. Wait for any HTTP
+                  # answer from the edge; the fixture server starts later, so
+                  # a 502 here still proves the remote path resolves.
+                  code="000"
+                  for _ in $(seq 1 20); do
+                      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$origin/index.html" || true)
+                      if [ -n "$code" ] && [ "$code" != "000" ]; then
+                          break
+                      fi
+                      sleep 3
+                  done
+                  echo "tunnel $origin reachable; edge answered HTTP ${code:-000}"
+
+            - name: Reproduce the Web receive loss over the remote path
+              id: defect
+              run: |
+                  rc=0
+                  .venv-remote-watch/bin/python scripts/check-websocket-web-receive.py \
+                    --godot "$GODOT_BIN" --output output/defect \
+                    --port "$REMOTE_PORT" \
+                    --public-origin "${{ steps.tunnel.outputs.origin }}" || rc=$?
+                  echo "exit=$rc" >> "$GITHUB_OUTPUT"
+
+            - name: Run the application ACK control over the remote path
+              id: control
+              run: |
+                  rc=0
+                  .venv-remote-watch/bin/python scripts/check-websocket-web-receive.py \
+                    --godot "$GODOT_BIN" --output output/control \
+                    --credit-transport app-ack --credit-bytes 32768 \
+                    --port "$REMOTE_PORT" \
+                    --public-origin "${{ steps.tunnel.outputs.origin }}" || rc=$?
+                  echo "exit=$rc" >> "$GITHUB_OUTPUT"
+
+            - name: Check remote-path expectations
+              run: |
+                  python3 - <<'PY'
+                  import json
+                  import os
+                  from pathlib import Path
+
+                  defect = json.loads(Path("output/defect/assessment.json").read_text())
+                  control = json.loads(Path("output/control/assessment.json").read_text())
+                  defect_exit = "${{ steps.defect.outputs.exit }}"
+                  control_exit = "${{ steps.control.outputs.exit }}"
+                  origin = "${{ steps.tunnel.outputs.origin }}"
+                  problems = []
+
+                  # The application ACK control must deliver all 65 exact
+                  # messages over the remote path: this is the remote-network
+                  # qualification for the boundary (#488).
+                  control_record = (
+                      control["results"][0] if len(control.get("results", [])) == 1 else {}
+                  )
+                  if control_record.get("received") != list(range(65)):
+                      problems.append(
+                          f"remote control delivered {control_record.get('received')!r}"
+                          " != all 65"
+                      )
+                  if control.get("receive_evidence", {}).get("reliable_delivery") is not True:
+                      problems.append("remote control reliable_delivery unexpectedly false")
+                  if (
+                      control.get("application_acknowledged_packets") != 64
+                      or control.get("application_sent_packets") != 65
+                  ):
+                      problems.append("remote control application ACK window incomplete")
+                  if control.get("remote_origin") != origin:
+                      problems.append("remote control did not record the tunnel origin")
+                  if control_exit != "0":
+                      problems.append(f"remote control exit {control_exit} != 0")
+
+                  # The uncredited workload keeps failing at the payload
+                  # boundary. The remote path must not mask it: a pass means
+                  # upstream moved (requalify godotengine/godot#125073 and
+                  # close #488). The run must reach the receive boundary and
+                  # show scoped loss; the exact remote signature stays
+                  # recorded, not pinned, until several runs settle it.
+                  defect_records = defect.get("results", [])
+                  if len(defect_records) != 1:
+                      problems.append(
+                          f"remote defect produced {len(defect_records)} result"
+                          " records; expected exactly one"
+                      )
+                  defect_record = defect_records[0] if len(defect_records) == 1 else {}
+                  evidence = defect.get("receive_evidence", {})
+                  if defect_exit == "0":
+                      problems.append(
+                          "remote defect delivered everything (the upstream repair"
+                          " landed: requalify it and close #488)"
+                      )
+                  elif defect_exit != "1":
+                      problems.append(f"remote defect exit {defect_exit} unexpected")
+                  if defect_record:
+                      received = defect_record.get("received", [])
+                      rejected = evidence.get("rejected_sequences", [])
+                      if len(received) >= 65 or not rejected:
+                          problems.append(
+                              "remote defect shows no scoped receive loss"
+                              f" (delivered {len(received)},"
+                              f" rejections {len(rejected)})"
+                          )
+                      if evidence.get("trace_complete") is not True:
+                          problems.append("remote defect receive trace incomplete")
+
+                  summary = [
+                      "## WebSocket Remote Path",
+                      "",
+                      f"- Engine: {control_record.get('engine', 'unknown')} (Web export)",
+                      f"- Browser: {control.get('browser', 'unknown')}",
+                      f"- Remote path: {origin} (Cloudflare quick tunnel, TLS)",
+                      f"- ACK control: {len(control_record.get('received', []))}/65"
+                      " delivered over the remote path",
+                      f"- Defect run: {len(defect_record.get('received', []))}/65"
+                      " delivered,"
+                      f" {len(evidence.get('rejected_sequences', []))} scoped rejections"
+                      f" (first gap {defect_record.get('first_gap', {}).get('expected')}"
+                      " ->"
+                      f" {defect_record.get('first_gap', {}).get('received')})",
+                      "",
+                  ]
+                  verdict = (
+                      "Remote path green: the 32 KiB application ACK control qualifies"
+                      " the boundary over a real remote path, and the uncredited loss"
+                      " still reproduces"
+                      " ([godotengine/godot#125073](https://github.com/godotengine/godot/issues/125073))."
+                      if not problems
+                      else "Remote path red: " + "; ".join(problems)
+                  )
+                  summary.extend(["", verdict, ""])
+                  with open(
+                      os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8"
+                  ) as step_summary:
+                      step_summary.write("\n".join(summary))
+                  print(verdict)
+                  assert not problems, "; ".join(problems)
+                  PY
+
+            - name: Stop the tunnel
+              if: always()
+              run: pkill -f "cloudflared tunnel" || true
+
+            - name: Upload remote-path evidence
+              if: always()
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: websocket-remote-watch-${{ github.run_id }}
+                  path: |
+                      output/
+                      tunnel.log
+                  if-no-files-found: error
