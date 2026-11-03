@@ -111,13 +111,18 @@ jobs:
                       exit 1
                   fi
                   echo "origin=$origin" >> "$GITHUB_OUTPUT"
-                  # The fresh tunnel hostname can lag DNS; wait it out.
+                  # The fresh tunnel hostname can lag DNS. Wait for any HTTP
+                  # answer from the edge; the fixture server starts later, so
+                  # a 502 here still proves the remote path resolves.
+                  code="000"
                   for _ in $(seq 1 20); do
-                      fetch=$(curl -so /dev/null -w "%{time_total}" "$origin/index.html" 2>/dev/null || true)
-                      [ -n "$fetch" ] && break
+                      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$origin/index.html" || true)
+                      if [ -n "$code" ] && [ "$code" != "000" ]; then
+                          break
+                      fi
                       sleep 3
                   done
-                  echo "tunnel $origin reachable; index fetch ${fetch:-unresolved}s"
+                  echo "tunnel $origin reachable; edge answered HTTP ${code:-000}"
 
             - name: Reproduce the Web receive loss over the remote path
               id: defect
@@ -180,11 +185,16 @@ jobs:
                   # The uncredited workload keeps failing at the payload
                   # boundary. The remote path must not mask it: a pass means
                   # upstream moved (requalify godotengine/godot#125073 and
-                  # close #488). The exact remote signature stays recorded,
-                  # not pinned, until several runs settle it.
-                  defect_record = (
-                      defect["results"][0] if len(defect.get("results", [])) == 1 else {}
-                  )
+                  # close #488). The run must reach the receive boundary and
+                  # show scoped loss; the exact remote signature stays
+                  # recorded, not pinned, until several runs settle it.
+                  defect_records = defect.get("results", [])
+                  if len(defect_records) != 1:
+                      problems.append(
+                          f"remote defect produced {len(defect_records)} result"
+                          " records; expected exactly one"
+                      )
+                  defect_record = defect_records[0] if len(defect_records) == 1 else {}
                   evidence = defect.get("receive_evidence", {})
                   if defect_exit == "0":
                       problems.append(
@@ -193,8 +203,17 @@ jobs:
                       )
                   elif defect_exit != "1":
                       problems.append(f"remote defect exit {defect_exit} unexpected")
-                  if defect_record and evidence.get("trace_complete") is not True:
-                      problems.append("remote defect receive trace incomplete")
+                  if defect_record:
+                      received = defect_record.get("received", [])
+                      rejected = evidence.get("rejected_sequences", [])
+                      if len(received) >= 65 or not rejected:
+                          problems.append(
+                              "remote defect shows no scoped receive loss"
+                              f" (delivered {len(received)},"
+                              f" rejections {len(rejected)})"
+                          )
+                      if evidence.get("trace_complete") is not True:
+                          problems.append("remote defect receive trace incomplete")
 
                   summary = [
                       "## WebSocket Remote Path",
