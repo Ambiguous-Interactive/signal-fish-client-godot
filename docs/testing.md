@@ -809,8 +809,18 @@ uses the nearest official release label because no release matches a master
 SHA. A `build_target`
 input selects `linuxbsd` (default) or `windows`; Windows builds
 cross-compile with mingw-w64, run under Wine, and use the uncapped suite. A
+`repair_kind` input selects the repair applicator. `stable` (default) patches
+the pinned 4.4.1, 4.5.2, 4.6.3, 4.7.2 and master revisions with
+`repair-websocket-stable.py`. `4.3-backport` patches 4.3-stable
+`77dcf97d82cbfe4e4615475fa52ca03da645dbd8` with `backport-websocket-43.py`;
+dispatch that run with the matching revision and the `4.3-stable` label. The
+4.3 build drops the `disable_path_overrides` SCons flag, which 4.3's
+SConstruct predates. A
 matched unpatched baseline job runs the same seven commands. The four defect
-failures must keep one observed result record each. The three comparison
+failures must keep one observed result record each, with one exception: an
+official engine that predates the #491/#492/#496 regressions (4.3) passes
+those three repros unpatched, so its baseline fails only the close-unicode
+command. The three comparison
 controls must pass. Both jobs upload build logs, patch reports, engine
 hashes and per-command evidence. A `remote_path` input adds the
 remote-network leg: each variant fronts a Cloudflare quick tunnel and drives
@@ -1154,9 +1164,12 @@ Linux dispatch; the baseline runs uncapped, the conditions the
 official-engine pinned signatures were collected under. The repaired engine
 must pass every case. The baseline must keep failing its six pinned defect
 signatures on the same path, so a pass cannot come from the path masking a
-trigger. That requirement applies to a Linux engine family with a pinned
-remote-path map; Windows and unpinned families record defect outcomes as
-collection data. The gate checks binary identity
+trigger. The pinned 4.3 map expects only its two #498 close shapes to fail;
+official 4.3 predates the other four defect shapes, and the gate requires
+those four to keep passing on the 4.3 baseline. That
+requirement applies to a Linux engine family with a pinned remote-path map;
+Windows and unpinned families record defect outcomes as collection data. The
+gate checks binary identity
 by SHA-256, tunnel provenance, paced writes, clean exits and per-case
 verdicts, keyed by engine family for the baseline map.
 
