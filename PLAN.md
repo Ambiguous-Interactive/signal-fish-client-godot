@@ -26,8 +26,7 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       the weekly `WebSocket Web Watch` CI run tracks it on x86-64 (alongside
       the master-pin watch for godotengine/godot#125066). The on-demand
       `WebSocket Remote Path` workflow now drives both controls over a
-      Cloudflare-edge remote path; its first CI run reproduced the filed
-      signature on official 4.7.2 Web. Follow-ups live in
+      Cloudflare-edge remote path. Follow-ups live in
       [#538](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/538):
       collect runs, pin the remote signature, schedule the lane, then extend
       it to the paced native suites. Physical home-network paths stay open.
