@@ -111,8 +111,13 @@ jobs:
                       exit 1
                   fi
                   echo "origin=$origin" >> "$GITHUB_OUTPUT"
-                  fetch=$(curl -so /dev/null -w "%{time_total}" "$origin/index.html")
-                  echo "tunnel $origin reachable; index fetch ${fetch}s"
+                  # The fresh tunnel hostname can lag DNS; wait it out.
+                  for _ in $(seq 1 20); do
+                      fetch=$(curl -so /dev/null -w "%{time_total}" "$origin/index.html" 2>/dev/null || true)
+                      [ -n "$fetch" ] && break
+                      sleep 3
+                  done
+                  echo "tunnel $origin reachable; index fetch ${fetch:-unresolved}s"
 
             - name: Reproduce the Web receive loss over the remote path
               id: defect

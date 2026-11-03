@@ -128,8 +128,13 @@ jobs:
                       cat tunnel.log
                       exit 1
                   fi
-                  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$origin/index.html")
-                  echo "tunnel $origin -> HTTP $code"
+                  code=""
+                  for _ in $(seq 1 20); do
+                      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$origin/index.html" || true)
+                      [ "$code" = "200" ] && break
+                      sleep 3
+                  done
+                  echo "tunnel $origin -> HTTP ${code:-none}"
                   pkill -f "cloudflared tunnel" || true
                   test "$code" = "200"
 
