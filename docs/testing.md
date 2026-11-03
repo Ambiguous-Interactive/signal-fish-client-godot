@@ -879,6 +879,18 @@ unpatched baseline reproduces the four defect commands and passes the three
 controls. Unpatched binary SHA-256:
 `566db2f263e02fcd266a99535142f156133c151d761f9b905cbbae612eeda466`.
 
+The pinned 4.3-stable backport `77dcf97d82cbfe4e4615475fa52ca03da645dbd8`
+passes the same checks on x86-64 ([run
+41730274982](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41730274982)).
+All 184 paced receive cases pass with capped reads and all seven standalone
+commands pass (#491, #492, #496, #498). Repaired binary SHA-256:
+`8aebdbce741747e08ba00ec694764e38d9d311ee94e5193d582c447197d831f3`. The
+unpatched 4.3 baseline passes the three controls, the control-bytes and
+reuse commands, and fails the full-buffer and close-unicode commands,
+matching the collected Linux ARM64 baseline results. Unpatched binary
+SHA-256:
+`68c4bce9bca9c3947428069ab1d30ad5c2c2ebd6ee5c7acbef9749f293fc70df`.
+
 The `windows` build target qualifies the repair on Windows x86-64 under
 Wine. The workflow installs current Wine from the WineHQ repository;
 Ubuntu 24.04 Wine 9.0 cannot start Godot 4.7.x Windows binaries, official

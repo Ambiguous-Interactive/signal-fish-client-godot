@@ -116,7 +116,7 @@ jobs:
 
             - name: Check the dispatch inputs
               run: |
-                  if [ "$REPAIR_KIND" = 4.3-backport ] && [ "${GODOT_LABEL#4.3}" = "$GODOT_LABEL" ]; then
+                  if [ "$REPAIR_KIND" = 4.3-backport ] && [ "${GODOT_LABEL#4.3-}" = "$GODOT_LABEL" ]; then
                     echo "repair_kind 4.3-backport needs a 4.3-stable engine_label; got $GODOT_LABEL" >&2
                     exit 1
                   fi
