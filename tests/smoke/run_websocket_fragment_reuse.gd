@@ -5,6 +5,7 @@ const ServerScript = preload("res://tests/smoke/ws_test_server.gd")
 # the burst fixture's 5000 ms connect budget is the precedent.
 const CONNECT_TIMEOUT_MS := 4000
 const REMOTE_CONNECT_TIMEOUT_MS := 5000
+const PHASE_TIMEOUT_MS := 2000
 var _server := ServerScript.new()
 var _peer := WebSocketPeer.new()
 var _failures: Array[String] = []
@@ -70,16 +71,18 @@ func _initialize() -> void:
 		_failures.append("port must be 0..65535")
 	if not _public_origin.is_empty() and _port == 0:
 		_failures.append("public origin requires a fixed port")
-	# The raised tunnel connect budget needs matching watchdog headroom
-	# for both dials.
+	# The raised tunnel connect budgets need matching watchdog headroom for
+	# both dials plus every phase deadline, including the handshake wait.
 	if not _public_origin.is_empty():
-		_watchdog_ms += 2 * (REMOTE_CONNECT_TIMEOUT_MS - CONNECT_TIMEOUT_MS)
+		_watchdog_ms += (
+			2 * (REMOTE_CONNECT_TIMEOUT_MS - CONNECT_TIMEOUT_MS) + 2 * PHASE_TIMEOUT_MS
+		)
 	call_deferred("_run")
 
 
 func _process(_delta: float) -> bool:
 	_server.poll()
-	if Time.get_ticks_msec() - _started > 12000:
+	if Time.get_ticks_msec() - _started > _watchdog_ms:
 		_failures.append("watchdog")
 		_finish()
 	return false
@@ -115,7 +118,7 @@ func _queue_retired() -> bool:
 	if _server.send_text_frame("retired") != OK:
 		_failures.append("retired send")
 		return false
-	var deadline := Time.get_ticks_msec() + 2000
+	var deadline := Time.get_ticks_msec() + PHASE_TIMEOUT_MS
 	while _peer.get_available_packet_count() == 0 and Time.get_ticks_msec() < deadline:
 		_peer.poll()
 		await process_frame
@@ -153,7 +156,7 @@ func _run() -> void:
 		_failures.append("barrier ping send")
 		_finish()
 		return
-	var deadline := Time.get_ticks_msec() + 2000
+	var deadline := Time.get_ticks_msec() + PHASE_TIMEOUT_MS
 	while _server.received_pongs.is_empty() and Time.get_ticks_msec() < deadline:
 		_peer.poll()
 		await process_frame
@@ -179,7 +182,7 @@ func _run() -> void:
 	elif _closing_state != WebSocketPeer.STATE_CLOSING:
 		_failures.append("closing state")
 	if _replacement == "handshake":
-		deadline = Time.get_ticks_msec() + 2000
+		deadline = Time.get_ticks_msec() + PHASE_TIMEOUT_MS
 		while (
 			_peer.get_ready_state() != WebSocketPeer.STATE_CLOSED
 			and Time.get_ticks_msec() < deadline
@@ -203,7 +206,7 @@ func _run() -> void:
 	var fresh_opcode := ServerScript.OP_TEXT if _fresh_type == "text" else ServerScript.OP_BINARY
 	if _server._send_frame(fresh_opcode, fresh_bytes) != OK:
 		_failures.append("fresh send")
-	deadline = Time.get_ticks_msec() + 2000
+	deadline = Time.get_ticks_msec() + PHASE_TIMEOUT_MS
 	while _peer.get_available_packet_count() == 0 and Time.get_ticks_msec() < deadline:
 		_peer.poll()
 		await process_frame
