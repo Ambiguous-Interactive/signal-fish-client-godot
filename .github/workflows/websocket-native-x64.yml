@@ -247,9 +247,10 @@ jobs:
                     --output "output/repaired-suite"
 
             # The repaired engine must deliver every pinned case over a real
-            # remote path; the unpatched baseline must keep failing its pinned
-            # defect signatures on the same path so a pass cannot come from the
-            # path masking the trigger (#485).
+            # remote path, at the lane's forced read cap. The unpatched
+            # baseline runs uncapped: the pinned signatures it must keep
+            # failing were collected over uncapped official-engine tunnels,
+            # so the anti-masking control matches those conditions (#485).
             - name: Run the pinned receive cases over the remote path
               if: inputs.remote_path == true
               id: remote
@@ -259,7 +260,7 @@ jobs:
                       case_args+=(--case "$case_name")
                   done
                   cap_args=()
-                  if [ "$BUILD_TARGET" = linuxbsd ] && [ "$RECV_CAP" != "0" ]; then
+                  if [ "${{ matrix.variant }}" = repaired ] && [ "$BUILD_TARGET" = linuxbsd ] && [ "$RECV_CAP" != "0" ]; then
                     cap_args=(--recv-cap-bytes="$RECV_CAP")
                   fi
                   rc=0
