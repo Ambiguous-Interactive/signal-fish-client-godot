@@ -267,9 +267,11 @@ jobs:
               run: |
                   # The build takes tens of minutes; make sure the tunnel is
                   # still alive before spending it. The fixture server is not
-                  # up yet, so any HTTP answer from the edge counts.
+                  # up yet, so any HTTP answer from the edge counts. 530 is
+                  # the exception: Cloudflare error 1033, a disconnected
+                  # tunnel.
                   code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "${{ steps.tunnel.outputs.origin }}/index.html" || true)
-                  if [ -z "$code" ] || [ "$code" = "000" ]; then
+                  if [ -z "$code" ] || [ "$code" = "000" ] || [ "$code" = "530" ]; then
                       echo "the Cloudflare edge stopped answering for ${{ steps.tunnel.outputs.origin }}:" >&2
                       cat tunnel.log >&2
                       exit 1
@@ -488,7 +490,14 @@ jobs:
                               f"remote cases disagree on the engine family: {engines!r}"
                           )
                       else:
-                          documented = baseline_documented.get(engines[0])
+                          # Wine baselines stay collection data until a
+                          # Wine map is pinned: the maps below were
+                          # collected from Linux runners.
+                          documented = (
+                              None
+                              if os.environ["BUILD_TARGET"] == "windows"
+                              else baseline_documented.get(engines[0])
+                          )
                           if documented is None:
                               print(
                                   f"baseline {engines[0]} has no pinned remote-path map;"

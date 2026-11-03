@@ -25,8 +25,7 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       `WebSocket Native x64` `remote_path` lane (#485; see
       `docs/testing.md`): the 4.3 backport applicator on x86-64 (#545;
       4.3's SConstruct lacks `disable_path_overrides`), the 4.4.1/4.5.2/4.6.3
-      stable repairs, and a Windows dispatch. The repaired 4.7.2 x86-64 leg
-      is qualified over capped and uncapped tunnels. Preserve the retained
+      stable repairs, and a Windows dispatch. Preserve the retained
       byte/count rejections, exact delivered prefix, full-buffer
       empty-fragment progress (#496), fragmented-message assembly
       (Godot #124973/#124975) and matched local/application ACK credit
