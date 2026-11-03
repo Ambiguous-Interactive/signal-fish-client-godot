@@ -321,11 +321,10 @@ jobs:
 
     # Follow-up 3 of #538: the paced native receive suites cross the same
     # tunnel, advancing the #485/#491/#492/#496/#498 remote-network items.
-    # Controls must pass over the remote path; defect outcomes are
-    # qualification data. A defect that passes means the path masked its
-    # trigger or upstream moved, and the summary flags it for triage. Once
-    # collected runs settle a stable signature, a later change pins it the
-    # way the Web lane pins its loss class.
+    # Controls must pass over the remote path; each defect is pinned to its
+    # filed failure signature, the class every collected run reproduced.
+    # A defect that passes or drifts means the path masked its trigger or
+    # upstream moved: requalify the filed issue and update the pinned map.
     remote-native-watch:
         name: Watch the paced native receive suites over a remote path
         runs-on: ubuntu-24.04
@@ -445,22 +444,63 @@ jobs:
                   python3 - <<'PY'
                   import json
                   import os
+                  import re
                   from pathlib import Path
 
                   role_control = set(os.environ["NATIVE_CONTROL_CASES"].split())
-                  filed_failure = {
-                      "read-control-ping": "exact receive prefix",
-                      "read-control-pong": "exact receive prefix",
-                      "chunk-limit-binary-none-false": "complete message missing",
-                      "chunk-reuse-text-text-closing": "fresh exact bytes",
-                      "close-3-mixed-server": "exact close code, reason and empty packet queue",
-                      "boundary-close-3-max-mixed-server-false": (
-                          "exact close code, reason and empty packet queue"
-                      ),
+                  # Pinned remote-path defect signatures, keyed by engine
+                  # major.minor. None marks a case that passes on that
+                  # engine; a failure-string list pins the exact filed
+                  # signature a failing case must reproduce. Collected CI
+                  # runs (ubuntu-24.04 x86-64, official editors, one
+                  # Cloudflare quick tunnel each):
+                  # - 4.7: 41591258643 and 41684196081, plus same-day
+                  #   devcontainer runs on Linux ARM64 (the retired
+                  #   continuation failure in the first CI run was the
+                  #   fixture race #541 removed).
+                  # - 4.4: 41684522769.
+                  # - 4.3: 41684912691 and 41685515285. Official 4.3
+                  #   predates the assembly/reuse/stall regressions
+                  #   (#491/#496/#492), so those cases pass there; the #498
+                  #   close shapes fail on every collected engine.
+                  # The frame split and retirement byte counts inside a
+                  # defect vary with network pacing, so the gate pins the
+                  # per-case class - the way the Web lane pins its loss
+                  # class and the macOS watch pins its documented gaps. A
+                  # documented defect that passes or drifts means the path
+                  # masked its trigger or upstream moved. An engine without
+                  # a map keeps its defect outcomes as recorded data;
+                  # collect runs, then add its map. Requalify the filed
+                  # issue and update this map.
+                  close_signature = [
+                      "exact close code, reason and empty packet queue",
+                      "matching client close frame",
+                  ]
+                  failing_signatures = {
+                      "read-control-ping": ["exact receive prefix"],
+                      "read-control-pong": ["exact receive prefix"],
+                      "chunk-limit-binary-none-false": ["complete message missing"],
+                      "chunk-reuse-text-text-closing": ["fresh exact bytes"],
+                      "close-3-mixed-server": close_signature,
+                      "boundary-close-3-max-mixed-server-false": close_signature,
                   }
-                  role_defect = set(filed_failure)
+                  documented = {
+                      "4.7": failing_signatures,
+                      "4.4": failing_signatures,
+                      "4.3": {
+                          **failing_signatures,
+                          "read-control-ping": None,
+                          "read-control-pong": None,
+                          "chunk-limit-binary-none-false": None,
+                          "chunk-reuse-text-text-closing": None,
+                      },
+                  }
+                  role_defect = set(failing_signatures)
                   origin = os.environ["TUNNEL_ORIGIN"]
                   version = os.environ["GODOT_VERSION"]
+                  engine_match = re.match(r"\d+\.\d+", version)
+                  major_minor = engine_match.group(0) if engine_match else version
+                  expected = documented.get(major_minor)
                   summary = json.loads(Path("output/native/summary.json").read_text())
                   provenance = json.loads(Path("output/native/provenance.json").read_text())
                   problems = []
@@ -510,15 +550,10 @@ jobs:
                               f"remote control {name} did not record the tunnel origin"
                           )
 
-                  # Defect outcomes are the qualification data. Structure is
-                  # gated (a complete paced record with a clean exit); the
-                  # outcome itself is data. A defect that passes at the driver
-                  # level means the path masked its trigger or upstream moved;
-                  # a fail without the filed signature is a new remote-path
-                  # behavior. Both stay green during the data-collection phase
-                  # and are flagged for triage in the summary.
-                  passed_defects = []
-                  novel_defects = []
+                  # Defect outcomes are pinned per engine. Structure stays
+                  # gated (a complete paced record with a clean exit); a
+                  # documented verdict must match its pinned signature.
+                  unpinned_defects = []
                   for name in sorted(role_defect):
                       case = cases.get(name, {})
                       record = case.get("result") or {}
@@ -552,14 +587,65 @@ jobs:
                           problems.append(
                               f"remote defect {name} shows no paced writes: {wire!r}"
                           )
-                      if case.get("passed") is True:
-                          passed_defects.append(name)
-                      elif filed_failure[name] not in record.get("failures", []):
-                          novel_defects.append(name)
+                      if expected is None:
+                          unpinned_defects.append(name)
+                      elif expected[name] is None:
+                          if case.get("passed") is not True:
+                              problems.append(
+                                  f"remote defect {name} failed"
+                                  f" {record.get('failures')!r} but official"
+                                  f" {major_minor} documents it passing: new"
+                                  " remote-path behavior or an upstream"
+                                  " regression; read the run's per-case logs"
+                                  " and update the pinned map"
+                              )
+                      elif case.get("passed") is True:
+                          problems.append(
+                              f"remote defect {name} passed over the remote path"
+                              " (the path masked its trigger or the upstream"
+                              " repair landed): requalify the filed issue and"
+                              " update the pinned map"
+                          )
+                      elif sorted(record.get("failures", [])) != sorted(
+                          expected[name]
+                      ):
+                          problems.append(
+                              f"remote defect {name} failures"
+                              f" {record.get('failures')!r} drifted from the"
+                              f" pinned {expected[name]!r}: new remote-path"
+                              " behavior; read the run's per-case logs"
+                          )
 
                   exit_code = os.environ["NATIVE_EXIT"]
-                  if exit_code not in ("0", "1"):
-                      problems.append(f"suite exit {exit_code} unexpected (crash or abort)")
+                  if expected is None:
+                      if exit_code not in ("0", "1"):
+                          problems.append(
+                              f"suite exit {exit_code} unexpected for an engine"
+                              " without a pinned map (a crash or abort is not a"
+                              " sample)"
+                          )
+                      exit_note = "0 or 1: this engine has no pinned map yet"
+                  else:
+                      expected_exit = (
+                          "1"
+                          if any(
+                              signature is not None for signature in expected.values()
+                          )
+                          else "0"
+                      )
+                      if exit_code != expected_exit:
+                          problems.append(
+                              f"suite exit {exit_code} != {expected_exit}"
+                              " (controls must pass and every pinned defect"
+                              " verdict must hold; a crash or abort is not a"
+                              " sample)"
+                          )
+                      exit_note = (
+                          "1 is expected: every pinned defect fails on official"
+                          " engines"
+                          if expected_exit == "1"
+                          else "0 is expected: every pinned defect passes"
+                      )
 
                   rows = []
                   for name in sorted(role_control | role_defect):
@@ -583,36 +669,26 @@ jobs:
                       "",
                       f"- Engine: official {version} (ubuntu-24.04 x86-64, editor binary)",
                       f"- Remote path: {origin} (Cloudflare quick tunnel, TLS)",
-                      f"- Suite exit: {exit_code} (1 is expected: defect cases fail on"
-                      " official engines)",
+                      f"- Suite exit: {exit_code} ({exit_note})",
                       "",
                       "| Case | Role | Outcome | Failures |",
                       "| --- | --- | --- | --- |",
                       *rows,
                       "",
                   ]
-                  if passed_defects:
+                  if unpinned_defects:
                       summary_lines.extend(
                           [
-                              "Defect cases that passed over the remote path:"
-                              f" {', '.join(passed_defects)}. The path masked the"
-                              " trigger or upstream moved; triage the run"
-                              " (collect more samples before pinning).",
-                              "",
-                          ]
-                      )
-                  if novel_defects:
-                      summary_lines.extend(
-                          [
-                              "Defect cases that failed without their filed signature:"
-                              f" {', '.join(novel_defects)}. New remote-path behavior;"
-                              " read the run's per-case logs before pinning.",
+                              f"Defect outcomes are recorded data for {version}:"
+                              " no pinned map yet. Collect runs, then add its"
+                              " map to the gate.",
                               "",
                           ]
                       )
                   verdict = (
                       "Remote path green: every control qualifies its suite over a real"
-                      " remote path and every defect keeps a complete paced record."
+                      " remote path and every pinned defect keeps its documented"
+                      " signature."
                       if not problems
                       else "Remote path red: " + "; ".join(problems)
                   )
