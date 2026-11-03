@@ -37,6 +37,11 @@ on:
                 required: true
                 type: boolean
                 default: true
+            remote_path:
+                description: Also run the pinned receive cases over a Cloudflare quick tunnel
+                required: true
+                type: boolean
+                default: false
 
 permissions:
     contents: read
@@ -51,7 +56,9 @@ jobs:
     qualify:
         name: ${{ matrix.variant }} ${{ inputs.engine_label || '4.4.1-stable' }} ${{ (inputs.build_target || 'windows') == 'windows' && 'on windows x86-64 (Wine)' || 'on x86-64' }}
         runs-on: ubuntu-24.04
-        timeout-minutes: 75
+        # The remote-path leg adds the tunnel pre-check wait (~9 min worst)
+        # and both suites at their fixture watchdog caps on top of the build.
+        timeout-minutes: 135
         defaults:
             run:
                 shell: bash
@@ -64,6 +71,31 @@ jobs:
             GODOT_LABEL: ${{ inputs.engine_label || '4.4.1-stable' }}
             BUILD_TARGET: ${{ inputs.build_target || 'windows' }}
             RECV_CAP: ${{ inputs.recv_cap_bytes }}
+            REMOTE_PATH: ${{ inputs.remote_path }}
+            REMOTE_PORT: "8990"
+            CLOUDFLARED_VERSION: "2026.10.7"
+            CLOUDFLARED_SHA256: 1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+            # Controls and filed defects for each receive issue class (#491
+            # fragmented assembly around control frames, #492 peer reuse
+            # retention, #496 full-buffer empty-fragment stall and #498
+            # Unicode close reasons across reads), matching the
+            # `WebSocket Remote Path` native lane selection.
+            REMOTE_CASES: >-
+                read-control-none
+                read-control-ping
+                read-control-pong
+                chunk-reuse-text-text-handshake
+                chunk-reuse-text-text-closing
+                chunk-limit-binary-none-false
+                close-3-ascii-server
+                close-3-mixed-server
+                boundary-close-3-max-ascii-server-false
+                boundary-close-3-max-mixed-server-false
+            REMOTE_CONTROL_CASES: >-
+                read-control-none
+                chunk-reuse-text-text-handshake
+                close-3-ascii-server
+                boundary-close-3-max-ascii-server-false
             SOURCE_DIR: godot-source
             ENGINE_BIN: godot-source/bin/godot.${{ inputs.build_target || 'windows' }}.template_debug.x86_64${{ (inputs.build_target || 'windows') == 'windows' && '.exe' || '' }}
             IMPORTER: ${{ github.workspace }}/official-godot/godot
@@ -113,8 +145,58 @@ jobs:
                   wine --version
                   wineboot --init
 
+            # A credential-free Cloudflare quick tunnel fronts the fixture
+            # server. The engine connects through the Cloudflare edge over
+            # TLS, so every paced frame crosses a real remote path. Starting
+            # it before the build lets the edge name warm up while scons
+            # compiles.
+            - name: Install cloudflared
+              if: inputs.remote_path == true
+              run: |
+                  curl -sSfL -o /tmp/cloudflared \
+                    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"
+                  echo "$CLOUDFLARED_SHA256  /tmp/cloudflared" | sha256sum --check --
+                  chmod +x /tmp/cloudflared
+                  /tmp/cloudflared --version
+
             - name: Prepare evidence directory
               run: mkdir -p output
+
+            - name: Start the remote-path tunnel
+              if: inputs.remote_path == true
+              id: tunnel
+              run: |
+                  /tmp/cloudflared tunnel --no-autoupdate \
+                    --url "http://127.0.0.1:${REMOTE_PORT}" > tunnel.log 2>&1 &
+                  origin=""
+                  for _ in $(seq 1 45); do
+                      origin=$(grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" tunnel.log | grep -v "^https://api\.trycloudflare\.com$" | head -1 || true)
+                      [ -n "$origin" ] && break
+                      sleep 2
+                  done
+                  if [ -z "$origin" ]; then
+                      echo "trycloudflare tunnel did not come up:" >&2
+                      cat tunnel.log >&2
+                      exit 1
+                  fi
+                  echo "origin=$origin" >> "$GITHUB_OUTPUT"
+                  # The fresh tunnel hostname can lag DNS. Wait for any HTTP
+                  # answer from the edge; the fixture server starts later, so
+                  # a 502 here still proves the remote path resolves.
+                  code="000"
+                  for _ in $(seq 1 20); do
+                      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$origin/index.html" || true)
+                      if [ -n "$code" ] && [ "$code" != "000" ]; then
+                          break
+                      fi
+                      sleep 3
+                  done
+                  if [ "$code" = "000" ]; then
+                      echo "the Cloudflare edge never answered for $origin:" >&2
+                      cat tunnel.log >&2
+                      exit 1
+                  fi
+                  echo "tunnel $origin reachable; edge answered HTTP ${code:-000}"
 
             - name: Fetch pinned engine source
               run: |
@@ -132,6 +214,10 @@ jobs:
 
             - name: Build the engine
               run: |
+                  # module_mbedtls_enabled provides StreamPeerTLS: without it
+                  # the engine rejects every wss:// URL ("WSS is not
+                  # available in this build"), which is all the remote-path
+                  # leg connects over.
                   target_args=()
                   if [ "$BUILD_TARGET" = linuxbsd ]; then
                     target_args+=(x11=no wayland=no alsa=no pulseaudio=no dbus=no speechd=no fontconfig=no udev=no)
@@ -146,6 +232,7 @@ jobs:
                       dev_build=no debug_symbols=no optimize=size \
                       modules_enabled_by_default=no module_gdscript_enabled=yes \
                       module_websocket_enabled=yes module_webrtc_enabled=yes \
+                      module_mbedtls_enabled=yes \
                       disable_3d=yes vulkan=no opengl3=yes \
                       "${target_args[@]}" \
                       disable_path_overrides=no
@@ -169,6 +256,48 @@ jobs:
                     "${cap_args[@]}" "${runner_args[@]}" \
                     --output "output/repaired-suite"
 
+            # The repaired engine must deliver every pinned case over a real
+            # remote path, at the lane's forced read cap. The unpatched
+            # baseline runs uncapped: the pinned signatures it must keep
+            # failing were collected over uncapped official-engine tunnels,
+            # so the anti-masking control matches those conditions (#485).
+            - name: Run the pinned receive cases over the remote path
+              if: inputs.remote_path == true
+              id: remote
+              run: |
+                  # The build takes tens of minutes; make sure the tunnel is
+                  # still alive before spending it. The fixture server is not
+                  # up yet, so any HTTP answer from the edge counts. 530 is
+                  # the exception: Cloudflare error 1033, a disconnected
+                  # tunnel.
+                  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "${{ steps.tunnel.outputs.origin }}/index.html" || true)
+                  if [ -z "$code" ] || [ "$code" = "000" ] || [ "$code" = "530" ]; then
+                      echo "the Cloudflare edge stopped answering for ${{ steps.tunnel.outputs.origin }}:" >&2
+                      cat tunnel.log >&2
+                      exit 1
+                  fi
+                  case_args=()
+                  for case_name in $REMOTE_CASES; do
+                      case_args+=(--case "$case_name")
+                  done
+                  cap_args=()
+                  runner_args=()
+                  if [ "${{ matrix.variant }}" = repaired ] && [ "$BUILD_TARGET" = linuxbsd ] && [ "$RECV_CAP" != "0" ]; then
+                    cap_args=(--recv-cap-bytes="$RECV_CAP")
+                  fi
+                  if [ "$BUILD_TARGET" = windows ]; then
+                    runner_args=(--runner "$(command -v wine)")
+                    export WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
+                  fi
+                  rc=0
+                  python3 scripts/check-websocket-native-receive.py \
+                    --godot "$ENGINE_BIN" --importer "$IMPORTER" \
+                    "${cap_args[@]}" "${runner_args[@]}" "${case_args[@]}" \
+                    --port "$REMOTE_PORT" \
+                    --public-origin "${{ steps.tunnel.outputs.origin }}" \
+                    --output "output/${{ matrix.variant }}-suite-remote" || rc=$?
+                  echo "exit=$rc" >> "$GITHUB_OUTPUT"
+
             - name: Run the standalone reproductions
               run: |
                   runner_args=()
@@ -180,14 +309,23 @@ jobs:
                     --godot "$ENGINE_BIN" --importer "$IMPORTER" \
                     --run-repro "${runner_args[@]}" --output "output/${{ matrix.variant }}-standalone"
 
+            - name: Stop the tunnel
+              if: always() && inputs.remote_path == true
+              run: pkill -f "cloudflared tunnel" || true
+
             - name: Check qualification expectations
+              env:
+                  TUNNEL_ORIGIN: ${{ steps.tunnel.outputs.origin }}
+                  REMOTE_EXIT: ${{ steps.remote.outputs.exit }}
               run: |
                   python3 - <<'PY'
                   import json
                   import os
+                  import re
                   from pathlib import Path
 
                   variant = "${{ matrix.variant }}"
+                  remote = os.environ["REMOTE_PATH"] == "true"
                   report = json.loads(
                       Path(
                           "output/${{ matrix.variant }}-standalone/standalone-report.json"
@@ -216,6 +354,247 @@ jobs:
                   assert not wrong, f"unexpected results: {sorted(set(wrong))}"
                   suffix = " under Wine" if os.environ["BUILD_TARGET"] == "windows" else ""
                   print(f"{variant}: all standalone expectations met on {os.environ['BUILD_TARGET']} x86-64{suffix}")
+                  if not remote:
+                      raise SystemExit(0)
+
+                  # The remote-path gate. Structure holds for every variant:
+                  # the built binary, the tunnel and one complete paced record
+                  # per case. Verdicts differ: the repaired engine must pass
+                  # every pinned case; the unpatched baseline must keep
+                  # failing its pinned defect signatures so a pass cannot come
+                  # from the path masking the trigger (#485).
+                  close_signature = [
+                      "exact close code, reason and empty packet queue",
+                      "matching client close frame",
+                  ]
+                  failing_signatures = {
+                      "read-control-ping": ["exact receive prefix"],
+                      "read-control-pong": ["exact receive prefix"],
+                      "chunk-limit-binary-none-false": ["complete message missing"],
+                      "chunk-reuse-text-text-closing": ["fresh exact bytes"],
+                      "close-3-mixed-server": close_signature,
+                      "boundary-close-3-max-mixed-server-false": close_signature,
+                  }
+                  # Pinned baseline remote-path signatures, keyed by engine
+                  # major.minor of the built source. The class official
+                  # editors of that family reproduced on ubuntu-24.04 Linux
+                  # over the collected `WebSocket Remote Path` tunnels (4.4:
+                  # run 41684522769, 4.7: runs 41591258643 and 41684196081).
+                  # Other platforms (Wine) and source-build conditions are
+                  # uncollected: treat a family's first run on a new platform
+                  # as collection data before pinning a platform map. A
+                  # family without a map keeps its baseline defect outcomes
+                  # as recorded data until collected runs pin it.
+                  baseline_documented = {
+                      "4.4": failing_signatures,
+                      "4.7": failing_signatures,
+                  }
+                  origin = os.environ["TUNNEL_ORIGIN"]
+                  suite_dir = Path(f"output/{variant}-suite-remote")
+                  summary = json.loads((suite_dir / "summary.json").read_text())
+                  provenance = json.loads((suite_dir / "provenance.json").read_text())
+                  control_cases = set(os.environ["REMOTE_CONTROL_CASES"].split())
+                  defect_cases = set(failing_signatures)
+                  cases = {case["case"]: case for case in summary.get("cases", [])}
+                  problems = []
+
+                  imported = summary.get("import", {})
+                  if imported.get("returncode") != 0 or imported.get("engine_errors"):
+                      problems.append("fixture import failed")
+                  if provenance.get("public_origin") != origin:
+                      problems.append(
+                          f"provenance origin {provenance.get('public_origin')!r}"
+                          f" != tunnel origin {origin!r}"
+                      )
+                  if provenance.get("port") != int(os.environ["REMOTE_PORT"]):
+                      problems.append(
+                          f"provenance port {provenance.get('port')!r} !="
+                          f" {os.environ['REMOTE_PORT']!r}"
+                      )
+                  engine_sha = Path("output/engine-sha256.txt").read_text().split()[0]
+                  if provenance.get("binary_sha256") != engine_sha:
+                      problems.append(
+                          "the remote suite did not run the built engine"
+                          f" ({provenance.get('binary_sha256')!r} !="
+                          f" {engine_sha!r})"
+                      )
+                  unexpected = sorted(set(cases) - (control_cases | defect_cases))
+                  missing = sorted((control_cases | defect_cases) - set(cases))
+                  if unexpected:
+                      problems.append(f"unexpected cases ran: {unexpected}")
+                  if missing:
+                      problems.append(f"cases produced no report: {missing}")
+
+                  for name in sorted(control_cases | defect_cases):
+                      case = cases.get(name, {})
+                      record = case.get("result") or {}
+                      if case.get("timed_out"):
+                          problems.append(f"remote case {name} timed out")
+                          continue
+                      if not record:
+                          problems.append(f"remote case {name} produced no result record")
+                          continue
+                      if case.get("returncode") not in (0, 1):
+                          problems.append(
+                              f"remote case {name} exited"
+                              f" {case.get('returncode')!r} (crash invalidates the sample)"
+                          )
+                          continue
+                      if case.get("engine_errors"):
+                          problems.append(
+                              f"remote case {name} contains engine errors:"
+                              f" {case.get('engine_errors')!r} (an engine error"
+                              " invalidates the sample)"
+                          )
+                          continue
+                      if record.get("remote_origin") != origin:
+                          problems.append(
+                              f"remote case {name} did not record the tunnel origin"
+                          )
+                      wire = record.get("wire", {})
+                      if wire.get("error") != 0:
+                          problems.append(
+                              f"remote case {name} has a paced-write error: {wire!r}"
+                          )
+                      # Mirror the driver's pacing floor: close-kind cases
+                      # need one paced write, the others two.
+                      minimum_writes = (
+                          1 if name.startswith(("close-", "boundary-close-")) else 2
+                      )
+                      if wire.get("writes", 0) < minimum_writes:
+                          problems.append(
+                              f"remote case {name} shows no paced writes: {wire!r}"
+                          )
+
+                  allowed_exits = None
+                  if variant == "repaired":
+                      for name in sorted(control_cases | defect_cases):
+                          case = cases.get(name, {})
+                          if case.get("passed") is not True:
+                              record = case.get("result") or {}
+                              problems.append(
+                                  f"remote case {name} failed"
+                                  f" {record.get('failures')!r}: the repair did not"
+                                  " hold over the remote path; requalify #485"
+                              )
+                      allowed_exits = ("0",)
+                  else:
+                      engines = sorted(
+                          {
+                              match.group(0)
+                              for match in (
+                                  re.match(r"\d+\.\d+", (case.get("result") or {}).get("engine", ""))
+                                  for case in cases.values()
+                              )
+                              if match
+                          }
+                      )
+                      if not engines:
+                          problems.append("no remote case recorded an engine family")
+                      elif len(engines) != 1:
+                          problems.append(
+                              f"remote cases disagree on the engine family: {engines!r}"
+                          )
+                      else:
+                          # Wine baselines stay collection data until a
+                          # Wine map is pinned: the maps below were
+                          # collected from Linux runners.
+                          documented = (
+                              None
+                              if os.environ["BUILD_TARGET"] == "windows"
+                              else baseline_documented.get(engines[0])
+                          )
+                          if documented is None:
+                              print(
+                                  f"baseline {engines[0]} has no pinned remote-path map;"
+                                  " defect outcomes stay recorded data until collected"
+                                  " runs pin it"
+                              )
+                              allowed_exits = ("0", "1")
+                          else:
+                              for name, signature in documented.items():
+                                  case = cases.get(name, {})
+                                  record = case.get("result") or {}
+                                  if case.get("passed") is True:
+                                      problems.append(
+                                          f"baseline defect {name} passed over the"
+                                          " remote path (the path masked its trigger"
+                                          " or the source moved); read the run's"
+                                          " per-case logs"
+                                      )
+                                  elif sorted(record.get("failures", [])) != sorted(
+                                      signature
+                                  ):
+                                      problems.append(
+                                          f"baseline defect {name} failures"
+                                          f" {record.get('failures')!r} drifted from"
+                                          f" the pinned {signature!r}"
+                                      )
+                              allowed_exits = (
+                                  ("0",)
+                                  if all(
+                                      signature is None for signature in documented.values()
+                                  )
+                                  else ("1",)
+                              )
+                      for name in sorted(control_cases):
+                          case = cases.get(name, {})
+                          if case.get("passed") is not True:
+                              record = case.get("result") or {}
+                              problems.append(
+                                  f"baseline control {name} failed"
+                                  f" {record.get('failures')!r}: the remote path"
+                                  " no longer qualifies the baseline; read the"
+                                  " run's per-case logs"
+                              )
+                  if allowed_exits is not None and os.environ["REMOTE_EXIT"] not in allowed_exits:
+                      problems.append(
+                          f"suite exit {os.environ['REMOTE_EXIT']!r} not in"
+                          f" {allowed_exits!r} (a crash or abort is not a sample)"
+                      )
+
+                  rows = []
+                  for name in sorted(control_cases | defect_cases):
+                      case = cases.get(name, {})
+                      record = case.get("result") or {}
+                      outcome = (
+                          "pass"
+                          if record.get("passed") is True
+                          else "fail"
+                          if record.get("passed") is False
+                          else "no record"
+                      )
+                      failures = "; ".join(record.get("failures", [])) or "-"
+                      rows.append(
+                          f"| {name} |"
+                          f" {'control' if name in control_cases else 'defect'}"
+                          f" | {outcome} | {failures} |"
+                      )
+                  summary_lines = [
+                      "## Pinned receive cases over a remote path",
+                      "",
+                      f"- Variant: {variant} (source build,"
+                      f" {os.environ['BUILD_TARGET']} x86-64)",
+                      f"- Remote path: {origin} (Cloudflare quick tunnel, TLS)",
+                      f"- Suite exit: {os.environ['REMOTE_EXIT']!r}",
+                      "",
+                      "| Case | Role | Outcome | Failures |",
+                      "| --- | --- | --- | --- |",
+                      *rows,
+                      "",
+                  ]
+                  verdict = (
+                      f"Remote path {variant}: every expectation met."
+                      if not problems
+                      else "Remote path problems: " + "; ".join(problems)
+                  )
+                  summary_lines.extend(["", verdict, ""])
+                  with open(
+                      os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8"
+                  ) as step_summary:
+                      step_summary.write("\n".join(summary_lines))
+                  print(verdict)
+                  assert not problems, "; ".join(problems)
                   PY
 
             - name: Upload qualification evidence
@@ -225,5 +604,6 @@ jobs:
                   name: websocket-native-x64-${{ matrix.variant }}-${{ github.run_id }}
                   path: |
                       output/
+                      tunnel.log
                       !output/**/*.so
                   if-no-files-found: error

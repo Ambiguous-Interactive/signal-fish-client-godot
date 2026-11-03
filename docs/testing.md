@@ -812,7 +812,11 @@ cross-compile with mingw-w64, run under Wine, and use the uncapped suite. A
 matched unpatched baseline job runs the same seven commands. The four defect
 failures must keep one observed result record each. The three comparison
 controls must pass. Both jobs upload build logs, patch reports, engine
-hashes and per-command evidence.
+hashes and per-command evidence. A `remote_path` input adds the
+remote-network leg: each variant fronts a Cloudflare quick tunnel and drives
+the ten pinned receive cases over `wss://` (see
+[Remote path qualification](#remote-path-qualification)). The build enables
+the mbedtls module so the engine can connect over TLS at all.
 
 The first run qualified the pinned 4.7.2-stable repair
 `ed1daf0bf001b61586d9930840f2f1394092c079` on a virtualized x86-64 host that
@@ -829,8 +833,9 @@ controls pass. Unpatched binary SHA-256:
 4.11.1 builds both engines with the options listed in the workflow. These
 results cover the #485 receive suite, paced writes, large boundaries, close
 reasons, peer replacement and local syscall read caps on x86-64. Keep them
-separate from QEMU emulation runs. Bare-metal hardware, other build targets,
-upstream adoption and remote-network qualification remain open.
+separate from QEMU emulation runs. Bare-metal hardware, remote legs for the
+other stable repairs, upstream adoption and a Windows remote leg remain
+open.
 
 The pinned 4.4.1-stable repair `49a5bc7b616bd04689a2c89e89bda41f50241464`
 passes the same checks on x86-64 ([run
@@ -1137,6 +1142,52 @@ signature on every collected engine. Same-day devcontainer runs on Linux
 ARM64 (4.7.2) matched the CI classification. The weekly schedule (Mondays
 12:00 UTC) runs both lanes; dispatch runs collect extra path samples on
 demand and add maps for new engines.
+
+The `WebSocket Native x64` lane extends the same tunnel idea to the
+experimental source-build repair (#485). With `remote_path` on it builds the
+pinned 4.7.2-stable source twice on ubuntu-24.04 x86-64, repaired via
+`scripts/repair-websocket-stable.py` and unpatched, enables the mbedtls
+module so the engines can speak `wss://`, and fronts the fixture server with
+a Cloudflare quick tunnel. The repaired engine runs the ten pinned receive
+cases over the tunnel at the lane's forced 3-byte read cap on the default
+Linux dispatch; the baseline runs uncapped, the conditions the
+official-engine pinned signatures were collected under. The repaired engine
+must pass every case. The baseline must keep failing its six pinned defect
+signatures on the same path, so a pass cannot come from the path masking a
+trigger. That requirement applies to a Linux engine family with a pinned
+remote-path map; Windows and unpinned families record defect outcomes as
+collection data. The gate checks binary identity
+by SHA-256, tunnel provenance, paced writes, clean exits and per-case
+verdicts, keyed by engine family for the baseline map.
+
+Three dispatched runs (2026-11-03, 1d2e7604, official 4.7.2-stable
+importer, one quick tunnel per variant) settle the first remote-network
+qualification of the repair. In the capped run
+([41700349763](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41700349763))
+the repaired engine (`4b58fac581f2b2f293d85b2eb313bf59d9fc227a9d121f3fbaeb21bfd7ae6130`)
+passes all ten cases over the tunnel with every read capped at 3 bytes; the
+65-packet burst control delivers every packet with a largest delivery gap of
+255 ms against the 3000 ms batch deadline. The unpatched baseline
+(`77bbcc386e6415a611d827051d24edd82b7eb9f44fb858ab57a4413405c8144e`) from the
+same source and flags passes its four controls and fails all six defect
+shapes with the exact pinned signatures on its own tunnel. In the uncapped
+run ([41700353810](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41700353810))
+the repaired engine passes all ten cases uncapped (burst largest gap
+276 ms). Its baseline run reproduced five of six pinned signatures exactly
+and then hit the documented mid-write abort on the maximum-length mixed
+close shape (`paced socket write failed`); the gate rejects paced-write
+errors as unclean samples, and the re-dispatch
+([41706656767](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41706656767))
+collected the clean sample: the baseline fails all six pinned shapes again.
+The abort stays a documented one-off, as in the official-engine lane. The
+first dispatch attempt
+([41697078313](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41697078313))
+failed every remote connect with `WSS is not available in this build`: the
+minimal source build shipped no TLS module. Its repaired engine still passed
+the full local paced suite, 184 of 184 cases at the 3-byte cap. Dispatch
+runs collect extra remote samples on demand; the cap applies on the default
+Linux dispatch, so a Windows or zero-cap remote dispatch qualifies the
+repaired leg uncapped.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
