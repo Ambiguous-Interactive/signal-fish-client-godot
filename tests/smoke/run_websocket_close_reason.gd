@@ -50,8 +50,9 @@ func _initialize() -> void:
 			_capacity = value.to_int()
 		elif option == "--port" and value.is_valid_int():
 			_port = value.to_int()
-		elif option == "--public-origin" and (
-			value.begins_with("https://") or value.begins_with("http://")
+		elif (
+			option == "--public-origin"
+			and (value.begins_with("https://") or value.begins_with("http://"))
 		):
 			_public_origin = value
 		else:
@@ -184,28 +185,26 @@ func _finish() -> void:
 	_finished = true
 	if _server.wire_error != OK:
 		_failures.append("paced socket write failed")
-	var record := (
-		{
-			"passed": _failures.is_empty(),
-			"engine": Engine.get_version_info()["string"],
-			"origin": _origin,
-			"reason_kind": _reason_kind,
-			"full_fragment": _full_fragment,
-			"capacity": _capacity,
-			"opened": _opened,
-			"state": _peer.get_ready_state(),
-			"close_code": _peer.get_close_code(),
-			"reason_hex": _peer.get_close_reason().to_utf8_buffer().hex_encode(),
-			"expected_reason_hex": _reason.to_utf8_buffer().hex_encode(),
-			"client_close_codes": _server.client_close_codes,
-			"client_reason_hex":
-			_server.client_close_reasons.map(
-				func(reason: PackedByteArray) -> String: return reason.hex_encode()
-			),
-			"wire": _server.wire_report(),
-			"failures": _failures
-		}
-	)
+	var record := {
+		"passed": _failures.is_empty(),
+		"engine": Engine.get_version_info()["string"],
+		"origin": _origin,
+		"reason_kind": _reason_kind,
+		"full_fragment": _full_fragment,
+		"capacity": _capacity,
+		"opened": _opened,
+		"state": _peer.get_ready_state(),
+		"close_code": _peer.get_close_code(),
+		"reason_hex": _peer.get_close_reason().to_utf8_buffer().hex_encode(),
+		"expected_reason_hex": _reason.to_utf8_buffer().hex_encode(),
+		"client_close_codes": _server.client_close_codes,
+		"client_reason_hex":
+		_server.client_close_reasons.map(
+			func(reason: PackedByteArray) -> String: return reason.hex_encode()
+		),
+		"wire": _server.wire_report(),
+		"failures": _failures
+	}
 	if not _public_origin.is_empty():
 		record["remote_origin"] = _public_origin
 	print("CLOSE_REASON_RESULT " + JSON.stringify(record))

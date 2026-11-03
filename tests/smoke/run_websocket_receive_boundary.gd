@@ -293,32 +293,30 @@ func _run() -> void:
 func _finish() -> void:
 	if _server.wire_error != OK:
 		_failures.append("paced socket write failed")
-	var record := (
-		{
-			"passed": _failures.is_empty(),
-			"wire": _server.wire_report(),
-			"engine": Engine.get_version_info()["string"],
-			"capacity": _peer.inbound_buffer_size,
-			"max_queued_packets": _peer.max_queued_packets,
-			"body_bytes": _body_bytes,
-			"fragment_bytes": _fragment_bytes,
-			"empty_fragments": _empty_fragments,
-			"fragment_control": _fragment_control,
-			"message_type": _message_type,
-			"watchdog_ms": _watchdog_ms,
-			"target_packets": PACKETS + 1,
-			"offered_packets": _sent,
-			"credit_bytes": _credit_bytes,
-			"credit_scope": "local consumer body bytes; no network acknowledgement",
-			"received": _received,
-			"first_gap": _first_gap,
-			"pending_wait": _pending_waits,
-			"failures": _failures
-		}
-	)
+	var record := {
+		"passed": _failures.is_empty(),
+		"wire": _server.wire_report(),
+		"engine": Engine.get_version_info()["string"],
+		"capacity": _peer.inbound_buffer_size,
+		"max_queued_packets": _peer.max_queued_packets,
+		"body_bytes": _body_bytes,
+		"fragment_bytes": _fragment_bytes,
+		"empty_fragments": _empty_fragments,
+		"fragment_control": _fragment_control,
+		"message_type": _message_type,
+		"watchdog_ms": _watchdog_ms,
+		"target_packets": PACKETS + 1,
+		"offered_packets": _sent,
+		"credit_bytes": _credit_bytes,
+		"credit_scope": "local consumer body bytes; no network acknowledgement",
+		"received": _received,
+		"first_gap": _first_gap,
+		"pending_wait": _pending_waits,
+		"failures": _failures
+	}
 	if not _public_origin.is_empty():
 		record["remote_origin"] = _public_origin
-	print(("WEBSOCKET_RECEIVE_RESULT " + JSON.stringify(record)))
+	print("WEBSOCKET_RECEIVE_RESULT " + JSON.stringify(record))
 	_peer.close()
 	_server.stop()
 	quit(0 if _failures.is_empty() else 1)

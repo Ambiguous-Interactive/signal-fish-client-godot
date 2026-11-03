@@ -46,8 +46,9 @@ func _initialize() -> void:
 				_queued_before_partial = value == "true"
 		elif option == "--port" and value.is_valid_int():
 			_port = value.to_int()
-		elif option == "--public-origin" and (
-			value.begins_with("https://") or value.begins_with("http://")
+		elif (
+			option == "--public-origin"
+			and (value.begins_with("https://") or value.begins_with("http://"))
 		):
 			_public_origin = value
 		elif option not in ["--partial-type", "--fresh-type"] or value not in ["text", "binary"]:
@@ -214,23 +215,21 @@ func _finish() -> void:
 		_failures.append("old queued continuation was not retired")
 	if _server.wire_error != OK:
 		_failures.append("paced socket write failed")
-	var record := (
-		{
-			"passed": _failures.is_empty(),
-			"failures": _failures,
-			"opened": _opened,
-			"closing_state": _closing_state,
-			"empty_pongs": _server.received_pongs.size(),
-			"fresh": _fresh,
-			"replacement": _replacement,
-			"retired_queued": _retired_queued,
-			"pending_wire_before_replace": _pending_wire_before_replace,
-			"partial_type": _partial_type,
-			"fresh_type": _fresh_type,
-			"wire": _server.wire_report(),
-			"engine": Engine.get_version_info()["string"]
-		}
-	)
+	var record := {
+		"passed": _failures.is_empty(),
+		"failures": _failures,
+		"opened": _opened,
+		"closing_state": _closing_state,
+		"empty_pongs": _server.received_pongs.size(),
+		"fresh": _fresh,
+		"replacement": _replacement,
+		"retired_queued": _retired_queued,
+		"pending_wire_before_replace": _pending_wire_before_replace,
+		"partial_type": _partial_type,
+		"fresh_type": _fresh_type,
+		"wire": _server.wire_report(),
+		"engine": Engine.get_version_info()["string"]
+	}
 	if not _public_origin.is_empty():
 		record["remote_origin"] = _public_origin
 	print("REDIAL_RESULT " + JSON.stringify(record))

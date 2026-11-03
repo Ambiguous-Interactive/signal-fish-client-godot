@@ -54,8 +54,9 @@ func _initialize() -> void:
 			_tail_bytes = value.to_int()
 		elif option == "--port" and value.is_valid_int():
 			_port = value.to_int()
-		elif option == "--public-origin" and (
-			value.begins_with("https://") or value.begins_with("http://")
+		elif (
+			option == "--public-origin"
+			and (value.begins_with("https://") or value.begins_with("http://"))
 		):
 			_public_origin = value
 		elif option == "--control-bytes" and value.is_valid_int() and value.to_int() in [19, 125]:
@@ -245,30 +246,28 @@ func _finish() -> void:
 	_finished = true
 	if _server.wire_error != OK:
 		_failures.append("paced socket write failed")
-	var record := (
-		{
-			"passed": _failures.is_empty(),
-			"wire": _server.wire_report(),
-			"engine": Engine.get_version_info()["string"],
-			"capacity": _capacity,
-			"message_type": _message_type,
-			"fragment_control": _fragment_control,
-			"oversize": _oversize,
-			"tail_bytes": _tail_bytes,
-			"control_bytes": _control_bytes.size(),
-			"opened": _opened,
-			"initial_offered": _initial_offered,
-			"final_offered": _final_offered,
-			"initial_state": _initial_state,
-			"final_state": _peer.get_ready_state(),
-			"close_code": _peer.get_close_code(),
-			"received": _received,
-			"receipt": _receipt,
-			"following": _following,
-			"pongs": _server.received_pongs.size(),
-			"failures": _failures
-		}
-	)
+	var record := {
+		"passed": _failures.is_empty(),
+		"wire": _server.wire_report(),
+		"engine": Engine.get_version_info()["string"],
+		"capacity": _capacity,
+		"message_type": _message_type,
+		"fragment_control": _fragment_control,
+		"oversize": _oversize,
+		"tail_bytes": _tail_bytes,
+		"control_bytes": _control_bytes.size(),
+		"opened": _opened,
+		"initial_offered": _initial_offered,
+		"final_offered": _final_offered,
+		"initial_state": _initial_state,
+		"final_state": _peer.get_ready_state(),
+		"close_code": _peer.get_close_code(),
+		"received": _received,
+		"receipt": _receipt,
+		"following": _following,
+		"pongs": _server.received_pongs.size(),
+		"failures": _failures
+	}
 	if not _public_origin.is_empty():
 		record["remote_origin"] = _public_origin
 	print("FRAGMENT_LIMIT_RESULT " + JSON.stringify(record))
