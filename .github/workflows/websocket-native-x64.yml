@@ -170,7 +170,7 @@ jobs:
                     --url "http://127.0.0.1:${REMOTE_PORT}" > tunnel.log 2>&1 &
                   origin=""
                   for _ in $(seq 1 45); do
-                      origin=$(grep -o "https://[a-z0-9-]*\.trycloudflare\.com" tunnel.log | head -1 || true)
+                      origin=$(grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" tunnel.log | grep -v "^https://api\.trycloudflare\.com$" | head -1 || true)
                       [ -n "$origin" ] && break
                       sleep 2
                   done
@@ -191,6 +191,11 @@ jobs:
                       fi
                       sleep 3
                   done
+                  if [ "$code" = "000" ]; then
+                      echo "the Cloudflare edge never answered for $origin:" >&2
+                      cat tunnel.log >&2
+                      exit 1
+                  fi
                   echo "tunnel $origin reachable; edge answered HTTP ${code:-000}"
 
             - name: Fetch pinned engine source
@@ -447,7 +452,7 @@ jobs:
                           {
                               match.group(0)
                               for match in (
-                                  re.match(r"\d+\.\d+", case.get("result", {}).get("engine", ""))
+                                  re.match(r"\d+\.\d+", (case.get("result") or {}).get("engine", ""))
                                   for case in cases.values()
                               )
                               if match
