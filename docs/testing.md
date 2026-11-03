@@ -1088,6 +1088,32 @@ schedule (Mondays 12:00 UTC) follows the other watches; dispatch runs
 collect extra path samples on demand. A same-day pre-merge devcontainer run
 on Godot 4.3 Web also gave the local 16-of-65 counts.
 
+The same workflow fronts the paced native receive suites
+(`check-websocket-native-receive.py`) with the same tunnel. The driver
+options `--port N --public-origin https://host` pass the fixture options
+`--port=N` and `--public-origin=https://host` to every selected case: the
+fixture server binds the tunneled port and the engine connects `wss://` at
+the public host. Result records from tunnel runs carry `remote_origin`.
+The lane runs controls and filed defects for each receive issue class (#491
+fragmented assembly around control frames, #492 peer reuse retention, #496
+full-buffer empty-fragment stall and #498 Unicode close reasons across
+reads). Controls must pass over the remote path, with the driver's full
+per-case verdict. Defect records must be complete, paced and cleanly
+exited; a defect that passes means the path masked its trigger or upstream
+moved, and a fail without the filed signature is new remote-path behavior.
+Both are flagged for triage. Once collected runs settle a stable
+signature, a later change pins it the way the Web lane pins its loss class.
+
+A 2026-11-03 pre-merge devcontainer run (official 4.7.2-stable native on
+Linux ARM64, one Cloudflare quick tunnel, ten selected cases) matched the
+local 4.7.2 classification exactly: all four controls passed over the
+tunnel, including the 65-packet burst control, and all six defects failed
+with their filed signatures. The remote path added two signals to record:
+the #492 reuse defect also failed the pending-continuation retirement that
+the local run passes, and the #498 maximum-length mixed close reason hit a
+paced-write failure when the engine aborted mid-write. Both need more
+samples before any pin.
+
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
 bounded prefix, rejection reason and browser clock while that handler is active.

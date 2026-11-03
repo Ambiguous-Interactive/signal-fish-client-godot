@@ -17,11 +17,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Extend the `WebSocket Remote Path` tunnel mechanism to the paced native
-      receive suites (`check-websocket-native-receive.py`; #538), advancing
-      the #485/#491/#492/#496/#498 remote-network items. The Web lane is
-      pinned and scheduled (Mondays 12:00 UTC); physical home-network paths
-      stay open.
+- [ ] Collect `WebSocket Remote Path` native-lane runs, then pin the stable
+      defect signature in the workflow gate (#538): controls are already
+      gated green; defect outcomes are recorded per run. Reuse the Web
+      lane's class-pin pattern once several runs (engines, tunnels) agree.
 - [ ] Qualify the experimental Godot 4.3 WebSocket receive backport and engine upgrades on
       remote networks (#485; see `docs/testing.md`). Preserve the retained
       byte/count rejections, exact delivered prefix, full-buffer empty-fragment progress (#496),
