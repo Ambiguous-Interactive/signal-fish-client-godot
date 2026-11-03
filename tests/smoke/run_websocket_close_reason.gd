@@ -16,7 +16,8 @@ var _capacity := 31
 var _reason := ""
 var _port := 0
 var _public_origin := ""
-var _watchdog_ms := 8000
+# Phase budgets plus the 100 ms settle after a full-fragment fill.
+var _watchdog_ms := 8100
 var _failures: Array[String] = []
 var _opened := false
 var _finished := false
