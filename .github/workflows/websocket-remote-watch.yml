@@ -165,6 +165,13 @@ jobs:
                   control_record = (
                       control["results"][0] if len(control.get("results", [])) == 1 else {}
                   )
+                  if control_record.get("engine", "").startswith(os.environ["GODOT_VERSION"]):
+                      pass
+                  else:
+                      problems.append(
+                          f"remote control ran {control_record.get('engine')!r},"
+                          f" expected {os.environ['GODOT_VERSION']!r} (wrong binary)"
+                      )
                   if control_record.get("received") != list(range(65)):
                       problems.append(
                           f"remote control delivered {control_record.get('received')!r}"
