@@ -1126,7 +1126,7 @@ Five dispatched CI runs (2026-11-03, ubuntu-24.04 x86-64, official editor
 binaries, five Cloudflare quick tunnels) pinned the native map. On 4.7.2
 (runs 41591258643 and 41684196081) and 4.4.1 (run 41684522769) all four
 controls passed over every tunnel, with the 65-packet burst control
-delivering every packet (largest delivery gap 262 ms against the 3000 ms
+delivering every packet (largest delivery gap 283 ms against the 3000 ms
 batch deadline), and all six defects failed with their filed signatures.
 The retired-continuation failure in the first 4.7.2 run was the fixture
 race #541 removed; post-fix runs fail the #492 reuse defect with
