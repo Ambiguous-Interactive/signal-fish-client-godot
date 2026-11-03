@@ -1216,6 +1216,20 @@ runs collect extra remote samples on demand; the cap applies on the default
 Linux dispatch, so a Windows or zero-cap remote dispatch qualifies the
 repaired leg uncapped.
 
+The pinned 4.3-stable backport
+`77dcf97d82cbfe4e4615475fa52ca03da645dbd8` completes the same remote leg
+([run
+41734479410](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41734479410)).
+The repaired engine (`8aebdbce741747e08ba00ec694764e38d9d311ee94e5193d582c447197d831f3`)
+passes all ten pinned cases over its Cloudflare tunnel with every read
+capped at 3 bytes; the 65-packet burst control delivers every packet with
+a largest delivery gap of 248 ms against the 3000 ms batch deadline. The
+unpatched 4.3 baseline (`68c4bce9bca9c3947428069ab1d30ad5c2c2ebd6ee5c7acbef9749f293fc70df`)
+on its own tunnel passes its four controls and the four pre-regression
+shapes, and fails exactly the two #498 close shapes with the pinned close
+signature, matching the official-engine 4.3 watch maps. That closes the
+4.3-backport leg of the #485 remote-network qualification.
+
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
 bounded prefix, rejection reason and browser clock while that handler is active.
