@@ -170,6 +170,19 @@ jobs:
                               "(a change means upstream engine behavior moved: investigate "
                               "godotengine/godot#125073)"
                           )
+                      reasons = sorted(
+                          {
+                              row.get("reason")
+                              for row in defect.get("receive_trace", {}).get(
+                                  "rejections", []
+                              )
+                          }
+                      )
+                      if reasons and reasons != ["payload_capacity"]:
+                          problems.append(
+                              f"defect rejection reasons {reasons!r} != payload_capacity"
+                              " only (a packet-capacity drop is a different boundary)"
+                          )
                       if evidence.get("trace_complete") is not True:
                           problems.append("defect receive trace incomplete")
                       if evidence.get("reliable_delivery") is not False:

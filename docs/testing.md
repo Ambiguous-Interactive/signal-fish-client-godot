@@ -1064,7 +1064,7 @@ releases, such as a dev snapshot after an upstream fix lands.
 
 #### Remote path qualification
 
-The on-demand `WebSocket Remote Path` CI workflow drives the same two controls
+The `WebSocket Remote Path` CI workflow drives the same two controls
 over a real remote network path. A credential-free Cloudflare quick tunnel
 fronts the fixture server, and the browser reaches it through the Cloudflare
 edge over TLS, so every burst frame, command and receipt crosses a remote
@@ -1072,18 +1072,21 @@ path. The fixture options `--port N` and `--public-origin https://host` point
 the export page and its WebSocket at the public host while the server keeps
 its local bind; the report records `remote_origin`.
 
-First data (2026-11-03, Godot 4.7.2-stable official Web, Chromium 156,
-`WebSocket Remote Path` CI run 41554600823, ubuntu-24.04 x86-64): the
-32 KiB application-ACK control delivered 65/65 exact messages across the
-tunnel with all 65 browser callbacks and the full ACK window. The uncredited
-run reproduced the filed signature over the remote path: 16 delivered
-(sequences 0-14 and the sentinel), 49 scoped rejections, first gap 15 -> 64,
-complete trace. A same-day pre-merge devcontainer run on Godot 4.3 Web gave
-the same counts. The remote path changed neither the control result nor the
-filed boundary. The workflow gates on the remote ACK control and on the
-uncredited run reaching the boundary with scoped loss; it records the remote
-signature for pinning after several runs settle. Scheduling follows the
-other watches once the lane is stable.
+Four dispatched CI runs (2026-11-03, ubuntu-24.04 x86-64, Chromium 156,
+runs 41554600823, 41561638882, 41561939096 and 41562318746; Godot 4.7.2-stable
+on three of them and 4.3-stable on one, one Cloudflare quick tunnel each)
+settle the lane. The 32 KiB application-ACK control delivered 65/65 exact
+messages across every tunnel with all 65 browser callbacks and the full ACK
+window. Every uncredited run reproduced the filed loss at the payload
+boundary (godotengine/godot#125073) with the three boundary failures, scoped
+rejections, a complete trace and partial delivery: 16 of 65 (first gap
+15 -> 64), 31 of 65 (15 -> 46), 31 of 65 (30 -> 64) and 16 of 65 (15 -> 64).
+The exact split varies with network segmentation and engine version, so the
+workflow pins the stable loss class (the three filed boundary failures,
+scoped rejections with a complete trace, sub-burst delivery). The weekly
+schedule (Mondays 12:00 UTC) follows the other watches; dispatch runs
+collect extra path samples on demand. A same-day pre-merge devcontainer run
+on Godot 4.3 Web also gave the local 16-of-65 counts.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
