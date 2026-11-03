@@ -115,7 +115,8 @@ jobs:
                     "https://github.com/cloudflare/cloudflared/releases/download/2026.10.7/cloudflared-linux-amd64"
                   echo "1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872  /tmp/cloudflared" | sha256sum --check --
                   chmod +x /tmp/cloudflared
-                  python3 -m http.server 8990 --bind 127.0.0.1 > http.log 2>&1 &
+                  mkdir -p /tmp/tunnel-smoke && echo ok > /tmp/tunnel-smoke/index.html
+                  python3 -m http.server 8990 --bind 127.0.0.1 --directory /tmp/tunnel-smoke > http.log 2>&1 &
                   /tmp/cloudflared tunnel --no-autoupdate \
                     --url "http://127.0.0.1:8990" > tunnel.log 2>&1 &
                   origin=""
