@@ -14,6 +14,8 @@ var _replacement := "closing"
 var _queued_before_partial := false
 var _retired_queued := 0
 var _pending_wire_before_replace := false
+var _port := 0
+var _public_origin := ""
 
 
 func _initialize() -> void:
@@ -24,7 +26,7 @@ func _initialize() -> void:
 				_failures.append("invalid paced-write option: " + argument)
 			continue
 		var option := argument.get_slice("=", 0)
-		var value := argument.get_slice("=", 1)
+		var value := argument.substr(option.length() + 1)
 		if not argument.begins_with(option + "="):
 			_failures.append("option requires =value")
 		elif option == "--replacement":
@@ -42,6 +44,12 @@ func _initialize() -> void:
 				_failures.append("queued-before-partial must be true or false")
 			else:
 				_queued_before_partial = value == "true"
+		elif option == "--port" and value.is_valid_int():
+			_port = value.to_int()
+		elif option == "--public-origin" and (
+			value.begins_with("https://") or value.begins_with("http://")
+		):
+			_public_origin = value
 		elif option not in ["--partial-type", "--fresh-type"] or value not in ["text", "binary"]:
 			_failures.append("expected --partial-type=text|binary or --fresh-type=text|binary")
 		elif option == "--partial-type":
@@ -52,6 +60,8 @@ func _initialize() -> void:
 		_failures.append("pending wire replacement requires closing or aborted")
 	if _pending_wire_before_replace and _server.wire_chunk_bytes == 0:
 		_failures.append("pending wire replacement requires paced writes")
+	if _port < 0 or _port > 65535:
+		_failures.append("port must be 0..65535")
 	call_deferred("_run")
 
 
@@ -64,7 +74,10 @@ func _process(_delta: float) -> bool:
 
 
 func _open() -> bool:
-	if _peer.connect_to_url("ws://127.0.0.1:%d" % _server.get_port()) != OK:
+	var target := "ws://127.0.0.1:%d" % _server.get_port()
+	if not _public_origin.is_empty():
+		target = _public_origin.replace("https://", "wss://").replace("http://", "ws://")
+	if _peer.connect_to_url(target) != OK:
 		_failures.append("connect failed")
 		return false
 	var deadline := Time.get_ticks_msec() + 4000
@@ -101,7 +114,7 @@ func _queue_retired() -> bool:
 func _prepare() -> bool:
 	if not _failures.is_empty():
 		return false
-	if _server.listen() != OK:
+	if _server.listen(_port) != OK:
 		_failures.append("listen")
 		return false
 	return await _open()
@@ -201,28 +214,26 @@ func _finish() -> void:
 		_failures.append("old queued continuation was not retired")
 	if _server.wire_error != OK:
 		_failures.append("paced socket write failed")
-	print(
-		(
-			"REDIAL_RESULT "
-			+ JSON.stringify(
-				{
-					"passed": _failures.is_empty(),
-					"failures": _failures,
-					"opened": _opened,
-					"closing_state": _closing_state,
-					"empty_pongs": _server.received_pongs.size(),
-					"fresh": _fresh,
-					"replacement": _replacement,
-					"retired_queued": _retired_queued,
-					"pending_wire_before_replace": _pending_wire_before_replace,
-					"partial_type": _partial_type,
-					"fresh_type": _fresh_type,
-					"wire": _server.wire_report(),
-					"engine": Engine.get_version_info()["string"]
-				}
-			)
-		)
+	var record := (
+		{
+			"passed": _failures.is_empty(),
+			"failures": _failures,
+			"opened": _opened,
+			"closing_state": _closing_state,
+			"empty_pongs": _server.received_pongs.size(),
+			"fresh": _fresh,
+			"replacement": _replacement,
+			"retired_queued": _retired_queued,
+			"pending_wire_before_replace": _pending_wire_before_replace,
+			"partial_type": _partial_type,
+			"fresh_type": _fresh_type,
+			"wire": _server.wire_report(),
+			"engine": Engine.get_version_info()["string"]
+		}
 	)
+	if not _public_origin.is_empty():
+		record["remote_origin"] = _public_origin
+	print("REDIAL_RESULT " + JSON.stringify(record))
 	_peer.close(-1)
 	_server.stop()
 	quit(0 if _failures.is_empty() else 1)

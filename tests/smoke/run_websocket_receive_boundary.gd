@@ -13,6 +13,8 @@ const WATCHDOG_MARGIN_MS := 1000
 
 var _body_bytes := 4096
 var _empty_fragments := false
+var _port := 0
+var _public_origin := ""
 var _server := ServerScript.new()
 var _peer := WebSocketPeer.new()
 var _credit_bytes := 0
@@ -49,7 +51,9 @@ func _initialize() -> void:
 				"--fragment-control",
 				"--message-type",
 				"--body-bytes",
-				"--empty-fragments"
+				"--empty-fragments",
+				"--port",
+				"--public-origin"
 			]
 		):
 			_failures.append("unknown argument: " + argument)
@@ -58,6 +62,12 @@ func _initialize() -> void:
 			_failures.append(option + " requires =value")
 			continue
 		var value := argument.substr(option.length() + 1)
+		if option == "--public-origin":
+			if not (value.begins_with("https://") or value.begins_with("http://")):
+				_failures.append("public origin must be an https:// or http:// URL")
+			else:
+				_public_origin = value
+			continue
 		if option == "--empty-fragments":
 			if value not in ["true", "false"]:
 				_failures.append("empty fragments must be true or false")
@@ -86,6 +96,11 @@ func _initialize() -> void:
 			_credit_bytes = number
 		elif option == "--fragment-bytes":
 			_fragment_bytes = number
+		elif option == "--port":
+			if number < 0 or number > 65535:
+				_failures.append("port must be 0..65535")
+			else:
+				_port = number
 		elif number <= 0:
 			_failures.append(option + " must be positive")
 		elif option == "--capacity":
@@ -214,11 +229,14 @@ func _run() -> void:
 	if not _failures.is_empty():
 		_finish()
 		return
-	if _server.listen() != OK:
+	if _server.listen(_port) != OK:
 		_failures.append("listen failed")
 		_finish()
 		return
-	if _peer.connect_to_url("ws://127.0.0.1:%d" % _server.get_port()) != OK:
+	var target := "ws://127.0.0.1:%d" % _server.get_port()
+	if not _public_origin.is_empty():
+		target = _public_origin.replace("https://", "wss://").replace("http://", "ws://")
+	if _peer.connect_to_url(target) != OK:
 		_failures.append("connect failed")
 		_finish()
 		return
@@ -275,34 +293,32 @@ func _run() -> void:
 func _finish() -> void:
 	if _server.wire_error != OK:
 		_failures.append("paced socket write failed")
-	print(
-		(
-			"WEBSOCKET_RECEIVE_RESULT "
-			+ JSON.stringify(
-				{
-					"passed": _failures.is_empty(),
-					"wire": _server.wire_report(),
-					"engine": Engine.get_version_info()["string"],
-					"capacity": _peer.inbound_buffer_size,
-					"max_queued_packets": _peer.max_queued_packets,
-					"body_bytes": _body_bytes,
-					"fragment_bytes": _fragment_bytes,
-					"empty_fragments": _empty_fragments,
-					"fragment_control": _fragment_control,
-					"message_type": _message_type,
-					"watchdog_ms": _watchdog_ms,
-					"target_packets": PACKETS + 1,
-					"offered_packets": _sent,
-					"credit_bytes": _credit_bytes,
-					"credit_scope": "local consumer body bytes; no network acknowledgement",
-					"received": _received,
-					"first_gap": _first_gap,
-					"pending_wait": _pending_waits,
-					"failures": _failures
-				}
-			)
-		)
+	var record := (
+		{
+			"passed": _failures.is_empty(),
+			"wire": _server.wire_report(),
+			"engine": Engine.get_version_info()["string"],
+			"capacity": _peer.inbound_buffer_size,
+			"max_queued_packets": _peer.max_queued_packets,
+			"body_bytes": _body_bytes,
+			"fragment_bytes": _fragment_bytes,
+			"empty_fragments": _empty_fragments,
+			"fragment_control": _fragment_control,
+			"message_type": _message_type,
+			"watchdog_ms": _watchdog_ms,
+			"target_packets": PACKETS + 1,
+			"offered_packets": _sent,
+			"credit_bytes": _credit_bytes,
+			"credit_scope": "local consumer body bytes; no network acknowledgement",
+			"received": _received,
+			"first_gap": _first_gap,
+			"pending_wait": _pending_waits,
+			"failures": _failures
+		}
 	)
+	if not _public_origin.is_empty():
+		record["remote_origin"] = _public_origin
+	print(("WEBSOCKET_RECEIVE_RESULT " + JSON.stringify(record)))
 	_peer.close()
 	_server.stop()
 	quit(0 if _failures.is_empty() else 1)

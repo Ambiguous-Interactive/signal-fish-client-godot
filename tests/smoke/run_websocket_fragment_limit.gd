@@ -3,6 +3,9 @@ extends SceneTree
 const ServerScript = preload("res://tests/smoke/ws_test_server.gd")
 const CONTROL_BODY := "interleaved-control"
 const PHASE_TIMEOUT_MS := 2000
+# Tunnel connects add DNS, TLS and upgrade latency to the loopback budget;
+# the burst fixture's 5000 ms connect budget is the precedent.
+const REMOTE_CONNECT_TIMEOUT_MS := 5000
 
 var _server := ServerScript.new()
 var _peer := WebSocketPeer.new()
@@ -11,10 +14,13 @@ var _message_type := "binary"
 var _fragment_control := "none"
 var _oversize := false
 var _tail_bytes := 0
+var _port := 0
+var _public_origin := ""
 var _control_bytes := CONTROL_BODY.to_utf8_buffer()
 var _body := PackedByteArray()
 var _failures: Array[String] = []
 var _started := Time.get_ticks_msec()
+var _watchdog_ms := 8000
 var _opened := false
 var _initial_offered := false
 var _final_offered := false
@@ -46,6 +52,12 @@ func _initialize() -> void:
 			_oversize = value == "true"
 		elif option == "--tail-bytes" and value.is_valid_int():
 			_tail_bytes = value.to_int()
+		elif option == "--port" and value.is_valid_int():
+			_port = value.to_int()
+		elif option == "--public-origin" and (
+			value.begins_with("https://") or value.begins_with("http://")
+		):
+			_public_origin = value
 		elif option == "--control-bytes" and value.is_valid_int() and value.to_int() in [19, 125]:
 			_control_bytes.resize(value.to_int())
 			for index: int in range(_control_bytes.size()):
@@ -54,6 +66,11 @@ func _initialize() -> void:
 			_failures.append("invalid option: " + argument)
 	if _capacity < 8 or _capacity > 131071:
 		_failures.append("capacity must be 8..131071")
+	if _port < 0 or _port > 65535:
+		_failures.append("port must be 0..65535")
+	# The raised tunnel connect budget needs matching watchdog headroom.
+	if not _public_origin.is_empty():
+		_watchdog_ms += REMOTE_CONNECT_TIMEOUT_MS - PHASE_TIMEOUT_MS
 	if _tail_bytes < 0 or _tail_bytes > 3 or (_oversize and _tail_bytes > 0):
 		_failures.append("tail must be 0..3 bytes; oversize requires an empty tail")
 	if _fragment_control != "none" and _capacity < _control_bytes.size():
@@ -63,7 +80,7 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	_server.poll()
-	if not _finished and Time.get_ticks_msec() - _started > 8000:
+	if not _finished and Time.get_ticks_msec() - _started > _watchdog_ms:
 		_failures.append("watchdog")
 		_finish()
 	return false
@@ -73,13 +90,19 @@ func _open() -> bool:
 	if not _failures.is_empty():
 		return false
 	_peer.inbound_buffer_size = _capacity
-	if _server.listen() != OK:
+	if _server.listen(_port) != OK:
 		_failures.append("listen failed")
 		return false
-	if _peer.connect_to_url("ws://127.0.0.1:%d" % _server.get_port()) != OK:
+	var target := "ws://127.0.0.1:%d" % _server.get_port()
+	if not _public_origin.is_empty():
+		target = _public_origin.replace("https://", "wss://").replace("http://", "ws://")
+	if _peer.connect_to_url(target) != OK:
 		_failures.append("connect failed")
 		return false
-	var deadline := Time.get_ticks_msec() + PHASE_TIMEOUT_MS
+	var connect_timeout := PHASE_TIMEOUT_MS
+	if not _public_origin.is_empty():
+		connect_timeout = REMOTE_CONNECT_TIMEOUT_MS
+	var deadline := Time.get_ticks_msec() + connect_timeout
 	while (
 		_peer.get_ready_state() == WebSocketPeer.STATE_CONNECTING
 		and Time.get_ticks_msec() < deadline
@@ -222,35 +245,33 @@ func _finish() -> void:
 	_finished = true
 	if _server.wire_error != OK:
 		_failures.append("paced socket write failed")
-	print(
-		(
-			"FRAGMENT_LIMIT_RESULT "
-			+ JSON.stringify(
-				{
-					"passed": _failures.is_empty(),
-					"wire": _server.wire_report(),
-					"engine": Engine.get_version_info()["string"],
-					"capacity": _capacity,
-					"message_type": _message_type,
-					"fragment_control": _fragment_control,
-					"oversize": _oversize,
-					"tail_bytes": _tail_bytes,
-					"control_bytes": _control_bytes.size(),
-					"opened": _opened,
-					"initial_offered": _initial_offered,
-					"final_offered": _final_offered,
-					"initial_state": _initial_state,
-					"final_state": _peer.get_ready_state(),
-					"close_code": _peer.get_close_code(),
-					"received": _received,
-					"receipt": _receipt,
-					"following": _following,
-					"pongs": _server.received_pongs.size(),
-					"failures": _failures
-				}
-			)
-		)
+	var record := (
+		{
+			"passed": _failures.is_empty(),
+			"wire": _server.wire_report(),
+			"engine": Engine.get_version_info()["string"],
+			"capacity": _capacity,
+			"message_type": _message_type,
+			"fragment_control": _fragment_control,
+			"oversize": _oversize,
+			"tail_bytes": _tail_bytes,
+			"control_bytes": _control_bytes.size(),
+			"opened": _opened,
+			"initial_offered": _initial_offered,
+			"final_offered": _final_offered,
+			"initial_state": _initial_state,
+			"final_state": _peer.get_ready_state(),
+			"close_code": _peer.get_close_code(),
+			"received": _received,
+			"receipt": _receipt,
+			"following": _following,
+			"pongs": _server.received_pongs.size(),
+			"failures": _failures
+		}
 	)
+	if not _public_origin.is_empty():
+		record["remote_origin"] = _public_origin
+	print("FRAGMENT_LIMIT_RESULT " + JSON.stringify(record))
 	_peer.close(-1)
 	_server.stop()
 	quit(0 if _failures.is_empty() else 1)

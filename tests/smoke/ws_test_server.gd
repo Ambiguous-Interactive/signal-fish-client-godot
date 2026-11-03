@@ -77,9 +77,10 @@ func wire_report() -> Dictionary:
 	}
 
 
-func listen() -> Error:
+## Binds 127.0.0.1; port zero picks a free port, a fixed port fronts a tunnel.
+func listen(port: int = 0) -> Error:
 	_server = TCPServer.new()
-	var error: Error = _server.listen(0, "127.0.0.1")
+	var error: Error = _server.listen(port, "127.0.0.1")
 	if error != OK:
 		_server = null
 	return error
