@@ -1149,17 +1149,18 @@ pinned 4.7.2-stable source twice on ubuntu-24.04 x86-64, repaired via
 `scripts/repair-websocket-stable.py` and unpatched, enables the mbedtls
 module so the engines can speak `wss://`, and fronts the fixture server with
 a Cloudflare quick tunnel. The repaired engine runs the ten pinned receive
-cases over the tunnel with every read capped at 3 bytes; the baseline runs
-uncapped, the conditions the official-engine pinned signatures were
-collected under. The repaired engine must pass every case. The baseline must
+cases over the tunnel at the lane's forced 3-byte read cap on the default
+Linux dispatch; the baseline runs uncapped, the conditions the
+official-engine pinned signatures were collected under. The repaired engine
+must pass every case. The baseline must
 keep failing its six pinned defect signatures on the same path, so a pass
 cannot come from the path masking a trigger. The gate checks binary identity
 by SHA-256, tunnel provenance, paced writes, clean exits and per-case
 verdicts, keyed by engine family for the baseline map.
 
-Two dispatched runs (2026-11-03, 1d2e7604, official 4.7.2-stable importer,
-one quick tunnel per variant) settle the first remote-network qualification
-of the repair. In the capped run
+Three dispatched runs (2026-11-03, 1d2e7604, official 4.7.2-stable
+importer, one quick tunnel per variant) settle the first remote-network
+qualification of the repair. In the capped run
 ([41700349763](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41700349763))
 the repaired engine (`4b58fac581f2b2f293d85b2eb313bf59d9fc227a9d121f3fbaeb21bfd7ae6130`)
 passes all ten cases over the tunnel with every read capped at 3 bytes; the
@@ -1181,9 +1182,10 @@ first dispatch attempt
 ([41697078313](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41697078313))
 failed every remote connect with `WSS is not available in this build`: the
 minimal source build shipped no TLS module. Its repaired engine still passed
-the full local paced suite, 184 of 184 cases at the 3-byte cap, the first
-x86-64 full-suite data for the repair outside ARM64 devcontainer builds.
-Dispatch runs collect extra remote samples on demand.
+the full local paced suite, 184 of 184 cases at the 3-byte cap. Dispatch
+runs collect extra remote samples on demand; the cap applies on the default
+Linux dispatch, so a Windows or zero-cap remote dispatch qualifies the
+repaired leg uncapped.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,

@@ -459,7 +459,6 @@ jobs:
                               f"remote case {name} shows no paced writes: {wire!r}"
                           )
 
-                  expected_exit = None
                   allowed_exits = None
                   if variant == "repaired":
                       for name in sorted(control_cases | defect_cases):
