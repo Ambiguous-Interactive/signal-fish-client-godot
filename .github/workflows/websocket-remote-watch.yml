@@ -231,11 +231,36 @@ jobs:
                               f"remote defect failures {defect_record.get('failures')!r}"
                               " unexpected"
                           )
+                      # Sequences 0..64 arrive in order or the boundary moved:
+                      # duplicates, reordering or out-of-range values are
+                      # corrupt receipts the counts alone would miss.
+                      if (
+                          received != sorted(set(received))
+                          or not all(0 <= value <= 64 for value in received)
+                      ):
+                          problems.append(
+                              "remote defect delivered a duplicate, reordered or"
+                              f" out-of-range sequence: {received!r}"
+                          )
                       if not 0 < len(received) < 65 or not rejected:
                           problems.append(
                               "remote defect shows no scoped receive loss"
                               f" (delivered {len(received)},"
                               f" rejections {len(rejected)})"
+                          )
+                      drop_reasons = sorted(
+                          {
+                              row.get("reason")
+                              for row in defect.get("receive_trace", {}).get(
+                                  "rejections", []
+                              )
+                          }
+                      )
+                      if drop_reasons != ["payload_capacity"] and rejected:
+                          problems.append(
+                              "remote defect rejection reasons"
+                              f" {drop_reasons!r} != payload_capacity only (a"
+                              " packet-capacity drop is a different boundary)"
                           )
                       if evidence.get("trace_complete") is not True:
                           problems.append("remote defect receive trace incomplete")
