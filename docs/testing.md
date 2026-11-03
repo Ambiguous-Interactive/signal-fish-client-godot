@@ -817,13 +817,15 @@ dispatch that run with the matching revision and the `4.3-stable` label. The
 4.3 remote leg pairs `4.3-backport` with `run_baseline` and `remote_path` on.
 The
 4.3 build drops the `disable_path_overrides` SCons flag, which 4.3's
-SConstruct predates. A
-matched unpatched baseline job runs the same seven commands. The four defect
-failures must keep one observed result record each, with one exception:
-official 4.3 passes the control-bytes and reuse repros unpatched, so its
-baseline fails the full-buffer and close-unicode commands. The three
-comparison controls must pass. Both jobs upload build logs, patch reports,
-engine
+SConstruct predates. The lane rejects a stable source whose label names a
+different major.minor family; a master pin keeps the nearest official
+release label. A
+matched unpatched baseline job runs the same seven commands, each keeping
+exactly one observed result record. The defect commands fail on official
+4.4.1, 4.5.2, 4.6.3 and 4.7.2 baselines. Official 4.3 passes the
+control-bytes and reuse repros unpatched, so its baseline fails the
+full-buffer and close-unicode commands. The three comparison controls must
+pass. Both jobs upload build logs, patch reports, engine
 hashes and per-command evidence. A `remote_path` input adds the
 remote-network leg: each variant fronts a Cloudflare quick tunnel and drives
 the ten pinned receive cases over `wss://` (see
