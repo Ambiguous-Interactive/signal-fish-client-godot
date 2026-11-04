@@ -89,9 +89,11 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       controls (#471).
       Keep the historical phase-1 tail open; preserve the failed 4 KiB/100 ms
       reader history and strict retirement checks.
-- [ ] Symbolicate the retained cold-import crash at engine PC `0x19a9bd8`
-      (#447), then isolate extension initialization and editor shutdown. Keep
-      the original/patched-extension failures and warm/no-extension controls.
+- [ ] Track the upstream guard for the null `EditorHelp` doc deferred call at
+      editor shutdown (#447; see
+      `.llm/research/godot-editor-shutdown-crash.md`). Requalify the native
+      import controls when an engine release adopts it. Keep the original and
+      patched-extension failures and the warm/no-extension controls.
 
 Next session: choose one item below as the sole milestone and finish its PR
 and checks within about one hour. Session cadence:
