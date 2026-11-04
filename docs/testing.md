@@ -397,7 +397,11 @@ relay bodies per frame), the control the local native qualifications used;
 a relay loss over the edge is new #488-family data, not a close-metadata
 failure. The per-case cold-editor import remains the known-open #447 abort
 hazard; the gate attributes an import abort so a red run is readable as
-engine-import data before it is read as remote-path data.
+engine-import data before it is read as remote-path data. The lane also
+re-dispatches import-unstable attempts (retaining each) and gives every
+editor invocation a fresh HOME with `--fresh-home`: the captured aborts
+all land right after the editor loads its layout, which reads shared
+state under the caller's HOME.
 
 ### Native WebSocket receive boundary
 

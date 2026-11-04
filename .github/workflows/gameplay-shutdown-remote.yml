@@ -520,19 +520,48 @@ jobs:
                   if int(sys.argv[1]) == 0:
                       print("passed")
                       raise SystemExit
+                  # Fail closed: anything not provably an import abort
+                  # (negative-signal or non-exited process record for
+                  # every failing case) is protocol data for the gate,
+                  # never a retry. Malformed records and summaries are
+                  # protocol too.
                   directory = Path(sys.argv[2])
-                  summary = json.loads((directory / "summary.json").read_text())
+                  try:
+                      summary = json.loads((directory / "summary.json").read_text())
+                  except (OSError, ValueError):
+                      print("protocol")
+                      raise SystemExit
+                  if not isinstance(summary, list):
+                      print("protocol")
+                      raise SystemExit
                   for result in summary:
+                      if not isinstance(result, dict):
+                          print("protocol")
+                          raise SystemExit
                       if result.get("passed") is True:
                           continue
                       record = (
                           directory
-                          / f"{result['runtime']}-{result['mode']}"
+                          / f"{result.get('runtime', '')}-{result.get('mode', '')}"
                           / "import.process.json"
                       )
-                      process = json.loads(record.read_text()) if record.exists() else {}
+                      if not record.exists():
+                          print("protocol")
+                          raise SystemExit
+                      try:
+                          process = json.loads(record.read_text())
+                      except (OSError, ValueError):
+                          print("protocol")
+                          raise SystemExit
+                      if not isinstance(process, dict):
+                          print("protocol")
+                          raise SystemExit
                       code = process.get("returncode")
-                      if process.get("status") == "exited" and isinstance(code, int) and code >= 0:
+                      if not (
+                          process.get("status") == "exited"
+                          and isinstance(code, int)
+                          and code < 0
+                      ):
                           print("protocol")
                           raise SystemExit
                   print("import-unstable")
@@ -542,7 +571,11 @@ jobs:
                   # warm imports of the same project pass). The documented
                   # operator step is to re-dispatch without reading the
                   # run as protocol data; this loop automates it with
-                  # every attempt retained and attributed.
+                  # every attempt retained and attributed. Each import
+                  # and native run also gets a fresh HOME: every captured
+                  # abort lands right after editor layout loading, which
+                  # reads shared state under HOME, and the sequential
+                  # case boots would otherwise share it.
                   #
                   # The native seats run the original uncredited workload
                   # (four 4096-byte relay bodies per frame), the control
@@ -564,6 +597,7 @@ jobs:
                         --godot "$GODOT_BIN" \
                         --runtime native \
                         --native-extension "/tmp/webrtc-native-ext/addons/webrtc_native" \
+                        --fresh-home \
                         --service-port "$SERVICE_PORT" \
                         --service-public-origin "$TUNNEL_ORIGIN" \
                         --output "output/native-remote-$attempt" || rc=$?
@@ -653,7 +687,7 @@ jobs:
                           # checked() writes the process record beside the
                           # log with its last suffix replaced.
                           process_path = (
-                              Path("output/native-remote")
+                              directory
                               / f"{result['runtime']}-{result['mode']}"
                               / "import.process.json"
                           )
@@ -695,10 +729,10 @@ jobs:
                       rows.append(
                           f"| {name} | {'pass' if result.get('passed') is True else 'FAIL'} |"
                       )
-                      directory = (
-                          Path("output/native-remote") / f"{result['runtime']}-{result['mode']}"
+                      case_directory = (
+                          directory / f"{result['runtime']}-{result['mode']}"
                       )
-                      assessment_path = directory / "assessment.json"
+                      assessment_path = case_directory / "assessment.json"
                       if assessment_path.exists():
                           assessment = json.loads(assessment_path.read_text())
                           # One ACTIVE_SHUTDOWN_TERMINAL record per case: a
