@@ -241,8 +241,8 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
         if proxy is not None:
             proxy.start()
             options["service_url"] = f"ws://127.0.0.1:{proxy.port}/v3/ws"
-        if args.service_public_origin:
-            options["service_url"] = f"wss://{args.service_public_origin}/v3/ws"
+        if args.service_origin_host:
+            options["service_url"] = f"wss://{args.service_origin_host}/v3/ws"
         project = prepare(args, directory, runtime, options)
         report["identities"] = interop.setup_identities([args.godot, "--path", str(project)])
         service.start()
@@ -454,6 +454,7 @@ def main() -> int:
         parser.error("--import-godot is only supported for native template builds")
     if args.service_port < 0 or args.service_port > 65535:
         parser.error("--service-port must be between 1 and 65535 (0 picks free ports)")
+    args.service_origin_host = ""
     if args.service_public_origin:
         if not args.service_port:
             parser.error(
@@ -473,7 +474,7 @@ def main() -> int:
         origin = origin.rstrip("/")
         if not origin or "/" in origin:
             parser.error("--service-public-origin must be a bare host[:port] or its origin URL")
-        args.service_public_origin = origin
+        args.service_origin_host = origin
     if args.runner_arg and not args.runner:
         parser.error("--runner-arg requires --runner")
     if args.runner is not None:

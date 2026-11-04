@@ -122,6 +122,11 @@ jobs:
 
             # The active shutdown drill starts and stops this server itself.
             - name: Build the server
+              env:
+                  # The server pins components in rust-toolchain.toml; the
+                  # env override keeps the minimal profile from growing
+                  # mid-build.
+                  RUSTUP_TOOLCHAIN: ${{ env.RUST_TOOLCHAIN }}
               run: |
                   (cd server && cargo build --locked --bin signal-fish-server) \
                     2>&1 | tee output/server-build.log
@@ -197,6 +202,7 @@ jobs:
                   echo "tunnel $origin reachable; edge answered HTTP ${code:-000}"
 
             - name: Run the Web shutdown controls over the remote path
+              id: drill
               run: |
                   # Application ACK credit bounds outstanding relay bytes the
                   # way the #511 Web control does. The uncredited workload
@@ -206,6 +212,7 @@ jobs:
                   # ("Buffer payload full") while the semantic closes still
                   # held, so the remote qualification uses the bounded
                   # control and records that boundary separately.
+                  rc=0
                   .venv-shutdown/bin/python scripts/check-active-shutdown.py \
                     --server-binary server/target/debug/signal-fish-server \
                     --server-config server-config.json \
@@ -216,7 +223,8 @@ jobs:
                     --relay-credit-bytes 32768 \
                     --service-port "$SERVICE_PORT" \
                     --service-public-origin "${{ steps.tunnel.outputs.origin }}" \
-                    --output output/web-remote
+                    --output output/web-remote || rc=$?
+                  echo "exit=$rc" >> "$GITHUB_OUTPUT"
 
             - name: Stop the tunnel
               if: always()
@@ -260,6 +268,7 @@ jobs:
                   rows = []
                   browsers = set()
                   closing = []
+                  drill_exit = "${{ steps.drill.outputs.exit }}"
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
                       browsers.add(str(result.get("browser", "unknown")))
@@ -279,16 +288,24 @@ jobs:
                       assessment_path = directory / "assessment.json"
                       if assessment_path.exists():
                           assessment = json.loads(assessment_path.read_text())
-                          terminals = assessment.get("terminals") or []
+                          # One ACTIVE_SHUTDOWN_TERMINAL record per case: a
+                          # list of per-seat dicts.
+                          seats = [
+                              seat
+                              for terminal in (assessment.get("terminals") or [])
+                              for seat in (terminal if isinstance(terminal, list) else [terminal])
+                          ]
                           codes = [
                               close.get("code")
-                              for terminal in terminals
-                              for close in (terminal.get("closes") or [])
+                              for seat in seats
+                              for close in (seat.get("closes") or [])
                           ]
                           closing.append(
                               f"{result['mode']}: close codes {codes}, traces"
-                              f" {[terminal.get('trace') for terminal in terminals]}"
+                              f" {[seat.get('trace') for seat in seats]}"
                           )
+                  if drill_exit != "0":
+                      problems.append(f"drill exited {drill_exit!r} (every case must pass)")
 
                   summary_lines = [
                       "## Active gameplay shutdown over a remote path",
