@@ -423,12 +423,12 @@ jobs:
                   # major.minor of the built source. The class official
                   # editors of that family reproduced on ubuntu-24.04 Linux
                   # over the collected `WebSocket Remote Path` tunnels (4.4:
-                  # run 41684522769, 4.7: runs 41591258643 and 41684196081).
-                  # Other platforms (Wine) and source-build conditions are
+                  # run 41684522769, 4.7: runs 41591258643 and 41684196081),
+                  # and source-built baselines reproduced the same six
+                  # signatures (4.5: run 41754468768, 4.6: run 41754472264;
+                  # 4.4: run 41754464659). Other platforms (Wine) are
                   # uncollected: treat a family's first run on a new platform
-                  # as collection data before pinning a platform map. A
-                  # family without a map keeps its baseline defect outcomes
-                  # as recorded data until collected runs pin it. A None
+                  # as collection data before pinning a platform map. A None
                   # signature pins a shape the baseline must keep passing:
                   # official 4.3 predates the #491/#492/#496 regressions, so
                   # only its two #498 close shapes fail (#545; 4.3 runs
@@ -444,6 +444,8 @@ jobs:
                           "boundary-close-3-max-mixed-server-false": close_signature,
                       },
                       "4.4": failing_signatures,
+                      "4.5": failing_signatures,
+                      "4.6": failing_signatures,
                       "4.7": failing_signatures,
                   }
                   origin = os.environ["TUNNEL_ORIGIN"]
