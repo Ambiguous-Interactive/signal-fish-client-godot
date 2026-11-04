@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import hashlib
 import importlib.util
@@ -15,6 +16,7 @@ import socket
 import subprocess
 import threading
 import time
+from collections.abc import Iterator
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
@@ -66,6 +68,39 @@ def digest(path: Path) -> str:
         while chunk := stream.read(65536):
             checksum.update(chunk)
         return checksum.hexdigest()
+
+
+@contextlib.contextmanager
+def isolated_home(enabled: bool, directory: Path) -> Iterator[None]:
+    """Give one editor invocation its own shared-state directories.
+
+    The #447 cold-import abort always lands right after editor layout
+    loading, which reads state under the caller's HOME. A fresh HOME per
+    invocation removes the shared editor-settings/layout caches between
+    sequential boots. Disabled by default so local qualifications keep
+    the historical shared-HOME conditions.
+    """
+    if not enabled:
+        yield
+        return
+    home = directory / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    saved = {
+        key: os.environ.get(key)
+        for key in ("HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
+    }
+    os.environ["HOME"] = str(home)
+    os.environ["XDG_CACHE_HOME"] = str(home / ".cache")
+    os.environ["XDG_CONFIG_HOME"] = str(home / ".config")
+    os.environ["XDG_DATA_HOME"] = str(home / ".local" / "share")
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def free_port() -> int:
@@ -154,22 +189,23 @@ def prepare(
     preset.write_text(
         preset.read_text().replace('include_filter=""', 'include_filter="shutdown-options.json"')
     )
-    interop.checked(
-        [
-            args.import_godot or args.godot,
-            "--headless",
-            "--path",
-            str(project),
-            "--editor",
-            "--import",
-        ],
-        directory / "import.log",
-    )
-    if runtime == "web":
+    with isolated_home(args.fresh_home, directory):
         interop.checked(
-            [args.godot, "--headless", "--path", str(project), "--export-debug", "Web"],
-            directory / "export.log",
+            [
+                args.import_godot or args.godot,
+                "--headless",
+                "--path",
+                str(project),
+                "--editor",
+                "--import",
+            ],
+            directory / "import.log",
         )
+        if runtime == "web":
+            interop.checked(
+                [args.godot, "--headless", "--path", str(project), "--export-debug", "Web"],
+                directory / "export.log",
+            )
     return project
 
 
@@ -255,7 +291,10 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
                 str(project),
             ]
             report["command"] = command
-            with (directory / "godot.log").open("w") as log:
+            with (
+                (directory / "godot.log").open("w") as log,
+                isolated_home(args.fresh_home, directory / "native"),
+            ):
                 result = subprocess.run(  # noqa: S603
                     command, stdout=log, stderr=subprocess.STDOUT, timeout=70, check=False
                 )
@@ -413,6 +452,15 @@ def main() -> int:
             " wss:// while the server keeps binding locally (remote-path leg)"
         ),
     )
+    parser.add_argument(
+        "--fresh-home",
+        action="store_true",
+        help=(
+            "Give every editor import and native run its own HOME"
+            " (isolates the shared editor state the #447 cold-import"
+            " abort reads)"
+        ),
+    )
     parser.add_argument("--runtime", choices=("all", "native", "web"), default="all")
     parser.add_argument("--mode", choices=("all", "graceful", "reset", "stall"), default="all")
     parser.add_argument("--output", type=Path, required=True)
@@ -450,6 +498,12 @@ def main() -> int:
         parser.error("Receive capacity must admit a 4096-byte body and one packet")
     if args.runtime in ("all", "native") and args.native_extension is None:
         parser.error("--native-extension is required for native or all runtime")
+    if args.fresh_home and args.runtime != "native":
+        parser.error(
+            "--fresh-home isolates native editor boots; combine it only"
+            " with --runtime native (web export templates live in the"
+            " caller's data directory)"
+        )
     if args.import_godot is not None and args.runtime != "native":
         parser.error("--import-godot is only supported for native template builds")
     if args.service_port < 0 or args.service_port > 65535:
@@ -516,6 +570,7 @@ def main() -> int:
         "network_delay_ms": args.network_delay_ms,
         "network_chunk_bytes": args.network_chunk_bytes,
         "trace_receive": args.trace_receive,
+        "fresh_home": args.fresh_home,
         "runner": str(args.runner) if args.runner else None,
         "runner_sha256": digest(args.runner) if args.runner else None,
         "runner_args": args.runner_arg,
