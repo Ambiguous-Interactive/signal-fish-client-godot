@@ -85,6 +85,16 @@ shrinking commit).
 - Leave other milestones in `PLAN.md` for later sessions. Do not start a
   second milestone after the first one is complete.
 
+## Local Branch Triage
+
+- At the start of every session, run `git fetch --prune` and review local
+  branches whose upstream is `gone`.
+- A `gone` upstream is a triage trigger, not proof that a branch is stale.
+  Confirm its work is merged, superseded, or abandoned before deleting it.
+  Archive uncertain work first (`git bundle create <file> --branches`) and
+  keep the branch when its status is unclear. Never merge stale commits into
+  a session branch.
+
 ## Decision Gates
 
 Stop and ask before choosing among materially different options for:
