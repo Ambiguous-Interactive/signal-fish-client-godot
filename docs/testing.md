@@ -1312,8 +1312,9 @@ baseline (`38c0e2580628c19117bf47dc9ca9cec7b56883012bff3882bb626b583e5beb45`)
 passes its four controls and fails the same six pinned signatures with
 clean close samples (bursts 65/65, largest gap 909 ms against the
 3000 ms batch deadline, below the recorded 1.14 s benign Wine stall).
-The gate pins the Wine `4.4` family map from these two runs; every
-pinned family gate now keys on its recorded map.
+The gate pins the Wine `4.4` family map from these two runs; the other
+families stay collection data on Wine until their own collected runs
+pin maps.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,

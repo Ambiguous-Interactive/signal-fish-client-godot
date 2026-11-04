@@ -426,8 +426,10 @@ jobs:
                   # run 41684522769, 4.7: runs 41591258643 and 41684196081),
                   # and source-built baselines reproduced the same six
                   # signatures (4.5: run 41754468768, 4.6: run 41754472264;
-                  # 4.4: run 41754464659; Wine: runs 41763583302 and
-                  # 41774059122). Not-yet-mapped families stay collection
+                  # 4.4: run 41754464659). Wine reproduced the 4.4 map
+                  # twice (runs 41763583302 and 41774059122); the other
+                  # families have no Wine data and stay collection data on
+                  # windows. Not-yet-mapped families stay collection
                   # data until collected runs pin their maps. A None
                   # signature pins a shape the baseline must keep passing:
                   # official 4.3 predates the #491/#492/#496 regressions, so
@@ -559,7 +561,17 @@ jobs:
                               f"remote cases disagree on the engine family: {engines!r}"
                           )
                       else:
+                          # The maps were collected from Linux runners;
+                          # the collected Wine data pins only the 4.4
+                          # family (runs 41763583302 and 41774059122), so
+                          # other Windows families stay collection data
+                          # until their own Wine runs pin a map.
                           documented = baseline_documented.get(engines[0])
+                          if (
+                              os.environ["BUILD_TARGET"] == "windows"
+                              and engines[0] != "4.4"
+                          ):
+                              documented = None
                           if documented is None:
                               print(
                                   f"baseline {engines[0]} has no pinned remote-path map;"
