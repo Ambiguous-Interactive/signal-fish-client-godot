@@ -507,24 +507,77 @@ jobs:
               env:
                   TUNNEL_ORIGIN: ${{ steps.tunnel.outputs.origin }}
               run: |
+                  # Classify one drill attempt: passed, import-unstable
+                  # (every failing case died in prepare() with a negative
+                  # or non-exited import process record - the known-open
+                  # #447 cold-import abort hazard), or protocol (any other
+                  # failure: that is data for the gate, never a retry).
+                  cat > /tmp/classify-attempt.py <<'PY'
+                  import json
+                  import sys
+                  from pathlib import Path
+
+                  if int(sys.argv[1]) == 0:
+                      print("passed")
+                      raise SystemExit
+                  directory = Path(sys.argv[2])
+                  summary = json.loads((directory / "summary.json").read_text())
+                  for result in summary:
+                      if result.get("passed") is True:
+                          continue
+                      record = (
+                          directory
+                          / f"{result['runtime']}-{result['mode']}"
+                          / "import.process.json"
+                      )
+                      process = json.loads(record.read_text()) if record.exists() else {}
+                      code = process.get("returncode")
+                      if process.get("status") == "exited" and isinstance(code, int) and code >= 0:
+                          print("protocol")
+                          raise SystemExit
+                  print("import-unstable")
+                  PY
+                  # The per-case cold-editor import is the #447 abort
+                  # hazard (sporadic SIGABRT during editor layout loading;
+                  # warm imports of the same project pass). The documented
+                  # operator step is to re-dispatch without reading the
+                  # run as protocol data; this loop automates it with
+                  # every attempt retained and attributed.
+                  #
                   # The native seats run the original uncredited workload
-                  # (four 4096-byte relay bodies per frame), the control the
-                  # #495/#507/#511 native qualifications used. The official
-                  # editor imports each case project and then runs it
-                  # headless; the WebRTC GDExtension backs its peer
-                  # connections.
+                  # (four 4096-byte relay bodies per frame), the control
+                  # the #495/#507/#511 native qualifications used. The
+                  # official editor imports each case project and then
+                  # runs it headless; the WebRTC GDExtension backs its
+                  # peer connections.
+                  max_attempts=3
+                  attempts_run=1
+                  attempt=1
                   rc=0
-                  python3 scripts/check-active-shutdown.py \
-                    --server-binary server/target/debug/signal-fish-server \
-                    --server-config server-config.json \
-                    --server-revision "$SERVER_REVISION" \
-                    --godot "$GODOT_BIN" \
-                    --runtime native \
-                    --native-extension "/tmp/webrtc-native-ext/addons/webrtc_native" \
-                    --service-port "$SERVICE_PORT" \
-                    --service-public-origin "$TUNNEL_ORIGIN" \
-                    --output output/native-remote || rc=$?
+                  while [ "$attempt" -le "$max_attempts" ]; do
+                      attempts_run=$attempt
+                      rc=0
+                      python3 scripts/check-active-shutdown.py \
+                        --server-binary server/target/debug/signal-fish-server \
+                        --server-config server-config.json \
+                        --server-revision "$SERVER_REVISION" \
+                        --godot "$GODOT_BIN" \
+                        --runtime native \
+                        --native-extension "/tmp/webrtc-native-ext/addons/webrtc_native" \
+                        --service-port "$SERVICE_PORT" \
+                        --service-public-origin "$TUNNEL_ORIGIN" \
+                        --output "output/native-remote-$attempt" || rc=$?
+                      outcome=$(python3 /tmp/classify-attempt.py "$rc" "output/native-remote-$attempt")
+                      echo "attempt $attempt: $outcome" >> "$GITHUB_STEP_SUMMARY"
+                      if [ "$outcome" != "import-unstable" ]; then
+                          break
+                      fi
+                      attempt=$((attempt + 1))
+                  done
+                  attempt=$attempts_run
                   echo "exit=$rc" >> "$GITHUB_OUTPUT"
+                  echo "attempts=$attempt" >> "$GITHUB_OUTPUT"
+                  echo "dir=output/native-remote-$attempt" >> "$GITHUB_OUTPUT"
 
             - name: Stop the tunnel
               if: always()
@@ -534,18 +587,32 @@ jobs:
               env:
                   TUNNEL_ORIGIN: ${{ steps.tunnel.outputs.origin }}
                   DRILL_EXIT: ${{ steps.drill.outputs.exit }}
+                  DRILL_ATTEMPTS: ${{ steps.drill.outputs.attempts }}
+                  DRILL_DIR: ${{ steps.drill.outputs.dir }}
               run: |
                   python3 - <<'PY'
                   import json
                   import os
                   from pathlib import Path
 
-                  summary = json.loads(Path("output/native-remote/summary.json").read_text())
-                  provenance = json.loads(
-                      Path("output/native-remote/provenance.json").read_text()
-                  )
+                  directory = Path(os.environ["DRILL_DIR"])
+                  summary = json.loads((directory / "summary.json").read_text())
+                  provenance = json.loads((directory / "provenance.json").read_text())
+                  attempts = int(os.environ["DRILL_ATTEMPTS"])
                   lib_sha = Path("output/webrtc-native-lib-sha256.txt").read_text().split()[0]
                   problems = []
+                  notes = []
+                  if attempts > 1:
+                      # Earlier attempts exist only because their imports
+                      # aborted (#447 hazard); the drill loop retains them
+                      # in the artifact. They stay visible so a green run
+                      # is never read as evidence that imports are stable.
+                      notes.append(
+                          f"final attempt followed {attempts - 1} retained"
+                          " import-unstable attempt(s) (known #447 hazard);"
+                          " this green run does not say the editor imports"
+                          " are stable"
+                      )
 
                   if provenance.get("service_public_origin") != os.environ["TUNNEL_ORIGIN"]:
                       problems.append(
@@ -662,6 +729,9 @@ jobs:
                       f"- Engine: {os.environ['GODOT_VERSION']} native headless,"
                       f" WebRTC GDExtension {os.environ['WEBRTC_NATIVE_TAG']}"
                       f" (lib sha256 {lib_sha})",
+                      f"- Attempt {attempts} of the retained-attempt loop"
+                      " (earlier import-unstable attempts stay in the"
+                      " artifact)",
                       "",
                       "| Case | Outcome |",
                       "| --- | --- |",
@@ -671,6 +741,9 @@ jobs:
                   if closing:
                       summary_lines.extend(["Semantic closes:", ""])
                       summary_lines.extend(f"- {line}" for line in closing)
+                  if notes:
+                      summary_lines.extend(["Notes:", ""])
+                      summary_lines.extend(f"- {line}" for line in notes)
                   verdict = (
                       "Remote path: every expectation met."
                       if not problems
