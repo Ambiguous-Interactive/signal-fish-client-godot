@@ -251,10 +251,12 @@ jobs:
                     export WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
                   fi
                   # disable_path_overrides starts in 4.4; the 4.3-stable
-                  # SConstruct predates it (#545).
-                  flag_args=(disable_path_overrides=no)
-                  if [ "$REPAIR_KIND" = 4.3-backport ]; then
-                    flag_args=()
+                  # SConstruct predates it (#545). The fetched source
+                  # family decides, so a baseline builds with the flags
+                  # its own source needs.
+                  flag_args=()
+                  if [ "$(printf '%s\n' 4.4 "$SOURCE_FAMILY" | sort -V | head -1)" = 4.4 ]; then
+                    flag_args=(disable_path_overrides=no)
                   fi
                   (
                     cd "$SOURCE_DIR"
