@@ -95,18 +95,21 @@ is created, during a fast `--editor --import` shutdown. A guard in
 ## Local Reproduction
 
 ```bash
+# Same rebuilt engine for both controls. Its SHA-256 is recorded below.
+GODOT=<rebuilt-godot.linuxbsd.editor.arm64>
+
 cp -r <prepared-project> /tmp/editor-crash-case
 rm -rf /tmp/editor-crash-case/.godot
 ulimit -c unlimited
 
 # Run GDB as the first editor boot on the fresh copy.
 gdb --batch -ex 'handle SIGSEGV stop print nopass' -ex run -ex bt \
-  --args <godot-debug-binary> --headless \
+  --args "$GODOT" --headless \
   --path /tmp/editor-crash-case --editor --import
 
 # Optional exit-code control: remove the cache again, then run without GDB.
 rm -rf /tmp/editor-crash-case/.godot
-<godot-4.7.2-editor> --headless --path /tmp/editor-crash-case --editor --import
+"$GODOT" --headless --path /tmp/editor-crash-case --editor --import
 ```
 
 Local rebuilt binaries and debug symbols:
