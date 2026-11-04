@@ -6,7 +6,8 @@ category: Research
 
 # Godot Editor Import Shutdown Crash
 
-Issue #447 tracks intermittent native editor-import aborts that end after
+[Issue #447](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/issues/447)
+tracks intermittent native editor-import aborts that end after
 `loading_editor_layout` with no engine-error marker. The retained official
 Godot 4.7.2 ARM64 core is now symbolized and the crash is isolated to one
 engine shutdown path, not to extension initialization.
@@ -97,10 +98,15 @@ is created, during a fast `--editor --import` shutdown. A guard in
 cp -r <prepared-project> /tmp/editor-crash-case
 rm -rf /tmp/editor-crash-case/.godot
 ulimit -c unlimited
-<godot-4.7.2-editor> --headless --path /tmp/editor-crash-case --editor --import
+
+# Run GDB as the first editor boot on the fresh copy.
 gdb --batch -ex 'handle SIGSEGV stop print nopass' -ex run -ex bt \
   --args <godot-debug-binary> --headless \
   --path /tmp/editor-crash-case --editor --import
+
+# Optional exit-code control: remove the cache again, then run without GDB.
+rm -rf /tmp/editor-crash-case/.godot
+<godot-4.7.2-editor> --headless --path /tmp/editor-crash-case --editor --import
 ```
 
 Local rebuilt binaries and debug symbols:
