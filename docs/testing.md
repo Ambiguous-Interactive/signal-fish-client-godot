@@ -847,9 +847,11 @@ controls pass. Unpatched binary SHA-256:
 4.11.1 builds both engines with the options listed in the workflow. These
 results cover the #485 receive suite, paced writes, large boundaries, close
 reasons, peer replacement and local syscall read caps on x86-64. Keep them
-separate from QEMU emulation runs. Bare-metal hardware, remote legs for the
-other stable repairs, upstream adoption and a Windows remote leg remain
-open.
+separate from QEMU emulation runs. Bare-metal hardware and upstream
+adoption remain open, and the macOS leg stays with the weekly
+`WebSocket Native macOS` watch. The 4.4.1/4.5.2/4.6.3 Linux remote legs
+and the Windows remote dispatch are recorded under
+[Remote path qualification](#remote-path-qualification).
 
 The pinned 4.4.1-stable repair `49a5bc7b616bd04689a2c89e89bda41f50241464`
 passes the same checks on x86-64 ([run
@@ -1185,9 +1187,14 @@ official 4.3 predates the other four defect shapes, and the gate requires
 those four to keep passing on the 4.3 baseline. That
 requirement applies to a Linux engine family with a pinned remote-path map;
 Windows and unpinned families record defect outcomes as collection data. The
-gate checks binary identity
-by SHA-256, tunnel provenance, paced writes, clean exits and per-case
-verdicts, keyed by engine family for the baseline map.
+gate checks binary identity by SHA-256, tunnel provenance, paced writes,
+clean exits and per-case verdicts, keyed by engine family for the baseline
+map. A baseline defect sample may contain engine errors (for example
+the #492 reuse case's `PacketBuffer` ERR_BUG line); the exit,
+paced-write, record and pinned-signature checks still bound it.
+Pass-required cases, every repaired case and each baseline control,
+must stay free of engine errors, which the driver's verdict already
+enforces.
 
 Three dispatched runs (2026-11-03, 1d2e7604, official 4.7.2-stable
 importer, one quick tunnel per variant) settle the first remote-network
@@ -1231,6 +1238,74 @@ on its own tunnel passes its four controls and the four pre-regression
 shapes, and fails exactly the two #498 close shapes with the pinned close
 signature, matching the official-engine 4.3 watch maps. That closes the
 4.3-backport leg of the #485 remote-network qualification.
+
+The pinned 4.4.1-stable repair
+`49a5bc7b616bd04689a2c89e89bda41f50241464` completes its Linux x86-64
+remote leg ([run
+41754464659](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41754464659)).
+The repaired engine
+(`7531c11dc69503e334d9048d6dbdb873f920942988a0d6fa58d95866ca8ec900`)
+passes all ten pinned cases over its Cloudflare tunnel with every read
+capped at 3 bytes; the burst control delivers 65 of 65 packets with a
+largest delivery gap of 248 ms against the 3000 ms batch deadline. The
+unpatched baseline
+(`e082eb387fa1f3e008c2967712fc644a770e31ad99bd6f363eb368f16aadb5dd`) on
+its own tunnel passes its four controls, fails all six pinned defect
+signatures, and delivers its burst 65/65 (largest gap 262 ms). A first
+dispatch ([41751187507](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41751187507))
+had already qualified the repaired leg; its baseline sample stayed
+unclean (the mid-write abort run 41700353810 recorded) while the lane
+still rejected engine-error defect samples outright, so the gate now
+tolerates a defect's filed symptom and the re-dispatch collected the
+clean sample above.
+
+The pinned 4.5.2-stable repair
+`6ce3de25aa58466e14ef354703ba8d9791a417da` completes the same leg
+([run
+41754468768](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41754468768)).
+The repaired engine
+(`f158c982bff211daf0c41e197d79f90b8f09acddf99f0f55d0015162ac6ce50f`)
+passes all ten cases at the 3-byte cap (burst 65/65, largest gap
+255 ms). The unpatched baseline
+(`4defc7d31eab80f57ee4abb07ba09ce90b2ef6a23df079ca62e3980ba1a8151f`)
+passes its four controls and fails all six pinned signatures on its own
+tunnel, so the lane pins the 4.5 family map to those six signatures.
+
+The pinned 4.6.3-stable repair
+`35e80b3a8822a9df9be390814b62f44c0a9c69e8` completes the same leg
+([run
+41754472264](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41754472264)).
+The repaired engine
+(`ce17e58543d06978d479d7568bd561713f022cdbafc85948f5cbef37a7fe5210`)
+passes all ten cases at the 3-byte cap (burst 65/65, largest gap
+269 ms). The unpatched baseline
+(`7ab2a67a48b4266743d2e05acf0a4db0551deba2117f8e7bf55e6dd7b2af1714`)
+matches the 4.5 baseline outcome set and the lane pins the 4.6 family
+map the same way. That closes the 4.4.1/4.5.2/4.6.3 stable-repair
+remote legs of the #485 remote-network qualification.
+
+The Windows dispatch closes the last planned #485 remote leg. In the
+first run ([41754475885](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41754475885))
+the repaired 4.4.1 engine
+(`3e7f09f711eac24df914e549762a92e1cf10127f6c096bf0b555f506ac949e6f`)
+passes all ten pinned cases over its Cloudflare tunnel uncapped under
+Wine, with the burst control at 65/65 packets (largest gap 257 ms).
+The unpatched Wine baseline
+(`d5b78c0fe2940d0874fb0b488303a88157192fbb5858b93ceafa91e33eb1d75b`)
+records clean outcomes on nine of its ten case samples (four controls
+pass, five defect shapes fail with the pinned signatures) but hits the
+documented
+mid-write abort on `close-3-mixed-server`, so the gate rejects the
+sample and a re-dispatch
+([41763583302](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41763583302))
+collects the clean one: the repaired engine
+(`42cb1f63f4ae64b47e9487a1246e5d57bf51a1081a7bbfa411ad605f25d8c7c1`)
+passes all ten cases again (burst 65/65, largest gap 248 ms) and the
+baseline (`fe39d6ccf1f79285f45afc0883953c3bf631c50165348f0c10fc6b430c4ab9f4`)
+passes its four controls and fails all six pinned signatures, its
+`close-3-mixed-server` sample now clean. Wine baselines stay
+collection data until a second collected run pins a Windows family
+map; every pinned Linux family gate now keys on its recorded map.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
