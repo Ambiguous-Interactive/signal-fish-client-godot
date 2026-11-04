@@ -44,13 +44,6 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       so a deadline miss names a stall above that or a real loss. Read the
       failed case's `delivery` summary and `pending_wait` entry before
       changing any deadline.
-- [ ] Qualify the native active-gameplay shutdown controls on remote
-      networks (#482; see `docs/testing.md`). Both remote legs of the
-      `Gameplay Shutdown Remote` lane landed (Web and native; see
-      `progress/` notes). Collect several green runs of both jobs, then
-      schedule the weekly watch. Preserve the browser send/close race
-      control, distinct reset and nonresponding close outcomes, plus
-      cached mesh retirement.
 - [ ] Qualify native SCTP startup cancellation and terminal handling upstream
       and on remote networks (#474; see `docs/mesh-guide.md`). Preserve the
       retained startup and teardown failures.

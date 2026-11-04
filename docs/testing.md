@@ -375,9 +375,20 @@ credential-free Cloudflare quick tunnel. The server keeps binding locally;
 both seats connect over `wss://` through the Cloudflare edge, so every relay
 message, the GoingAway advisory and the semantic close cross a real remote
 path. The driver takes `--service-port` plus `--service-public-origin` for
-this; the origin cannot be combined with the delayed local proxy. The lane is
-dispatch-only until several green runs pin the remote signature; a weekly
-watch can follow the other lanes.
+this; the origin cannot be combined with the delayed local proxy. Four
+consecutive green runs of both jobs - the post-merge main run
+[41905622779](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41905622779)
+plus three branch dispatches of the same lane (41898423659, 41900140061, 41904306119) - pinned the remote shutdown signature, so the lane carries
+a weekly scheduled run (Mondays 13:00 UTC, staggered after the
+`WebSocket Remote Path` watch) with the same pinned inputs. Dispatch runs
+keep on-demand qualification available; GitHub disables schedule triggers
+after ~60 days without repo activity. A red run triages from the run page:
+a drill failure reads the run summary alone (the known #447 import-abort
+attribution first; the native loop already re-dispatches import-unstable
+attempts and retains each), while a tunnel-provisioning failure points at
+the failed tunnel step (run
+[41897404439](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41897404439)
+is the transient record).
 
 ### Remote-path qualification (native)
 
