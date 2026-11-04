@@ -1,0 +1,349 @@
+name: Gameplay Shutdown Remote
+
+on:
+    # Dispatch-only until collected runs show the remote Web shutdown
+    # signature is stable (#538 pattern); scheduling can follow.
+    workflow_dispatch:
+        inputs:
+            server_revision:
+                description: Pinned signal-fish-server revision to build
+                required: true
+                type: string
+                default: 9bd5a9386df940b6fed4e5ff536cc36f5748e347
+            engine_version:
+                description: Official Godot release for the Web import and export
+                required: true
+                type: string
+                default: 4.7.2-stable
+            rust_toolchain:
+                description: Rust toolchain for the server build
+                required: true
+                type: string
+                default: "1.94.0"
+
+permissions:
+    contents: read
+
+# Evidence runs are expensive; queue concurrent triggers instead of
+# cancelling or dropping one.
+concurrency:
+    group: ${{ github.workflow }}
+    queue: max
+
+env:
+    GODOT_VERSION: ${{ inputs.engine_version || '4.7.2-stable' }}
+    GODOT_BIN: /tmp/godot-cache/godot
+    SERVER_REVISION: ${{ inputs.server_revision || '9bd5a9386df940b6fed4e5ff536cc36f5748e347' }}
+    RUST_TOOLCHAIN: ${{ inputs.rust_toolchain || '1.94.0' }}
+    SERVICE_PORT: "8991"
+    CLOUDFLARED_VERSION: "2026.10.7"
+    CLOUDFLARED_SHA256: 1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+
+jobs:
+    shutdown-remote:
+        name: Web shutdown controls over a remote path
+        runs-on: ubuntu-24.04
+        timeout-minutes: 60
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Prepare evidence directory
+              run: mkdir -p output
+
+            - name: Install Godot runtime dependencies
+              run: sudo python3 .devcontainer/install-godot.py runtime-deps
+
+            - name: Cache Godot editor
+              id: godot-cache
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: /tmp/godot-cache
+                  key: godot-shutdown-remote-editor-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
+
+            - name: Install Godot editor
+              if: steps.godot-cache.outputs.cache-hit != 'true'
+              run: python3 .devcontainer/install-godot.py editor "$GODOT_VERSION" /tmp/godot-cache --target "$GODOT_BIN"
+
+            - name: Expose the Godot binary
+              run: |
+                  echo "$(dirname "$GODOT_BIN")" >> "$GITHUB_PATH"
+                  "$GODOT_BIN" --headless --version
+
+            - name: Cache web export templates
+              id: templates-cache
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: ~/.local/share/godot/export_templates
+                  key: godot-shutdown-remote-templates-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
+
+            - name: Install web export templates
+              if: steps.templates-cache.outputs.cache-hit != 'true'
+              run: python3 .devcontainer/install-godot.py templates "$GODOT_VERSION" /tmp/godot-templates-cache "$HOME/.local/share/godot/export_templates"
+
+            - name: Set up Python
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+              with:
+                  python-version: "3.12"
+
+            - name: Install Python Playwright with uv
+              run: python3 scripts/install-ci-venv.py .venv-shutdown requirements-docs-accessibility.txt
+
+            - name: Set up Playwright Chromium
+              uses: ./.github/actions/playwright-chromium
+              with:
+                  python-path: .venv-shutdown/bin/python
+
+            - name: Fetch the pinned server source
+              run: |
+                  git init server
+                  git -C server remote add origin https://github.com/Ambiguous-Interactive/signal-fish-server.git
+                  git -C server fetch --depth 1 origin "$SERVER_REVISION"
+                  git -C server checkout --detach FETCH_HEAD
+                  test "$(git -C server rev-parse HEAD)" = "$SERVER_REVISION"
+
+            - name: Cache cargo registry
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-shutdown-registry-${{ runner.os }}-${{ hashFiles('server/Cargo.lock') }}
+
+            - name: Install the pinned Rust toolchain
+              run: |
+                  rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+                  rustup default "$RUST_TOOLCHAIN"
+
+            # The active shutdown drill starts and stops this server itself.
+            - name: Build the server
+              env:
+                  # The server pins components in rust-toolchain.toml; the
+                  # env override keeps the minimal profile from growing
+                  # mid-build.
+                  RUSTUP_TOOLCHAIN: ${{ env.RUST_TOOLCHAIN }}
+              run: |
+                  (cd server && cargo build --locked --bin signal-fish-server) \
+                    2>&1 | tee output/server-build.log
+                  sha256sum server/target/debug/signal-fish-server \
+                    | tee output/server-sha256.txt
+
+            - name: Write the local server config
+              run: |
+                  python3 - <<'PY'
+                  import json
+                  from pathlib import Path
+
+                  config = json.loads(Path("server/config.example.json").read_text())
+                  config["session"]["default_topology"] = "host"
+                  config["session"]["enable_webrtc"] = True
+                  config["session"]["enable_direct"] = False
+                  config["session"]["enable_ice_pregather"] = True
+                  config["session"]["ice_servers"] = []
+                  config["protocol"]["enable_rkyv_game_data"] = True
+                  config["protocol"]["enable_protobuf_game_data"] = True
+                  config["rate_limit"]["max_room_creations"] = 1000
+                  config["rate_limit"]["max_join_attempts"] = 1000
+                  Path("server-config.json").write_text(
+                      json.dumps(config, indent=2) + "\n"
+                  )
+                  PY
+
+            # A credential-free Cloudflare quick tunnel fronts the server's
+            # fixed local port. Both seats connect through the Cloudflare edge
+            # over TLS, so every relay message, GoingAway advisory and the
+            # semantic close cross a real remote path.
+            - name: Install cloudflared
+              run: |
+                  curl -sSfL -o /tmp/cloudflared \
+                    "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"
+                  echo "$CLOUDFLARED_SHA256  /tmp/cloudflared" | sha256sum --check --
+                  chmod +x /tmp/cloudflared
+                  /tmp/cloudflared --version
+
+            - name: Start the remote-path tunnel
+              id: tunnel
+              run: |
+                  /tmp/cloudflared tunnel --no-autoupdate \
+                    --url "http://127.0.0.1:${SERVICE_PORT}" > tunnel.log 2>&1 &
+                  origin=""
+                  for _ in $(seq 1 45); do
+                      origin=$(grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" tunnel.log | grep -v "^https://api\.trycloudflare\.com$" | head -1 || true)
+                      [ -n "$origin" ] && break
+                      sleep 2
+                  done
+                  if [ -z "$origin" ]; then
+                      echo "trycloudflare tunnel did not come up:" >&2
+                      cat tunnel.log >&2
+                      exit 1
+                  fi
+                  echo "origin=$origin" >> "$GITHUB_OUTPUT"
+                  # The fresh tunnel hostname can lag DNS. Wait for any HTTP
+                  # answer from the edge; the server starts later, so a 502
+                  # here still proves the remote path resolves.
+                  code="000"
+                  for _ in $(seq 1 20); do
+                      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$origin/index.html" || true)
+                      if [ -n "$code" ] && [ "$code" != "000" ]; then
+                          break
+                      fi
+                      sleep 3
+                  done
+                  if [ "$code" = "000" ]; then
+                      echo "the Cloudflare edge never answered for $origin:" >&2
+                      cat tunnel.log >&2
+                      exit 1
+                  fi
+                  echo "tunnel $origin reachable; edge answered HTTP ${code:-000}"
+
+            - name: Run the Web shutdown controls over the remote path
+              id: drill
+              run: |
+                  # Application ACK credit bounds outstanding relay bytes the
+                  # way the #511 Web control does. The uncredited workload
+                  # overflows the engine's Web inbound payload budget under
+                  # edge bursts (godotengine/godot#125073, #488): a captured
+                  # uncredited tunnel run dropped two relay packets
+                  # ("Buffer payload full") while the semantic closes still
+                  # held, so the remote qualification uses the bounded
+                  # control and records that boundary separately.
+                  rc=0
+                  .venv-shutdown/bin/python scripts/check-active-shutdown.py \
+                    --server-binary server/target/debug/signal-fish-server \
+                    --server-config server-config.json \
+                    --server-revision "$SERVER_REVISION" \
+                    --godot "$GODOT_BIN" \
+                    --runtime web \
+                    --relay-credit-transport app-ack \
+                    --relay-credit-bytes 32768 \
+                    --service-port "$SERVICE_PORT" \
+                    --service-public-origin "${{ steps.tunnel.outputs.origin }}" \
+                    --output output/web-remote || rc=$?
+                  echo "exit=$rc" >> "$GITHUB_OUTPUT"
+
+            - name: Stop the tunnel
+              if: always()
+              run: pkill -f "cloudflared tunnel" || true
+
+            - name: Check qualification expectations
+              env:
+                  TUNNEL_ORIGIN: ${{ steps.tunnel.outputs.origin }}
+              run: |
+                  python3 - <<'PY'
+                  import json
+                  import os
+                  from pathlib import Path
+
+                  summary = json.loads(Path("output/web-remote/summary.json").read_text())
+                  provenance = json.loads(
+                      Path("output/web-remote/provenance.json").read_text()
+                  )
+                  problems = []
+
+                  if provenance.get("service_public_origin") != os.environ["TUNNEL_ORIGIN"]:
+                      problems.append(
+                          f"provenance origin {provenance.get('service_public_origin')!r}"
+                          f" != tunnel origin {os.environ['TUNNEL_ORIGIN']!r}"
+                      )
+                  if provenance.get("service_port") != int(os.environ["SERVICE_PORT"]):
+                      problems.append(
+                          f"provenance port {provenance.get('service_port')!r} !="
+                          f" {os.environ['SERVICE_PORT']!r}"
+                      )
+                  if provenance.get("server_revision_declared") != os.environ["SERVER_REVISION"]:
+                      problems.append(
+                          "provenance server revision"
+                          f" {provenance.get('server_revision_declared')!r} !="
+                          f" {os.environ['SERVER_REVISION']!r}"
+                      )
+                  server_sha = Path("output/server-sha256.txt").read_text().split()[0]
+                  if provenance.get("server_binary_sha256") != server_sha:
+                      problems.append("the drill did not run the built server")
+
+                  rows = []
+                  browsers = set()
+                  closing = []
+                  drill_exit = "${{ steps.drill.outputs.exit }}"
+                  for result in summary:
+                      name = f"{result['runtime']}-{result['mode']}"
+                      browsers.add(str(result.get("browser", "unknown")))
+                      if result.get("passed") is not True:
+                          detail = (
+                              result.get("error")
+                              or result.get("control_errors")
+                              or "no result record; read the case artifacts"
+                          )
+                          problems.append(f"remote case {name} failed: {detail}")
+                      rows.append(
+                          f"| {name} | {'pass' if result.get('passed') is True else 'FAIL'} |"
+                      )
+                      directory = (
+                          Path("output/web-remote") / f"{result['runtime']}-{result['mode']}"
+                      )
+                      assessment_path = directory / "assessment.json"
+                      if assessment_path.exists():
+                          assessment = json.loads(assessment_path.read_text())
+                          # One ACTIVE_SHUTDOWN_TERMINAL record per case: a
+                          # list of per-seat dicts.
+                          seats = [
+                              seat
+                              for terminal in (assessment.get("terminals") or [])
+                              for seat in (terminal if isinstance(terminal, list) else [terminal])
+                          ]
+                          codes = [
+                              close.get("code")
+                              for seat in seats
+                              for close in (seat.get("closes") or [])
+                          ]
+                          closing.append(
+                              f"{result['mode']}: close codes {codes}, traces"
+                              f" {[seat.get('trace') for seat in seats]}"
+                          )
+                  if drill_exit != "0":
+                      problems.append(f"drill exited {drill_exit!r} (every case must pass)")
+
+                  summary_lines = [
+                      "## Active gameplay shutdown over a remote path",
+                      "",
+                      f"- Server: {os.environ['SERVER_REVISION']} (source build)",
+                      f"- Remote path: {os.environ['TUNNEL_ORIGIN']}"
+                      " (Cloudflare quick tunnel, TLS)",
+                      f"- Browser: {', '.join(sorted(browsers))}",
+                      "",
+                      "| Case | Outcome |",
+                      "| --- | --- |",
+                      *rows,
+                      "",
+                  ]
+                  if closing:
+                      summary_lines.extend(["Semantic closes:", ""])
+                      summary_lines.extend(f"- {line}" for line in closing)
+                  verdict = (
+                      "Remote path: every expectation met."
+                      if not problems
+                      else "Remote path problems: " + "; ".join(problems)
+                  )
+                  summary_lines.extend(["", verdict, ""])
+                  with open(
+                      os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8"
+                  ) as step_summary:
+                      step_summary.write("\n".join(summary_lines))
+                  print(verdict)
+                  assert not problems, "; ".join(problems)
+                  PY
+
+            - name: Upload qualification evidence
+              if: always()
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: gameplay-shutdown-remote-${{ github.run_id }}
+                  path: |
+                      output/
+                      tunnel.log
+                      server-config.json
+                  if-no-files-found: error
