@@ -389,8 +389,9 @@ is commit `62135fc034cbdc5aee177136e526e3ead3cc563a`, the source revision
 other qualifications build from. The official release binary itself is new
 qualification ground: earlier native #482 cohorts ran opt-in repaired
 extension builds. The gate compares each case's staged extension library
-hash against the release hash, so a substituted library cannot enter the
-projects; the exact gameplay checks are what qualify the peer behavior.
+hash against the release hash after the drill, so a substituted library is
+detected and fails the qualification; the exact gameplay checks are what
+qualify the peer behavior.
 The native seats use the original uncredited workload (four 4096-byte
 relay bodies per frame), the control the local native qualifications used;
 a relay loss over the edge is new #488-family data, not a close-metadata
