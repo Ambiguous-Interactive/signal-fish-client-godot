@@ -583,10 +583,12 @@ jobs:
                           # cold-import abort hazard; attribute a signal
                           # abort so a red run is readable as an engine
                           # import failure, not remote-path data.
+                          # checked() writes the process record beside the
+                          # log with its last suffix replaced.
                           process_path = (
                               Path("output/native-remote")
                               / f"{result['runtime']}-{result['mode']}"
-                              / "import.log.process.json"
+                              / "import.process.json"
                           )
                           if process_path.exists():
                               process = json.loads(process_path.read_text())
