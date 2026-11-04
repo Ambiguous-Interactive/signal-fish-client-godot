@@ -24,13 +24,11 @@ point here unless a tool requires a tiny wrapper format.
 
 ## Working Rules
 
-- Read this file, then open only the specific skill or reference files that
-  match the current task.
+- Read this file, then open only the matching skill or reference files.
 - Keep `main` a pure mirror of `origin/main`: work on a branch, PR it, and
   after each squash merge resync with
   `git fetch origin && git reset --hard origin/main`. Squash merges rewrite
-  history, so commits parked on local `main` are what force recurring
-  merge-conflict resolutions.
+  history, so parked local commits force recurring merge conflicts.
 - One milestone per session (about one hour): finish its PR, checks,
   progress log, merge, and main sync, then end. The green-PR merge contract
   (merge a fully green PR, then resync): `.llm/skills/architectural-planning.md`.
@@ -43,11 +41,13 @@ point here unless a tool requires a tiny wrapper format.
   file-system decisions.
 - Do not invent protocol details. Anchor concrete wire, auth, and reconnect
   semantics to upstream paths and commits before runtime implementation.
+- Never file issues on, or comment on, GitHub repos outside the
+  Ambiguous-Interactive org. Track upstream needs and findings in this
+  repo's issues or `.llm` notes instead, with links.
 - After editing any `.ps1`, `.psm1`, `.psd1`, or `.llm/**` file, run
   `pwsh -NoProfile -File scripts/agent-check.ps1` and resolve every reported
-  issue before continuing or proposing a commit. This is the same validation
-  the pre-commit hook and CI run; running it locally turns hook failures
-  into fast in-loop feedback.
+  issue before continuing or proposing a commit. Same validation as the
+  pre-commit hook and CI; local runs give fast in-loop feedback.
 - Keep user-facing copy (commits, PRs, changelogs, docs, code comments)
   extremely short, simple, and to the point (STE style). Omit internal-only
   detail; changelogs list user-relevant changes only.
