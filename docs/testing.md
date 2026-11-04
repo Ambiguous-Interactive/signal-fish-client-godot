@@ -377,7 +377,27 @@ message, the GoingAway advisory and the semantic close cross a real remote
 path. The driver takes `--service-port` plus `--service-public-origin` for
 this; the origin cannot be combined with the delayed local proxy. The lane is
 dispatch-only until several green runs pin the remote signature; a weekly
-watch can follow the other lanes. The native remote leg stays open in #482.
+watch can follow the other lanes.
+
+### Remote-path qualification (native)
+
+The lane's native job runs the three native controls through the same kind
+of quick tunnel. The official editor imports each case project and runs it
+headless; the pinned official WebRTC GDExtension backs its peer
+connections. The lane pins release `1.2.2-stable` by zip SHA-256; that tag
+is commit `62135fc034cbdc5aee177136e526e3ead3cc563a`, the source revision
+other qualifications build from. The official release binary itself is new
+qualification ground: earlier native #482 cohorts ran opt-in repaired
+extension builds. The gate compares each case's staged extension library
+hash against the release hash after the drill, so a substituted library is
+detected and fails the qualification; the exact gameplay checks are what
+qualify the peer behavior.
+The native seats use the original uncredited workload (four 4096-byte
+relay bodies per frame), the control the local native qualifications used;
+a relay loss over the edge is new #488-family data, not a close-metadata
+failure. The per-case cold-editor import remains the known-open #447 abort
+hazard; the gate attributes an import abort so a red run is readable as
+engine-import data before it is read as remote-path data.
 
 ### Native WebSocket receive boundary
 
