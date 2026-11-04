@@ -27,10 +27,10 @@ and a local build of Godot 4.7.2 from source commit
 flags (`production=yes debug_symbols=yes separate_debug_symbols=yes
 debug_paths_relative=yes`).
 
-| Control | Result |
-| --- | --- |
+| Control                          | Result          |
+| -------------------------------- | --------------- |
 | Copy with `addons/webrtc_native` | abort, exit 134 |
-| Same copy without `addons` | clean, exit 0 |
+| Same copy without `addons`       | clean, exit 0   |
 
 The failing run crashed after the editor layout and import scan completed.
 GDB stopped the SIGSEGV before the engine crash handler and produced this
