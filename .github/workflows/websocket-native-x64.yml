@@ -426,9 +426,10 @@ jobs:
                   # run 41684522769, 4.7: runs 41591258643 and 41684196081),
                   # and source-built baselines reproduced the same six
                   # signatures (4.5: run 41754468768, 4.6: run 41754472264;
-                  # 4.4: run 41754464659). Other platforms (Wine) are
-                  # uncollected: treat a family's first run on a new platform
-                  # as collection data before pinning a platform map. A None
+                  # 4.4: run 41754464659). Other platforms (Wine) and
+                  # not-yet-mapped families stay collection data until
+                  # collected runs pin their maps; a Wine pin wants a
+                  # second collected sample. A None
                   # signature pins a shape the baseline must keep passing:
                   # official 4.3 predates the #491/#492/#496 regressions, so
                   # only its two #498 close shapes fail (#545; 4.3 runs
@@ -500,13 +501,16 @@ jobs:
                           )
                           continue
                       # No blanket engine-error rejection here: a baseline
-                      # defect may log the filed symptom itself (the #492
-                      # reuse case's PacketBuffer ERR_BUG), and the collected
-                      # 4.7.2 baseline map (runs 41700353810/41706656767)
-                      # includes that log line. Cleanliness is still enforced
-                      # where a pass is required: the driver marks a case
-                      # passed only without engine errors, so every repaired
-                      # case and baseline control below must be clean.
+                      # defect sample may contain engine errors (for
+                      # example the #492 reuse case's PacketBuffer ERR_BUG
+                      # line; the collected 4.7.2 source-built baseline
+                      # data, runs 41700353810/41706656767, includes it).
+                      # The exit, paced-write, record and pinned-signature
+                      # checks below still bound the sample, and
+                      # cleanliness stays enforced where a pass is
+                      # required: the driver marks a case passed only
+                      # without engine errors, so every repaired case and
+                      # baseline control below must be clean.
                       if record.get("remote_origin") != origin:
                           problems.append(
                               f"remote case {name} did not record the tunnel origin"

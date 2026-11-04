@@ -1189,10 +1189,12 @@ requirement applies to a Linux engine family with a pinned remote-path map;
 Windows and unpinned families record defect outcomes as collection data. The
 gate checks binary identity by SHA-256, tunnel provenance, paced writes,
 clean exits and per-case verdicts, keyed by engine family for the baseline
-map. A pinned baseline defect may log the filed symptom itself (the #492
-reuse case's `PacketBuffer` ERR_BUG line); only pass-required cases, every
-repaired case and each baseline control, must stay free of engine errors,
-which the driver's verdict already enforces.
+map. A baseline defect sample may contain engine errors (for example
+the #492 reuse case's `PacketBuffer` ERR_BUG line); the exit,
+paced-write, record and pinned-signature checks still bound it.
+Pass-required cases, every repaired case and each baseline control,
+must stay free of engine errors, which the driver's verdict already
+enforces.
 
 Three dispatched runs (2026-11-03, 1d2e7604, official 4.7.2-stable
 importer, one quick tunnel per variant) settle the first remote-network
@@ -1290,13 +1292,15 @@ passes all ten pinned cases over its Cloudflare tunnel uncapped under
 Wine, with the burst control at 65/65 packets (largest gap 257 ms).
 The unpatched Wine baseline
 (`d5b78c0fe2940d0874fb0b488303a88157192fbb5858b93ceafa91e33eb1d75b`)
-records nine clean pinned-shape failures but hits the documented
+records clean outcomes on nine of its ten case samples (four controls
+pass, five defect shapes fail with the pinned signatures) but hits the
+documented
 mid-write abort on `close-3-mixed-server`, so the gate rejects the
 sample and a re-dispatch
 ([41763583302](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41763583302))
 collects the clean one: the repaired engine
 (`42cb1f63f4ae64b47e9487a1246e5d57bf51a1081a7bbfa411ad605f25d8c7c1`)
-passes all ten cases again (burst 65/65, largest gap 249 ms) and the
+passes all ten cases again (burst 65/65, largest gap 248 ms) and the
 baseline (`fe39d6ccf1f79285f45afc0883953c3bf631c50165348f0c10fc6b430c4ab9f4`)
 passes its four controls and fails all six pinned signatures, its
 `close-3-mixed-server` sample now clean. Wine baselines stay
