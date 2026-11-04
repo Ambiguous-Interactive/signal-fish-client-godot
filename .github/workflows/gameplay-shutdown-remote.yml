@@ -1,8 +1,17 @@
 name: Gameplay Shutdown Remote
 
 on:
-    # Dispatch-only until collected runs show the remote Web shutdown
-    # signature is stable (#538 pattern); scheduling can follow.
+    # Mondays 13:00 UTC: weekly #482 remote-path watch, staggered after the
+    # x86-64 (08:00), master-pin (09:00), Web (10:00), macOS (11:00) and
+    # remote-path (12:00) watches. Scheduled runs use the same pinned
+    # revisions as the dispatch defaults. GitHub disables schedule triggers
+    # after ~60 days without repo activity; dispatch runs keep it
+    # recoverable. A red run triages in order: the gate's known #447
+    # import-abort attribution (the native loop already re-dispatches
+    # import-unstable attempts), then tunnel provisioning (one transient
+    # edge failure is on record), then the case records as protocol data.
+    schedule:
+        - cron: "0 13 * * 1"
     workflow_dispatch:
         inputs:
             server_revision:
