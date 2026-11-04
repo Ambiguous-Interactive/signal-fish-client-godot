@@ -469,6 +469,8 @@ jobs:
                   #   continuation failure in the first CI run was the
                   #   fixture race #541 removed).
                   # - 4.4: 41684522769.
+                  # - 4.5: 41937461420 and 4.6: 41937707094. Both match the
+                  #   4.4/4.7 outcome set on official editors.
                   # - 4.3: 41684912691 and 41685515285. Official 4.3
                   #   predates the assembly/reuse/stall regressions
                   #   (#491/#496/#492), so those cases pass there; the #498
@@ -496,6 +498,8 @@ jobs:
                   }
                   documented = {
                       "4.7": failing_signatures,
+                      "4.6": failing_signatures,
+                      "4.5": failing_signatures,
                       "4.4": failing_signatures,
                       "4.3": {
                           **failing_signatures,

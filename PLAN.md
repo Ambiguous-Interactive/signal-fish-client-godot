@@ -17,10 +17,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 
 ## Next work
 
-- [ ] Watch the weekly remote-path lanes; requalify on any pinned
-      signature drift and add maps for new engines (#538). Fold the
-      remote-path results into the #485/#491/#492/#496/#498
-      remote-network qualification.
+- [ ] Watch the weekly remote-path lanes and requalify on any pinned-signature
+      drift (#538). The native remote map now covers official 4.3-4.7; add
+      maps only for new engine families. Fold the remote-path results into
+      the #485/#491/#492/#496/#498 remote-network qualification.
 - [ ] Follow Godot #124976 for valid Unicode WebSocket close reasons and
       qualify bare-metal x86-64 and remote networks (#498; see
       `docs/testing.md`). The weekly `WebSocket Native macOS` watch covers

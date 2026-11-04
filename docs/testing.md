@@ -1201,12 +1201,14 @@ when the message completes. The #498 maximum-length mixed close reason
 also hit a paced-write failure when the engine aborted mid-write in one
 tunnel run; the gate rejects paced-write errors as unclean samples.
 
-Five dispatched CI runs (2026-11-03, ubuntu-24.04 x86-64, official editor
-binaries, five Cloudflare quick tunnels) pinned the native map. On 4.7.2
-(runs 41591258643 and 41684196081) and 4.4.1 (run 41684522769) all four
+Seven dispatched CI runs (2026-11-03 and 2026-11-04, ubuntu-24.04 x86-64,
+official editor binaries, one Cloudflare quick tunnel each) pinned the
+native map. On 4.7.2 (runs 41591258643 and 41684196081), 4.6.3 (run
+41937707094), 4.5.2 (run 41937461420) and 4.4.1 (run 41684522769) all four
 controls passed over every tunnel, with the 65-packet burst control
 delivering every packet (largest delivery gap 283 ms against the 3000 ms
 batch deadline), and all six defects failed with their filed signatures.
+The gate now carries a map for every stable family from 4.3 to 4.7.
 The retired-continuation failure in the first 4.7.2 run was the fixture
 race #541 removed; post-fix runs fail the #492 reuse defect with
 `fresh exact bytes` alone and retire exactly 2 queued bytes. On 4.3 (runs
