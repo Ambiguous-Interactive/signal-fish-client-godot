@@ -46,8 +46,8 @@ point here unless a tool requires a tiny wrapper format.
   user authorization, LLM disclosure): `.llm/skills/github-boundary.md`.
 - After editing any `.ps1`, `.psm1`, `.psd1`, or `.llm/**` file, run
   `pwsh -NoProfile -File scripts/agent-check.ps1` and resolve every reported
-  issue before continuing or proposing a commit. Same validation as the
-  pre-commit hook and CI; local runs give fast in-loop feedback.
+  issue before continuing or proposing a commit. This runs a fast subset of
+  pre-commit and CI validation; local runs give fast in-loop feedback.
 - Keep user-facing copy (commits, PRs, changelogs, docs, code comments)
   extremely short, simple, and to the point (STE style). Omit internal-only
   detail; changelogs list user-relevant changes only.
