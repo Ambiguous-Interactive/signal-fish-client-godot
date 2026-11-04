@@ -178,7 +178,7 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
     server_directory = directory / "server"
     server_directory.mkdir()
     config = json.loads(args.server_config.read_text())
-    port = free_port()
+    port = args.service_port or free_port()
     config["port"] = port
     config["server"]["drain_grace_secs"] = 3
     (server_directory / "config.json").write_text(json.dumps(config, indent=2) + "\n")
@@ -234,11 +234,15 @@ def assess(args: argparse.Namespace, runtime: str, mode: str, directory: Path) -
         "max_queued_packets": args.max_queued_packets,
     }
     report: dict[str, object] = {"runtime": runtime, "mode": mode, "passed": False}
+    if args.service_public_origin:
+        report["service_public_origin"] = args.service_public_origin
     output = ""
     try:
         if proxy is not None:
             proxy.start()
             options["service_url"] = f"ws://127.0.0.1:{proxy.port}/v3/ws"
+        if args.service_public_origin:
+            options["service_url"] = f"wss://{args.service_public_origin}/v3/ws"
         project = prepare(args, directory, runtime, options)
         report["identities"] = interop.setup_identities([args.godot, "--path", str(project)])
         service.start()
@@ -392,6 +396,23 @@ def main() -> int:
     )
     parser.add_argument("--native-extension", type=Path)
     parser.add_argument("--chromium", type=Path)
+    parser.add_argument(
+        "--service-port",
+        type=int,
+        default=0,
+        help=(
+            "Pin the server port instead of a per-case free port;"
+            " a public origin needs this fixed local tunnel target"
+        ),
+    )
+    parser.add_argument(
+        "--service-public-origin",
+        default="",
+        help=(
+            "Public origin advertised to the seats; they then connect over"
+            " wss:// while the server keeps binding locally (remote-path leg)"
+        ),
+    )
     parser.add_argument("--runtime", choices=("all", "native", "web"), default="all")
     parser.add_argument("--mode", choices=("all", "graceful", "reset", "stall"), default="all")
     parser.add_argument("--output", type=Path, required=True)
@@ -431,6 +452,28 @@ def main() -> int:
         parser.error("--native-extension is required for native or all runtime")
     if args.import_godot is not None and args.runtime != "native":
         parser.error("--import-godot is only supported for native template builds")
+    if args.service_port < 0 or args.service_port > 65535:
+        parser.error("--service-port must be between 1 and 65535 (0 picks free ports)")
+    if args.service_public_origin:
+        if not args.service_port:
+            parser.error(
+                "--service-public-origin requires --service-port: the remote"
+                " path needs a fixed local tunnel target"
+            )
+        if args.network_delay_ms or args.network_chunk_bytes != 65536:
+            parser.error(
+                "--service-public-origin fronts the server directly and cannot"
+                " be combined with the delayed local proxy"
+            )
+        origin = args.service_public_origin
+        for scheme in ("https://", "wss://", "http://", "ws://"):
+            if origin.startswith(scheme):
+                origin = origin[len(scheme) :]
+                break
+        origin = origin.rstrip("/")
+        if not origin or "/" in origin:
+            parser.error("--service-public-origin must be a bare host[:port] or its origin URL")
+        args.service_public_origin = origin
     if args.runner_arg and not args.runner:
         parser.error("--runner-arg requires --runner")
     if args.runner is not None:
@@ -459,6 +502,8 @@ def main() -> int:
         "server_revision_declared": args.server_revision,
         "server_binary_sha256": digest(args.server_binary),
         "server_config_input_sha256": digest(args.server_config),
+        "service_port": args.service_port,
+        "service_public_origin": args.service_public_origin or None,
         "relay_packets_per_frame": args.relay_packets_per_frame,
         "relay_packets_per_second": args.relay_packets_per_second,
         "relay_credit_bytes": args.relay_credit_bytes,

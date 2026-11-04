@@ -368,6 +368,17 @@ the semantic closes on those local paths. A delayed browser control below
 exposes a separate send/close race. Engine coverage and remote qualification
 remain open in #482, #403 and #355.
 
+### Remote-path qualification (Web)
+
+The `Gameplay Shutdown Remote` lane runs the three Web controls through a
+credential-free Cloudflare quick tunnel. The server keeps binding locally;
+both seats connect over `wss://` through the Cloudflare edge, so every relay
+message, the GoingAway advisory and the semantic close cross a real remote
+path. The driver takes `--service-port` plus `--service-public-origin` for
+this; the origin cannot be combined with the delayed local proxy. The lane is
+dispatch-only until several green runs pin the remote signature; a weekly
+watch can follow the other lanes. The native remote leg stays open in #482.
+
 ### Native WebSocket receive boundary
 
 Issue #485 is reproducible with `WebSocketPeer` and the local smoke server.
