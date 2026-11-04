@@ -14,6 +14,8 @@ Generated Markdown inventory by `scripts/generate-llm-index.ps1`; do not edit by
   Triggers: asset library, asset store, publish, release, store submission, moderation, godot-asset-lib-action, asset-template, plugin.cfg, icon
 - [Dev Container Tooling](skills/devcontainer-tooling.md) (`Tooling`) - Use when changing the VS Code dev container, installed tools, MCP servers, shell profiles, or post-create/post-start setup.
   Triggers: devcontainer, container, codex, opencode, nanocoder, claude, agent cli, cli, post-create, postcreate, post-start, poststart, powershell profile, pwsh profile, PSReadLine, toolchain, mcp, mcp servers, godot-mcp, playwright-mcp, github-mcp-server, context7, deepwiki, env file, secrets
+- [GitHub Boundary](skills/github-boundary.md) (`Core`) - Use before any GitHub write - org-only repos, outside-people pause, explicit user authorization, and required LLM disclosure.
+  Triggers: github, issue, comment, pr, review, release, upstream, disclosure, outside, authorization, boundary
 - [Godot GDScript Bindings](skills/godot-gdscript.md) (`Godot`) - Use when writing or reviewing Godot addon code, GDScript APIs, scenes, resources, or exports.
   Triggers: godot, gdscript, addon, plugin, scene, resource, export, api
 - [Godot Transport Adapters](skills/godot-transport.md) (`Godot`) - Use when implementing or reviewing Godot transport adapters for WebSocket, WebRTC, polling, reconnect, or multiplayer APIs.
