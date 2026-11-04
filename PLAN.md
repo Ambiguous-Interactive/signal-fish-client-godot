@@ -20,17 +20,10 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Watch the weekly remote-path lanes; requalify on any pinned
       signature drift and add maps for new engines (#538). Fold the
       remote-path results into the #485/#491/#492/#496/#498
-      remote-network qualification.
-- [ ] Qualify the remaining repaired-engine remote legs with the
-      `WebSocket Native x64` `remote_path` lane (#485; see
-      `docs/testing.md`): the 4.4.1/4.5.2/4.6.3
-      stable repairs, and a Windows dispatch. Preserve the retained
-      byte/count rejections, exact delivered prefix, full-buffer
-      empty-fragment progress (#496), fragmented-message assembly
-      (Godot #124973/#124975) and matched local/application ACK credit
-      controls, including 64-bit frame lengths and Unicode continuation
-      boundaries. Compare forced syscall read boundaries with remote-path
-      results.
+      remote-network qualification. The 4.4.1/4.5.2/4.6.3 stable-repair
+      remote legs and the Windows dispatch of the `WebSocket Native x64`
+      lane landed; collect a second Wine baseline sample before pinning
+      a Windows family map.
 - [ ] Follow Godot #124976 for valid Unicode WebSocket close reasons and
       qualify bare-metal x86-64 and remote networks (#498; see
       `docs/testing.md`). The weekly `WebSocket Native macOS` watch covers
