@@ -34,16 +34,16 @@ point here unless a tool requires a tiny wrapper format.
   (merge a fully green PR, then resync): `.llm/skills/architectural-planning.md`.
 - Keep `.llm` Markdown files and known pointer files at or below 300 lines.
 - Add `description`, `triggers`, and `category` frontmatter to every `.llm` Markdown file except generated `.llm/index.md`.
-- Update generated indexes after adding, removing, or renaming `.llm`
-  Markdown files.
+- Update generated indexes after adding, removing, or renaming `.llm` Markdown files.
 - Prefer Godot-native APIs and GDScript examples over C# assumptions.
-- Keep web export constraints visible in networking, crypto, threading, and
-  file-system decisions.
+- Keep web export constraints visible in networking, crypto, threading, file-system decisions.
 - Do not invent protocol details. Anchor concrete wire, auth, and reconnect
   semantics to upstream paths and commits before runtime implementation.
 - Never file issues on, or comment on, GitHub repos outside the
   Ambiguous-Interactive org. Track upstream needs and findings in this
   repo's issues or `.llm` notes instead, with links.
+- GitHub write boundaries (org-only repos, outside-people pause, explicit
+  user authorization, LLM disclosure): `.llm/skills/github-boundary.md`.
 - After editing any `.ps1`, `.psm1`, `.psd1`, or `.llm/**` file, run
   `pwsh -NoProfile -File scripts/agent-check.ps1` and resolve every reported
   issue before continuing or proposing a commit. Same validation as the
@@ -51,11 +51,10 @@ point here unless a tool requires a tiny wrapper format.
 - Keep user-facing copy (commits, PRs, changelogs, docs, code comments)
   extremely short, simple, and to the point (STE style). Omit internal-only
   detail; changelogs list user-relevant changes only.
-- Docs (tracked Markdown + `llms.txt`) stay ASCII-only and skip contrast
-  constructions; `scripts/check-docs-style.py` enforces this (CI + `changed`).
-- Keep code comments minimal: comments carry only non-inferable rationale
-  (upstream/issue citations, behavioral "why"). No comments on internal
-  helpers; keep `##` docs on public API; naming and structure carry the rest.
+- Docs (tracked Markdown + `llms.txt`) stay ASCII-only; `scripts/check-docs-style.py` enforces this (CI + `changed`).
+- Keep code comments minimal: only non-inferable rationale (upstream/issue
+  citations, behavioral "why"); no internal-helper comments; `##` docs on
+  public API.
 - Keep `PLAN.md` going-forward only: in-progress items, next work, open
   questions, and the definition of done. When an item ships, record it in
   the local `progress/session-NNN-*.md` note (git-ignored) and delete it
@@ -97,8 +96,8 @@ Before coding the first runtime client:
 - Use `.llm/skills/security-privacy.md` before handling tokens, secrets, logs,
   persistence, or browser-visible identifiers.
 
-MVP rule: Godot 4 only. The Godot 3.6 compatibility decision (2026-10-06)
-deferred support; data and revisit triggers: `.llm/research/godot-targets.md`.
+MVP rule: Godot 4 only (2026-10-06 deferral; data and revisit triggers:
+`.llm/research/godot-targets.md`).
 
 Definition of done for the first usable client:
 
@@ -121,13 +120,13 @@ Definition of done for the first usable client:
 - `scripts/generate-llm-index.ps1`: thin wrapper around shared generator
   functions that regenerate `.llm/index.md` and this file's generated section.
 - `scripts/lint-llm.ps1`: thin wrapper around shared linter functions that
-  enforce line limits, metadata, pointers, and index freshness.
+  enforce line limits, metadata, pointers, index freshness.
 - `scripts/run-llm-hooks.ps1`: single entry point invoked by the installed
   pre-commit shim (from `git rev-parse --git-path hooks`) and by CI. Modes are
   `PreCommit` (staged-aware fast path with AutoFix), `AgentFast`
   (non-mutating fast path), `Full` (structural plus behavioral self-tests), and
-  `CI` (`Full` plus loud generated diff verification). Fast modes use
-  in-process parse/static guards; `Full` and `CI` run `preflight.ps1`. Use
+  `CI` (`Full` plus loud generated diff verification); fast modes use
+  in-process parse/static guards, `Full` and `CI` run `preflight.ps1`. Use
   `-Profile` when changing hook performance.
 - `scripts/install-git-hooks.ps1`: materializes a portable POSIX-sh shim
   (`#!/usr/bin/env sh`) into the hook directory resolved by `git rev-parse
@@ -136,15 +135,14 @@ Definition of done for the first usable client:
   would break on Windows because `pwsh -File` refuses extensionless files. The
   shim evaluates the staged-path predicate in sh: commits touching none of
   the harness predicates skip the pwsh boot (~0.1 s vs ~2.7 s; issue #112),
-  with parity pinned by a `test-llm-harness.ps1` self-test. The
-  committed `.githooks/pre-commit*` files are reference templates only; the live
-  hook lives in the resolved git hooks directory after running the installer.
+  with parity pinned by a `test-llm-harness.ps1` self-test. Committed
+  `.githooks/pre-commit*` files are reference templates; the live hook lives
+  in the resolved hooks directory after install.
   The installer clears legacy `core.hooksPath` values that normalize to
   `.githooks`, including trailing slash or backslash variants, and warns before
   leaving foreign hook paths in place unless `-Force` is used.
-- `scripts/agent-check.ps1`: fast post-edit validator for agents and humans.
-  It invokes `run-llm-hooks.ps1 -Mode AgentFast -SkipStagedCheck -NoAutoFix`
-  in the same PowerShell process.
+- `scripts/agent-check.ps1`: fast post-edit validator; invokes
+  `run-llm-hooks.ps1 -Mode AgentFast -SkipStagedCheck -NoAutoFix` in-process.
 - `scripts/check-gdscript-private-helpers.py`: gdtoolkit-parser static guard
   for unreachable private GDScript helper chains and cold-cache-fragile
   self-`class_name` references; CI runs it with `--self-test` before fixtures.
@@ -186,9 +184,9 @@ Definition of done for the first usable client:
   `PostToolUse` parse-checks every `.ps1`/`.psm1`/`.psd1` write/edit and
   runs a fast per-file `.llm` structural validator after `.llm/**` edits;
   `Stop` runs preflight; `SessionStart` emits a one-shot reminder.
-  Tracked scripts with shebangs are forced to LF by `.gitattributes` and
-  by a byte-level self-test so direct Unix execution cannot resolve an
-  interpreter name ending in `\r`.
+  Tracked scripts with shebangs are forced to LF by `.gitattributes` and a
+  byte-level self-test so Unix execution cannot resolve an interpreter name
+  ending in `\r`.
   `.claude/settings.local.json` is intentionally gitignored for local Claude
   Code permission overrides.
 
@@ -265,6 +263,8 @@ Do not edit the section below manually. Regenerate it with
   Triggers: asset library, asset store, publish, release, store submission, moderation, godot-asset-lib-action, asset-template, plugin.cfg, icon
 - [Dev Container Tooling](skills/devcontainer-tooling.md) (`Tooling`) - Use when changing the VS Code dev container, installed tools, MCP servers, shell profiles, or post-create/post-start setup.
   Triggers: devcontainer, container, codex, opencode, nanocoder, claude, agent cli, cli, post-create, postcreate, post-start, poststart, powershell profile, pwsh profile, PSReadLine, toolchain, mcp, mcp servers, godot-mcp, playwright-mcp, github-mcp-server, context7, deepwiki, env file, secrets
+- [GitHub Boundary](skills/github-boundary.md) (`Core`) - Use before any GitHub write - org-only repos, outside-people pause, explicit user authorization, and required LLM disclosure.
+  Triggers: github, issue, comment, pr, review, release, upstream, disclosure, outside, authorization, boundary
 - [Godot GDScript Bindings](skills/godot-gdscript.md) (`Godot`) - Use when writing or reviewing Godot addon code, GDScript APIs, scenes, resources, or exports.
   Triggers: godot, gdscript, addon, plugin, scene, resource, export, api
 - [Godot Transport Adapters](skills/godot-transport.md) (`Godot`) - Use when implementing or reviewing Godot transport adapters for WebSocket, WebRTC, polling, reconnect, or multiplayer APIs.
