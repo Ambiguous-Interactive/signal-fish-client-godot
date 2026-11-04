@@ -809,9 +809,23 @@ uses the nearest official release label because no release matches a master
 SHA. A `build_target`
 input selects `linuxbsd` (default) or `windows`; Windows builds
 cross-compile with mingw-w64, run under Wine, and use the uncapped suite. A
-matched unpatched baseline job runs the same seven commands. The four defect
-failures must keep one observed result record each. The three comparison
-controls must pass. Both jobs upload build logs, patch reports, engine
+`repair_kind` input selects the repair applicator. `stable` (default) patches
+the pinned 4.4.1, 4.5.2, 4.6.3, 4.7.2 and master revisions with
+`repair-websocket-stable.py`. `4.3-backport` patches 4.3-stable
+`77dcf97d82cbfe4e4615475fa52ca03da645dbd8` with `backport-websocket-43.py`;
+dispatch that run with the matching revision and the `4.3-stable` label. The
+4.3 remote leg pairs `4.3-backport` with `run_baseline` and `remote_path` on.
+The
+4.3 build drops the `disable_path_overrides` SCons flag, which 4.3's
+SConstruct predates. The lane rejects a stable source whose label names a
+different major.minor family; a master pin keeps the nearest official
+release label. A
+matched unpatched baseline job runs the same seven commands, each keeping
+exactly one observed result record. The defect commands fail on official
+4.4.1, 4.5.2, 4.6.3 and 4.7.2 baselines. Official 4.3 passes the
+control-bytes and reuse repros unpatched, so its baseline fails the
+full-buffer and close-unicode commands. The three comparison controls must
+pass. Both jobs upload build logs, patch reports, engine
 hashes and per-command evidence. A `remote_path` input adds the
 remote-network leg: each variant fronts a Cloudflare quick tunnel and drives
 the ten pinned receive cases over `wss://` (see
@@ -866,6 +880,18 @@ commands pass (#491, #492, #496, #498). Repaired binary SHA-256:
 unpatched baseline reproduces the four defect commands and passes the three
 controls. Unpatched binary SHA-256:
 `566db2f263e02fcd266a99535142f156133c151d761f9b905cbbae612eeda466`.
+
+The pinned 4.3-stable backport `77dcf97d82cbfe4e4615475fa52ca03da645dbd8`
+passes the same checks on x86-64 ([run
+41730274982](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41730274982)).
+All 184 paced receive cases pass with capped reads and all seven standalone
+commands pass (#491, #492, #496, #498). Repaired binary SHA-256:
+`8aebdbce741747e08ba00ec694764e38d9d311ee94e5193d582c447197d831f3`. The
+unpatched 4.3 baseline passes the three controls, the control-bytes and
+reuse commands, and fails the full-buffer and close-unicode commands,
+matching the collected Linux ARM64 baseline results. Unpatched binary
+SHA-256:
+`68c4bce9bca9c3947428069ab1d30ad5c2c2ebd6ee5c7acbef9749f293fc70df`.
 
 The `windows` build target qualifies the repair on Windows x86-64 under
 Wine. The workflow installs current Wine from the WineHQ repository;
@@ -1152,11 +1178,14 @@ a Cloudflare quick tunnel. The repaired engine runs the ten pinned receive
 cases over the tunnel at the lane's forced 3-byte read cap on the default
 Linux dispatch; the baseline runs uncapped, the conditions the
 official-engine pinned signatures were collected under. The repaired engine
-must pass every case. The baseline must keep failing its six pinned defect
+must pass every case. The baseline must keep failing its pinned defect
 signatures on the same path, so a pass cannot come from the path masking a
-trigger. That requirement applies to a Linux engine family with a pinned
-remote-path map; Windows and unpinned families record defect outcomes as
-collection data. The gate checks binary identity
+trigger. The pinned 4.3 map expects only its two #498 close shapes to fail;
+official 4.3 predates the other four defect shapes, and the gate requires
+those four to keep passing on the 4.3 baseline. That
+requirement applies to a Linux engine family with a pinned remote-path map;
+Windows and unpinned families record defect outcomes as collection data. The
+gate checks binary identity
 by SHA-256, tunnel provenance, paced writes, clean exits and per-case
 verdicts, keyed by engine family for the baseline map.
 
@@ -1188,6 +1217,20 @@ the full local paced suite, 184 of 184 cases at the 3-byte cap. Dispatch
 runs collect extra remote samples on demand; the cap applies on the default
 Linux dispatch, so a Windows or zero-cap remote dispatch qualifies the
 repaired leg uncapped.
+
+The pinned 4.3-stable backport
+`77dcf97d82cbfe4e4615475fa52ca03da645dbd8` completes the same remote leg
+([run
+41734479410](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41734479410)).
+The repaired engine (`8aebdbce741747e08ba00ec694764e38d9d311ee94e5193d582c447197d831f3`)
+passes all ten pinned cases over its Cloudflare tunnel with every read
+capped at 3 bytes; the 65-packet burst control delivers every packet with
+a largest delivery gap of 248 ms against the 3000 ms batch deadline. The
+unpatched 4.3 baseline (`68c4bce9bca9c3947428069ab1d30ad5c2c2ebd6ee5c7acbef9749f293fc70df`)
+on its own tunnel passes its four controls and the four pre-regression
+shapes, and fails exactly the two #498 close shapes with the pinned close
+signature, matching the official-engine 4.3 watch maps. That closes the
+4.3-backport leg of the #485 remote-network qualification.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
