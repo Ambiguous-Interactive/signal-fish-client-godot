@@ -497,13 +497,14 @@ jobs:
                               f" {case.get('returncode')!r} (crash invalidates the sample)"
                           )
                           continue
-                      if case.get("engine_errors"):
-                          problems.append(
-                              f"remote case {name} contains engine errors:"
-                              f" {case.get('engine_errors')!r} (an engine error"
-                              " invalidates the sample)"
-                          )
-                          continue
+                      # No blanket engine-error rejection here: a baseline
+                      # defect may log the filed symptom itself (the #492
+                      # reuse case's PacketBuffer ERR_BUG), and the collected
+                      # 4.7.2 baseline map (runs 41700353810/41706656767)
+                      # includes that log line. Cleanliness is still enforced
+                      # where a pass is required: the driver marks a case
+                      # passed only without engine errors, so every repaired
+                      # case and baseline control below must be clean.
                       if record.get("remote_origin") != origin:
                           problems.append(
                               f"remote case {name} did not record the tunnel origin"
