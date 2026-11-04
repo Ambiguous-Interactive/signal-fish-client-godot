@@ -33,8 +33,7 @@ point here unless a tool requires a tiny wrapper format.
   progress log, merge, and main sync, then end. The green-PR merge contract
   (merge a fully green PR, then resync): `.llm/skills/architectural-planning.md`.
 - Keep `.llm` Markdown files and known pointer files at or below 300 lines.
-- Add `description`, `triggers`, and `category` frontmatter to every `.llm` Markdown file except generated `.llm/index.md`.
-- Update generated indexes after adding, removing, or renaming `.llm` Markdown files.
+- Add `description`, `triggers`, and `category` frontmatter to every `.llm` Markdown file except generated `.llm/index.md`; update generated indexes after any add, remove, or rename.
 - Prefer Godot-native APIs and GDScript examples over C# assumptions.
 - Keep web export constraints visible in networking, crypto, threading, file-system decisions.
 - Do not invent protocol details. Anchor concrete wire, auth, and reconnect
@@ -289,6 +288,7 @@ Do not edit the section below manually. Regenerate it with
 - [GDScript Client Shape](code-samples/gdscript-client-shape.md) - Map of the shipped GDScript-facing Signal Fish client API (mirrors the runtime addon).
 - [LLM Context Organization](README.md) - Organization guide for repo-specific AI context files.
 - [GDScript Typing Boundaries](research/gdscript-typing-boundaries.md) - Why Signal Fish wire and event boundaries retain dynamic GDScript values on Godot 4.3.
+- [Godot Editor Import Shutdown Crash](research/godot-editor-shutdown-crash.md) - Symbolized Godot 4.7.2 editor import shutdown crash from a null DocTools pointer in the deferred extension-doc callback (issue #447).
 - [Godot Networking And Web Notes](research/godot-networking-web.md) - Source-backed notes for Godot WebSocket, WebRTC, browser export, and cross-platform networking decisions.
 - [Godot Target Notes](research/godot-targets.md) - Godot 4.x target notes for the GDScript Signal Fish addon, with the recorded Godot 3.6 compatibility deferral.
 - [GStack Adaptation Notes](research/gstack-adaptations.md) - Practical gstack practices adapted for this repo's lightweight LLM harness.
