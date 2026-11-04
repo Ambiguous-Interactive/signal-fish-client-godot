@@ -87,11 +87,13 @@ shrinking commit).
 
 ## Local Branch Triage
 
-- Run `git fetch --prune` before checking for carry-forward work.
-- A local branch whose upstream is `gone` is stale, not in-progress. Confirm
-  its work is merged or superseded, archive it when uncertain
-  (`git bundle create <file> --branches`), then delete it locally. Never
-  merge stale commits into a session branch.
+- At the start of every session, run `git fetch --prune` and review local
+  branches whose upstream is `gone`.
+- A `gone` upstream is a triage trigger, not proof that a branch is stale.
+  Confirm its work is merged, superseded, or abandoned before deleting it.
+  Archive uncertain work first (`git bundle create <file> --branches`) and
+  keep the branch when its status is unclear. Never merge stale commits into
+  a session branch.
 
 ## Decision Gates
 
