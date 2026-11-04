@@ -1254,7 +1254,7 @@ its own tunnel passes its four controls, fails all six pinned defect
 signatures, and delivers its burst 65/65 (largest gap 262 ms). A first
 dispatch ([41751187507](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41751187507))
 had already qualified the repaired leg; its baseline sample stayed
-unclean (the mid-write abort run 41700353810 recorded) while the lane
+unclean (the documented mid-write abort) while the lane
 still rejected engine-error defect samples outright, so the gate now
 tolerates a defect's filed symptom and the re-dispatch collected the
 clean sample above.
