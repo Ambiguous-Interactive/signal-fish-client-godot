@@ -1303,9 +1303,18 @@ collects the clean one: the repaired engine
 passes all ten cases again (burst 65/65, largest gap 248 ms) and the
 baseline (`fe39d6ccf1f79285f45afc0883953c3bf631c50165348f0c10fc6b430c4ab9f4`)
 passes its four controls and fails all six pinned signatures, its
-`close-3-mixed-server` sample now clean. Wine baselines stay
-collection data until a second collected run pins a Windows family
-map; every pinned Linux family gate now keys on its recorded map.
+`close-3-mixed-server` sample now clean. The second collected Wine
+sample ([41774059122](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41774059122))
+confirms the map: the repaired engine
+(`4905f4af3ea7c005a82aed0ddeddb9af8c91a72aa2a508a9ae138ee60832bd19`)
+passes all ten cases again (bursts 65/65, largest gap 283 ms) and the
+baseline (`38c0e2580628c19117bf47dc9ca9cec7b56883012bff3882bb626b583e5beb45`)
+passes its four controls and fails the same six pinned signatures with
+clean close samples (bursts 65/65, largest gap 909 ms against the
+3000 ms batch deadline, below the recorded 1.14 s benign Wine stall).
+The gate pins the Wine `4.4` family map from these two runs; the other
+families stay collection data on Wine until their own collected runs
+pin maps.
 
 The test-only observer wraps the engine's assigned browser `onmessage` handler.
 Each rejection records the physical connection, callback ordinal, byte length,
