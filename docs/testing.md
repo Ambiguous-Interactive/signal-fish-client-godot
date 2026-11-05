@@ -347,8 +347,10 @@ Each case retains `godot.log`, `server/server.log`, `assessment.json`, import
 logs and effective config. Web cases also retain export logs. Root provenance
 records source and executable hashes. Failed attempts remain in their original
 output directories. These are local acceptance controls; the
-[remote lane](#remote-path-qualification-web) covers official 4.4.1 and
-4.7.2. Other engine versions and extension builds need separate
+[remote Web lane](#remote-path-qualification-web) covers official Web 4.3,
+4.4.1 and 4.7.2, and the
+[remote native lane](#remote-path-qualification-native) covers official
+4.4.1 and 4.7.2. Other engine versions and extension builds need separate
 qualification.
 
 On Linux ARM64, one six-case cohort passes with official Godot 4.7.2, Chromium
@@ -1238,8 +1240,8 @@ Linux x86-64, plus 4.4.1 on Windows x86-64 under Wine. Linux legs run at
 the 3-byte read cap except the cited uncapped 4.7.2 run; Wine legs run
 uncapped. The same ladder qualifies the #485 receive repair. The separate
 `Gameplay Shutdown Remote` lane covers active-shutdown close semantics over
-a remote path on official 4.7.2 and 4.4.1; the repaired-engine shutdown
-cases remain local. Each issue stays open for upstream adoption (resubmission
+a remote path on official Web 4.3, 4.4.1 and 4.7.2 and native 4.4.1 and
+4.7.2; the repaired-engine shutdown cases remain local. Each issue stays open for upstream adoption (resubmission
 tracked in #536). The macOS map's pinned gaps cover the #492 and #498
 families only. Targets with no collected map (bare-metal x86-64 and new
 engine families) also stay open.
@@ -1492,8 +1494,9 @@ passes all gameplay checks. The credit result qualifies that local control;
 it leaves the original uncredited workload failed. A new six-case Godot 4.4.1
 native/Web cohort passes graceful shutdown, reset, nonresponding close, cached
 metadata, retirement and fresh mesh recovery at the original four-per-frame
-rate. Three new Godot 4.3 Web shutdown controls also pass. Remote-network
-and Godot 4.3 native receive qualification remain open.
+rate. Three new Godot 4.3 Web shutdown controls also pass, and the 4.3 Web
+shutdown leg is now qualified over the remote path. Godot 4.3 native
+receive qualification remains open.
 
 ### Delayed relay shutdown
 

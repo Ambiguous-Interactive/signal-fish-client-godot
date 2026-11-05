@@ -344,19 +344,31 @@ jobs:
                   server_sha = Path("output/server-sha256.txt").read_text().split()[0]
                   if provenance.get("server_binary_sha256") != server_sha:
                       problems.append("the drill did not run the built server")
+                  if provenance.get("relay_credit_transport") != "app-ack":
+                      problems.append(
+                          "remote Web workload is not the app-ack credit control:"
+                          f" {provenance.get('relay_credit_transport')!r}"
+                      )
+                  if provenance.get("relay_credit_bytes") != 32768:
+                      problems.append(
+                          "remote Web credit is not 32768 bytes:"
+                          f" {provenance.get('relay_credit_bytes')!r}"
+                      )
 
                   rows = []
                   browsers = set()
                   closing = []
                   drill_exit = os.environ["DRILL_EXIT"]
-                  expected_engine = os.environ["GODOT_VERSION"]
+                  expected_engine = f"{os.environ['GODOT_VERSION']} (official)"
                   expected_cases = {
                       ("web", mode) for mode in ("graceful", "reset", "stall")
                   }
-                  cases = {(result.get("runtime"), result.get("mode")) for result in summary}
-                  if cases != expected_cases:
+                  case_rows = [(result.get("runtime"), result.get("mode")) for result in summary]
+                  cases = set(case_rows)
+                  if len(case_rows) != len(expected_cases) or cases != expected_cases:
                       problems.append(
                           f"remote cases {sorted(cases)!r} != {sorted(expected_cases)!r}"
+                          f" (rows {len(case_rows)})"
                       )
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
@@ -369,9 +381,7 @@ jobs:
                           problems.append(
                               f"remote case {name} passed without an engine record"
                           )
-                      if engines and any(
-                          engine.split(" ")[0] != expected_engine for engine in engines
-                      ):
+                      if engines and any(engine != expected_engine for engine in engines):
                           problems.append(
                               f"remote case {name} ran engines {engines!r},"
                               f" expected {expected_engine!r} (wrong binary)"
@@ -739,7 +749,7 @@ jobs:
                   lib_sha = Path("output/webrtc-native-lib-sha256.txt").read_text().split()[0]
                   problems = []
                   notes = []
-                  expected_engine = os.environ["GODOT_VERSION"]
+                  expected_engine = f"{os.environ['GODOT_VERSION']} (official)"
                   if attempts > 1:
                       # Earlier attempts exist only because their imports
                       # aborted (#447 hazard); the drill loop retains them
@@ -778,10 +788,12 @@ jobs:
                   expected_cases = {
                       ("native", mode) for mode in ("graceful", "reset", "stall")
                   }
-                  cases = {(result.get("runtime"), result.get("mode")) for result in summary}
-                  if cases != expected_cases:
+                  case_rows = [(result.get("runtime"), result.get("mode")) for result in summary]
+                  cases = set(case_rows)
+                  if len(case_rows) != len(expected_cases) or cases != expected_cases:
                       problems.append(
                           f"remote cases {sorted(cases)!r} != {sorted(expected_cases)!r}"
+                          f" (rows {len(case_rows)})"
                       )
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
@@ -793,9 +805,7 @@ jobs:
                           problems.append(
                               f"remote case {name} passed without an engine record"
                           )
-                      if engines and any(
-                          engine.split(" ")[0] != expected_engine for engine in engines
-                      ):
+                      if engines and any(engine != expected_engine for engine in engines):
                           problems.append(
                               f"remote case {name} ran engines {engines!r},"
                               f" expected {expected_engine!r} (wrong binary)"

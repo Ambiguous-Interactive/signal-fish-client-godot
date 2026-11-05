@@ -18,8 +18,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 ## Next work
 
 - [ ] Qualify the semantic shutdown close on Godot 4.3 native over the remote
-      path once the #485 uncredited-rate receive repair is adopted (#482).
-      Web is qualified (`docs/testing.md`).
+      path once the #485 uncredited-rate receive repair is adopted (#482;
+      `docs/testing.md`, "Remote-path qualification (native)").
 - [ ] Watch the weekly remote-path lanes and requalify on any pinned-signature
       drift (#538). Add maps for new engine families (current coverage:
       `docs/testing.md`, "Remote path qualification").
