@@ -19,8 +19,13 @@ on:
                 required: true
                 type: string
                 default: 9bd5a9386df940b6fed4e5ff536cc36f5748e347
-            engine_version:
-                description: Official Godot release(s) to drive; space or comma separated. Empty runs the weekly pair.
+            web_engine_version:
+                description: Official Godot release(s) for the Web job; space or comma separated. Empty runs 4.7.2, 4.4.1 and 4.3.
+                required: false
+                type: string
+                default: ""
+            native_engine_version:
+                description: Official Godot release(s) for the native job; space or comma separated. Empty runs 4.7.2 and 4.4.1.
                 required: false
                 type: string
                 default: ""
@@ -58,34 +63,52 @@ jobs:
         name: Plan engine targets
         runs-on: ubuntu-24.04
         outputs:
-            engines: ${{ steps.engines.outputs.json }}
+            web_engines: ${{ steps.engines.outputs.web }}
+            native_engines: ${{ steps.engines.outputs.native }}
         steps:
             - name: Choose engine targets
               id: engines
               env:
-                  REQUESTED: ${{ inputs.engine_version }}
+                  WEB_REQUESTED: ${{ inputs.web_engine_version }}
+                  NATIVE_REQUESTED: ${{ inputs.native_engine_version }}
               run: |
-                  engines=$(python3 - "$REQUESTED" <<'PY'
+                  python3 - "$WEB_REQUESTED" "$NATIVE_REQUESTED" <<'PY' >> "$GITHUB_OUTPUT"
                   import json
+                  import os
                   import re
                   import sys
 
-                  requested = sys.argv[1].replace(",", " ").split()
-                  targets = list(
-                      dict.fromkeys(requested or ["4.7.2-stable", "4.4.1-stable"])
-                  )
-                  invalid = [
-                      target
-                      for target in targets
-                      if not re.fullmatch(r"[0-9]+\.[0-9]+(\.[0-9]+)?-[a-z0-9.]+", target)
-                  ]
-                  if invalid:
-                      raise SystemExit(f"invalid engine release name(s): {invalid}")
-                  print(json.dumps(targets))
+                  defaults = {
+                      "web": ["4.7.2-stable", "4.4.1-stable", "4.3-stable"],
+                      "native": ["4.7.2-stable", "4.4.1-stable"],
+                  }
+
+                  def targets(value, default):
+                      requested = value.replace(",", " ").split()
+                      chosen = list(dict.fromkeys(requested or default))
+                      invalid = [
+                          target
+                          for target in chosen
+                          if not re.fullmatch(
+                              r"[0-9]+\.[0-9]+(\.[0-9]+)?-[a-z0-9.]+", target
+                          )
+                      ]
+                      if invalid:
+                          raise SystemExit(f"invalid engine release name(s): {invalid}")
+                      return chosen
+
+                  web = targets(sys.argv[1], defaults["web"])
+                  native = targets(sys.argv[2], defaults["native"])
+                  print(f"web={json.dumps(web)}")
+                  print(f"native={json.dumps(native)}")
+                  summary = os.environ.get("GITHUB_STEP_SUMMARY")
+                  if summary:
+                      with open(summary, "a", encoding="utf-8") as step_summary:
+                          step_summary.write(
+                              f"Web engines: {', '.join(web)}\n"
+                              f"Native engines: {', '.join(native)}\n"
+                          )
                   PY
-                  )
-                  echo "json=$engines" >> "$GITHUB_OUTPUT"
-                  echo "Engines: $engines" >> "$GITHUB_STEP_SUMMARY"
 
     shutdown-remote:
         name: Web shutdown controls (Godot ${{ matrix.engine }})
@@ -93,7 +116,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                engine: ${{ fromJSON(needs.plan.outputs.engines) }}
+                engine: ${{ fromJSON(needs.plan.outputs.web_engines) }}
         runs-on: ubuntu-24.04
         timeout-minutes: 60
         env:
@@ -436,7 +459,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                engine: ${{ fromJSON(needs.plan.outputs.engines) }}
+                engine: ${{ fromJSON(needs.plan.outputs.native_engines) }}
         runs-on: ubuntu-24.04
         timeout-minutes: 60
         env:
