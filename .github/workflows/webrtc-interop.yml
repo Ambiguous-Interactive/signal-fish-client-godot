@@ -1,0 +1,259 @@
+name: WebRTC Interop
+
+on:
+    schedule:
+        # Mondays 15:00 UTC: weekly native + Web mesh control (#403, #355),
+        # staggered after the other watches. The safe receiver must keep exact
+        # bytes and modes while the raw engine peer keeps reproducing the
+        # filed metadata mismatch. Note: GitHub disables schedule triggers
+        # after ~60 days without repo activity; dispatch runs keep it
+        # recoverable.
+        - cron: "0 15 * * 1"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+# Evidence runs are cheap but sequential; queue instead of cancelling.
+concurrency:
+    group: ${{ github.workflow }}
+    cancel-in-progress: false
+
+env:
+    GODOT_VERSION: 4.7.2-stable
+    GODOT_BIN: /tmp/godot-cache/godot
+    WEBRTC_NATIVE_TAG: "1.2.2-stable"
+    WEBRTC_NATIVE_ZIP_SHA256: 98e9446921740d995bd9ca1be48798dc3c2ceed51e044a25ce18b3cff11f56e5
+    WEBRTC_NATIVE_LIB: libwebrtc_native.linux.template_debug.x86_64.so
+
+jobs:
+    interop:
+        name: Native and Web mesh controls
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Prepare evidence directory
+              run: mkdir -p output
+
+            - name: Install Godot runtime dependencies
+              run: sudo python3 .devcontainer/install-godot.py runtime-deps
+
+            - name: Cache Godot editor
+              id: godot-cache
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: /tmp/godot-cache
+                  key: godot-interop-editor-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
+
+            - name: Install Godot editor
+              if: steps.godot-cache.outputs.cache-hit != 'true'
+              run: python3 .devcontainer/install-godot.py editor "$GODOT_VERSION" /tmp/godot-cache --target "$GODOT_BIN"
+
+            - name: Expose the Godot binary
+              run: |
+                  echo "$(dirname "$GODOT_BIN")" >> "$GITHUB_PATH"
+                  "$GODOT_BIN" --headless --version
+
+            - name: Cache web export templates
+              id: templates-cache
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+              with:
+                  path: ~/.local/share/godot/export_templates
+                  key: godot-interop-templates-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
+
+            - name: Install web export templates
+              if: steps.templates-cache.outputs.cache-hit != 'true'
+              run: python3 .devcontainer/install-godot.py templates "$GODOT_VERSION" /tmp/godot-templates-cache "$HOME/.local/share/godot/export_templates"
+
+            - name: Install the pinned native WebRTC extension
+              run: |
+                  curl -sSfL -o /tmp/webrtc-native.zip \
+                    "https://github.com/godotengine/webrtc-native/releases/download/${WEBRTC_NATIVE_TAG}/godot-extension-webrtc_native.zip"
+                  echo "$WEBRTC_NATIVE_ZIP_SHA256  /tmp/webrtc-native.zip" | sha256sum --check --
+                  unzip -q /tmp/webrtc-native.zip -d /tmp/webrtc-native-ext
+                  sha256sum "/tmp/webrtc-native-ext/addons/webrtc_native/lib/$WEBRTC_NATIVE_LIB" \
+                    | tee output/webrtc-native-lib-sha256.txt
+
+            - name: Set up Python
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+              with:
+                  python-version: "3.12"
+
+            - name: Install Python Playwright with uv
+              run: python3 scripts/install-ci-venv.py .venv-interop requirements-docs-accessibility.txt
+
+            - name: Set up Playwright Chromium
+              uses: ./.github/actions/playwright-chromium
+              with:
+                  python-path: .venv-interop/bin/python
+
+            # The per-case editor import is the #447 abort hazard: a sporadic
+            # SIGABRT while loading the editor layout. Retry only attempts
+            # whose failed prepare step proves that abort (no trial summary
+            # and a negative import exit); every attempt stays under output/.
+            # Any other failure is real data.
+            - name: Run the safe metadata and mixed controls
+              run: |
+                  # Fail closed: a retry needs no trial summary and a negative
+                  # editor import exit. A completed import is not an abort.
+                  cat > /tmp/import-aborted.py <<'PY'
+                  import json
+                  import sys
+                  from pathlib import Path
+
+                  directory = Path(sys.argv[1])
+                  if (directory / "summary.json").exists():
+                      raise SystemExit(1)
+                  aborted = False
+                  for project in ("native", "web"):
+                      record = directory / project / "import.process.json"
+                      if not record.exists():
+                          continue
+                      process = json.loads(record.read_text())
+                      code = process.get("returncode")
+                      if process.get("status") != "exited" or not isinstance(code, int):
+                          raise SystemExit(1)
+                      if code < 0:
+                          aborted = True
+                      elif code != 0:
+                          raise SystemExit(1)
+                  raise SystemExit(0 if aborted else 1)
+                  PY
+                  run_safe() {
+                    local name="$1"
+                    shift
+                    local attempt=1
+                    while [ "$attempt" -le 3 ]; do
+                      local directory="output/safe-$name-$attempt"
+                      local rc=0
+                      .venv-interop/bin/python scripts/check-webrtc-interop.py \
+                        --native-extension /tmp/webrtc-native-ext/addons/webrtc_native \
+                        --godot "$GODOT_BIN" \
+                        --safe-receive "$@" \
+                        --output "$directory" || rc=$?
+                      if [ "$rc" -eq 0 ]; then
+                        echo "safe $name passed on attempt $attempt" >> "$GITHUB_STEP_SUMMARY"
+                        return 0
+                      fi
+                      if python3 /tmp/import-aborted.py "$directory"; then
+                        echo "retrying safe $name after an import abort (attempt $attempt)" >> "$GITHUB_STEP_SUMMARY"
+                        attempt=$((attempt + 1))
+                        continue
+                      fi
+                      echo "safe $name failed; every attempt is retained" >> "$GITHUB_STEP_SUMMARY"
+                      return "$rc"
+                    done
+                    echo "safe $name kept aborting on import after 3 attempts" >> "$GITHUB_STEP_SUMMARY"
+                    return 1
+                  }
+                  run_safe metadata --metadata-probe
+                  run_safe mixed --mixed-traffic
+
+            - name: Run the raw metadata defect control
+              id: defect
+              run: |
+                  attempt=1
+                  while [ "$attempt" -le 3 ]; do
+                    directory="output/defect-$attempt"
+                    rc=0
+                    .venv-interop/bin/python scripts/check-webrtc-interop.py \
+                      --native-extension /tmp/webrtc-native-ext/addons/webrtc_native \
+                      --godot "$GODOT_BIN" \
+                      --metadata-probe \
+                      --output "$directory" || rc=$?
+                    if python3 /tmp/import-aborted.py "$directory"; then
+                      echo "retrying the defect control after an import abort (attempt $attempt)" >> "$GITHUB_STEP_SUMMARY"
+                      attempt=$((attempt + 1))
+                      continue
+                    fi
+                    if [ "$rc" -eq 0 ]; then
+                      # A pass means the engine changed; the gate must go red
+                      # so #403 is requalified instead of losing its pin.
+                      echo "the raw metadata defect control passed; requalify #403" >> "$GITHUB_STEP_SUMMARY"
+                      exit 1
+                    fi
+                    echo "dir=$directory" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  done
+                  echo "the defect control kept aborting on import after 3 attempts" >> "$GITHUB_STEP_SUMMARY"
+                  exit 1
+
+            - name: Check qualification expectations
+              env:
+                  DEFECT_DIR: ${{ steps.defect.outputs.dir }}
+              run: |
+                  python3 - <<'PY'
+                  import json
+                  import os
+                  from pathlib import Path
+
+                  problems = []
+                  expected = {
+                      0: "native.log",
+                      1: "browser.log",
+                  }
+                  summary_path = Path(os.environ["DEFECT_DIR"]) / "summary.json"
+                  try:
+                      summary = json.loads(summary_path.read_text())
+                  except (OSError, ValueError):
+                      summary = []
+                  if not isinstance(summary, list):
+                      summary = []
+                  if len(summary) != 1 or summary[0].get("passed") is not False:
+                      problems.append("the raw metadata probe did not record one failed trial")
+                  logs = Path(
+                      summary[0].get("logs")
+                      if summary and isinstance(summary[0], dict)
+                      else os.environ["DEFECT_DIR"]
+                  )
+                  for seat, name in expected.items():
+                      log = logs / name
+                      try:
+                          text = log.read_text()
+                      except OSError:
+                          problems.append(f"{name} is missing")
+                          continue
+                      if "queued packet transfer mode differs from payload" not in text:
+                          problems.append(f"{name} does not record the filed metadata mismatch")
+                      for line in (
+                          f"interop metadata probe: seat={seat} packet=0 mode=0 bytes=1200"
+                          " matches_reliable=true matches_unreliable=false",
+                          f"interop metadata probe: seat={seat} packet=1 mode=0 bytes=32"
+                          " matches_reliable=false matches_unreliable=true",
+                      ):
+                          if line not in text:
+                              problems.append(f"{name} is missing its pinned probe line")
+                  for name in ("native", "browser"):
+                      log = logs / f"{name}.log"
+                      if log.exists() and "SCRIPT ERROR" in log.read_text():
+                          problems.append(f"{name} logged a script error")
+                  verdict = (
+                      "Mesh controls: every expectation met."
+                      if not problems
+                      else "Mesh controls failed: " + "; ".join(problems)
+                  )
+                  with open(
+                      os.environ.get("GITHUB_STEP_SUMMARY", os.devnull),
+                      "a",
+                      encoding="utf-8",
+                  ) as step_summary:
+                      step_summary.write("\n" + verdict + "\n")
+                  print(verdict)
+                  assert not problems, "; ".join(problems)
+                  PY
+
+            - name: Upload qualification evidence
+              if: always()
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: webrtc-interop-${{ github.run_id }}
+                  path: output/
+                  if-no-files-found: error
