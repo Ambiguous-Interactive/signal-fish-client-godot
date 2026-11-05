@@ -47,6 +47,19 @@ class GodotInstallerTests(unittest.TestCase):
             )
             self.assertEqual((target / "web_release.zip").read_bytes(), b"web-release")
             self.assertEqual((target / "web_release.zip").stat().st_mode & 0o777, 0o644)
+            with (
+                patch.object(installer, "TEMPLATES_MIN_BYTES", 1),
+                patch.object(installer.shutil, "which", return_value="/fake/godot"),
+                patch.object(
+                    installer.subprocess,
+                    "run",
+                    return_value=installer.subprocess.CompletedProcess(
+                        [], 0, "4.4.stable.official.test\n", ""
+                    ),
+                ),
+            ):
+                installer.install_templates("4.3-stable", cache, root / "mismatched-editor")
+            self.assertTrue((root / "mismatched-editor" / "4.3.stable" / "web_debug.zip").is_file())
             beta_archive = cache / "Godot_v4.8-beta2_export_templates.tpz"
             with zipfile.ZipFile(beta_archive, "w") as archive:
                 archive.writestr("templates/version.txt", b"4.8.beta2\n")
