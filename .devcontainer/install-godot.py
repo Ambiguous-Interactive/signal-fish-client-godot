@@ -18,7 +18,10 @@ import zipfile
 import zlib
 from pathlib import Path
 
-RELEASES = "https://github.com/godotengine/godot/releases/download"
+STABLE_RELEASES = "https://github.com/godotengine/godot/releases/download"
+# Dev, beta and release-candidate builds ship on godot-builds, not the
+# main repository's release page.
+PRE_RELEASES = "https://github.com/godotengine/godot-builds/releases/download"
 EDITOR_MIN_BYTES = 1_000_000
 TEMPLATES_MIN_BYTES = 100_000_000
 # Headless Godot loads only fontconfig, freetype, and udev; the X11/GL/audio
@@ -44,7 +47,8 @@ def download_archive(version: str, name: str, cache_dir: Path, minimum_bytes: in
         print(f"==> Using cached {target}")
         return target
 
-    url = f"{RELEASES}/{version}/{name}"
+    base = STABLE_RELEASES if version.endswith("-stable") else PRE_RELEASES
+    url = f"{base}/{version}/{name}"
     print(f"==> Downloading {url}")
     target.unlink(missing_ok=True)
     for attempt in range(6):
@@ -219,7 +223,7 @@ def install_templates(version: str, cache_dir: Path, templates_root: Path) -> No
     version_dir = (
         editor_version.split(".official", maxsplit=1)[0]
         if editor_version
-        else version.replace("-stable", ".stable")
+        else version.replace("-", ".", 1)
     )
     target_dir = templates_root / version_dir
     print(f"==> Extracting web templates into {target_dir}")

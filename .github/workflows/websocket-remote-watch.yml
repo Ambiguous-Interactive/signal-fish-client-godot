@@ -475,6 +475,9 @@ jobs:
                   #   predates the assembly/reuse/stall regressions
                   #   (#491/#496/#492), so those cases pass there; the #498
                   #   close shapes fail on every collected engine.
+                  # - 4.8: the beta2 pre-release reproduces the 4.4-4.7
+                  #   outcome set on Linux ARM64; the remote dispatch
+                  #   confirms the x86-64 path sample.
                   # The frame split and retirement byte counts inside a
                   # defect vary with network pacing, so the gate pins the
                   # per-case class - the way the Web lane pins its loss
@@ -497,6 +500,7 @@ jobs:
                       "boundary-close-3-max-mixed-server-false": close_signature,
                   }
                   documented = {
+                      "4.8": failing_signatures,
                       "4.7": failing_signatures,
                       "4.6": failing_signatures,
                       "4.5": failing_signatures,
