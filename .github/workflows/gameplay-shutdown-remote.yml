@@ -67,10 +67,21 @@ jobs:
               run: |
                   engines=$(python3 - "$REQUESTED" <<'PY'
                   import json
+                  import re
                   import sys
 
                   requested = sys.argv[1].replace(",", " ").split()
-                  print(json.dumps(requested or ["4.7.2-stable", "4.4.1-stable"]))
+                  targets = list(
+                      dict.fromkeys(requested or ["4.7.2-stable", "4.4.1-stable"])
+                  )
+                  invalid = [
+                      target
+                      for target in targets
+                      if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", target)
+                  ]
+                  if invalid:
+                      raise SystemExit(f"invalid engine release name(s): {invalid}")
+                  print(json.dumps(targets))
                   PY
                   )
                   echo "json=$engines" >> "$GITHUB_OUTPUT"
@@ -315,7 +326,7 @@ jobs:
                   browsers = set()
                   closing = []
                   drill_exit = os.environ["DRILL_EXIT"]
-                  expected_engine = os.environ["GODOT_VERSION"].split("-")[0]
+                  expected_engine = os.environ["GODOT_VERSION"]
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
                       browsers.add(str(result.get("browser", "unknown")))
@@ -323,8 +334,12 @@ jobs:
                           str(record.get("engine", ""))
                           for record in (result.get("results") or [])
                       ]
+                      if result.get("passed") is True and not engines:
+                          problems.append(
+                              f"remote case {name} passed without an engine record"
+                          )
                       if engines and any(
-                          not engine.startswith(expected_engine) for engine in engines
+                          engine.split(" ")[0] != expected_engine for engine in engines
                       ):
                           problems.append(
                               f"remote case {name} ran engines {engines!r},"
@@ -693,7 +708,7 @@ jobs:
                   lib_sha = Path("output/webrtc-native-lib-sha256.txt").read_text().split()[0]
                   problems = []
                   notes = []
-                  expected_engine = os.environ["GODOT_VERSION"].split("-")[0]
+                  expected_engine = os.environ["GODOT_VERSION"]
                   if attempts > 1:
                       # Earlier attempts exist only because their imports
                       # aborted (#447 hazard); the drill loop retains them
@@ -735,8 +750,12 @@ jobs:
                           str(record.get("engine", ""))
                           for record in (result.get("results") or [])
                       ]
+                      if result.get("passed") is True and not engines:
+                          problems.append(
+                              f"remote case {name} passed without an engine record"
+                          )
                       if engines and any(
-                          not engine.startswith(expected_engine) for engine in engines
+                          engine.split(" ")[0] != expected_engine for engine in engines
                       ):
                           problems.append(
                               f"remote case {name} ran engines {engines!r},"

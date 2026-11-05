@@ -367,8 +367,8 @@ pass. The original failure remains under `/tmp/session452-native43-original`.
 A separate one-packet-per-frame control passes every check. The slower pass
 leaves the original reliable receive failure open. These results establish
 the semantic closes on those local paths. A delayed browser control below
-exposes a separate send/close race. Engine coverage and remote qualification
-remain open in #482, #403 and #355.
+exposes a separate send/close race. Other engine coverage and extension
+builds remain open in #482, #403 and #355.
 
 ### Remote-path qualification (Web)
 
@@ -397,11 +397,12 @@ is the transient record).
 
 Official 4.4.1 Web qualified in the two-engine dispatch
 [41982061849](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41982061849)
-(Chromium 156.0.8078.4). All three controls passed: graceful delivered
-`GoingAway` then exactly one `4000/server_shutdown` close per seat, reset
-closed `1006`, and stall ended with the heartbeat close timeout. Both
-gameplay generations completed in every mode, the run counted two service
-starts and one shutdown request, and provenance recorded the tunnel origin.
+(Chromium 156.0.8078.4, 32 KiB application-ACK window). All three controls
+passed: graceful delivered `GoingAway` then exactly one `4000/server_shutdown`
+close per seat, reset closed `1006`, and stall ended with the heartbeat close
+timeout. Both gameplay generations completed in every mode, each case counted
+two service starts and one shutdown request, and provenance recorded the
+tunnel origin.
 Official 4.7.2 repeated green in the same run.
 
 ### Remote-path qualification (native)
@@ -436,7 +437,7 @@ All three controls passed at the original uncredited rate: graceful
 delivered `GoingAway` then exactly one `4000/server_shutdown` close per
 seat, reset reported the raw abnormal close `-1`, and stall ended with the
 heartbeat close timeout. Both gameplay generations completed in every
-mode with two service starts and one shutdown request.
+mode, and each case counted two service starts and one shutdown request.
 
 ### Native WebSocket receive boundary
 
@@ -1225,8 +1226,8 @@ Linux x86-64, plus 4.4.1 on Windows x86-64 under Wine. Linux legs run at
 the 3-byte read cap except the cited uncapped 4.7.2 run; Wine legs run
 uncapped. The same ladder qualifies the #485 receive repair. The separate
 `Gameplay Shutdown Remote` lane covers active-shutdown close semantics over
-a remote path on the official engine; the repaired-engine shutdown cases
-remain local. Each issue stays open for upstream adoption (resubmission
+a remote path on official 4.7.2 and 4.4.1; the repaired-engine shutdown
+cases remain local. Each issue stays open for upstream adoption (resubmission
 tracked in #536). The macOS map's pinned gaps cover the #492 and #498
 families only. Targets with no collected map (bare-metal x86-64 and new
 engine families) also stay open.
