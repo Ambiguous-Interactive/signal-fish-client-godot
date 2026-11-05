@@ -31,6 +31,7 @@ EXTRA_RUNTIME_PACKAGES = ("ca-certificates", "curl", "unzip")
 
 
 def archive_valid(path: Path, minimum_bytes: int) -> bool:
+    """Return true when path is a readable zip above the minimum size."""
     if not path.is_file() or path.stat().st_size < minimum_bytes:
         return False
     try:
@@ -41,6 +42,7 @@ def archive_valid(path: Path, minimum_bytes: int) -> bool:
 
 
 def download_archive(version: str, name: str, cache_dir: Path, minimum_bytes: int) -> Path:
+    """Download a release archive from the repository that hosts it."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     target = cache_dir / name
     if archive_valid(target, minimum_bytes):
@@ -73,6 +75,7 @@ def download_archive(version: str, name: str, cache_dir: Path, minimum_bytes: in
 
 
 def binary_failure(result: subprocess.CompletedProcess[str]) -> str:
+    """Summarize why an editor binary probe failed."""
     tail = [
         *result.stdout.strip().splitlines()[-2:],
         *result.stderr.strip().splitlines()[-2:],
@@ -82,6 +85,7 @@ def binary_failure(result: subprocess.CompletedProcess[str]) -> str:
 
 
 def install_editor(version: str, cache_dir: Path, target: Path) -> None:
+    """Install the editor binary for this platform at target."""
     if sys.platform == "darwin":
         install_macos_editor(version, cache_dir, target)
         return
@@ -210,24 +214,14 @@ def install_macos_editor(version: str, cache_dir: Path, target: Path) -> None:
 
 
 def install_templates(version: str, cache_dir: Path, templates_root: Path) -> None:
+    """Install the archive's web templates under the version it declares."""
     name = f"Godot_v{version}_export_templates.tpz"
     path = download_archive(version, name, cache_dir, TEMPLATES_MIN_BYTES)
     print("==> Verifying archive")
-    editor = shutil.which("godot")
-    result = (
-        subprocess.run([editor, "--version"], capture_output=True, text=True, check=False)  # noqa: S603
-        if editor
-        else None
-    )
-    editor_version = result.stdout.strip() if result and result.returncode == 0 else ""
-    version_dir = (
-        editor_version.split(".official", maxsplit=1)[0]
-        if editor_version
-        else version.replace("-", ".", 1)
-    )
-    target_dir = templates_root / version_dir
-    print(f"==> Extracting web templates into {target_dir}")
     with zipfile.ZipFile(path) as archive:
+        version_dir = archive.read("templates/version.txt").decode("utf-8").strip()
+        target_dir = templates_root / version_dir
+        print(f"==> Extracting web templates into {target_dir}")
         web_members = [
             member
             for member in archive.infolist()
@@ -253,6 +247,7 @@ def install_templates(version: str, cache_dir: Path, templates_root: Path) -> No
 
 
 def install_runtime_deps() -> None:
+    """Install the libraries headless Godot loads on Linux."""
     if os.geteuid() != 0:
         raise RuntimeError("runtime-deps must run as root (sudo)")
     dpkg = shutil.which("dpkg")
@@ -286,6 +281,7 @@ def install_runtime_deps() -> None:
 
 
 def main() -> int:
+    """Dispatch the installer command line."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="kind", required=True)
     editor = commands.add_parser("editor")

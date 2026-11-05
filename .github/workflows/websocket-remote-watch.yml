@@ -476,8 +476,7 @@ jobs:
                   #   (#491/#496/#492), so those cases pass there; the #498
                   #   close shapes fail on every collected engine.
                   # - 4.8: beta2 reproduces the 4.4-4.7 outcome set on
-                  #   Linux ARM64 and the remote x86-64 path (run
-                  #   42108167042).
+                  #   the remote x86-64 path (run 42108167042).
                   # The frame split and retirement byte counts inside a
                   # defect vary with network pacing, so the gate pins the
                   # per-case class - the way the Web lane pins its loss
