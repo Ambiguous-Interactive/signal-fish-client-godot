@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from itertools import pairwise
 from pathlib import Path
 
@@ -174,6 +175,9 @@ def compare(
         )
         for name, path, old, new, expected in steps:
             if path is not None:
+                # Keep the edit out of the previous build's timestamp
+                # second: make compares mtimes, not content.
+                time.sleep(1.1)
                 content = path.read_text()
                 if content.count(old) != 1:
                     raise RuntimeError(f"Invalid fixture edit: {path}")
