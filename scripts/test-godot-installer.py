@@ -84,6 +84,15 @@ class GodotInstallerTests(unittest.TestCase):
             ):
                 installer.install_templates("4.3-stable", cache, root / "missing-web")
             self.assertFalse((root / "missing-web").exists())
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("templates/version.txt", b"../escape\n")
+                archive.writestr("templates/web_release.zip", b"web-release")
+            with (
+                patch.object(installer, "TEMPLATES_MIN_BYTES", 1),
+                self.assertRaisesRegex(ValueError, "Invalid template version"),
+            ):
+                installer.install_templates("4.3-stable", cache, root / "bad-version")
+            self.assertFalse((root / "escape").exists())
 
     def test_downloads_use_the_repository_that_hosts_the_release(self) -> None:
         """Fetch stable and pre-release tags from their hosting repository."""

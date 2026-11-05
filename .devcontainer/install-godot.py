@@ -220,6 +220,8 @@ def install_templates(version: str, cache_dir: Path, templates_root: Path) -> No
     print("==> Verifying archive")
     with zipfile.ZipFile(path) as archive:
         version_dir = archive.read("templates/version.txt").decode("utf-8").strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", version_dir):
+            raise ValueError(f"Invalid template version in {name}: {version_dir!r}")
         target_dir = templates_root / version_dir
         print(f"==> Extracting web templates into {target_dir}")
         web_members = [
