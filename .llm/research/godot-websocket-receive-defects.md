@@ -1,5 +1,5 @@
 ---
-description: Godot WebSocketPeer receive defects, root causes, pinned repairs, and reproductions kept in-repo (upstream reports withdrawn).
+description: Godot WebSocketPeer receive defects, root causes, pinned repairs, and reproductions kept in-repo (upstream reports closed).
 triggers: godot, websocket, receive, wslay, close reason, fragmentation, packet buffer, upstream defect
 category: Research
 ---
@@ -8,7 +8,7 @@ category: Research
 
 These are engine defects in Godot's native and Web WebSocket receive
 paths. Godot does not accept AI-authored issues or pull requests, so the
-upstream reports were withdrawn. This note is the durable record. Downstream
+upstream reports were closed. This note is the maintained record. Downstream
 issues live in this repository (#485, #491, #492, #496, #488, #498) and the
 pinned repairs live in `scripts/patches/`.
 
@@ -117,9 +117,7 @@ Engine revisions named below are the stable sources other sections cite:
 
 ## Upstream copy status
 
-- Four reports (control bytes, peer reuse, full buffer, split close
-  reasons) drew no comments or maintainer work and their bodies were
-  cleared at the reporter's request; this note is their only record.
-- The Web drop report and the master repair pull request stay readable
-  because maintainers commented on them (AI-authorship policy). Do not
-  submit more AI-authored content to Godot repos.
+- Godot closed the four receive reports and the master pull request under
+  its AI-authorship policy. Their text stays upstream for history; this
+  note is the maintained record.
+- Do not submit more AI-authored content to Godot repos.
