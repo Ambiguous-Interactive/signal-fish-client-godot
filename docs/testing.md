@@ -396,7 +396,7 @@ the failed tunnel step (run
 is the transient record).
 
 Official 4.4.1 Web qualified in the two-engine dispatch
-[41982061849](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41982061849)
+[41984709949](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41984709949)
 (Chromium 156.0.8078.4, 32 KiB application-ACK window). All three controls
 passed: graceful delivered `GoingAway` then exactly one `4000/server_shutdown`
 close per seat, reset closed `1006`, and stall ended with the heartbeat close
@@ -430,7 +430,7 @@ all land right after the editor loads its layout, which reads shared
 state under the caller's HOME.
 
 Official 4.4.1 native qualified in the same dispatch
-([41982061849](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41982061849))
+([41984709949](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41984709949))
 with the pinned release extension (library SHA-256
 `d99224f5411c5083f1d0932f2ed30b0b68f5f697be025671ff0083015f06a033`).
 All three controls passed at the original uncredited rate: graceful
