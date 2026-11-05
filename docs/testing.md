@@ -346,8 +346,10 @@ prefix. Shutdown may discard the remaining relay tail.
 Each case retains `godot.log`, `server/server.log`, `assessment.json`, import
 logs and effective config. Web cases also retain export logs. Root provenance
 records source and executable hashes. Failed attempts remain in their original
-output directories. These are local acceptance controls; remote networks,
-engine versions and extension builds need separate qualification.
+output directories. These are local acceptance controls; the
+[remote lane](#remote-path-qualification-web) covers official 4.4.1 and
+4.7.2. Other engine versions and extension builds need separate
+qualification.
 
 On Linux ARM64, one six-case cohort passes with official Godot 4.7.2, Chromium
 156.0.8078.4 and server `ee20b51e`. Native seats use the opt-in repaired
@@ -365,8 +367,8 @@ pass. The original failure remains under `/tmp/session452-native43-original`.
 A separate one-packet-per-frame control passes every check. The slower pass
 leaves the original reliable receive failure open. These results establish
 the semantic closes on those local paths. A delayed browser control below
-exposes a separate send/close race. Engine coverage and remote qualification
-remain open in #482, #403 and #355.
+exposes a separate send/close race. Other engine coverage and extension
+builds remain open in #482, #403 and #355.
 
 ### Remote-path qualification (Web)
 
@@ -380,8 +382,11 @@ consecutive green runs of both jobs - the post-merge main run
 [41905622779](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41905622779)
 plus three branch dispatches of the same lane (41898423659, 41900140061, 41904306119) - pinned the remote shutdown signature, so the lane carries
 a weekly scheduled run (Mondays 13:00 UTC, staggered after the
-`WebSocket Remote Path` watch) with the same pinned inputs. Dispatch runs
-keep on-demand qualification available; GitHub disables schedule triggers
+`WebSocket Remote Path` watch) with the same pinned inputs. The weekly run
+covers official Godot 4.7.2 and 4.4.1. A dispatch accepts one or more
+releases in `engine_version` (space or comma separated) to qualify another
+target or re-run one engine. Dispatch runs keep on-demand qualification
+available; GitHub disables schedule triggers
 after ~60 days without repo activity. A red run triages from the run page:
 a drill failure reads the run summary alone (the known #447 import-abort
 attribution first; the native loop already re-dispatches import-unstable
@@ -389,6 +394,16 @@ attempts and retains each), while a tunnel-provisioning failure points at
 the failed tunnel step (run
 [41897404439](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41897404439)
 is the transient record).
+
+Official 4.4.1 Web qualified in the two-engine dispatch
+[41984709949](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41984709949)
+(Chromium 156.0.8078.4, 32 KiB application-ACK window). All three controls
+passed: graceful delivered `GoingAway` then exactly one `4000/server_shutdown`
+close per seat, reset closed `1006`, and stall ended with the heartbeat close
+timeout. Both gameplay generations completed in every mode, each case counted
+two service starts and one shutdown request, and provenance recorded the
+tunnel origin.
+Official 4.7.2 repeated green in the same run.
 
 ### Remote-path qualification (native)
 
@@ -413,6 +428,16 @@ re-dispatches import-unstable attempts (retaining each) and gives every
 editor invocation a fresh HOME with `--fresh-home`: the captured aborts
 all land right after the editor loads its layout, which reads shared
 state under the caller's HOME.
+
+Official 4.4.1 native qualified in the same dispatch
+([41984709949](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41984709949))
+with the pinned release extension (library SHA-256
+`d99224f5411c5083f1d0932f2ed30b0b68f5f697be025671ff0083015f06a033`).
+All three controls passed at the original uncredited rate: graceful
+delivered `GoingAway` then exactly one `4000/server_shutdown` close per
+seat, reset reported the raw abnormal close `-1`, and stall ended with the
+heartbeat close timeout. Both gameplay generations completed in every
+mode, and each case counted two service starts and one shutdown request.
 
 ### Native WebSocket receive boundary
 
@@ -1201,8 +1226,8 @@ Linux x86-64, plus 4.4.1 on Windows x86-64 under Wine. Linux legs run at
 the 3-byte read cap except the cited uncapped 4.7.2 run; Wine legs run
 uncapped. The same ladder qualifies the #485 receive repair. The separate
 `Gameplay Shutdown Remote` lane covers active-shutdown close semantics over
-a remote path on the official engine; the repaired-engine shutdown cases
-remain local. Each issue stays open for upstream adoption (resubmission
+a remote path on official 4.7.2 and 4.4.1; the repaired-engine shutdown
+cases remain local. Each issue stays open for upstream adoption (resubmission
 tracked in #536). The macOS map's pinned gaps cover the #492 and #498
 families only. Targets with no collected map (bare-metal x86-64 and new
 engine families) also stay open.

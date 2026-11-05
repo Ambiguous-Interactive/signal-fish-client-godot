@@ -20,10 +20,10 @@ on:
                 type: string
                 default: 9bd5a9386df940b6fed4e5ff536cc36f5748e347
             engine_version:
-                description: Official Godot release for the Web import and export
-                required: true
+                description: Official Godot release(s) to drive; space or comma separated. Empty runs the weekly pair.
+                required: false
                 type: string
-                default: 4.7.2-stable
+                default: ""
             rust_toolchain:
                 description: Rust toolchain for the server build
                 required: true
@@ -40,7 +40,6 @@ concurrency:
     queue: max
 
 env:
-    GODOT_VERSION: ${{ inputs.engine_version || '4.7.2-stable' }}
     GODOT_BIN: /tmp/godot-cache/godot
     SERVER_REVISION: ${{ inputs.server_revision || '9bd5a9386df940b6fed4e5ff536cc36f5748e347' }}
     RUST_TOOLCHAIN: ${{ inputs.rust_toolchain || '1.94.0' }}
@@ -55,10 +54,50 @@ env:
     WEBRTC_NATIVE_LIB: libwebrtc_native.linux.template_debug.x86_64.so
 
 jobs:
+    plan:
+        name: Plan engine targets
+        runs-on: ubuntu-24.04
+        outputs:
+            engines: ${{ steps.engines.outputs.json }}
+        steps:
+            - name: Choose engine targets
+              id: engines
+              env:
+                  REQUESTED: ${{ inputs.engine_version }}
+              run: |
+                  engines=$(python3 - "$REQUESTED" <<'PY'
+                  import json
+                  import re
+                  import sys
+
+                  requested = sys.argv[1].replace(",", " ").split()
+                  targets = list(
+                      dict.fromkeys(requested or ["4.7.2-stable", "4.4.1-stable"])
+                  )
+                  invalid = [
+                      target
+                      for target in targets
+                      if not re.fullmatch(r"[0-9]+\.[0-9]+(\.[0-9]+)?-[a-z0-9.]+", target)
+                  ]
+                  if invalid:
+                      raise SystemExit(f"invalid engine release name(s): {invalid}")
+                  print(json.dumps(targets))
+                  PY
+                  )
+                  echo "json=$engines" >> "$GITHUB_OUTPUT"
+                  echo "Engines: $engines" >> "$GITHUB_STEP_SUMMARY"
+
     shutdown-remote:
-        name: Web shutdown controls over a remote path
+        name: Web shutdown controls (Godot ${{ matrix.engine }})
+        needs: plan
+        strategy:
+            fail-fast: false
+            matrix:
+                engine: ${{ fromJSON(needs.plan.outputs.engines) }}
         runs-on: ubuntu-24.04
         timeout-minutes: 60
+        env:
+            GODOT_VERSION: ${{ matrix.engine }}
         defaults:
             run:
                 shell: bash
@@ -287,9 +326,33 @@ jobs:
                   browsers = set()
                   closing = []
                   drill_exit = os.environ["DRILL_EXIT"]
+                  expected_engine = os.environ["GODOT_VERSION"]
+                  expected_cases = {
+                      ("web", mode) for mode in ("graceful", "reset", "stall")
+                  }
+                  cases = {(result.get("runtime"), result.get("mode")) for result in summary}
+                  if cases != expected_cases:
+                      problems.append(
+                          f"remote cases {sorted(cases)!r} != {sorted(expected_cases)!r}"
+                      )
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
                       browsers.add(str(result.get("browser", "unknown")))
+                      engines = [
+                          str(record.get("engine", ""))
+                          for record in (result.get("results") or [])
+                      ]
+                      if result.get("passed") is True and not engines:
+                          problems.append(
+                              f"remote case {name} passed without an engine record"
+                          )
+                      if engines and any(
+                          engine.split(" ")[0] != expected_engine for engine in engines
+                      ):
+                          problems.append(
+                              f"remote case {name} ran engines {engines!r},"
+                              f" expected {expected_engine!r} (wrong binary)"
+                          )
                       if result.get("passed") is not True:
                           detail = (
                               result.get("error")
@@ -328,6 +391,7 @@ jobs:
                   summary_lines = [
                       "## Active gameplay shutdown over a remote path",
                       "",
+                      f"- Engine: {os.environ['GODOT_VERSION']} Web export",
                       f"- Server: {os.environ['SERVER_REVISION']} (source build)",
                       f"- Remote path: {os.environ['TUNNEL_ORIGIN']}"
                       " (Cloudflare quick tunnel, TLS)",
@@ -359,7 +423,7 @@ jobs:
               if: always()
               uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
-                  name: gameplay-shutdown-remote-${{ github.run_id }}
+                  name: gameplay-shutdown-remote-web-${{ matrix.engine }}-${{ github.run_id }}
                   path: |
                       output/
                       tunnel.log
@@ -367,9 +431,16 @@ jobs:
                   if-no-files-found: error
 
     shutdown-remote-native:
-        name: Native shutdown controls over a remote path
+        name: Native shutdown controls (Godot ${{ matrix.engine }})
+        needs: plan
+        strategy:
+            fail-fast: false
+            matrix:
+                engine: ${{ fromJSON(needs.plan.outputs.engines) }}
         runs-on: ubuntu-24.04
         timeout-minutes: 60
+        env:
+            GODOT_VERSION: ${{ matrix.engine }}
         defaults:
             run:
                 shell: bash
@@ -645,6 +716,7 @@ jobs:
                   lib_sha = Path("output/webrtc-native-lib-sha256.txt").read_text().split()[0]
                   problems = []
                   notes = []
+                  expected_engine = os.environ["GODOT_VERSION"]
                   if attempts > 1:
                       # Earlier attempts exist only because their imports
                       # aborted (#447 hazard); the drill loop retains them
@@ -680,8 +752,31 @@ jobs:
                   rows = []
                   closing = []
                   drill_exit = os.environ["DRILL_EXIT"]
+                  expected_cases = {
+                      ("native", mode) for mode in ("graceful", "reset", "stall")
+                  }
+                  cases = {(result.get("runtime"), result.get("mode")) for result in summary}
+                  if cases != expected_cases:
+                      problems.append(
+                          f"remote cases {sorted(cases)!r} != {sorted(expected_cases)!r}"
+                      )
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
+                      engines = [
+                          str(record.get("engine", ""))
+                          for record in (result.get("results") or [])
+                      ]
+                      if result.get("passed") is True and not engines:
+                          problems.append(
+                              f"remote case {name} passed without an engine record"
+                          )
+                      if engines and any(
+                          engine.split(" ")[0] != expected_engine for engine in engines
+                      ):
+                          problems.append(
+                              f"remote case {name} ran engines {engines!r},"
+                              f" expected {expected_engine!r} (wrong binary)"
+                          )
                       if result.get("passed") is not True:
                           detail = (
                               result.get("error")
@@ -805,7 +900,7 @@ jobs:
               if: always()
               uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
-                  name: gameplay-shutdown-remote-native-${{ github.run_id }}
+                  name: gameplay-shutdown-remote-native-${{ matrix.engine }}-${{ github.run_id }}
                   path: |
                       output/
                       tunnel.log
