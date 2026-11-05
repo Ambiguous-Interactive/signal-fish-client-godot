@@ -48,9 +48,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Qualify native SCTP startup cancellation and terminal handling upstream
       and on remote networks (#474; see `docs/mesh-guide.md`). Preserve the
       retained startup and teardown failures.
-- [ ] Qualify the native incremental-build repair on Windows and coordinate
-      upstream review (#479; see `docs/mesh-guide.md`). The control already
-      repeats weekly on Linux x86-64, Linux ARM64 and macOS ARM64 in
+- [ ] Coordinate upstream review of the native incremental-build repair
+      (#479; see `docs/mesh-guide.md`). The control repeats weekly on Linux
+      x86-64, Linux ARM64, macOS ARM64 and Windows x86-64 in
       `Native Build Control`.
 
 - [ ] Compare uniquely enqueued initial probe expiry with transmitted gaps and
