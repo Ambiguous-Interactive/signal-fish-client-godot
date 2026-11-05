@@ -1185,6 +1185,28 @@ path masked its trigger or upstream moved; requalify the filed issue and
 update the map. Dispatching an engine without a map records its defect
 outcomes as data; collect runs, then add its map.
 
+Coverage by filed issue, from the same suite on each engine:
+
+| Issue | Filed symptom                                                                                                                | Official-engine remote watch                                                | Repaired-engine remote lane |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------- |
+| #491  | fragmented bytes change around Ping/Pong (`exact receive prefix`)                                                            | fails on 4.4.1-4.7.2; passes on buffered 4.3, which predates the regression | passes                      |
+| #492  | a fresh peer returns an empty packet after CLOSING reuse (`fresh exact bytes`)                                               | fails on 4.4.1-4.7.2; passes on buffered 4.3                                | passes                      |
+| #496  | a full buffer plus an empty final fragment stalls (`complete message missing`)                                               | fails on 4.4.1-4.7.2; passes on buffered 4.3                                | passes                      |
+| #498  | a valid Unicode close reason becomes 1007 (`exact close code, reason and empty packet queue`; `matching client close frame`) | fails on every collected engine, including 4.3                              | passes                      |
+
+The 4.3 entry in the #496 row is the paced remote case; the standalone
+full-buffer reproduction still drops the following packet on official 4.3.
+The repaired legs are the 4.3 backport, 4.4.1, 4.5.2, 4.6.3 and 4.7.2 on
+Linux x86-64, plus 4.4.1 on Windows x86-64 under Wine. Linux legs run at
+the 3-byte read cap except the cited uncapped 4.7.2 run; Wine legs run
+uncapped. The same ladder qualifies the #485 receive repair. The separate
+`Gameplay Shutdown Remote` lane covers active-shutdown close semantics over
+a remote path on the official engine; the repaired-engine shutdown cases
+remain local. Each issue stays open for upstream adoption (resubmission
+tracked in #536). The macOS map's pinned gaps cover the #492 and #498
+families only. Targets with no collected map (bare-metal x86-64 and new
+engine families) also stay open.
+
 A 2026-11-03 pre-merge devcontainer run (official 4.7.2-stable native on
 Linux ARM64, one Cloudflare quick tunnel, ten selected cases) matched the
 local 4.7.2 classification exactly: all four controls passed over the
@@ -1204,8 +1226,10 @@ tunnel run; the gate rejects paced-write errors as unclean samples.
 Seven dispatched CI runs (2026-11-03 and 2026-11-04, ubuntu-24.04 x86-64,
 official editor binaries, one Cloudflare quick tunnel per native job)
 pinned the native map. On 4.7.2 (runs 41591258643 and 41684196081), 4.6.3
-(run 41937707094), 4.5.2 (run 41937461420) and 4.4.1 (run 41684522769) all
-four controls passed over every tunnel, with the 65-packet burst control
+(run 41937707094), 4.5.2 (run 41937461420) and 4.4.1 (run 41684522769, whose
+native job is green while the run is overall cancelled after its Web job
+lost a concurrency race) all four controls passed over every tunnel, with
+the 65-packet burst control
 delivering every packet (largest delivery gap 283 ms against the 3000 ms
 batch deadline). All six defects failed with their filed signatures, apart
 from the pre-#541 retirement race in the first 4.7.2 run noted below.
@@ -1229,9 +1253,11 @@ a Cloudflare quick tunnel. The repaired engine runs the ten pinned receive
 cases over the tunnel at the lane's forced 3-byte read cap on the default
 Linux dispatch; the baseline runs uncapped, the conditions the
 official-engine pinned signatures were collected under. The repaired engine
-must pass every case. The baseline must keep failing its pinned defect
-signatures on the same path, so a pass cannot come from the path masking a
-trigger. The pinned 4.3 map expects only its two #498 close shapes to fail;
+must pass every case. The baseline must keep its pinned map: each
+expected-failure case must keep failing with its filed signature, and each
+expected-pass case must keep passing, so neither a pass nor a drift can
+come from the path masking a trigger. The pinned 4.3 map expects only its
+two #498 close shapes to fail;
 official 4.3 predates the other four defect shapes, and the gate requires
 those four to keep passing on the 4.3 baseline. That
 requirement applies to a Linux engine family with a pinned remote-path map;
