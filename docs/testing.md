@@ -350,8 +350,8 @@ output directories. These are local acceptance controls; the
 [remote Web lane](#remote-path-qualification-web) covers official Web 4.3,
 4.4.1 and 4.7.2, and the
 [remote native lane](#remote-path-qualification-native) covers official
-4.4.1 and 4.7.2. Other engine versions and extension builds need separate
-qualification.
+4.4.1 and 4.7.2 plus the pinned repaired 4.3 backport. Other engine versions
+and extension builds need separate qualification.
 
 On Linux ARM64, one six-case cohort passes with official Godot 4.7.2, Chromium
 156.0.8078.4 and server `ee20b51e`. Native seats use the opt-in repaired
@@ -422,8 +422,10 @@ original uncredited rate.
 ### Remote-path qualification (native)
 
 The lane's native job runs the three native controls through the same kind
-of quick tunnel. The official editor imports each case project and runs it
-headless; the pinned official WebRTC GDExtension backs its peer
+of quick tunnel. One matrix entry builds the pinned repaired 4.3 backport
+from source (below); the rest are official releases. The official editor
+imports each case project and runs it headless; the pinned official WebRTC
+GDExtension backs its peer
 connections. The lane pins release `1.2.2-stable` by zip SHA-256; that tag
 is commit `62135fc034cbdc5aee177136e526e3ead3cc563a`, the source revision
 other qualifications build from. The official release binary itself is new
@@ -452,6 +454,27 @@ delivered `GoingAway` then exactly one `4000/server_shutdown` close per
 seat, reset reported the raw abnormal close `-1`, and stall ended with the
 heartbeat close timeout. Both gameplay generations completed in every
 mode, and each case counted two service starts and one shutdown request.
+
+The native list also carries the pinned repaired 4.3 backport
+(`77dcf97d82cbfe4e4615475fa52ca03da645dbd8`,
+`scripts/backport-websocket-43.py`). The job builds a `template_debug`
+x86-64 engine with GDScript, WebSocket, WebRTC and mbedtls, imports each
+case with the official 4.3 editor, and runs the same three controls at the
+original uncredited rate (four 4096-byte bodies per frame, no credit). This
+is the 4.3 engine that holds the #485 receive boundary; official 4.3 does
+not. Dispatch
+[42076926873](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/42076926873)
+passed all three: graceful delivered `GoingAway` then exactly one
+`4000/server_shutdown` close per seat, reset reported `-1`, and stall ended
+with the heartbeat timeout. Both generations completed in every mode, and
+each case counted two starts and one shutdown request. The gate pins the
+built binary (SHA-256
+`8aebdbce741747e08ba00ec694764e38d9d311ee94e5193d582c447197d831f3`), the
+custom-build version string and the extension library. The first dispatch
+(42074629297) passed every control but failed its gate on the 4.3 version
+string (`4.3-stable (custom_build)`); that attempt stays retained. A
+dispatch sets `native_repaired_4_3` to skip the build. Upstream adoption
+stays open in #536.
 
 ### Native WebSocket receive boundary
 
@@ -1240,8 +1263,8 @@ Linux x86-64, plus 4.4.1 on Windows x86-64 under Wine. Linux legs run at
 the 3-byte read cap except the cited uncapped 4.7.2 run; Wine legs run
 uncapped. The same ladder qualifies the #485 receive repair. The separate
 `Gameplay Shutdown Remote` lane covers active-shutdown close semantics over
-a remote path on official Web 4.3, 4.4.1 and 4.7.2 and native 4.4.1 and
-4.7.2; the repaired-engine shutdown cases remain local. Each issue stays open for upstream adoption (resubmission
+a remote path on official Web 4.3, 4.4.1 and 4.7.2, native 4.4.1 and
+4.7.2, and the pinned repaired 4.3 native backport. Each issue stays open for upstream adoption (resubmission
 tracked in #536). The macOS map's pinned gaps cover the #492 and #498
 families only. Targets with no collected map (bare-metal x86-64 and new
 engine families) also stay open.
