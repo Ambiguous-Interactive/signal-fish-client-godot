@@ -553,9 +553,11 @@ def main() -> int:
             ROOT / "scripts/websocket-browser-observation.js",
             args.output / "websocket-browser-observation.js",
         )
+    engine_path = Path(shutil.which(args.godot) or args.godot)
     provenance = {
         "server_revision_declared": args.server_revision,
         "server_binary_sha256": digest(args.server_binary),
+        "engine_sha256": digest(engine_path) if engine_path.is_file() else None,
         "server_config_input_sha256": digest(args.server_config),
         "service_port": args.service_port,
         "service_public_origin": args.service_public_origin or None,

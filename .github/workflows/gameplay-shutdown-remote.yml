@@ -10,6 +10,9 @@ on:
     # import-abort attribution (the native loop already re-dispatches
     # import-unstable attempts), then tunnel provisioning (one transient
     # edge failure is on record), then the case records as protocol data.
+    # The native list also builds the pinned repaired Godot 4.3 backport
+    # (scripts/backport-websocket-43.py) so #482 keeps a 4.3 engine that
+    # holds the uncredited relay rate; dispatch can turn it off.
     schedule:
         - cron: "0 13 * * 1"
     workflow_dispatch:
@@ -29,6 +32,11 @@ on:
                 required: false
                 type: string
                 default: ""
+            native_repaired_4_3:
+                description: Also build the pinned repaired Godot 4.3 receive backport and run its native shutdown controls
+                required: true
+                type: boolean
+                default: true
             rust_toolchain:
                 description: Rust toolchain for the server build
                 required: true
@@ -64,13 +72,14 @@ jobs:
         runs-on: ubuntu-24.04
         outputs:
             web_engines: ${{ steps.engines.outputs.web }}
-            native_engines: ${{ steps.engines.outputs.native }}
+            native_targets: ${{ steps.engines.outputs.native }}
         steps:
             - name: Choose engine targets
               id: engines
               env:
                   WEB_REQUESTED: ${{ inputs.web_engine_version }}
                   NATIVE_REQUESTED: ${{ inputs.native_engine_version }}
+                  NATIVE_REPAIRED_43: ${{ inputs.native_repaired_4_3 }}
               run: |
                   python3 - "$WEB_REQUESTED" "$NATIVE_REQUESTED" <<'PY' >> "$GITHUB_OUTPUT"
                   import json
@@ -81,6 +90,17 @@ jobs:
                   defaults = {
                       "web": ["4.7.2-stable", "4.4.1-stable", "4.3-stable"],
                       "native": ["4.7.2-stable", "4.4.1-stable"],
+                  }
+                  # The pinned experimental 4.3-stable receive backport
+                  # (scripts/backport-websocket-43.py) is built in-lane: it
+                  # is the only 4.3 engine that holds the uncredited relay
+                  # rate during shutdown (#485, #482). It is not an
+                  # official release, so it never appears in the dispatch
+                  # list.
+                  repaired = {
+                      "engine": "4.3-repaired",
+                      "label": "4.3-stable",
+                      "repaired": True,
                   }
 
                   def targets(value, default):
@@ -98,7 +118,12 @@ jobs:
                       return chosen
 
                   web = targets(sys.argv[1], defaults["web"])
-                  native = targets(sys.argv[2], defaults["native"])
+                  native = [
+                      {"engine": engine, "label": engine, "repaired": False}
+                      for engine in targets(sys.argv[2], defaults["native"])
+                  ]
+                  if os.environ.get("NATIVE_REPAIRED_43") != "false":
+                      native.append(repaired)
                   print(f"web={json.dumps(web)}")
                   print(f"native={json.dumps(native)}")
                   summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -106,7 +131,8 @@ jobs:
                       with open(summary, "a", encoding="utf-8") as step_summary:
                           step_summary.write(
                               f"Web engines: {', '.join(web)}\n"
-                              f"Native engines: {', '.join(native)}\n"
+                              "Native engines: "
+                              f"{', '.join(target['engine'] for target in native)}\n"
                           )
                   PY
 
@@ -471,16 +497,22 @@ jobs:
                   if-no-files-found: error
 
     shutdown-remote-native:
-        name: Native shutdown controls (Godot ${{ matrix.engine }})
+        name: Native shutdown controls (Godot ${{ matrix.label }}${{ matrix.repaired == true && ' repaired' || '' }})
         needs: plan
         strategy:
             fail-fast: false
             matrix:
-                engine: ${{ fromJSON(needs.plan.outputs.native_engines) }}
+                include: ${{ fromJSON(needs.plan.outputs.native_targets) }}
         runs-on: ubuntu-24.04
-        timeout-minutes: 60
+        # The repaired 4.3 entry builds a template from pinned source.
+        timeout-minutes: ${{ matrix.repaired == true && 150 || 60 }}
         env:
-            GODOT_VERSION: ${{ matrix.engine }}
+            GODOT_VERSION: ${{ matrix.label }}
+            REPAIRED: ${{ matrix.repaired }}
+            ENGINE_SOURCE_REVISION: 77dcf97d82cbfe4e4615475fa52ca03da645dbd8
+            SOURCE_DIR: godot-source
+            ENGINE_BIN: godot-source/bin/godot.linuxbsd.template_debug.x86_64
+            IMPORTER: ${{ github.workspace }}/official-godot/godot
         defaults:
             run:
                 shell: bash
@@ -504,13 +536,59 @@ jobs:
                   key: godot-shutdown-remote-editor-${{ runner.os }}-${{ runner.arch }}-${{ env.GODOT_VERSION }}
 
             - name: Install Godot editor
-              if: steps.godot-cache.outputs.cache-hit != 'true'
+              if: matrix.repaired != true && steps.godot-cache.outputs.cache-hit != 'true'
               run: python3 .devcontainer/install-godot.py editor "$GODOT_VERSION" /tmp/godot-cache --target "$GODOT_BIN"
 
             - name: Expose the Godot binary
+              if: matrix.repaired != true
               run: |
                   echo "$(dirname "$GODOT_BIN")" >> "$GITHUB_PATH"
                   "$GODOT_BIN" --headless --version
+
+            - name: Install the official importer
+              if: matrix.repaired == true
+              run: |
+                  python3 .devcontainer/install-godot.py editor "$GODOT_VERSION" \
+                    /tmp/godot-cache --target "$IMPORTER"
+                  "$IMPORTER" --headless --version
+
+            - name: Install SCons
+              if: matrix.repaired == true
+              run: python3 -m pip install "scons==4.11.1"
+
+            - name: Fetch the pinned engine source
+              if: matrix.repaired == true
+              run: |
+                  git init "$SOURCE_DIR"
+                  git -C "$SOURCE_DIR" remote add origin https://github.com/godotengine/godot.git
+                  git -C "$SOURCE_DIR" fetch --depth 1 origin "$ENGINE_SOURCE_REVISION"
+                  git -C "$SOURCE_DIR" checkout --detach FETCH_HEAD
+                  test "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$ENGINE_SOURCE_REVISION"
+
+            - name: Apply the pinned receive backport
+              if: matrix.repaired == true
+              run: |
+                  python3 scripts/backport-websocket-43.py --source "$SOURCE_DIR" \
+                    --report output/repair-report.json
+
+            - name: Build the repaired engine
+              if: matrix.repaired == true
+              run: |
+                  # Same minimal flags as the WebSocket Native x64 lane:
+                  # GDScript, WebSocket, WebRTC and mbedtls (wss://) are
+                  # the only modules these seats need.
+                  (
+                    cd "$SOURCE_DIR"
+                    scons -j"$(nproc)" platform=linuxbsd target=template_debug arch=x86_64 \
+                      dev_build=no debug_symbols=no optimize=size \
+                      modules_enabled_by_default=no module_gdscript_enabled=yes \
+                      module_websocket_enabled=yes module_webrtc_enabled=yes \
+                      module_mbedtls_enabled=yes \
+                      disable_3d=yes vulkan=no opengl3=yes \
+                      x11=no wayland=no alsa=no pulseaudio=no dbus=no speechd=no \
+                      fontconfig=no udev=no
+                  ) 2>&1 | tee output/build-repaired.log
+                  sha256sum "$ENGINE_BIN" | tee output/engine-sha256.txt
 
             - name: Install the pinned native WebRTC extension
               run: |
@@ -702,7 +780,13 @@ jobs:
                   # the #495/#507/#511 native qualifications used. The
                   # official editor imports each case project and then
                   # runs it headless; the WebRTC GDExtension backs its
-                  # peer connections.
+                  # peer connections. The repaired 4.3 entry runs the
+                  # pinned source-build template and imports with the
+                  # official editor instead.
+                  engine_args=(--godot "$GODOT_BIN")
+                  if [ "$REPAIRED" = true ]; then
+                      engine_args=(--godot "$ENGINE_BIN" --import-godot "$IMPORTER")
+                  fi
                   max_attempts=3
                   attempts_run=1
                   attempt=1
@@ -714,7 +798,7 @@ jobs:
                         --server-binary server/target/debug/signal-fish-server \
                         --server-config server-config.json \
                         --server-revision "$SERVER_REVISION" \
-                        --godot "$GODOT_BIN" \
+                        "${engine_args[@]}" \
                         --runtime native \
                         --native-extension "/tmp/webrtc-native-ext/addons/webrtc_native" \
                         --fresh-home \
@@ -754,13 +838,24 @@ jobs:
                   provenance = json.loads((directory / "provenance.json").read_text())
                   attempts = int(os.environ["DRILL_ATTEMPTS"])
                   lib_sha = Path("output/webrtc-native-lib-sha256.txt").read_text().split()[0]
+                  repaired = os.environ["REPAIRED"] == "true"
+                  engine_sha = None
                   problems = []
                   notes = []
                   expected_engine = os.environ["GODOT_VERSION"]
-                  release, _, channel = expected_engine.rpartition("-")
-                  expected_engines = {f"{expected_engine} (official)"}
-                  if release and channel:
-                      expected_engines.add(f"{release}.{channel}.official")
+                  if repaired:
+                      # Godot 4.3 custom builds report
+                      # "4.3-stable (custom_build)"; newer engines report
+                      # "4.3.stable.custom_build".
+                      expected_engines = {
+                          "4.3-stable (custom_build)",
+                          "4.3.stable.custom_build",
+                      }
+                  else:
+                      release, _, channel = expected_engine.rpartition("-")
+                      expected_engines = {f"{expected_engine} (official)"}
+                      if release and channel:
+                          expected_engines.add(f"{release}.{channel}.official")
                   if attempts > 1:
                       # Earlier attempts exist only because their imports
                       # aborted (#447 hazard); the drill loop retains them
@@ -792,6 +887,14 @@ jobs:
                   server_sha = Path("output/server-sha256.txt").read_text().split()[0]
                   if provenance.get("server_binary_sha256") != server_sha:
                       problems.append("the drill did not run the built server")
+                  if repaired:
+                      engine_sha = Path("output/engine-sha256.txt").read_text().split()[0]
+                      if provenance.get("engine_sha256") != engine_sha:
+                          problems.append(
+                              "the drill did not run the built repaired engine:"
+                              f" provenance {provenance.get('engine_sha256')!r}"
+                              f" != {engine_sha!r}"
+                          )
 
                   rows = []
                   closing = []
@@ -903,15 +1006,26 @@ jobs:
                   if drill_exit != "0":
                       problems.append(f"drill exited {drill_exit!r} (every case must pass)")
 
+                  if repaired:
+                      engine_line = (
+                          "- Engine: repaired Godot 4.3 backport"
+                          f" {os.environ['ENGINE_SOURCE_REVISION']} (template_debug"
+                          f" x86_64, sha256 {engine_sha}), WebRTC GDExtension"
+                          f" {os.environ['WEBRTC_NATIVE_TAG']} (lib sha256 {lib_sha})"
+                      )
+                  else:
+                      engine_line = (
+                          f"- Engine: {os.environ['GODOT_VERSION']} native headless,"
+                          f" WebRTC GDExtension {os.environ['WEBRTC_NATIVE_TAG']}"
+                          f" (lib sha256 {lib_sha})"
+                      )
                   summary_lines = [
                       "## Native active gameplay shutdown over a remote path",
                       "",
                       f"- Server: {os.environ['SERVER_REVISION']} (source build)",
                       f"- Remote path: {os.environ['TUNNEL_ORIGIN']}"
                       " (Cloudflare quick tunnel, TLS)",
-                      f"- Engine: {os.environ['GODOT_VERSION']} native headless,"
-                      f" WebRTC GDExtension {os.environ['WEBRTC_NATIVE_TAG']}"
-                      f" (lib sha256 {lib_sha})",
+                      engine_line,
                       f"- Attempt {attempts} of the retained-attempt loop"
                       " (earlier import-unstable attempts stay in the"
                       " artifact)",
