@@ -19,8 +19,13 @@ on:
                 required: true
                 type: string
                 default: 9bd5a9386df940b6fed4e5ff536cc36f5748e347
-            engine_version:
-                description: Official Godot release(s) to drive; space or comma separated. Empty runs the weekly pair.
+            web_engine_version:
+                description: Official Godot release(s) for the Web job, such as 4.3-stable; space or comma separated. Empty runs 4.7.2-stable, 4.4.1-stable and 4.3-stable.
+                required: false
+                type: string
+                default: ""
+            native_engine_version:
+                description: Official Godot release(s) for the native job, such as 4.4.1-stable; space or comma separated. Empty runs 4.7.2-stable and 4.4.1-stable.
                 required: false
                 type: string
                 default: ""
@@ -58,34 +63,52 @@ jobs:
         name: Plan engine targets
         runs-on: ubuntu-24.04
         outputs:
-            engines: ${{ steps.engines.outputs.json }}
+            web_engines: ${{ steps.engines.outputs.web }}
+            native_engines: ${{ steps.engines.outputs.native }}
         steps:
             - name: Choose engine targets
               id: engines
               env:
-                  REQUESTED: ${{ inputs.engine_version }}
+                  WEB_REQUESTED: ${{ inputs.web_engine_version }}
+                  NATIVE_REQUESTED: ${{ inputs.native_engine_version }}
               run: |
-                  engines=$(python3 - "$REQUESTED" <<'PY'
+                  python3 - "$WEB_REQUESTED" "$NATIVE_REQUESTED" <<'PY' >> "$GITHUB_OUTPUT"
                   import json
+                  import os
                   import re
                   import sys
 
-                  requested = sys.argv[1].replace(",", " ").split()
-                  targets = list(
-                      dict.fromkeys(requested or ["4.7.2-stable", "4.4.1-stable"])
-                  )
-                  invalid = [
-                      target
-                      for target in targets
-                      if not re.fullmatch(r"[0-9]+\.[0-9]+(\.[0-9]+)?-[a-z0-9.]+", target)
-                  ]
-                  if invalid:
-                      raise SystemExit(f"invalid engine release name(s): {invalid}")
-                  print(json.dumps(targets))
+                  defaults = {
+                      "web": ["4.7.2-stable", "4.4.1-stable", "4.3-stable"],
+                      "native": ["4.7.2-stable", "4.4.1-stable"],
+                  }
+
+                  def targets(value, default):
+                      requested = value.replace(",", " ").split()
+                      chosen = list(dict.fromkeys(requested or default))
+                      invalid = [
+                          target
+                          for target in chosen
+                          if not re.fullmatch(
+                              r"[0-9]+\.[0-9]+(\.[0-9]+)?-[a-z0-9.]+", target
+                          )
+                      ]
+                      if invalid:
+                          raise SystemExit(f"invalid engine release name(s): {invalid}")
+                      return chosen
+
+                  web = targets(sys.argv[1], defaults["web"])
+                  native = targets(sys.argv[2], defaults["native"])
+                  print(f"web={json.dumps(web)}")
+                  print(f"native={json.dumps(native)}")
+                  summary = os.environ.get("GITHUB_STEP_SUMMARY")
+                  if summary:
+                      with open(summary, "a", encoding="utf-8") as step_summary:
+                          step_summary.write(
+                              f"Web engines: {', '.join(web)}\n"
+                              f"Native engines: {', '.join(native)}\n"
+                          )
                   PY
-                  )
-                  echo "json=$engines" >> "$GITHUB_OUTPUT"
-                  echo "Engines: $engines" >> "$GITHUB_STEP_SUMMARY"
 
     shutdown-remote:
         name: Web shutdown controls (Godot ${{ matrix.engine }})
@@ -93,7 +116,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                engine: ${{ fromJSON(needs.plan.outputs.engines) }}
+                engine: ${{ fromJSON(needs.plan.outputs.web_engines) }}
         runs-on: ubuntu-24.04
         timeout-minutes: 60
         env:
@@ -321,19 +344,37 @@ jobs:
                   server_sha = Path("output/server-sha256.txt").read_text().split()[0]
                   if provenance.get("server_binary_sha256") != server_sha:
                       problems.append("the drill did not run the built server")
+                  if provenance.get("relay_credit_transport") != "app-ack":
+                      problems.append(
+                          "remote Web workload is not the app-ack credit control:"
+                          f" {provenance.get('relay_credit_transport')!r}"
+                      )
+                  if provenance.get("relay_credit_bytes") != 32768:
+                      problems.append(
+                          "remote Web credit is not 32768 bytes:"
+                          f" {provenance.get('relay_credit_bytes')!r}"
+                      )
 
                   rows = []
                   browsers = set()
                   closing = []
                   drill_exit = os.environ["DRILL_EXIT"]
-                  expected_engine = os.environ["GODOT_VERSION"]
+                  # Godot reports the release as "<tag> (official)" on the
+                  # pinned builds; older releases use "<version>.<channel>.official".
+                  tag = os.environ["GODOT_VERSION"]
+                  release, _, channel = tag.rpartition("-")
+                  expected_engines = {f"{tag} (official)"}
+                  if release and channel:
+                      expected_engines.add(f"{release}.{channel}.official")
                   expected_cases = {
                       ("web", mode) for mode in ("graceful", "reset", "stall")
                   }
-                  cases = {(result.get("runtime"), result.get("mode")) for result in summary}
-                  if cases != expected_cases:
+                  case_rows = [(result.get("runtime"), result.get("mode")) for result in summary]
+                  cases = set(case_rows)
+                  if len(case_rows) != len(expected_cases) or cases != expected_cases:
                       problems.append(
                           f"remote cases {sorted(cases)!r} != {sorted(expected_cases)!r}"
+                          f" (rows {len(case_rows)})"
                       )
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
@@ -346,12 +387,11 @@ jobs:
                           problems.append(
                               f"remote case {name} passed without an engine record"
                           )
-                      if engines and any(
-                          engine.split(" ")[0] != expected_engine for engine in engines
-                      ):
+                      if engines and any(engine not in expected_engines for engine in engines):
                           problems.append(
                               f"remote case {name} ran engines {engines!r},"
-                              f" expected {expected_engine!r} (wrong binary)"
+                              f" expected one of {sorted(expected_engines)!r}"
+                              " (wrong binary)"
                           )
                       if result.get("passed") is not True:
                           detail = (
@@ -436,7 +476,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                engine: ${{ fromJSON(needs.plan.outputs.engines) }}
+                engine: ${{ fromJSON(needs.plan.outputs.native_engines) }}
         runs-on: ubuntu-24.04
         timeout-minutes: 60
         env:
@@ -717,6 +757,10 @@ jobs:
                   problems = []
                   notes = []
                   expected_engine = os.environ["GODOT_VERSION"]
+                  release, _, channel = expected_engine.rpartition("-")
+                  expected_engines = {f"{expected_engine} (official)"}
+                  if release and channel:
+                      expected_engines.add(f"{release}.{channel}.official")
                   if attempts > 1:
                       # Earlier attempts exist only because their imports
                       # aborted (#447 hazard); the drill loop retains them
@@ -755,10 +799,12 @@ jobs:
                   expected_cases = {
                       ("native", mode) for mode in ("graceful", "reset", "stall")
                   }
-                  cases = {(result.get("runtime"), result.get("mode")) for result in summary}
-                  if cases != expected_cases:
+                  case_rows = [(result.get("runtime"), result.get("mode")) for result in summary]
+                  cases = set(case_rows)
+                  if len(case_rows) != len(expected_cases) or cases != expected_cases:
                       problems.append(
                           f"remote cases {sorted(cases)!r} != {sorted(expected_cases)!r}"
+                          f" (rows {len(case_rows)})"
                       )
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
@@ -770,12 +816,11 @@ jobs:
                           problems.append(
                               f"remote case {name} passed without an engine record"
                           )
-                      if engines and any(
-                          engine.split(" ")[0] != expected_engine for engine in engines
-                      ):
+                      if engines and any(engine not in expected_engines for engine in engines):
                           problems.append(
                               f"remote case {name} ran engines {engines!r},"
-                              f" expected {expected_engine!r} (wrong binary)"
+                              f" expected one of {sorted(expected_engines)!r}"
+                              " (wrong binary)"
                           )
                       if result.get("passed") is not True:
                           detail = (

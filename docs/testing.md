@@ -347,8 +347,10 @@ Each case retains `godot.log`, `server/server.log`, `assessment.json`, import
 logs and effective config. Web cases also retain export logs. Root provenance
 records source and executable hashes. Failed attempts remain in their original
 output directories. These are local acceptance controls; the
-[remote lane](#remote-path-qualification-web) covers official 4.4.1 and
-4.7.2. Other engine versions and extension builds need separate
+[remote Web lane](#remote-path-qualification-web) covers official Web 4.3,
+4.4.1 and 4.7.2, and the
+[remote native lane](#remote-path-qualification-native) covers official
+4.4.1 and 4.7.2. Other engine versions and extension builds need separate
 qualification.
 
 On Linux ARM64, one six-case cohort passes with official Godot 4.7.2, Chromium
@@ -382,9 +384,10 @@ consecutive green runs of both jobs - the post-merge main run
 [41905622779](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41905622779)
 plus three branch dispatches of the same lane (41898423659, 41900140061, 41904306119) - pinned the remote shutdown signature, so the lane carries
 a weekly scheduled run (Mondays 13:00 UTC, staggered after the
-`WebSocket Remote Path` watch) with the same pinned inputs. The weekly run
-covers official Godot 4.7.2 and 4.4.1. A dispatch accepts one or more
-releases in `engine_version` (space or comma separated) to qualify another
+`WebSocket Remote Path` watch) with the same pinned inputs. The weekly Web
+run covers official Godot 4.7.2, 4.4.1 and 4.3; the native run covers 4.7.2
+and 4.4.1. Each job takes its own dispatch list in `web_engine_version` and
+`native_engine_version` (space or comma separated) to qualify another
 target or re-run one engine. Dispatch runs keep on-demand qualification
 available; GitHub disables schedule triggers
 after ~60 days without repo activity. A red run triages from the run page:
@@ -404,6 +407,17 @@ timeout. Both gameplay generations completed in every mode, each case counted
 two service starts and one shutdown request, and provenance recorded the
 tunnel origin.
 Official 4.7.2 repeated green in the same run.
+
+Official 4.3 Web qualified in dispatch
+[41991293515](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41991293515)
+(Chromium 156.0.8078.4, 32 KiB application-ACK window). All three controls
+passed: graceful delivered `GoingAway` then exactly one `4000/server_shutdown`
+close per seat, reset closed `1006`, and stall ended with the heartbeat close
+timeout. Both gameplay generations completed in every mode, and each case
+counted two service starts and one shutdown request. The 4.7.2 and 4.4.1 Web
+jobs repeated green in the same run. The native job keeps its 4.7.2 and
+4.4.1 pair: official 4.3 native still hits the #485 receive loss at the
+original uncredited rate.
 
 ### Remote-path qualification (native)
 
@@ -1226,8 +1240,8 @@ Linux x86-64, plus 4.4.1 on Windows x86-64 under Wine. Linux legs run at
 the 3-byte read cap except the cited uncapped 4.7.2 run; Wine legs run
 uncapped. The same ladder qualifies the #485 receive repair. The separate
 `Gameplay Shutdown Remote` lane covers active-shutdown close semantics over
-a remote path on official 4.7.2 and 4.4.1; the repaired-engine shutdown
-cases remain local. Each issue stays open for upstream adoption (resubmission
+a remote path on official Web 4.3, 4.4.1 and 4.7.2 and native 4.4.1 and
+4.7.2; the repaired-engine shutdown cases remain local. Each issue stays open for upstream adoption (resubmission
 tracked in #536). The macOS map's pinned gaps cover the #492 and #498
 families only. Targets with no collected map (bare-metal x86-64 and new
 engine families) also stay open.
@@ -1480,8 +1494,9 @@ passes all gameplay checks. The credit result qualifies that local control;
 it leaves the original uncredited workload failed. A new six-case Godot 4.4.1
 native/Web cohort passes graceful shutdown, reset, nonresponding close, cached
 metadata, retirement and fresh mesh recovery at the original four-per-frame
-rate. Three new Godot 4.3 Web shutdown controls also pass. Remote-network
-and Godot 4.3 native receive qualification remain open.
+rate. Three new Godot 4.3 Web shutdown controls also pass, and the 4.3 Web
+shutdown leg is now qualified over the remote path. Godot 4.3 native
+receive qualification remains open.
 
 ### Delayed relay shutdown
 
