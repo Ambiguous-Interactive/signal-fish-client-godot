@@ -25,18 +25,22 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Watch the weekly remote-path lanes and requalify on any pinned-signature
       drift (#538). Add maps for new engine families (current coverage:
       `docs/testing.md`, "Remote path qualification").
-- [ ] Follow Godot #124976 for valid Unicode WebSocket close reasons.
+- [ ] Follow the split close-reason defect
+      (`.llm/research/godot-websocket-receive-defects.md`, defect 4) for
+      valid Unicode WebSocket close reasons.
       Qualify bare-metal x86-64 and close the macOS one-byte-paced gap
       (#498; see `docs/testing.md`). The weekly `WebSocket Native macOS`
       watch covers the macOS leg on Apple Silicon and pins the measured
       maximum-length close-reason gap; requalify when it clears.
       Preserve paced close reasons, full-buffer completion and peer reuse.
       Include maximum-length ASCII and mixed Unicode close reasons.
-- [ ] Qualify the Godot #124973/#124974 assembly/reuse repair on the
-      remaining targets (#491, #492; see `docs/testing.md`; the weekly
-      `WebSocket Native macOS` watch covers the macOS leg on Apple Silicon
-      and pins the measured macOS gaps: barrier pong under one-byte paced
-      reuse writes, with at most one sporadic retirement failure per run).
+- [ ] Qualify the assembly/reuse repair
+      (`.llm/research/godot-websocket-receive-defects.md`, defects 1 and 2)
+      on the remaining targets (#491, #492; see `docs/testing.md`; the
+      weekly `WebSocket Native macOS` watch covers the macOS leg on Apple
+      Silicon and pins the measured macOS gaps: barrier pong under one-byte
+      paced reuse writes, with at most one sporadic retirement failure per
+      run).
       The upstream submission godotengine/godot#125066 was closed unmerged
       on AI-authorship policy grounds; a policy-compliant resubmission is
       tracked in #536. Keep the master pin buildable (the weekly

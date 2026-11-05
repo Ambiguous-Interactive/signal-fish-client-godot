@@ -877,14 +877,16 @@ peer replacement, full-buffer completion and split Unicode close controls,
 plus passing comparison commands. `SHA256SUMS` pins every input. The exporter
 refuses an existing archive and accepts no runtime options.
 
-Upstream reports:
+Upstream reports were withdrawn because Godot does not accept AI-authored
+issues. The technical record lives in
+`.llm/research/godot-websocket-receive-defects.md`:
 
-| Failure                                           | Godot issue                                                  |
-| ------------------------------------------------- | ------------------------------------------------------------ |
-| Ping/Pong bytes enter fragmented messages (#491)  | [124973](https://github.com/godotengine/godot/issues/124973) |
-| Closing peer replacement retains old state (#492) | [124974](https://github.com/godotengine/godot/issues/124974) |
-| Full-buffer empty continuation stalls (#496)      | [124975](https://github.com/godotengine/godot/issues/124975) |
-| Split Unicode close reasons fail (#498)           | [124976](https://github.com/godotengine/godot/issues/124976) |
+| Failure                                           | Local record |
+| ------------------------------------------------- | ------------ |
+| Ping/Pong bytes enter fragmented messages (#491)  | defect 1     |
+| Closing peer replacement retains old state (#492) | defect 2     |
+| Full-buffer empty continuation stalls (#496)      | defect 3     |
+| Split Unicode close reasons fail (#498)           | defect 4     |
 
 The extracted project's seven commands were checked on official and repaired
 4.3/4.4.1/4.7.2 Linux ARM64 engines. All three repaired builds pass every
