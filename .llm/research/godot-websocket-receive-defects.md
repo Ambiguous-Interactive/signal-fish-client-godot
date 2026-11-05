@@ -94,10 +94,10 @@ Engine revisions named below are the stable sources other sections cite:
 - Cause: `EMWSPeer::_esws_on_message` ignores the `Error` from
   `PacketBuffer::write_packet`. On Web, delivery runs on browser callbacks,
   so slower polling cannot apply backpressure.
-- Status: no engine fix is pinned. The shipped mitigation is a
-  pure-GDScript application-ACK credit window (`--relay-credit-transport
-app-ack`); a 512 KiB buffer also moves the threshold but does not remove
-  the failure mode.
+- Status: no engine fix is pinned. The opt-in application-ACK drill control
+  is a pure-GDScript credit window (`--relay-credit-transport app-ack`) with
+  no SDK-wide delivery guarantee. A 512 KiB buffer also moves the threshold
+  but does not remove the failure mode.
 - Repro: `python scripts/check-websocket-web-receive.py --godot ...
 --chromium ... --output ...`; the paced comparison adds
   `--credit-transport app-ack --credit-bytes 32768`.
