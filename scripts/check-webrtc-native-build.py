@@ -31,9 +31,10 @@ env["cmake"] = ARGUMENTS["cmake"]
 env["emcmake"] = "emcmake"
 env["cmake_generator"] = ""
 env.Tool("cmake", toolpath=["tools"])
+nested = "nested.lib" if env["platform"] == "windows" else "libnested.a"
 targets = env.CMakeBuild(
     env.Dir("build"), env.Dir("library"),
-    cmake_outputs=["libnested.a"], cmake_targets=["nested"], cmake_options={})
+    cmake_outputs=[nested], cmake_targets=["nested"], cmake_options={})
 env.Append(LIBS=[targets[1]])
 Default(env.SharedLibrary("extension", ["entry.cpp"]))
 """
