@@ -92,9 +92,7 @@ def run(command: list[str], cwd: Path, log: Path, *, expect_failure: bool = Fals
 
 def snapshot(work: Path, platform_id: str, arch: str, log: Path) -> dict[str, object]:
     archive = work / "build" / platform_id / arch / "libnested.a"
-    extension = work / (
-        "libextension.dylib" if platform_id == "macos" else "libextension.so"
-    )
+    extension = work / ("libextension.dylib" if platform_id == "macos" else "libextension.so")
     observed = run(
         [
             sys.executable,
@@ -255,11 +253,7 @@ def main() -> None:
     cmake = shutil.which(args.cmake)
     if scons is None or cmake is None:
         parser.error("SCons and CMake must be installed")
-    arch = (
-        "arm64"
-        if platform.machine() in ("aarch64", "arm64")
-        else "x86_64"
-    )
+    arch = "arm64" if platform.machine() in ("aarch64", "arm64") else "x86_64"
     results = {
         "revision": REVISION,
         "platform": platform_id,
