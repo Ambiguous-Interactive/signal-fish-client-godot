@@ -877,8 +877,8 @@ peer replacement, full-buffer completion and split Unicode close controls,
 plus passing comparison commands. `SHA256SUMS` pins every input. The exporter
 refuses an existing archive and accepts no runtime options.
 
-Upstream reports were withdrawn because Godot does not accept AI-authored
-issues. The technical record lives in
+Godot closed the upstream reports because it does not accept AI-authored
+issues. This repository keeps the maintained record in
 `.llm/research/godot-websocket-receive-defects.md`:
 
 | Failure                                           | Local record |

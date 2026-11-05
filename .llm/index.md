@@ -43,7 +43,7 @@ Generated Markdown inventory by `scripts/generate-llm-index.ps1`; do not edit by
 - [Godot Editor Import Shutdown Crash](research/godot-editor-shutdown-crash.md) - Symbolized Godot 4.7.2 editor import shutdown crash from a null DocTools pointer in the deferred extension-doc callback (issue #447).
 - [Godot Networking And Web Notes](research/godot-networking-web.md) - Source-backed notes for Godot WebSocket, WebRTC, browser export, and cross-platform networking decisions.
 - [Godot Target Notes](research/godot-targets.md) - Godot 4.x target notes for the GDScript Signal Fish addon, with the recorded Godot 3.6 compatibility deferral.
-- [Godot WebSocketPeer Receive Defects](research/godot-websocket-receive-defects.md) - Godot WebSocketPeer receive defects, root causes, pinned repairs, and reproductions kept in-repo (upstream reports withdrawn).
+- [Godot WebSocketPeer Receive Defects](research/godot-websocket-receive-defects.md) - Godot WebSocketPeer receive defects, root causes, pinned repairs, and reproductions kept in-repo (upstream reports closed).
 - [GStack Adaptation Notes](research/gstack-adaptations.md) - Practical gstack practices adapted for this repo's lightweight LLM harness.
 - [Hot-Path Audit Verdicts (issue #161)](research/hot-path-audit.md) - Measured verdicts for issue #161 hot-path audit ideas (allocations, value-typed cursor decoders, float wire-text memo) so no session repeats them without new engine capabilities.
 - [Signal Fish Protocol Fixtures](research/protocol-fixtures.md) - Pinned upstream sources used to build Signal Fish protocol fixtures for the Godot client.
