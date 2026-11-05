@@ -382,9 +382,10 @@ consecutive green runs of both jobs - the post-merge main run
 [41905622779](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41905622779)
 plus three branch dispatches of the same lane (41898423659, 41900140061, 41904306119) - pinned the remote shutdown signature, so the lane carries
 a weekly scheduled run (Mondays 13:00 UTC, staggered after the
-`WebSocket Remote Path` watch) with the same pinned inputs. The weekly run
-covers official Godot 4.7.2 and 4.4.1. A dispatch accepts one or more
-releases in `engine_version` (space or comma separated) to qualify another
+`WebSocket Remote Path` watch) with the same pinned inputs. The weekly Web
+run covers official Godot 4.7.2, 4.4.1 and 4.3; the native run covers 4.7.2
+and 4.4.1. Each job takes its own dispatch list in `web_engine_version` and
+`native_engine_version` (space or comma separated) to qualify another
 target or re-run one engine. Dispatch runs keep on-demand qualification
 available; GitHub disables schedule triggers
 after ~60 days without repo activity. A red run triages from the run page:
@@ -404,6 +405,17 @@ timeout. Both gameplay generations completed in every mode, each case counted
 two service starts and one shutdown request, and provenance recorded the
 tunnel origin.
 Official 4.7.2 repeated green in the same run.
+
+Official 4.3 Web qualified in dispatch
+[41991293515](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/41991293515)
+(Chromium 156.0.8078.4, 32 KiB application-ACK window). All three controls
+passed: graceful delivered `GoingAway` then exactly one `4000/server_shutdown`
+close per seat, reset closed `1006`, and stall ended with the heartbeat close
+timeout. Both gameplay generations completed in every mode, and each case
+counted two service starts and one shutdown request. The 4.7.2 and 4.4.1 Web
+jobs repeated green in the same run. The native job keeps its 4.7.2 and
+4.4.1 pair: official 4.3 native still hits the #485 receive loss at the
+original uncredited rate.
 
 ### Remote-path qualification (native)
 
