@@ -23,8 +23,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       `scripts/backport-websocket-43.py` template and checks its binary
       identity (`docs/testing.md`, "Remote-path qualification (native)").
 - [ ] Watch the weekly remote-path lanes and requalify on any pinned-signature
-      drift (#538). Add maps for new engine families (current coverage:
-      `docs/testing.md`, "Remote path qualification").
+      drift (#538). Keep the 4.8-beta2 map current and add a 4.8 stable map
+      when it ships (current coverage: `docs/testing.md`, "Remote path
+      qualification").
 - [ ] Follow the split close-reason defect
       (`.llm/research/godot-websocket-receive-defects.md`, defect 4) for
       valid Unicode WebSocket close reasons.

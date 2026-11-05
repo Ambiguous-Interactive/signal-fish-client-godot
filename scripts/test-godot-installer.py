@@ -6,7 +6,6 @@ from __future__ import annotations
 import importlib.util
 import io
 import os
-import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -23,22 +22,23 @@ SPEC.loader.exec_module(installer)
 
 
 class GodotInstallerTests(unittest.TestCase):
+    """Exercise the installer with small synthetic archives."""
+
     def test_archive_integrity_and_web_only_templates(self) -> None:
+        """Extract only web templates and reject corrupt or empty archives."""
         with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
             root = Path(temporary)
             cache = root / "cache"
             cache.mkdir()
             archive_path = cache / "Godot_v4.3-stable_export_templates.tpz"
             with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("templates/version.txt", b"4.3.stable\n")
                 archive.writestr("templates/web_release.zip", b"web-release")
                 archive.writestr("templates/web_debug.zip", b"web-debug")
                 archive.writestr("templates/windows.exe", b"not-web")
             self.assertTrue(installer.archive_valid(archive_path, 1))
             self.assertFalse(installer.archive_valid(archive_path, 100_000_000))
-            with (
-                patch.object(installer, "TEMPLATES_MIN_BYTES", 1),
-                patch.object(installer.shutil, "which", return_value=None),
-            ):
+            with patch.object(installer, "TEMPLATES_MIN_BYTES", 1):
                 installer.install_templates("4.3-stable", cache, root / "installed")
             target = root / "installed" / "4.3.stable"
             self.assertEqual(
@@ -53,13 +53,20 @@ class GodotInstallerTests(unittest.TestCase):
                 patch.object(
                     installer.subprocess,
                     "run",
-                    return_value=subprocess.CompletedProcess(
+                    return_value=installer.subprocess.CompletedProcess(
                         [], 0, "4.4.stable.official.test\n", ""
                     ),
                 ),
             ):
-                installer.install_templates("4.3-stable", cache, root / "editor-version")
-            self.assertTrue((root / "editor-version" / "4.4.stable" / "web_debug.zip").is_file())
+                installer.install_templates("4.3-stable", cache, root / "mismatched-editor")
+            self.assertTrue((root / "mismatched-editor" / "4.3.stable" / "web_debug.zip").is_file())
+            beta_archive = cache / "Godot_v4.8-beta2_export_templates.tpz"
+            with zipfile.ZipFile(beta_archive, "w") as archive:
+                archive.writestr("templates/version.txt", b"4.8.beta2\n")
+                archive.writestr("templates/web_release.zip", b"beta-web")
+            with patch.object(installer, "TEMPLATES_MIN_BYTES", 1):
+                installer.install_templates("4.8-beta2", cache, root / "beta-installed")
+            self.assertTrue((root / "beta-installed" / "4.8.beta2" / "web_release.zip").is_file())
             valid_bytes = archive_path.read_bytes()
             archive_path.write_bytes(b"corrupt")
             self.assertFalse(installer.archive_valid(archive_path, 1))
@@ -69,17 +76,51 @@ class GodotInstallerTests(unittest.TestCase):
                 installer.download_archive("4.3-stable", archive_path.name, cache, 1)
             self.assertEqual(archive_path.read_bytes(), valid_bytes)
             with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("templates/version.txt", b"4.3.stable\n")
                 archive.writestr("templates/windows.exe", b"not-web")
             with (
                 patch.object(installer, "TEMPLATES_MIN_BYTES", 1),
-                patch.object(installer.shutil, "which", return_value=None),
                 self.assertRaisesRegex(ValueError, "No web templates found"),
             ):
                 installer.install_templates("4.3-stable", cache, root / "missing-web")
             self.assertFalse((root / "missing-web").exists())
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("templates/version.txt", b"../escape\n")
+                archive.writestr("templates/web_release.zip", b"web-release")
+            with (
+                patch.object(installer, "TEMPLATES_MIN_BYTES", 1),
+                self.assertRaisesRegex(ValueError, "Invalid template version"),
+            ):
+                installer.install_templates("4.3-stable", cache, root / "bad-version")
+            self.assertFalse((root / "escape").exists())
+
+    def test_downloads_use_the_repository_that_hosts_the_release(self) -> None:
+        """Fetch stable and pre-release tags from their hosting repository."""
+        with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
+            root = Path(temporary)
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                archive.writestr("templates/version.txt", b"4.8.beta2\n")
+            valid = buffer.getvalue()
+            urls: list[str] = []
+            for version, host in (
+                ("4.3-stable", "https://github.com/godotengine/godot/releases/download"),
+                ("4.8-beta2", "https://github.com/godotengine/godot-builds/releases/download"),
+            ):
+                urls.clear()
+
+                def open_url(url: str, *args: object, **kwargs: object) -> io.BytesIO:
+                    urls.append(url)
+                    return io.BytesIO(valid)
+
+                with patch.object(installer.urllib.request, "urlopen", side_effect=open_url):
+                    path = installer.download_archive(version, f"{version}.zip", root, 1)
+                self.assertEqual(path.read_bytes(), valid)
+                self.assertEqual(urls, [f"{host}/{version}/{version}.zip"])
 
     @unittest.skipUnless(os.name == "posix", "editor fixture uses a POSIX executable")
     def test_editor_verifies_before_replacing_target(self) -> None:
+        """Keep the previous editor when a new binary cannot run."""
         with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
             root = Path(temporary)
             cache = root / "cache"
@@ -105,6 +146,7 @@ class GodotInstallerTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "editor fixture uses a POSIX executable")
     def test_editor_installs_macos_bundle_binary(self) -> None:
+        """Install and restore the macOS app bundle without escaping it."""
         with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
             root = Path(temporary)
             cache = root / "cache"

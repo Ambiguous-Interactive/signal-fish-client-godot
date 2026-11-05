@@ -46,6 +46,9 @@ logs_*.zip
 !.env.example
 GOAL.md
 
+# Local upstream contribution working notes.
+GODOT_CONTRIBUTING.md
+
 # Session logs are local working notes, never shared (issue #155).
 /progress/
 

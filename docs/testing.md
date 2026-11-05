@@ -1253,12 +1253,12 @@ outcomes as data; collect runs, then add its map.
 
 Coverage by filed issue, from the same suite on each engine:
 
-| Issue | Filed symptom                                                                                                                | Official-engine remote watch                                                | Repaired-engine remote lane |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------- |
-| #491  | fragmented bytes change around Ping/Pong (`exact receive prefix`)                                                            | fails on 4.4.1-4.7.2; passes on buffered 4.3, which predates the regression | passes                      |
-| #492  | a fresh peer returns an empty packet after CLOSING reuse (`fresh exact bytes`)                                               | fails on 4.4.1-4.7.2; passes on buffered 4.3                                | passes                      |
-| #496  | a full buffer plus an empty final fragment stalls (`complete message missing`)                                               | fails on 4.4.1-4.7.2; passes on buffered 4.3                                | passes                      |
-| #498  | a valid Unicode close reason becomes 1007 (`exact close code, reason and empty packet queue`; `matching client close frame`) | fails on every collected engine, including 4.3                              | passes                      |
+| Issue | Filed symptom                                                                                                                | Official-engine remote watch                                                    | Repaired-engine remote lane |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------- |
+| #491  | fragmented bytes change around Ping/Pong (`exact receive prefix`)                                                            | fails on 4.4.1-4.8-beta2; passes on buffered 4.3, which predates the regression | passes                      |
+| #492  | a fresh peer returns an empty packet after CLOSING reuse (`fresh exact bytes`)                                               | fails on 4.4.1-4.8-beta2; passes on buffered 4.3                                | passes                      |
+| #496  | a full buffer plus an empty final fragment stalls (`complete message missing`)                                               | fails on 4.4.1-4.8-beta2; passes on buffered 4.3                                | passes                      |
+| #498  | a valid Unicode close reason becomes 1007 (`exact close code, reason and empty packet queue`; `matching client close frame`) | fails on every collected engine, including 4.3 and 4.8-beta2                    | passes                      |
 
 The 4.3 entry in the #496 row is the paced remote case; the standalone
 full-buffer reproduction still drops the following packet on official 4.3.
@@ -1270,8 +1270,8 @@ uncapped. The same ladder qualifies the #485 receive repair. The separate
 a remote path on official Web 4.3, 4.4.1 and 4.7.2, native 4.4.1 and
 4.7.2, and the pinned repaired 4.3 native backport. Each issue stays open for upstream adoption (resubmission
 tracked in #536). The macOS map's pinned gaps cover the #492 and #498
-families only. Targets with no collected map (bare-metal x86-64 and new
-engine families) also stay open.
+families only. Targets with no collected map (bare-metal x86-64 and engine
+families not yet collected) also stay open.
 
 A 2026-11-03 pre-merge devcontainer run (official 4.7.2-stable native on
 Linux ARM64, one Cloudflare quick tunnel, ten selected cases) matched the
@@ -1299,8 +1299,8 @@ the 65-packet burst control
 delivering every packet (largest delivery gap 283 ms against the 3000 ms
 batch deadline). All six defects failed with their filed signatures, apart
 from the pre-#541 retirement race in the first 4.7.2 run noted below.
-The gate now carries a map for every stable family from 4.3 to 4.7.
-The retired-continuation failure in the first 4.7.2 run was the fixture
+The gate now carries a map for every stable family from 4.3 to 4.7 and
+for the 4.8 beta family. The retired-continuation failure in the first 4.7.2 run was the fixture
 race #541 removed; post-fix runs fail the #492 reuse defect with
 `fresh exact bytes` alone and retire exactly 2 queued bytes. On 4.3 (runs
 41684912691 and 41685515285) the #491/#496/#492 shapes pass: official 4.3
@@ -1309,6 +1309,18 @@ signature on every collected engine. Same-day devcontainer runs on Linux
 ARM64 (4.7.2) matched the CI classification. The weekly schedule (Mondays
 12:00 UTC) runs both lanes; dispatch runs collect extra path samples on
 demand and add maps for new engines.
+
+Godot 4.8-beta2 is the first collected pre-release family ([run
+42108167042](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/42108167042),
+2026-11-05, ubuntu-24.04 x86-64, official editor, one Cloudflare quick
+tunnel per job). Both lanes follow the 4.4-4.7 shape. Native: the four
+controls pass, including the 65-packet burst, and the six defects fail with
+their pinned signatures, so the gate carries a 4.8 map. Web: the 32 KiB
+application ACK control delivers 65/65 with the full 64-packet ACK window,
+while the uncredited run delivers 16/65 with 49 scoped rejections (first
+gap 15 -> 64), the same loss class as godotengine/godot#125073. The
+installer fetches pre-release builds from `godotengine/godot-builds`; stable
+releases keep using the main repository.
 
 The `WebSocket Native x64` lane extends the same tunnel idea to the
 experimental source-build repair (#485). With `remote_path` on it builds the
