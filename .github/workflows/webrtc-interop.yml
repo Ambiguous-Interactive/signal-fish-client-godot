@@ -117,11 +117,11 @@ jobs:
                   directory = Path(sys.argv[1])
                   if (directory / "summary.json").exists():
                       raise SystemExit(1)
+                  records = sorted(directory.glob("**/import.process.json"))
+                  if not records:
+                      raise SystemExit(1)
                   aborted = False
-                  for project in ("native", "web"):
-                      record = directory / project / "import.process.json"
-                      if not record.exists():
-                          continue
+                  for record in records:
                       process = json.loads(record.read_text())
                       code = process.get("returncode")
                       if process.get("status") != "exited" or not isinstance(code, int):
