@@ -209,6 +209,7 @@ def compare(
                         raise RuntimeError(f"Repaired {after['case']} build retained stale {key}")
             cpp = nested / "nested.cpp"
             previous = cpp.read_text()
+            time.sleep(1.1)
             cpp.write_text("#error intentional incremental build failure\n")
             run(command, work, log, expect_failure=True)
             failed = snapshot(work, platform_id, arch, log)
@@ -220,6 +221,7 @@ def compare(
             ):
                 if failed[key] != rows[-1][key]:
                     raise RuntimeError(f"Failed build changed the retained {key}")
+            time.sleep(1.1)
             cpp.write_text(previous.replace("return 2 +", "return 3 +"))
             run(command, work, log)
             recovered = snapshot(work, platform_id, arch, log)
