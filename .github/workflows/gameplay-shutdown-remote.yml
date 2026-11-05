@@ -319,11 +319,16 @@ jobs:
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
                       browsers.add(str(result.get("browser", "unknown")))
-                      if not str(result.get("engine", "")).startswith(expected_engine):
+                      engines = [
+                          str(record.get("engine", ""))
+                          for record in (result.get("results") or [])
+                      ]
+                      if engines and any(
+                          not engine.startswith(expected_engine) for engine in engines
+                      ):
                           problems.append(
-                              f"remote case {name} ran engine"
-                              f" {result.get('engine')!r}, expected"
-                              f" {expected_engine!r} (wrong binary)"
+                              f"remote case {name} ran engines {engines!r},"
+                              f" expected {expected_engine!r} (wrong binary)"
                           )
                       if result.get("passed") is not True:
                           detail = (
@@ -726,11 +731,16 @@ jobs:
                   drill_exit = os.environ["DRILL_EXIT"]
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
-                      if not str(result.get("engine", "")).startswith(expected_engine):
+                      engines = [
+                          str(record.get("engine", ""))
+                          for record in (result.get("results") or [])
+                      ]
+                      if engines and any(
+                          not engine.startswith(expected_engine) for engine in engines
+                      ):
                           problems.append(
-                              f"remote case {name} ran engine"
-                              f" {result.get('engine')!r}, expected"
-                              f" {expected_engine!r} (wrong binary)"
+                              f"remote case {name} ran engines {engines!r},"
+                              f" expected {expected_engine!r} (wrong binary)"
                           )
                       if result.get("passed") is not True:
                           detail = (
