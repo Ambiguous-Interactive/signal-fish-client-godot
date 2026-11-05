@@ -359,7 +359,13 @@ jobs:
                   browsers = set()
                   closing = []
                   drill_exit = os.environ["DRILL_EXIT"]
-                  expected_engine = f"{os.environ['GODOT_VERSION']} (official)"
+                  # Godot reports the release as "<tag> (official)" on the
+                  # pinned builds; older releases use "<version>.<channel>.official".
+                  tag = os.environ["GODOT_VERSION"]
+                  release, _, channel = tag.rpartition("-")
+                  expected_engines = {f"{tag} (official)"}
+                  if release and channel:
+                      expected_engines.add(f"{release}.{channel}.official")
                   expected_cases = {
                       ("web", mode) for mode in ("graceful", "reset", "stall")
                   }
@@ -381,10 +387,11 @@ jobs:
                           problems.append(
                               f"remote case {name} passed without an engine record"
                           )
-                      if engines and any(engine != expected_engine for engine in engines):
+                      if engines and any(engine not in expected_engines for engine in engines):
                           problems.append(
                               f"remote case {name} ran engines {engines!r},"
-                              f" expected {expected_engine!r} (wrong binary)"
+                              f" expected one of {sorted(expected_engines)!r}"
+                              " (wrong binary)"
                           )
                       if result.get("passed") is not True:
                           detail = (
@@ -749,7 +756,11 @@ jobs:
                   lib_sha = Path("output/webrtc-native-lib-sha256.txt").read_text().split()[0]
                   problems = []
                   notes = []
-                  expected_engine = f"{os.environ['GODOT_VERSION']} (official)"
+                  expected_engine = os.environ["GODOT_VERSION"]
+                  release, _, channel = expected_engine.rpartition("-")
+                  expected_engines = {f"{expected_engine} (official)"}
+                  if release and channel:
+                      expected_engines.add(f"{release}.{channel}.official")
                   if attempts > 1:
                       # Earlier attempts exist only because their imports
                       # aborted (#447 hazard); the drill loop retains them
@@ -805,10 +816,11 @@ jobs:
                           problems.append(
                               f"remote case {name} passed without an engine record"
                           )
-                      if engines and any(engine != expected_engine for engine in engines):
+                      if engines and any(engine not in expected_engines for engine in engines):
                           problems.append(
                               f"remote case {name} ran engines {engines!r},"
-                              f" expected {expected_engine!r} (wrong binary)"
+                              f" expected one of {sorted(expected_engines)!r}"
+                              " (wrong binary)"
                           )
                       if result.get("passed") is not True:
                           detail = (
