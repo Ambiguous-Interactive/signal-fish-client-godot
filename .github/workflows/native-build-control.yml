@@ -28,7 +28,8 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-latest]
+                runner:
+                    [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-latest]
         env:
             SOURCE_REVISION: 62135fc034cbdc5aee177136e526e3ead3cc563a
         steps:
