@@ -82,8 +82,8 @@ class GodotInstallerTests(unittest.TestCase):
             valid = buffer.getvalue()
             urls: list[str] = []
             for version, host in (
-                ("4.3-stable", installer.STABLE_RELEASES),
-                ("4.8-beta2", installer.PRE_RELEASES),
+                ("4.3-stable", "https://github.com/godotengine/godot/releases/download"),
+                ("4.8-beta2", "https://github.com/godotengine/godot-builds/releases/download"),
             ):
                 urls.clear()
 
