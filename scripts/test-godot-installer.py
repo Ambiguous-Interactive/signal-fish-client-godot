@@ -22,7 +22,10 @@ SPEC.loader.exec_module(installer)
 
 
 class GodotInstallerTests(unittest.TestCase):
+    """Exercise the installer with small synthetic archives."""
+
     def test_archive_integrity_and_web_only_templates(self) -> None:
+        """Extract only web templates and reject corrupt or empty archives."""
         with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
             root = Path(temporary)
             cache = root / "cache"
@@ -70,6 +73,7 @@ class GodotInstallerTests(unittest.TestCase):
             self.assertFalse((root / "missing-web").exists())
 
     def test_downloads_use_the_repository_that_hosts_the_release(self) -> None:
+        """Fetch stable and pre-release tags from their hosting repository."""
         with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
             root = Path(temporary)
             buffer = io.BytesIO()
@@ -94,6 +98,7 @@ class GodotInstallerTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "editor fixture uses a POSIX executable")
     def test_editor_verifies_before_replacing_target(self) -> None:
+        """Keep the previous editor when a new binary cannot run."""
         with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
             root = Path(temporary)
             cache = root / "cache"
@@ -119,6 +124,7 @@ class GodotInstallerTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "editor fixture uses a POSIX executable")
     def test_editor_installs_macos_bundle_binary(self) -> None:
+        """Install and restore the macOS app bundle without escaping it."""
         with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
             root = Path(temporary)
             cache = root / "cache"
