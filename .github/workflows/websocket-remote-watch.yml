@@ -463,7 +463,7 @@ jobs:
                   # engine; a failure-string list pins the exact filed
                   # signature a failing case must reproduce. Collected CI
                   # runs (ubuntu-24.04 x86-64, official editors, one
-                  # Cloudflare quick tunnel each):
+                  # Cloudflare quick tunnel per native job):
                   # - 4.7: 41591258643 and 41684196081, plus same-day
                   #   devcontainer runs on Linux ARM64 (the retired
                   #   continuation failure in the first CI run was the
