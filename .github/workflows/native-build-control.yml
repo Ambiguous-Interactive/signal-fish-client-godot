@@ -1,0 +1,101 @@
+name: Native Build Control
+
+on:
+    schedule:
+        # Mondays 14:00 UTC: weekly repeat of the pinned native
+        # incremental-build repair control (#479), staggered after the
+        # other watches. Note: GitHub disables schedule triggers after
+        # ~60 days without repo activity; dispatch runs keep it
+        # recoverable.
+        - cron: "0 14 * * 1"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ matrix.runner }}
+    cancel-in-progress: false
+
+jobs:
+    incremental:
+        name: Incremental build control on ${{ matrix.runner }}
+        runs-on: ${{ matrix.runner }}
+        timeout-minutes: 20
+        strategy:
+            fail-fast: false
+            matrix:
+                runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+        env:
+            SOURCE_REVISION: 62135fc034cbdc5aee177136e526e3ead3cc563a
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Set up Python
+              uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+              with:
+                  python-version: "3.12"
+
+            - name: Install SCons and CMake
+              run: |
+                  python -m pip install "scons==4.11.1"
+                  if ! command -v cmake >/dev/null 2>&1; then
+                      if [ "$RUNNER_OS" = "Linux" ]; then
+                          sudo apt-get update
+                          sudo apt-get install -y cmake
+                      else
+                          brew install cmake
+                      fi
+                  fi
+                  cmake --version
+                  c++ --version | head -1
+
+            - name: Fetch the pinned webrtc-native source
+              run: |
+                  git init source
+                  git -C source remote add origin https://github.com/godotengine/webrtc-native.git
+                  git -C source fetch --depth 1 origin "$SOURCE_REVISION"
+                  git -C source checkout --detach FETCH_HEAD
+                  test "$(git -C source rev-parse HEAD)" = "$SOURCE_REVISION"
+
+            - name: Run the incremental-build control
+              run: |
+                  python scripts/check-webrtc-native-build.py \
+                    --source source --output output
+
+            - name: Check the recorded target
+              run: |
+                  python - <<'PY'
+                  import json
+                  import os
+
+                  expected = {
+                      "ubuntu-24.04": ("linux", "x86_64"),
+                      "ubuntu-24.04-arm": ("linux", "arm64"),
+                      "macos-15": ("macos", "arm64"),
+                  }["${{ matrix.runner }}"]
+                  assessment = json.load(open("output/assessment.json", encoding="utf-8"))
+                  actual = (assessment["platform"], assessment["arch"])
+                  assert actual == expected, f"ran {actual}, expected {expected}"
+                  rows = [row["observed"] for row in assessment["repaired"]]
+                  assert rows == [111, 112, 122, 222, 1222, 1222], rows
+                  summary = os.environ["GITHUB_STEP_SUMMARY"]
+                  with open(summary, "a", encoding="utf-8") as stream:
+                      stream.write(
+                          f"## Native build control ({actual[0]} {actual[1]})\n\n"
+                          f"- Repaired values: {rows}\n"
+                          f"- SCons: {assessment['scons_version'].splitlines()[1]}\n"
+                          f"- Patch SHA-256: `{assessment['patch_sha256']}`\n"
+                      )
+                  PY
+
+            - name: Upload the assessment
+              if: always()
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: native-build-control-${{ matrix.runner }}-${{ github.run_id }}
+                  path: output/
+                  if-no-files-found: error

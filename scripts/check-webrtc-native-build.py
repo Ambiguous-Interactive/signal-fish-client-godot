@@ -23,7 +23,7 @@ import os
 env = Environment(ENV=os.environ.copy())
 env.CacheDir("scons-cache")
 env.__class__.msvc = False
-env["platform"] = "linux"
+env["platform"] = ARGUMENTS["platform"]
 env["arch"] = ARGUMENTS["arch"]
 env["debug_symbols"] = False
 env["cmake"] = ARGUMENTS["cmake"]
@@ -89,9 +89,11 @@ def run(command: list[str], cwd: Path, log: Path, *, expect_failure: bool = Fals
     return result.stdout
 
 
-def snapshot(work: Path, arch: str, log: Path) -> dict[str, object]:
-    archive = work / "build" / "linux" / arch / "libnested.a"
-    extension = work / "libextension.so"
+def snapshot(work: Path, platform_id: str, arch: str, log: Path) -> dict[str, object]:
+    archive = work / "build" / platform_id / arch / "libnested.a"
+    extension = work / (
+        "libextension.dylib" if platform_id == "macos" else "libextension.so"
+    )
     observed = run(
         [
             sys.executable,
@@ -120,7 +122,9 @@ def snapshot(work: Path, arch: str, log: Path) -> dict[str, object]:
     }
 
 
-def compare(source: str, output: Path, scons: str, cmake: str, arch: str) -> dict[str, object]:
+def compare(
+    source: str, output: Path, scons: str, cmake: str, platform_id: str, arch: str
+) -> dict[str, object]:
     results: dict[str, object] = {}
     for variant in ("baseline", "repaired"):
         work = output / variant
@@ -139,7 +143,14 @@ def compare(source: str, output: Path, scons: str, cmake: str, arch: str) -> dic
         log = work / "commands.log"
         if variant == "repaired":
             run(["git", "apply", "--unsafe-paths", "--directory", str(work), str(PATCH)], ROOT, log)
-        command = [scons, "-Q", "-j2", f"arch={arch}", f"cmake={cmake}"]
+        command = [
+            scons,
+            "-Q",
+            "-j2",
+            f"platform={platform_id}",
+            f"arch={arch}",
+            f"cmake={cmake}",
+        ]
         rows: list[dict[str, object]] = []
         steps = (
             ("initial", None, "", "", 111),
@@ -168,7 +179,7 @@ def compare(source: str, output: Path, scons: str, cmake: str, arch: str) -> dic
                     raise RuntimeError(f"Invalid fixture edit: {path}")
                 path.write_text(content.replace(old, new))
             run(command, work, log)
-            row = {"case": name, "expected": expected, **snapshot(work, arch, log)}
+            row = {"case": name, "expected": expected, **snapshot(work, platform_id, arch, log)}
             rows.append(row)
             (work / "results.json").write_text(json.dumps(rows, indent=2) + "\n")
         results[variant] = rows
@@ -196,7 +207,7 @@ def compare(source: str, output: Path, scons: str, cmake: str, arch: str) -> dic
             previous = cpp.read_text()
             cpp.write_text("#error intentional incremental build failure\n")
             run(command, work, log, expect_failure=True)
-            failed = snapshot(work, arch, log)
+            failed = snapshot(work, platform_id, arch, log)
             for key in (
                 "archive_sha256",
                 "extension_sha256",
@@ -207,7 +218,7 @@ def compare(source: str, output: Path, scons: str, cmake: str, arch: str) -> dic
                     raise RuntimeError(f"Failed build changed the retained {key}")
             cpp.write_text(previous.replace("return 2 +", "return 3 +"))
             run(command, work, log)
-            recovered = snapshot(work, arch, log)
+            recovered = snapshot(work, platform_id, arch, log)
             if recovered["observed"] != 1223:
                 raise RuntimeError("Build did not recover after compilation failure")
             for key in ("archive_sha256", "extension_sha256"):
@@ -224,8 +235,9 @@ def main() -> None:
     parser.add_argument("--scons", default="scons", help="SCons executable")
     parser.add_argument("--cmake", default="cmake", help="CMake executable")
     args = parser.parse_args()
-    if sys.platform != "linux" or platform.machine() not in ("aarch64", "x86_64"):
-        parser.error("This compiled control requires Linux ARM64 or x86-64")
+    platform_id = {"linux": "linux", "darwin": "macos"}.get(sys.platform)
+    if platform_id is None or platform.machine() not in ("aarch64", "arm64", "x86_64"):
+        parser.error("This compiled control requires Linux ARM64/x86-64 or macOS ARM64")
     source = args.source.resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -237,14 +249,20 @@ def main() -> None:
     cmake = shutil.which(args.cmake)
     if scons is None or cmake is None:
         parser.error("SCons and CMake must be installed")
-    arch = "arm64" if platform.machine() == "aarch64" else "x86_64"
+    arch = (
+        "arm64"
+        if platform.machine() in ("aarch64", "arm64")
+        else "x86_64"
+    )
     results = {
         "revision": REVISION,
+        "platform": platform_id,
+        "arch": arch,
         "tool_sha256": digest(source / "tools/cmake.py"),
         "patch_sha256": digest(PATCH),
         "scons_version": run([scons, "--version"], output, log),
         "cmake_version": run([cmake, "--version"], output, log),
-        **compare(expected, output, scons, cmake, arch),
+        **compare(expected, output, scons, cmake, platform_id, arch),
     }
     (output / "assessment.json").write_text(json.dumps(results, indent=2) + "\n")
     print(f"Native incremental build control passed: {output / 'assessment.json'}")
