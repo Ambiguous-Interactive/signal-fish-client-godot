@@ -6,6 +6,10 @@ on:
         # x86-64, repaired only; see the fallbacks in the job below and
         # docs/testing.md). Note: GitHub disables schedule triggers after
         # ~60 days without repo activity; dispatch runs keep it recoverable.
+        # Dispatch with `windows_native_runner=true` and
+        # `build_target=windows` to also run the cross-built engine on a
+        # native windows-latest host (docs/testing.md, "Windows-native CI
+        # qualification").
         - cron: "0 8 * * 1"
     workflow_dispatch:
         inputs:
@@ -118,6 +122,12 @@ jobs:
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   persist-credentials: false
+
+            - name: Require the Windows build target for the native runner
+              if: inputs.windows_native_runner == true && (inputs.build_target || 'windows') != 'windows'
+              run: |
+                  echo "::error::windows_native_runner requires build_target=windows"
+                  exit 1
 
             - name: Set up Python
               uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -276,12 +286,19 @@ jobs:
                   ) 2>&1 | tee "output/build-${{ matrix.variant }}.log"
                   sha256sum "$ENGINE_BIN" | tee "output/engine-sha256.txt"
 
+            - name: Stage the Windows engine for the native runner
+              if: matrix.variant == 'repaired' && (inputs.build_target || 'windows') == 'windows' && inputs.windows_native_runner == true
+              run: |
+                  mkdir windows-engine
+                  cp "$ENGINE_BIN" windows-engine/
+                  sha256sum windows-engine/$(basename "$ENGINE_BIN") > windows-engine/SHA256SUMS
+
             - name: Upload the Windows engine for the native runner
               if: matrix.variant == 'repaired' && (inputs.build_target || 'windows') == 'windows' && inputs.windows_native_runner == true
               uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
-                  name: websocket-native-x64-engine-${{ github.run_id }}
-                  path: ${{ env.ENGINE_BIN }}
+                  name: websocket-native-x64-engine-${{ github.run_id }}-${{ github.run_attempt }}
+                  path: windows-engine/
                   if-no-files-found: error
 
             - name: Run the paced receive suite
@@ -703,7 +720,7 @@ jobs:
     windows-native:
         name: Repaired ${{ inputs.engine_label || '4.4.1-stable' }} on native Windows x86-64
         needs: qualify
-        if: inputs.windows_native_runner == true && (inputs.build_target || 'windows') == 'windows'
+        if: inputs.windows_native_runner == true
         runs-on: windows-latest
         timeout-minutes: 60
         defaults:
@@ -727,7 +744,7 @@ jobs:
             - name: Download the repaired Windows engine
               uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
-                  name: websocket-native-x64-engine-${{ github.run_id }}
+                  name: websocket-native-x64-engine-${{ github.run_id }}-${{ github.run_attempt }}
                   path: engine
 
             - name: Install the official Windows importer
@@ -751,6 +768,7 @@ jobs:
             - name: Check Windows-native expectations
               run: |
                   python - <<'PY'
+                  import hashlib
                   import json
                   import os
                   from pathlib import Path
@@ -759,21 +777,27 @@ jobs:
                   problems = []
                   imported = suite.get("import", {})
                   if imported.get("returncode") != 0 or imported.get("engine_errors"):
-                      problems.append("fixture import failed")
+                      problems.append("paced fixture import failed")
                   cases = suite.get("cases", [])
                   failed = sorted(
                       case["case"] for case in cases if case.get("passed") is not True
                   )
-                  if not cases:
-                      problems.append("the suite reported no cases")
+                  if len(cases) != 184:
+                      problems.append(f"expected 184 paced cases, got {len(cases)}")
                   if failed:
                       problems.append(f"failed cases: {failed}")
                   if suite.get("passed") is not True:
-                      problems.append("the suite did not pass")
+                      problems.append("the paced suite did not pass")
 
                   report = json.loads(
                       Path("output/repaired-standalone/standalone-report.json").read_text()
                   )
+                  standalone_import = report.get("import", {})
+                  if (
+                      standalone_import.get("returncode") != 0
+                      or standalone_import.get("engine_errors")
+                  ):
+                      problems.append("standalone fixture import failed")
                   results = {command["name"]: command for command in report["commands"]}
                   expected = {
                       "control-bytes",
@@ -798,25 +822,38 @@ jobs:
                       ):
                           problems.append(f"standalone {name} did not pass")
 
-                  provenance = json.loads(Path("output/repaired-suite/provenance.json").read_text())
-                  lines = [
-                      "## Native Windows receive qualification",
-                      "",
-                      f"- Engine: `{provenance['binary_sha256']}`",
-                      f"- Cases: {len(cases)} passed",
-                      f"- Standalone commands: {len(results)} passed",
-                      "",
-                      "Every pinned receive case and reproduction passed on native"
-                      " Windows x86-64.",
-                      "",
-                  ]
-                  with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as stream:
-                      stream.write("\n".join(lines))
+                  engine = Path("engine/godot.windows.template_debug.x86_64.exe")
+                  digest = hashlib.sha256(engine.read_bytes()).hexdigest()
+                  staged = Path("engine/SHA256SUMS").read_text().split()
+                  if not staged or digest != staged[0]:
+                      problems.append("the downloaded engine does not match its staged hash")
+                  provenance = json.loads(
+                      Path("output/repaired-suite/provenance.json").read_text()
+                  )
+                  if digest != provenance.get("binary_sha256"):
+                      problems.append("the suite did not run the staged engine")
+
+                  passed = sum(case.get("passed") is True for case in cases)
+                  standalone_passed = sum(
+                      results.get(name, {}).get("passed") is True for name in expected
+                  )
                   verdict = (
                       "Native Windows: every pinned receive case and reproduction passed."
                       if not problems
                       else "Native Windows problems: " + "; ".join(problems)
                   )
+                  lines = [
+                      "## Native Windows receive qualification",
+                      "",
+                      f"- Engine: `{digest}`",
+                      f"- Cases: {passed}/{len(cases)} passed",
+                      f"- Standalone commands: {standalone_passed}/{len(expected)} passed",
+                      "",
+                      verdict,
+                      "",
+                  ]
+                  with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as stream:
+                      stream.write("\n".join(lines))
                   print(verdict)
                   assert not problems, "; ".join(problems)
                   PY
@@ -825,6 +862,6 @@ jobs:
               if: always()
               uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
-                  name: websocket-native-windows-${{ github.run_id }}
+                  name: websocket-native-windows-${{ github.run_id }}-${{ github.run_attempt }}
                   path: output/
                   if-no-files-found: error

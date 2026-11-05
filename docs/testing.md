@@ -1103,13 +1103,15 @@ same engine binary on both paths:
   passed; the fixture import exited 0 with no engine errors.
 - Engine SHA-256
   `16979a7550bba710fed7b57aeafdb51d6f173bb60a6bfbb9e73815a15829512a`;
-  official Windows editor SHA-256
+  extracted official Windows editor executable SHA-256
   `ab1824f85bfd8e0e4128182c000c4003a3e042245b2967848d089b2a04b22424`.
 
-The native leg takes about six minutes after the build. It stays
-dispatch-only; the weekly Wine watch covers recurrence. This qualifies the
-Windows socket path for the pinned build, not an MSVC rebuild or another
-engine family.
+The gate checks the downloaded engine against the uploaded checksum and the
+suite provenance, so both paths run the same binary. The native leg takes
+about six minutes after the build. It stays dispatch-only; the weekly Wine
+watch remains the recurring Wine check, and native Windows runs on dispatch.
+This qualifies the Windows socket path for the pinned build, not an MSVC
+rebuild or another engine family.
 
 ### macOS CI qualification
 

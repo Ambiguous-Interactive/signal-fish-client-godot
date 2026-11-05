@@ -535,7 +535,7 @@ def main() -> int:
                 flush=True,
             )
         print(json.dumps({"report": str(args.output / "standalone-report.json")}))
-        return 0 if imported["returncode"] == 0 else 1
+        return 0 if imported["returncode"] == 0 and not imported["engine_errors"] else 1
     prefix = [str(runner), *args.runner_arg] if runner else []
     selected = [
         case

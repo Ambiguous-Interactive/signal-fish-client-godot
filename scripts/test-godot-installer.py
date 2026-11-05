@@ -116,15 +116,16 @@ class GodotInstallerTests(unittest.TestCase):
                 patch.object(installer.subprocess, "run", side_effect=run),
             ):
                 with zipfile.ZipFile(archive_path, "w") as archive:
-                    archive.writestr("Godot_v4.7.2-stable_win64.exe", b"editor")
                     archive.writestr("Godot_v4.7.2-stable_win64_console.exe", b"wrapper")
+                    archive.writestr("Godot_v4.7.2-stable_win64.exe", b"editor")
                 installer.install_windows_editor("4.7.2-stable", cache, target)
                 self.assertEqual(target.read_bytes(), b"editor")
+                self.assertEqual(calls[0][1:], ["--headless", "--version"])
                 self.assertTrue(calls[0][0].endswith(".exe"))
+                self.assertFalse(list(target.parent.glob(".godot-*")))
                 good_binary = target.read_bytes()
                 with zipfile.ZipFile(archive_path, "w") as archive:
-                    archive.writestr("Godot_v4.7.2-stable_win64.exe", b"editor")
-                    archive.writestr("Godot_v4.7.2-stable_win64_console.exe", b"wrapper")
+                    archive.writestr("Godot_v4.7.2-stable_win64.exe", b"replacement")
                 calls.clear()
 
                 def fail(command: list[str], *args: object, **kwargs: object) -> object:
@@ -137,6 +138,11 @@ class GodotInstallerTests(unittest.TestCase):
                 ):
                     installer.install_windows_editor("4.7.2-stable", cache, target)
                 self.assertEqual(target.read_bytes(), good_binary)
+                self.assertFalse(list(target.parent.glob(".godot-*")))
+                with self.assertRaisesRegex(ValueError, "must end with .exe"):
+                    installer.install_windows_editor(
+                        "4.7.2-stable", cache, root / "extensionless"
+                    )
 
     def test_downloads_use_the_repository_that_hosts_the_release(self) -> None:
         """Fetch stable and pre-release tags from their hosting repository."""

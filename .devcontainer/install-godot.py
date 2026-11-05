@@ -138,6 +138,8 @@ def install_windows_editor(version: str, cache_dir: Path, target: Path) -> None:
     The win64 archive also ships a console wrapper; only the editor binary is
     installed, and the target keeps its .exe suffix so Windows can launch it.
     """
+    if target.suffix.lower() != ".exe":
+        raise ValueError(f"Windows editor target must end with .exe: {target}")
     name = f"Godot_v{version}_win64.exe.zip"
     path = download_archive(version, name, cache_dir, EDITOR_MIN_BYTES)
     print("==> Verifying archive")
@@ -167,6 +169,7 @@ def install_windows_editor(version: str, cache_dir: Path, target: Path) -> None:
             capture_output=True,
             text=True,
             check=False,
+            timeout=60,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Godot binary failed to run: {binary_failure(result)}")
