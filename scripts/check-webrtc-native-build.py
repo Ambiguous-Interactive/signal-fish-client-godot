@@ -294,7 +294,10 @@ def main() -> None:
         "patch_sha256": digest(PATCH),
         "scons_version": run([scons, "--version"], output, log),
         "cmake_version": run([cmake, "--version"], output, log),
-        **compare(expected, output, scons, cmake, platform_id, arch),
+        # The pinned tool splices the executable names into its own command
+        # lines, so keep the caller-provided names unquoted. Bare names resolve
+        # through PATH, including CMake's space-bearing Windows install path.
+        **compare(expected, output, args.scons, args.cmake, platform_id, arch),
     }
     (output / "assessment.json").write_text(json.dumps(results, indent=2) + "\n")
     print(f"Native incremental build control passed: {output / 'assessment.json'}")
