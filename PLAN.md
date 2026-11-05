@@ -20,8 +20,8 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
 - [ ] Watch the repaired 4.3 native shutdown leg and requalify when the
       receive repair lands upstream (#482, #536). The weekly
       `Gameplay Shutdown Remote` lane builds the pinned
-      `scripts/backport-websocket-43.py` template and pins its binary
-      (`docs/testing.md`, "Remote-path qualification (native)").
+      `scripts/backport-websocket-43.py` template and checks its binary
+      identity (`docs/testing.md`, "Remote-path qualification (native)").
 - [ ] Watch the weekly remote-path lanes and requalify on any pinned-signature
       drift (#538). Add maps for new engine families (current coverage:
       `docs/testing.md`, "Remote path qualification").

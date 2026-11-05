@@ -467,10 +467,12 @@ not. Dispatch
 passed all three: graceful delivered `GoingAway` then exactly one
 `4000/server_shutdown` close per seat, reset reported `-1`, and stall ended
 with the heartbeat timeout. Both generations completed in every mode, and
-each case counted two starts and one shutdown request. The gate pins the
-built binary (SHA-256
-`8aebdbce741747e08ba00ec694764e38d9d311ee94e5193d582c447197d831f3`), the
-custom-build version string and the extension library. The first dispatch
+each case counted two starts and one shutdown request. The gate compares
+the run's engine hash with the freshly built binary and checks the
+custom-build version string and the extension library; this run used
+SHA-256
+`8aebdbce741747e08ba00ec694764e38d9d311ee94e5193d582c447197d831f3`. The
+first dispatch
 (42074629297) passed every control but failed its gate on the 4.3 version
 string (`4.3-stable (custom_build)`); that attempt stays retained. A
 dispatch sets `native_repaired_4_3` to skip the build. Upstream adoption
