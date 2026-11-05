@@ -43,9 +43,9 @@ jobs:
               with:
                   python-version: "3.12"
 
-            # The Windows control builds the extension with MSVC and drives
-            # CMake through Ninja. The action exports the compiler environment
-            # to the later steps.
+            # The Windows control builds the extension and the nested CMake
+            # library with MSVC, matching the pinned webrtc-native SConstruct.
+            # The action exports the compiler environment to the later steps.
             - name: Set up MSVC
               if: runner.os == 'Windows'
               uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -54,9 +54,7 @@ jobs:
               run: |
                   python -m pip install "scons==4.11.1"
                   if [ "$RUNNER_OS" = "Windows" ]; then
-                      python -m pip install ninja
                       cmake --version
-                      ninja --version
                       cl 2>&1 | head -1 || true
                       exit 0
                   fi

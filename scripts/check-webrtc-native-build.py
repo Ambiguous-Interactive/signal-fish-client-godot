@@ -23,7 +23,7 @@ SCONSTRUCT = """
 import os
 env = Environment(ENV=os.environ.copy())
 env.CacheDir("scons-cache")
-env.__class__.msvc = False
+env.__class__.msvc = ARGUMENTS["platform"] == "windows"
 env["platform"] = ARGUMENTS["platform"]
 env["arch"] = ARGUMENTS["arch"]
 env["debug_symbols"] = False
@@ -63,9 +63,9 @@ ENTRY = (
     'extern "C" OBSERVED_EXPORT int observed() { return nested(); }\n'
 )
 PLATFORM_ARTIFACTS = {
-    "linux": (("libnested.a",), ("libextension.so",)),
-    "macos": (("libnested.a",), ("libextension.dylib",)),
-    "windows": (("nested.lib", "libnested.a"), ("extension.dll", "libextension.dll")),
+    "linux": ("libnested.a", "libextension.so"),
+    "macos": ("libnested.a", "libextension.dylib"),
+    "windows": ("nested.lib", "extension.dll"),
 }
 
 
@@ -107,20 +107,11 @@ def run(command: list[str], cwd: Path, log: Path, *, expect_failure: bool = Fals
     return result.stdout
 
 
-def artifact(directory: Path, names: tuple[str, ...]) -> Path:
-    """Return the first existing build artifact, or the primary name."""
-    for name in names:
-        path = directory / name
-        if path.exists():
-            return path
-    return directory / names[0]
-
-
 def snapshot(work: Path, platform_id: str, arch: str, log: Path) -> dict[str, object]:
     """Record the loaded extension value and the build artifact hashes."""
-    archives, extensions = PLATFORM_ARTIFACTS[platform_id]
-    archive = artifact(work / "build" / platform_id / arch, archives)
-    extension = artifact(work, extensions)
+    archive_name, extension_name = PLATFORM_ARTIFACTS[platform_id]
+    archive = work / "build" / platform_id / arch / archive_name
+    extension = work / extension_name
     observed = run(
         [
             sys.executable,
