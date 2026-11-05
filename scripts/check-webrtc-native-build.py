@@ -246,7 +246,7 @@ def main() -> None:
     args = parser.parse_args()
     platform_id = {"linux": "linux", "darwin": "macos"}.get(sys.platform)
     if platform_id is None or platform.machine() not in ("aarch64", "arm64", "x86_64"):
-        parser.error("This compiled control requires Linux ARM64/x86-64 or macOS ARM64")
+        parser.error("This compiled control requires Linux or macOS on ARM64/x86-64")
     source = args.source.resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
