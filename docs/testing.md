@@ -1203,8 +1203,9 @@ uncapped. The same ladder qualifies the #485 receive repair. The separate
 `Gameplay Shutdown Remote` lane covers active-shutdown close semantics over
 a remote path on the official engine; the repaired-engine shutdown cases
 remain local. Each issue stays open for upstream adoption (resubmission
-tracked in #536), the macOS map's pinned gaps, and targets with no
-collected map (bare-metal x86-64 and new engine families).
+tracked in #536). The macOS map's pinned gaps cover the #492 and #498
+families only. Targets with no collected map (bare-metal x86-64 and new
+engine families) also stay open.
 
 A 2026-11-03 pre-merge devcontainer run (official 4.7.2-stable native on
 Linux ARM64, one Cloudflare quick tunnel, ten selected cases) matched the
