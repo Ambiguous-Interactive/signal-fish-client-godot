@@ -20,12 +20,12 @@ on:
                 type: string
                 default: 9bd5a9386df940b6fed4e5ff536cc36f5748e347
             web_engine_version:
-                description: Official Godot release(s) for the Web job; space or comma separated. Empty runs 4.7.2, 4.4.1 and 4.3.
+                description: Official Godot release(s) for the Web job, such as 4.3-stable; space or comma separated. Empty runs 4.7.2-stable, 4.4.1-stable and 4.3-stable.
                 required: false
                 type: string
                 default: ""
             native_engine_version:
-                description: Official Godot release(s) for the native job; space or comma separated. Empty runs 4.7.2 and 4.4.1.
+                description: Official Godot release(s) for the native job, such as 4.4.1-stable; space or comma separated. Empty runs 4.7.2-stable and 4.4.1-stable.
                 required: false
                 type: string
                 default: ""
