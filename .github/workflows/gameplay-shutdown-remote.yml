@@ -327,6 +327,14 @@ jobs:
                   closing = []
                   drill_exit = os.environ["DRILL_EXIT"]
                   expected_engine = os.environ["GODOT_VERSION"]
+                  expected_cases = {
+                      ("web", mode) for mode in ("graceful", "reset", "stall")
+                  }
+                  cases = {(result.get("runtime"), result.get("mode")) for result in summary}
+                  if cases != expected_cases:
+                      problems.append(
+                          f"remote cases {sorted(cases)!r} != {sorted(expected_cases)!r}"
+                      )
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
                       browsers.add(str(result.get("browser", "unknown")))
@@ -744,6 +752,14 @@ jobs:
                   rows = []
                   closing = []
                   drill_exit = os.environ["DRILL_EXIT"]
+                  expected_cases = {
+                      ("native", mode) for mode in ("graceful", "reset", "stall")
+                  }
+                  cases = {(result.get("runtime"), result.get("mode")) for result in summary}
+                  if cases != expected_cases:
+                      problems.append(
+                          f"remote cases {sorted(cases)!r} != {sorted(expected_cases)!r}"
+                      )
                   for result in summary:
                       name = f"{result['runtime']}-{result['mode']}"
                       engines = [
