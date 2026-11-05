@@ -61,8 +61,9 @@ Godot 3.6 compatibility was evaluated and deferred (2026-10-06;
       zero-byte mesh sends and safe-peer receives (#437).
 - [ ] Qualify the experimental Godot 4.6.3/4.7.2 mesh selection/lifetime repair on
       Web, other targets and remote networks; coordinate upstream adoption
-      (#403, #433, #355; see `docs/mesh-guide.md`).
-      Preserve exact metadata, reliable receipts and replacement links.
+      (#403, #433, #355; see `docs/mesh-guide.md`). The weekly `WebRTC Interop`
+      lane watches the shipped safe-receiver metadata and mixed workload on
+      native and Web 4.7.2 and pins the raw engine mismatch.
       Prove finite packet expiry under controlled delay or loss.
 - [ ] Complete mesh channel interoperability with the reference engines (#355),
       including full reference CLI sessions and remote-network startup

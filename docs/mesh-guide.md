@@ -2204,6 +2204,17 @@ also reproduced that engine failure and passed the raw receive probe and
 seven-generation mixed workload with a Web Godot 4.3 seat. Other engine/export
 versions need separate live checks.
 
+#### CI control
+
+`WebRTC Interop` runs this drill weekly (Mondays 15:00 UTC) and on dispatch
+on ubuntu-24.04 with Godot 4.7.2, webrtc-native 1.2.2-stable and Playwright
+Chromium. The safe `--metadata-probe` and `--mixed-traffic` controls must
+pass on both seats. The raw `--metadata-probe` control must fail each seat
+with `queued packet transfer mode differs from payload` and both pinned
+probe lines. A raw pass means the engine changed: requalify #403 and update
+the lane. A negative editor import exit is retried up to three times because
+of the #447 abort hazard; every attempt is retained.
+
 ### Receive throughput benchmark
 
 Run `godot --headless --path . --script tests/client/mesh_receive_bench.gd`
