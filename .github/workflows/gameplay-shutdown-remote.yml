@@ -844,8 +844,13 @@ jobs:
                   notes = []
                   expected_engine = os.environ["GODOT_VERSION"]
                   if repaired:
-                      # A source build reports "4.3.stable.custom_build".
-                      expected_engines = {"4.3.stable.custom_build"}
+                      # Godot 4.3 custom builds report
+                      # "4.3-stable (custom_build)"; newer engines report
+                      # "4.3.stable.custom_build".
+                      expected_engines = {
+                          "4.3-stable (custom_build)",
+                          "4.3.stable.custom_build",
+                      }
                   else:
                       release, _, channel = expected_engine.rpartition("-")
                       expected_engines = {f"{expected_engine} (official)"}
