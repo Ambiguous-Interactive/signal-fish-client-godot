@@ -55,10 +55,12 @@ CPP = (
 
 
 def digest(path: Path) -> str:
+    """Return the SHA-256 hex digest of a file."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def run(command: list[str], cwd: Path, log: Path, *, expect_failure: bool = False) -> str:
+    """Run one command, append its output to the log, and check its exit code."""
     environment = os.environ.copy()
     if command[0] == "git":
         for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
@@ -91,6 +93,7 @@ def run(command: list[str], cwd: Path, log: Path, *, expect_failure: bool = Fals
 
 
 def snapshot(work: Path, platform_id: str, arch: str, log: Path) -> dict[str, object]:
+    """Record the loaded extension value and the build artifact hashes."""
     archive = work / "build" / platform_id / arch / "libnested.a"
     extension = work / ("libextension.dylib" if platform_id == "macos" else "libextension.so")
     observed = run(
@@ -124,6 +127,7 @@ def snapshot(work: Path, platform_id: str, arch: str, log: Path) -> dict[str, ob
 def compare(
     source: str, output: Path, scons: str, cmake: str, platform_id: str, arch: str
 ) -> dict[str, object]:
+    """Run the pinned tool and the repair through every controlled build step."""
     results: dict[str, object] = {}
     for variant in ("baseline", "repaired"):
         work = output / variant
@@ -233,6 +237,7 @@ def compare(
 
 
 def main() -> None:
+    """Parse arguments and write the control assessment."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path, help="Pinned webrtc-native clone")
     parser.add_argument("--output", required=True, type=Path, help="New evidence directory")

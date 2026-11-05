@@ -67,6 +67,8 @@ jobs:
                     --source source --output output
 
             - name: Check the recorded target
+              env:
+                  RUNNER_LABEL: ${{ matrix.runner }}
               run: |
                   python - <<'PY'
                   import json
@@ -76,7 +78,7 @@ jobs:
                       "ubuntu-24.04": ("linux", "x86_64"),
                       "ubuntu-24.04-arm": ("linux", "arm64"),
                       "macos-15": ("macos", "arm64"),
-                  }["${{ matrix.runner }}"]
+                  }[os.environ["RUNNER_LABEL"]]
                   assessment = json.load(open("output/assessment.json", encoding="utf-8"))
                   actual = (assessment["platform"], assessment["arch"])
                   assert actual == expected, f"ran {actual}, expected {expected}"
