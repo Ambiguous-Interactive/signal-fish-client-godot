@@ -94,6 +94,50 @@ class GodotInstallerTests(unittest.TestCase):
                 installer.install_templates("4.3-stable", cache, root / "bad-version")
             self.assertFalse((root / "escape").exists())
 
+    def test_windows_editor_installs_the_editor_not_the_console_wrapper(self) -> None:
+        """Install the win64 editor binary and keep a failed replacement intact."""
+        with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
+            root = Path(temporary)
+            cache = root / "cache"
+            cache.mkdir()
+            name = "Godot_v4.7.2-stable_win64.exe.zip"
+            archive_path = cache / name
+            target = root / "official-godot" / "godot.exe"
+            calls: list[list[str]] = []
+
+            def run(command: list[str], *args: object, **kwargs: object) -> object:
+                calls.append(command)
+                return installer.subprocess.CompletedProcess(
+                    command, 0, "4.7.2.stable.official.test\n", ""
+                )
+
+            with (
+                patch.object(installer, "EDITOR_MIN_BYTES", 1),
+                patch.object(installer.subprocess, "run", side_effect=run),
+            ):
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("Godot_v4.7.2-stable_win64.exe", b"editor")
+                    archive.writestr("Godot_v4.7.2-stable_win64_console.exe", b"wrapper")
+                installer.install_windows_editor("4.7.2-stable", cache, target)
+                self.assertEqual(target.read_bytes(), b"editor")
+                self.assertTrue(calls[0][0].endswith(".exe"))
+                good_binary = target.read_bytes()
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("Godot_v4.7.2-stable_win64.exe", b"editor")
+                    archive.writestr("Godot_v4.7.2-stable_win64_console.exe", b"wrapper")
+                calls.clear()
+
+                def fail(command: list[str], *args: object, **kwargs: object) -> object:
+                    calls.append(command)
+                    return installer.subprocess.CompletedProcess(command, 3, "", "missing")
+
+                with (
+                    patch.object(installer.subprocess, "run", side_effect=fail),
+                    self.assertRaisesRegex(RuntimeError, "Godot binary failed to run: exit 3"),
+                ):
+                    installer.install_windows_editor("4.7.2-stable", cache, target)
+                self.assertEqual(target.read_bytes(), good_binary)
+
     def test_downloads_use_the_repository_that_hosts_the_release(self) -> None:
         """Fetch stable and pre-release tags from their hosting repository."""
         with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
