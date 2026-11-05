@@ -1919,8 +1919,9 @@ incremental check on every build. It prevents SCons cache reads for those
 outputs and preserves CMake-owned files so unchanged objects and archives
 can be reused. Apply it to the pinned webrtc-native
 `62135fc034cbdc5aee177136e526e3ead3cc563a` source before building a repair.
-Run the compiled control on Linux ARM64/x86-64 or macOS ARM64 with SCons,
-CMake and a C++ compiler available. Use executable paths without spaces:
+Run the compiled control on Linux ARM64/x86-64, macOS ARM64 or Windows
+x86-64 with SCons, CMake and a C++ compiler available. Use executable
+paths without spaces:
 
 ```bash
 python scripts/check-webrtc-native-build.py \
@@ -1938,10 +1939,12 @@ and preserve unchanged output hashes and modification times. This isolates the
 build boundary; live gameplay still needs the rebuilt WebRTC extension.
 
 The `Native Build Control` workflow repeats this control on Linux x86-64,
-Linux ARM64 and macOS ARM64 every Monday at 14:00 UTC. Each job records its
-platform and architecture and must return the repaired values
-`[111, 112, 122, 222, 1222, 1222]`, so a new SCons or CMake regression
-surfaces without a local run.
+Linux ARM64, macOS ARM64 and Windows x86-64 every Monday at 14:00 UTC. Each
+job records its platform and architecture and must return the repaired
+values `[111, 112, 122, 222, 1222, 1222]`, so a new SCons or CMake
+regression surfaces without a local run. The Windows job builds the fixture
+extension with MSVC and lets the pinned CMake tool use Ninja; the control
+still loads the rebuilt DLL and compares its returned value.
 
 Add `--rpc-traffic` to `--multi-peer` to run actual `SceneMultiplayer` RPCs
 after each raw-packet phase:

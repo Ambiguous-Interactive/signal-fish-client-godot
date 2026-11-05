@@ -52,6 +52,20 @@ target_compile_definitions(nested PRIVATE CONFIG_VALUE=100)
 CPP = (
     '#include "value.hpp"\nint nested() { return 1 + HEADER_VALUE + CONFIG_VALUE + ROOT_VALUE; }\n'
 )
+ENTRY = (
+    "#ifdef _WIN32\n"
+    "#define OBSERVED_EXPORT __declspec(dllexport)\n"
+    "#else\n"
+    "#define OBSERVED_EXPORT\n"
+    "#endif\n"
+    "int nested();\n"
+    'extern "C" OBSERVED_EXPORT int observed() { return nested(); }\n'
+)
+PLATFORM_ARTIFACTS = {
+    "linux": (("libnested.a",), ("libextension.so",)),
+    "macos": (("libnested.a",), ("libextension.dylib",)),
+    "windows": (("nested.lib", "libnested.a"), ("extension.dll", "libextension.dll")),
+}
 
 
 def digest(path: Path) -> str:
@@ -92,10 +106,20 @@ def run(command: list[str], cwd: Path, log: Path, *, expect_failure: bool = Fals
     return result.stdout
 
 
+def artifact(directory: Path, names: tuple[str, ...]) -> Path:
+    """Return the first existing build artifact, or the primary name."""
+    for name in names:
+        path = directory / name
+        if path.exists():
+            return path
+    return directory / names[0]
+
+
 def snapshot(work: Path, platform_id: str, arch: str, log: Path) -> dict[str, object]:
     """Record the loaded extension value and the build artifact hashes."""
-    archive = work / "build" / platform_id / arch / "libnested.a"
-    extension = work / ("libextension.dylib" if platform_id == "macos" else "libextension.so")
+    archives, extensions = PLATFORM_ARTIFACTS[platform_id]
+    archive = artifact(work / "build" / platform_id / arch, archives)
+    extension = artifact(work, extensions)
     observed = run(
         [
             sys.executable,
@@ -140,12 +164,10 @@ def compare(
         (nested / "CMakeLists.txt").write_text(NESTED_CMAKE)
         (nested / "nested.cpp").write_text(CPP)
         (nested / "value.hpp").write_text("#define HEADER_VALUE 10\n")
-        (work / "entry.cpp").write_text(
-            'int nested(); extern "C" int observed() { return nested(); }\n'
-        )
+        (work / "entry.cpp").write_text(ENTRY)
         log = work / "commands.log"
         if variant == "repaired":
-            run(["git", "apply", "--unsafe-paths", "--directory", str(work), str(PATCH)], ROOT, log)
+            run(["git", "apply", "--unsafe-paths", str(PATCH)], work, log)
         command = [
             scons,
             "-Q",
@@ -244,9 +266,15 @@ def main() -> None:
     parser.add_argument("--scons", default="scons", help="SCons executable")
     parser.add_argument("--cmake", default="cmake", help="CMake executable")
     args = parser.parse_args()
-    platform_id = {"linux": "linux", "darwin": "macos"}.get(sys.platform)
-    if platform_id is None or platform.machine() not in ("aarch64", "arm64", "x86_64"):
-        parser.error("This compiled control requires Linux or macOS on ARM64/x86-64")
+    platform_id = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(sys.platform)
+    arch = {
+        "aarch64": "arm64",
+        "arm64": "arm64",
+        "x86_64": "x86_64",
+        "amd64": "x86_64",
+    }.get(platform.machine().lower())
+    if platform_id is None or arch is None:
+        parser.error("This compiled control requires Linux, macOS or Windows on ARM64/x86-64")
     source = args.source.resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -258,7 +286,6 @@ def main() -> None:
     cmake = shutil.which(args.cmake)
     if scons is None or cmake is None:
         parser.error("SCons and CMake must be installed")
-    arch = "arm64" if platform.machine() in ("aarch64", "arm64") else "x86_64"
     results = {
         "revision": REVISION,
         "platform": platform_id,
