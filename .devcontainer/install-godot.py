@@ -342,7 +342,11 @@ def main() -> int:
     editor = commands.add_parser("editor")
     editor.add_argument("version")
     editor.add_argument("cache_dir", nargs="?")
-    editor.add_argument("--target", type=Path, default=Path("/usr/local/bin/godot"))
+    editor.add_argument(
+        "--target",
+        type=Path,
+        default=Path("godot.exe") if sys.platform == "win32" else Path("/usr/local/bin/godot"),
+    )
     templates = commands.add_parser("templates")
     templates.add_argument("version")
     templates.add_argument("cache_dir", type=Path)
