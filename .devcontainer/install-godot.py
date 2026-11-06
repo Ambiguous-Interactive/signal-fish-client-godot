@@ -164,13 +164,16 @@ def install_windows_editor(version: str, cache_dir: Path, target: Path) -> None:
             part_path = Path(output.name)
             shutil.copyfileobj(source, output)
     try:
-        result = subprocess.run(  # noqa: S603
-            [str(part_path), "--headless", "--version"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
+        try:
+            result = subprocess.run(  # noqa: S603
+                [str(part_path), "--headless", "--version"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(f"Godot binary did not exit: {error}") from error
         if result.returncode != 0:
             raise RuntimeError(f"Godot binary failed to run: {binary_failure(result)}")
         os.replace(part_path, target)

@@ -140,9 +140,7 @@ class GodotInstallerTests(unittest.TestCase):
                 self.assertEqual(target.read_bytes(), good_binary)
                 self.assertFalse(list(target.parent.glob(".godot-*")))
                 with self.assertRaisesRegex(ValueError, "must end with .exe"):
-                    installer.install_windows_editor(
-                        "4.7.2-stable", cache, root / "extensionless"
-                    )
+                    installer.install_windows_editor("4.7.2-stable", cache, root / "extensionless")
 
     def test_downloads_use_the_repository_that_hosts_the_release(self) -> None:
         """Fetch stable and pre-release tags from their hosting repository."""
