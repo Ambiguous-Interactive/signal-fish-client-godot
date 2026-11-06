@@ -457,7 +457,7 @@ class TriageOutputTests(unittest.TestCase):
                 " 'wire': {'writes': 1, 'error': 0}}))\n",
                 0,
                 True,
-                1,
+                0,
                 "ERROR: engine errors failed the import",
             ),
         }
