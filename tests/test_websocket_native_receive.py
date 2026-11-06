@@ -457,7 +457,7 @@ class TriageOutputTests(unittest.TestCase):
                 " 'wire': {'writes': 1, 'error': 0}}))\n",
                 0,
                 True,
-                0,
+                1,
                 "ERROR: engine errors failed the import",
             ),
         }
@@ -498,6 +498,8 @@ class TriageOutputTests(unittest.TestCase):
                 self.assertFalse(records[0].get("timed_out"), name)
                 self.assertEqual(records[0].get("engine_errors"), engine_errors, name)
                 self.assertIn(message, records[0].get("import_log_tail"), name)
+                report = json.loads((output / "standalone-report.json").read_text())
+                self.assertEqual(report["import"]["engine_errors"], engine_errors, name)
 
     def test_run_repro_command_failure_prints_diagnostics_without_command(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -539,6 +541,37 @@ class TriageOutputTests(unittest.TestCase):
                 if line.startswith("diagnostics ")
             ]
             self.assertEqual(lines, expected)
+
+    def test_run_repro_truncated_result_still_writes_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "if '--editor' in sys.argv:\n"
+                " exit(0)\n"
+                "print('CLOSE_REASON_RESULT {\"passed\":true,')\n"
+            )
+            target.chmod(0o755)
+            output = root / "results"
+            command = [
+                str(SCRIPT),
+                "--godot",
+                str(target),
+                "--importer",
+                str(target),
+                "--output",
+                str(output),
+                "--run-repro",
+            ]
+            with patch.object(sys, "argv", command), redirect_stdout(io.StringIO()):
+                self.assertEqual(drill.main(), 0)
+            report = json.loads((output / "standalone-report.json").read_text())
+            self.assertTrue(report["commands"])
+            for record in report["commands"]:
+                self.assertEqual(record["records"], [{}])
+                self.assertFalse(record["passed"])
 
     def test_failing_case_without_delivery_still_prints_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -304,9 +304,15 @@ def run_repro(
         log = output / f"{name}.log"
         report = run([*prefix, str(binary), *arguments], log, 90)
         text = log.read_text(errors="replace")
-        records = [
-            json.loads(line.split(" ", 1)[1]) for line in text.splitlines() if "_RESULT " in line
-        ]
+        records = []
+        for line in text.splitlines():
+            if "_RESULT " not in line:
+                continue
+            try:
+                records.append(json.loads(line.split(" ", 1)[1]))
+            except ValueError:
+                # A crash can truncate the line; keep the report for diagnosis.
+                records.append({})
         report.update(
             name=name,
             records=records,
@@ -526,7 +532,8 @@ def main() -> int:
         imported = summary["import"]
         if not isinstance(imported, dict):
             return 1
-        if imported["returncode"] != 0 or imported["engine_errors"]:
+        import_failed = imported["returncode"] != 0 or imported["engine_errors"]
+        if import_failed:
             print(
                 "diagnostics "
                 + json.dumps(
@@ -535,7 +542,7 @@ def main() -> int:
                 flush=True,
             )
         print(json.dumps({"report": str(args.output / "standalone-report.json")}))
-        return 0 if imported["returncode"] == 0 else 1
+        return 1 if import_failed else 0
     prefix = [str(runner), *args.runner_arg] if runner else []
     selected = [
         case
