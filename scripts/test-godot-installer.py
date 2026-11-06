@@ -106,6 +106,7 @@ class GodotInstallerTests(unittest.TestCase):
             calls: list[list[str]] = []
 
             def run(command: list[str], *args: object, **kwargs: object) -> object:
+                """Return a successful version probe."""
                 calls.append(command)
                 return installer.subprocess.CompletedProcess(
                     command, 0, "4.7.2.stable.official.test\n", ""
@@ -129,6 +130,7 @@ class GodotInstallerTests(unittest.TestCase):
                 calls.clear()
 
                 def fail(command: list[str], *args: object, **kwargs: object) -> object:
+                    """Return a failed version probe."""
                     calls.append(command)
                     return installer.subprocess.CompletedProcess(command, 3, "", "missing")
 
@@ -141,6 +143,7 @@ class GodotInstallerTests(unittest.TestCase):
                 self.assertFalse(list(target.parent.glob(".godot-*")))
 
                 def stall(command: list[str], *args: object, **kwargs: object) -> object:
+                    """Raise a version probe timeout."""
                     raise installer.subprocess.TimeoutExpired(command, 60)
 
                 with (
@@ -169,6 +172,7 @@ class GodotInstallerTests(unittest.TestCase):
                 urls.clear()
 
                 def open_url(url: str, *args: object, **kwargs: object) -> io.BytesIO:
+                    """Record and serve a synthetic archive response."""
                     urls.append(url)
                     return io.BytesIO(valid)
 
@@ -258,6 +262,7 @@ class GodotInstallerTests(unittest.TestCase):
                 promoted_bytes = installed.read_bytes()
 
                 def fail_first_promotion(source: Path, destination: Path) -> None:
+                    """Fail the first bundle promotion, then delegate."""
                     if (
                         not promotion_failed[0]
                         and source.parent.name.startswith(".godot-app-")
