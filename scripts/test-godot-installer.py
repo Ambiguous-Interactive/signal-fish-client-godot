@@ -139,6 +139,17 @@ class GodotInstallerTests(unittest.TestCase):
                     installer.install_windows_editor("4.7.2-stable", cache, target)
                 self.assertEqual(target.read_bytes(), good_binary)
                 self.assertFalse(list(target.parent.glob(".godot-*")))
+
+                def stall(command: list[str], *args: object, **kwargs: object) -> object:
+                    raise installer.subprocess.TimeoutExpired(command, 60)
+
+                with (
+                    patch.object(installer.subprocess, "run", side_effect=stall),
+                    self.assertRaisesRegex(RuntimeError, "did not exit"),
+                ):
+                    installer.install_windows_editor("4.7.2-stable", cache, target)
+                self.assertEqual(target.read_bytes(), good_binary)
+                self.assertFalse(list(target.parent.glob(".godot-*")))
                 with self.assertRaisesRegex(ValueError, "must end with .exe"):
                     installer.install_windows_editor("4.7.2-stable", cache, root / "extensionless")
 
