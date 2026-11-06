@@ -905,12 +905,13 @@ python scripts/check-websocket-native-receive.py \
 ```
 
 `standalone-report.json` pins engine and importer hashes and records optional
-emulator paths and arguments. It records each command's exit, logs and result
-records. An engine that crashes a command yields no record, so a missing result
-stays visible. The driver exits nonzero when the fixture import fails, including
-an import that exits 0 after logging an `ERROR:` line. It writes the report
-before it exits. The report itself states facts; callers compare them with the
-expected matrix.
+emulator paths and arguments. It records each command's exit and result
+records. Each command's log sits beside the report as `<name>.log`. An engine
+that crashes a command yields no record, so a missing result stays visible.
+The driver exits nonzero when the fixture import fails, including an import
+that exits 0 after logging an `ERROR:` line. It writes the report before it
+exits. The report itself states facts; callers compare them with the expected
+matrix.
 
 ### x86-64 CI qualification
 
