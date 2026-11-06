@@ -94,6 +94,68 @@ class GodotInstallerTests(unittest.TestCase):
                 installer.install_templates("4.3-stable", cache, root / "bad-version")
             self.assertFalse((root / "escape").exists())
 
+    def test_windows_editor_installs_the_editor_not_the_console_wrapper(self) -> None:
+        """Install the win64 editor binary and keep a failed replacement intact."""
+        with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
+            root = Path(temporary)
+            cache = root / "cache"
+            cache.mkdir()
+            name = "Godot_v4.7.2-stable_win64.exe.zip"
+            archive_path = cache / name
+            target = root / "official-godot" / "godot.exe"
+            calls: list[list[str]] = []
+
+            def run(command: list[str], *args: object, **kwargs: object) -> object:
+                """Return a successful version probe."""
+                calls.append(command)
+                return installer.subprocess.CompletedProcess(
+                    command, 0, "4.7.2.stable.official.test\n", ""
+                )
+
+            with (
+                patch.object(installer, "EDITOR_MIN_BYTES", 1),
+                patch.object(installer.subprocess, "run", side_effect=run),
+            ):
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("Godot_v4.7.2-stable_win64_console.exe", b"wrapper")
+                    archive.writestr("Godot_v4.7.2-stable_win64.exe", b"editor")
+                installer.install_windows_editor("4.7.2-stable", cache, target)
+                self.assertEqual(target.read_bytes(), b"editor")
+                self.assertEqual(calls[0][1:], ["--headless", "--version"])
+                self.assertTrue(calls[0][0].endswith(".exe"))
+                self.assertFalse(list(target.parent.glob(".godot-*")))
+                good_binary = target.read_bytes()
+                with zipfile.ZipFile(archive_path, "w") as archive:
+                    archive.writestr("Godot_v4.7.2-stable_win64.exe", b"replacement")
+                calls.clear()
+
+                def fail(command: list[str], *args: object, **kwargs: object) -> object:
+                    """Return a failed version probe."""
+                    calls.append(command)
+                    return installer.subprocess.CompletedProcess(command, 3, "", "missing")
+
+                with (
+                    patch.object(installer.subprocess, "run", side_effect=fail),
+                    self.assertRaisesRegex(RuntimeError, "Godot binary failed to run: exit 3"),
+                ):
+                    installer.install_windows_editor("4.7.2-stable", cache, target)
+                self.assertEqual(target.read_bytes(), good_binary)
+                self.assertFalse(list(target.parent.glob(".godot-*")))
+
+                def stall(command: list[str], *args: object, **kwargs: object) -> object:
+                    """Raise a version probe timeout."""
+                    raise installer.subprocess.TimeoutExpired(command, 60)
+
+                with (
+                    patch.object(installer.subprocess, "run", side_effect=stall),
+                    self.assertRaisesRegex(RuntimeError, "did not exit"),
+                ):
+                    installer.install_windows_editor("4.7.2-stable", cache, target)
+                self.assertEqual(target.read_bytes(), good_binary)
+                self.assertFalse(list(target.parent.glob(".godot-*")))
+                with self.assertRaisesRegex(ValueError, "must end with .exe"):
+                    installer.install_windows_editor("4.7.2-stable", cache, root / "extensionless")
+
     def test_downloads_use_the_repository_that_hosts_the_release(self) -> None:
         """Fetch stable and pre-release tags from their hosting repository."""
         with tempfile.TemporaryDirectory(prefix="sf-godot-test-") as temporary:
@@ -110,6 +172,7 @@ class GodotInstallerTests(unittest.TestCase):
                 urls.clear()
 
                 def open_url(url: str, *args: object, **kwargs: object) -> io.BytesIO:
+                    """Record and serve a synthetic archive response."""
                     urls.append(url)
                     return io.BytesIO(valid)
 
@@ -199,6 +262,7 @@ class GodotInstallerTests(unittest.TestCase):
                 promoted_bytes = installed.read_bytes()
 
                 def fail_first_promotion(source: Path, destination: Path) -> None:
+                    """Fail the first bundle promotion, then delegate."""
                     if (
                         not promotion_failed[0]
                         and source.parent.name.startswith(".godot-app-")

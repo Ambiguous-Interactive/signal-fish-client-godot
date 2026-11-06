@@ -89,6 +89,9 @@ def install_editor(version: str, cache_dir: Path, target: Path) -> None:
     if sys.platform == "darwin":
         install_macos_editor(version, cache_dir, target)
         return
+    if sys.platform == "win32":
+        install_windows_editor(version, cache_dir, target)
+        return
     architecture = {"x86_64": "linux.x86_64", "aarch64": "linux.arm64"}.get(platform.machine())
     if architecture is None:
         raise ValueError(f"Unsupported architecture: {platform.machine()}")
@@ -121,6 +124,56 @@ def install_editor(version: str, cache_dir: Path, target: Path) -> None:
             text=True,
             check=False,
         )
+        if result.returncode != 0:
+            raise RuntimeError(f"Godot binary failed to run: {binary_failure(result)}")
+        os.replace(part_path, target)
+    finally:
+        part_path.unlink(missing_ok=True)
+    print(f"==> Installed: {result.stdout.strip()}")
+
+
+def install_windows_editor(version: str, cache_dir: Path, target: Path) -> None:
+    """Install the official Windows editor executable at target.
+
+    The win64 archive also ships a console wrapper; only the editor binary is
+    installed, and the target keeps its .exe suffix so Windows can launch it.
+    """
+    if target.suffix.lower() != ".exe":
+        raise ValueError(f"Windows editor target must end with .exe: {target}")
+    name = f"Godot_v{version}_win64.exe.zip"
+    path = download_archive(version, name, cache_dir, EDITOR_MIN_BYTES)
+    print("==> Verifying archive")
+    with zipfile.ZipFile(path) as archive:
+        binaries = [
+            member
+            for member in archive.infolist()
+            if not member.is_dir()
+            and Path(member.filename).name.startswith(f"Godot_v{version}_win64")
+            and not Path(member.filename).name.endswith("_console.exe")
+        ]
+        if len(binaries) != 1:
+            raise ValueError(f"Expected one Godot binary in {name}, found {len(binaries)}")
+        print(f"==> Installing to {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with (
+            archive.open(binaries[0]) as source,
+            tempfile.NamedTemporaryFile(
+                dir=target.parent, prefix=".godot-", suffix=".exe", delete=False
+            ) as output,
+        ):
+            part_path = Path(output.name)
+            shutil.copyfileobj(source, output)
+    try:
+        try:
+            result = subprocess.run(  # noqa: S603
+                [str(part_path), "--headless", "--version"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(f"Godot binary did not exit: {error}") from error
         if result.returncode != 0:
             raise RuntimeError(f"Godot binary failed to run: {binary_failure(result)}")
         os.replace(part_path, target)
@@ -289,7 +342,11 @@ def main() -> int:
     editor = commands.add_parser("editor")
     editor.add_argument("version")
     editor.add_argument("cache_dir", nargs="?")
-    editor.add_argument("--target", type=Path, default=Path("/usr/local/bin/godot"))
+    editor.add_argument(
+        "--target",
+        type=Path,
+        default=Path("godot.exe") if sys.platform == "win32" else Path("/usr/local/bin/godot"),
+    )
     templates = commands.add_parser("templates")
     templates.add_argument("version")
     templates.add_argument("cache_dir", type=Path)

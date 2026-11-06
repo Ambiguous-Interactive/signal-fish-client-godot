@@ -1083,6 +1083,36 @@ suite or the standalone log prints a `diagnostics` line with its result
 record, so a red run triages from the CI log alone. The uploaded artifacts
 keep the complete per-case evidence.
 
+### Windows-native CI qualification
+
+The `windows` build target runs under Wine by default, which cannot show that
+the repair holds on the Windows socket path itself. Dispatch the workflow
+with `build_target=windows` and `windows_native_runner=true`: the Linux job
+uploads the repaired engine, and a `windows-latest` job downloads it,
+installs the official Windows editor through
+`.devcontainer/install-godot.py`, and runs the uncapped paced suite plus the
+seven standalone commands. The gate requires every case and reproduction.
+
+Dispatch [42132635865](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/42132635865)
+(Windows Server 2025, `windows-2025-vs2026` image) built the pinned
+4.7.2-stable repair `ed1daf0bf001b61586d9930840f2f1394092c079` and ran the
+same engine binary on both paths:
+
+- Wine leg: 184/184 paced cases and 7/7 standalone commands passed.
+- Native Windows leg: 184/184 paced cases and 7/7 standalone commands
+  passed; both fixture imports exited 0 with no engine errors.
+- Engine SHA-256
+  `51115c67ff60d889c7f79f3b90c88234a96b0d4bab8f05927ad93516e25fde67`;
+  extracted official Windows editor executable SHA-256
+  `ab1824f85bfd8e0e4128182c000c4003a3e042245b2967848d089b2a04b22424`.
+
+The gate checks the downloaded engine against the uploaded checksum and the
+suite provenance, so both paths run the same binary. The native leg takes
+about six minutes after the build. It stays dispatch-only; the weekly Wine
+watch remains the recurring Wine check, and native Windows runs on dispatch.
+This qualifies the Windows socket path for the pinned build, not an MSVC
+rebuild or another engine family.
+
 ### macOS CI qualification
 
 The `WebSocket Native macOS` workflow qualifies the same pinned repairs on
@@ -1263,9 +1293,11 @@ Coverage by filed issue, from the same suite on each engine:
 The 4.3 entry in the #496 row is the paced remote case; the standalone
 full-buffer reproduction still drops the following packet on official 4.3.
 The repaired legs are the 4.3 backport, 4.4.1, 4.5.2, 4.6.3 and 4.7.2 on
-Linux x86-64, plus 4.4.1 on Windows x86-64 under Wine. Linux legs run at
-the 3-byte read cap except the cited uncapped 4.7.2 run; Wine legs run
-uncapped. The same ladder qualifies the #485 receive repair. The separate
+Linux x86-64, plus 4.4.1, 4.5.2, 4.6.3 and 4.7.2 on Windows x86-64
+under Wine and 4.7.2 on a native Windows runner. Linux legs run at the
+3-byte read cap except the cited uncapped 4.7.2 run; Wine and native
+Windows legs run uncapped. The same ladder qualifies the #485 receive
+repair. The separate
 `Gameplay Shutdown Remote` lane covers active-shutdown close semantics over
 a remote path on official Web 4.3, 4.4.1 and 4.7.2, native 4.4.1 and
 4.7.2, and the pinned repaired 4.3 native backport. Each issue stays open for upstream adoption (resubmission
