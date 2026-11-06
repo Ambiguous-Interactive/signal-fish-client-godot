@@ -439,6 +439,7 @@ class TriageOutputTests(unittest.TestCase):
             self.assertEqual(summary["cases"], [])
 
     def test_run_repro_import_failures_print_diagnostics(self) -> None:
+        """Pin failed-import diagnostics, exit code and report."""
         variants = {
             "nonzero": (
                 "#!/usr/bin/env python3\nimport json, sys\nif '--editor' in sys.argv:\n"
@@ -543,6 +544,7 @@ class TriageOutputTests(unittest.TestCase):
             self.assertEqual(lines, expected)
 
     def test_run_repro_truncated_result_still_writes_report(self) -> None:
+        """Keep the report when a result line is truncated."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target = root / "target"

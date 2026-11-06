@@ -281,6 +281,7 @@ def repro_commands(files: dict[str, bytes], project: Path) -> list[tuple[str, li
 def run_repro(
     binary: Path, importer: Path, runner: Path | None, runner_args: list[str], output: Path
 ) -> dict[str, object]:
+    """Run the extracted reproduction commands and keep one report."""
     output.mkdir(parents=True)
     project = output.resolve() / "project"
     project.mkdir()
@@ -426,6 +427,7 @@ def import_diagnostics(record: dict[str, object], log: Path) -> dict[str, object
 
 
 def main() -> int:
+    """Run the requested receive check, export or reproduction."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", type=Path, help="Native engine or template to test")
     parser.add_argument("--importer", type=Path, help="Godot editor for fixture import")
