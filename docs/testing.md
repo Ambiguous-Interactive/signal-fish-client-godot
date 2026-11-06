@@ -1093,16 +1093,16 @@ installs the official Windows editor through
 `.devcontainer/install-godot.py`, and runs the uncapped paced suite plus the
 seven standalone commands. The gate requires every case and reproduction.
 
-The first run ([42127137060](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/42127137060),
-Windows Server 2025, `windows-2025-vs2026` image) built the pinned
+Dispatch [42132635865](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/42132635865)
+(Windows Server 2025, `windows-2025-vs2026` image) built the pinned
 4.7.2-stable repair `ed1daf0bf001b61586d9930840f2f1394092c079` and ran the
 same engine binary on both paths:
 
 - Wine leg: 184/184 paced cases and 7/7 standalone commands passed.
 - Native Windows leg: 184/184 paced cases and 7/7 standalone commands
-  passed; the fixture import exited 0 with no engine errors.
+  passed; both fixture imports exited 0 with no engine errors.
 - Engine SHA-256
-  `16979a7550bba710fed7b57aeafdb51d6f173bb60a6bfbb9e73815a15829512a`;
+  `51115c67ff60d889c7f79f3b90c88234a96b0d4bab8f05927ad93516e25fde67`;
   extracted official Windows editor executable SHA-256
   `ab1824f85bfd8e0e4128182c000c4003a3e042245b2967848d089b2a04b22424`.
 
