@@ -910,8 +910,10 @@ records. Each command's log sits beside the report as `<name>.log`. An engine
 that crashes a command leaves no result, or an empty record when its result
 line is cut short. Either way the gap stays visible. The driver exits nonzero
 when the fixture import fails, including an import that exits 0 after logging
-an `ERROR:` line. It writes the report before it exits. The report itself
-states facts; callers compare them with the expected matrix.
+an `ERROR:` line. It writes the report before it exits. Only the import sets
+the exit status: a failing reproduction command still exits 0, because
+official engines fail the defect commands by design. Callers compare the
+report with the expected matrix.
 
 ### x86-64 CI qualification
 
