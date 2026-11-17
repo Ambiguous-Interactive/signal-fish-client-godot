@@ -225,6 +225,10 @@ def has_trigger(data: object, trigger_name: str) -> bool:
 
 
 PR_TRIGGERS = ("pull_request", "pull_request_target")
+ADVISORY_REVIEW_WORKFLOW = (
+    "Ambiguous-Interactive/review-tools/.github/workflows/openai-review.yml"
+    "@d8aab4dc3655924360ff17ebb04bbc3a844a493f"
+)
 
 
 def write_permission_scopes(permissions: object) -> list[str]:
@@ -244,6 +248,14 @@ def pr_permission_errors(source: str, data: object) -> list[str]:
         )
     for job_name, job in as_dict(as_dict(data).get("jobs")).items():
         for scope in write_permission_scopes(as_dict(job).get("permissions")):
+            if (
+                scope == "pull-requests"
+                and has_trigger(data, "pull_request")
+                and not has_trigger(data, "pull_request_target")
+                and as_dict(job).get("uses") == ADVISORY_REVIEW_WORKFLOW
+                and "steps" not in as_dict(job)
+            ):
+                continue
             errors.append(
                 f"{source}: pull_request workflows must stay read-only; "
                 f"job {job_name} grants write to {scope}"
@@ -856,6 +868,31 @@ jobs:
     )
     if pr_permission_errors("push-write.yml", push_write):
         reporter.error("self-test: push-triggered write workflow was rejected")
+
+    advisory_permissions = {"contents": "read", "pull-requests": "write"}
+    advisory_job: dict[str, object] = {
+        "uses": ADVISORY_REVIEW_WORKFLOW,
+        "permissions": advisory_permissions,
+    }
+    advisory_review: dict[str, object] = {
+        "on": {"pull_request": {}},
+        "permissions": {"contents": "read"},
+        "jobs": {"review": advisory_job},
+    }
+    if pr_permission_errors("openai-review.yml", advisory_review):
+        reporter.error("self-test: trusted advisory review comments were rejected")
+    for scope in ("contents", "issues", "actions"):
+        advisory_permissions[scope] = "write"
+        if not pr_permission_errors("openai-review.yml", advisory_review):
+            reporter.error(f"self-test: advisory review write to {scope} was accepted")
+        advisory_permissions.pop(scope)
+    advisory_job["uses"] = ADVISORY_REVIEW_WORKFLOW + "-untrusted"
+    if not pr_permission_errors("openai-review.yml", advisory_review):
+        reporter.error("self-test: untrusted review workflow was accepted")
+    advisory_job["uses"] = ADVISORY_REVIEW_WORKFLOW
+    advisory_review["on"] = {"pull_request_target": {}}
+    if not pr_permission_errors("openai-review.yml", advisory_review):
+        reporter.error("self-test: privileged review trigger was accepted")
 
     old_command = 'gh api --paginate --slurp "/repos/o/r/actions/runs" \\\n  --jq ".[0]"'
     if not find_gh_api_slurp_jq(old_command):
