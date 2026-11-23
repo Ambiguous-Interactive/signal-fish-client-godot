@@ -10,6 +10,10 @@ released version.
 
 ### Added
 
+- Add opt-in `SFWebRTCMesh.pair_recovery_enabled` to rebuild a closed WebRTC
+  pair inside the current room and plan. Both peers must enable it before the
+  plan starts. The game manages relay fallback (#585).
+
 - `JoinRoomParams.join_only` lets stale room links return `ROOM_NOT_FOUND` (#509).
 
 - WebRTC assessments show startup, snapshot and control backlogs beside
