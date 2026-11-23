@@ -1157,21 +1157,27 @@ func _on_peer_session_description(entry: _MeshPeer, type: String, sdp: String) -
 		entry.early_ice.clear()
 
 
-func _on_peer_ice_candidate(
-	entry: _MeshPeer, _media: String, _index: int, candidate: String
-) -> void:
+func _on_peer_ice_candidate(entry: _MeshPeer, media: String, index: int, candidate: String) -> void:
 	if _peers.get(entry.uuid) != entry:
 		return
 	if candidate.is_empty():
 		return
+	var body := candidate
+	# Some adapters already carry the ICE coordinates inside the candidate.
+	if (
+		entry.attempt > 0
+		and (not media.is_empty() or index != 0)
+		and not candidate.strip_edges().begins_with("{")
+	):
+		body = JSON.stringify({"candidate": candidate, "sdpMid": media, "sdpMLineIndex": index})
 	if entry.attempt > 0 and not entry.local_description_sent:
 		if not _recovery_accepts_callbacks(entry):
 			return
 		if not entry.local_description_sent:
 			if entry.early_ice.size() < Recovery.MAX_EARLY_CANDIDATES:
-				entry.early_ice.append(candidate)
+				entry.early_ice.append(body)
 			return
-	_send_signal_to(entry, {"IceCandidate": candidate})
+	_send_signal_to(entry, {"IceCandidate": body})
 
 
 func _recovery_accepts_callbacks(entry: _MeshPeer) -> bool:

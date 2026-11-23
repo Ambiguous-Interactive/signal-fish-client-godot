@@ -293,7 +293,7 @@ func _test_plan_opens_peers_and_reports_boundaries() -> void:
 		"offer relayed to the peer"
 	)
 
-	pc.emit_ice_candidate_created("", 0, "cand:1")
+	pc.emit_ice_candidate_created("legacy-data", 2, "cand:1")
 	pc.emit_ice_candidate_created("", 0, "")
 	_assert_equal(
 		[

@@ -34,6 +34,7 @@ func run_all() -> void:
 		_test_closed_pair_is_rebuilt_in_room,
 		_test_recovery_offer_requires_local_ready_link,
 		_test_recovery_buffers_ice_before_remote_description,
+		_test_recovery_preserves_ice_coordinates,
 		_test_answerer_recovers_after_dropped_offer,
 		_test_recovery_budget_and_retirement,
 		_test_new_generation_recovers_independently,
@@ -1219,3 +1220,81 @@ func _test_recovery_buffers_ice_before_remote_description() -> void:
 		mesh.free()
 		client.free()
 	_done()
+
+
+func _test_recovery_preserves_ice_coordinates() -> void:
+	for deferred: bool in [true, false]:
+		_check_recovery_preserves_ice_coordinates(deferred)
+	_done()
+
+
+func _check_recovery_preserves_ice_coordinates(deferred: bool) -> void:
+	var sender_id := ClientFixtures.PLAYER_A
+	var sender := _make_recovery_mesh(sender_id, [0])
+	var receiver := _make_recovery_mesh(PLAYER_B, [0])
+	var sender_client: ClientScript = sender[0]
+	var receiver_client: ClientScript = receiver[0]
+	var send_mesh: MeshScript = sender[1]
+	var receive_mesh: MeshScript = receiver[1]
+	var send_roster: Array[Dictionary] = [_owner.call("_peer", PLAYER_B, true)]
+	var receive_roster: Array[Dictionary] = [_owner.call("_peer", sender_id, false)]
+	_owner.call("_inject_plan", sender_client, send_roster)
+	_owner.call("_inject_plan", receiver_client, receive_roster)
+	var send_peers: Array = _owner.call("_mesh_peers", send_mesh)
+	var receive_peers: Array = _owner.call("_mesh_peers", receive_mesh)
+	var original_sender: Object = send_peers[0]
+	var original_receiver: Object = receive_peers[0]
+	_ready_recovery_connection(send_mesh, original_sender)
+	_ready_recovery_connection(receive_mesh, original_receiver)
+	_close_unreliable(original_sender)
+	_close_unreliable(original_receiver)
+	send_mesh.poll()
+	receive_mesh.poll()
+	send_mesh.poll()
+	_assert_equal(2, send_peers.size(), "candidate test starts one recovery attempt")
+	if send_peers.size() == 2:
+		var sending: Object = send_peers[1]
+		var encoded := ' {"candidate":"compat-candidate","sdpMid":"compat-data","sdpMLineIndex":3} '
+		if not deferred:
+			sending.call("emit_session_description_created", "offer", OFFER_SDP)
+		sending.call("emit_ice_candidate_created", "data", 2, "both-metadata-fields")
+		sending.call("emit_ice_candidate_created", "other-data", 0, "only-mid")
+		sending.call("emit_ice_candidate_created", "", 1, "only-index")
+		sending.call("emit_ice_candidate_created", "ignored-callback-mid", 7, encoded)
+		sending.call("emit_ice_candidate_created", "", 0, "raw-defaults")
+		if deferred:
+			_assert_equal(0, _get_signals(sender_client).size(), "ICE waits for local SDP")
+			sending.call("emit_session_description_created", "offer", OFFER_SDP)
+		var signals := _get_signals(sender_client)
+		_assert_equal(6, signals.size(), "one Offer precedes five ICE candidates")
+		if signals.size() == 6:
+			_assert_equal(
+				encoded,
+				signals[4]["signal"]["MeshRecovery"]["body"],
+				"pre-encoded candidate stays byte-for-byte intact"
+			)
+			_assert_equal(
+				"raw-defaults",
+				signals[5]["signal"]["MeshRecovery"]["body"],
+				"metadata-free candidate stays compatible with raw receiver"
+			)
+			for frame: Dictionary in signals:
+				_deliver(receiver_client, sender_id, frame)
+			_assert_equal(2, receive_peers.size(), "recovery registers the receiver")
+			if receive_peers.size() == 2:
+				var receiving: Object = receive_peers[1]
+				_assert_equal(
+					[
+						["data", 2, "both-metadata-fields"],
+						["other-data", 0, "only-mid"],
+						["", 1, "only-index"],
+						["compat-data", 3, "compat-candidate"],
+						["", 0, "raw-defaults"],
+					],
+					receiving.get("added_candidates"),
+					"recovery preserves native and encoded ICE metadata, deferred=%s" % deferred
+				)
+	send_mesh.free()
+	receive_mesh.free()
+	sender_client.free()
+	receiver_client.free()
