@@ -90,8 +90,9 @@ Set `mesh.pair_recovery_enabled = true` before the first WebRTC plan on
 both ends. Use this option with a fixed roster and a separate gameplay
 relay path. The accepted offerer can build up to three replacement
 connections for a previously connected pair in that plan. The other end
-can request a replacement. The same multiplayer peer and unaffected
-connections stay in service.
+can request a replacement. A peer with an active connection keeps it
+while Godot validates a replacement offer. The same multiplayer peer
+and unaffected connections stay in service.
 
 Recovery requires known v3 roster epochs on both ends. A departure,
 changed plan, changed offerer, or mesh teardown cancels pending work for

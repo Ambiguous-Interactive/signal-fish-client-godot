@@ -38,6 +38,8 @@ func run_all() -> void:
 		_test_reentrant_clock_claims_sdp_once,
 		_test_reentrant_clock_does_not_strand_ice,
 		_test_malformed_offer_preserves_active_link,
+		_test_replacement_waits_for_engine_offer_validation,
+		_test_staged_offer_retires_with_pair,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -535,3 +537,129 @@ func _test_malformed_offer_preserves_active_link() -> void:
 	mesh.free()
 	client.free()
 	_done()
+
+
+func _test_replacement_waits_for_engine_offer_validation() -> void:
+	var clock: Array[int] = [0]
+	var fixture := _make_recovery_mesh(PLAYER_B, clock)
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = created[0]
+	original.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	mesh.poll()
+	var multiplayer := mesh.get_multiplayer_peer()
+	var peer_id := MeshScript.uuid_to_peer_id(offerer)
+	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP + "a=fingerprint:sha-256 invalid"))
+	_assert_equal(2, created.size(), "one standalone offer verification begins")
+	if created.size() == 2:
+		var rejected: Object = created[1]
+		_assert_equal(false, original.get("closed"), "pending validation preserves old link")
+		var disabled_answer := OFFER_SDP.replace("m=application 9", "m=application 0")
+		rejected.call("emit_session_description_created", "answer", disabled_answer)
+		mesh.poll()
+		_assert_equal(false, original.get("closed"), "rejected data section preserves old link")
+		clock[0] = 5
+		mesh.poll()
+		_assert_equal(
+			true, rejected.get("closed"), "no engine answer retires standalone verification"
+		)
+		var old_peer: Dictionary = {}
+		if multiplayer.call("has_peer", peer_id):
+			old_peer = multiplayer.call("get_peer", peer_id)
+		_assert_equal(
+			true,
+			old_peer.get("connection") == original,
+			"semantically rejected offer preserves the registered link"
+		)
+		rejected.call("emit_session_description_created", "answer", OFFER_SDP)
+		_assert_equal(0, _get_signals(client).size(), "expired verification cannot send SDP")
+		_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+		_assert_equal(2, created.size(), "expired offer cannot restart standalone verification")
+		_deliver(client, offerer, _recovery_offer(2, OFFER_SDP))
+		_assert_equal(3, created.size(), "higher offer starts one verification")
+		if created.size() == 3:
+			var accepted: Object = created[2]
+			_deliver(client, offerer, _recovery_offer(2, OFFER_SDP))
+			var candidate := _recovery_offer(2, "while-validating")
+			candidate["signal"]["MeshRecovery"]["kind"] = "IceCandidate"
+			_deliver(client, offerer, candidate)
+			_assert_equal(3, created.size(), "duplicate offer cannot restart verification")
+			accepted.call("emit_session_description_created", "answer", OFFER_SDP)
+			mesh.poll()
+			_assert_equal(true, accepted.get("closed"), "validated standalone connection retires")
+			_assert_equal(
+				true, original.get("closed"), "only validated offer retires old connection"
+			)
+			_assert_equal(4, created.size(), "validation promotes a distinct registered connection")
+			if created.size() == 4:
+				var replacement: Object = created[3]
+				var new_peer: Dictionary = multiplayer.call("get_peer", peer_id)
+				_assert_equal(
+					replacement,
+					new_peer.get("connection"),
+					"validated replacement keeps the peer ID"
+				)
+				_assert_equal(
+					["offer", OFFER_SDP],
+					replacement.get("remote_description"),
+					"replacement applies exactly the verified offer"
+				)
+				_assert_equal(
+					[["", 0, "while-validating"]],
+					replacement.get("added_candidates"),
+					"matching ICE queued during validation reaches replacement"
+				)
+	mesh.free()
+	client.free()
+	_done()
+
+
+func _test_staged_offer_retires_with_pair() -> void:
+	for retire_by_plan: bool in [true, false]:
+		_check_staged_offer_retires_with_pair(retire_by_plan)
+	_done()
+
+
+func _check_staged_offer_retires_with_pair(retire_by_plan: bool) -> void:
+	var fixture := _make_recovery_mesh(PLAYER_B, [0])
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	for attempt: int in [1, 2]:
+		_deliver(client, offerer, _recovery_offer(attempt, OFFER_SDP))
+	_assert_equal(3, created.size(), "newer offer allocates one replacement verification")
+	if created.size() == 3:
+		var superseded: Object = created[1]
+		var pending: Object = created[2]
+		_assert_equal(true, superseded.get("closed"), "newer offer closes superseded verification")
+		_assert_equal(false, pending.get("closed"), "newest offer waits for engine")
+		var session_created: Signal = pending.get("session_description_created")
+		var first_callback: Dictionary = session_created.get_connections()[0]
+		var stale_callback: Callable = first_callback["callable"]
+		var retained_probe := stale_callback.get_object()
+		if retire_by_plan:
+			_owner.call("_inject_plan", client, roster, NEXT_GENERATION)
+		else:
+			mesh.detach()
+		_assert_equal(true, pending.get("closed"), "pair retirement closes pending verification")
+		_assert_equal(
+			true,
+			session_created.get_connections().is_empty(),
+			"retirement disconnects probe callback"
+		)
+		_assert_equal(true, is_instance_valid(retained_probe), "test retains retired probe")
+		stale_callback.call("answer", OFFER_SDP)
+		mesh.poll()
+		_assert_equal(
+			4 if retire_by_plan else 3, created.size(), "retired validation cannot replace peer"
+		)
+		_assert_equal(0, _get_signals(client).size(), "retired validation cannot send SDP")
+	mesh.free()
+	client.free()

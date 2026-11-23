@@ -18,6 +18,20 @@ var attempt := 0
 var request_count := 0
 var due := -1
 var expires := -1
+var last_probed_attempt := 0
+var offer_probe: OfferProbe
+
+
+func retire() -> void:
+	retired = true
+	clear_offer_probe()
+
+
+func clear_offer_probe() -> void:
+	var probe := offer_probe
+	offer_probe = null
+	if probe != null:
+		probe.close()
 
 
 func envelope(kind: String, body := "") -> Dictionary:
@@ -63,3 +77,35 @@ static func has_data_offer_shape(sdp: String) -> bool:
 		and sdp.contains("\nt=")
 		and sdp.contains("\nm=application ")
 	)
+
+
+class OfferProbe:
+	extends RefCounted
+
+	var attempt: int
+	var sdp: String
+	var expires: int
+	var connection: Object
+	var accepted := false
+	var candidates: Array[String] = []
+
+	func listen() -> void:
+		var session_created: Signal = connection.get("session_description_created")
+		session_created.connect(_on_description_created)
+
+	func _on_description_created(type: String, answer: String) -> void:
+		if type != "answer":
+			return
+		for line: String in answer.split("\n"):
+			if line.begins_with("m=application ") and line.get_slice(" ", 1).to_int() > 0:
+				accepted = true
+				return
+
+	func close() -> void:
+		if connection == null:
+			return
+		var session_created: Signal = connection.get("session_description_created")
+		if session_created.is_connected(_on_description_created):
+			session_created.disconnect(_on_description_created)
+		connection.call("close")
+		connection = null

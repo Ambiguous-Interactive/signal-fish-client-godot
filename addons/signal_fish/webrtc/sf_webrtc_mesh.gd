@@ -463,7 +463,7 @@ func _retire_prior_incarnation(player_id: String) -> void:
 		return
 	var pair := _recovery_pair(player_id)
 	if pair != null and _client._get_player_epoch(player_id) != pair.remote_epoch:
-		pair.retired = true
+		pair.retire()
 	var entry: _MeshPeer = _peers.get(player_id)
 	if entry == null:
 		if _known_peers.has(player_id):
@@ -488,7 +488,7 @@ func _retire_prior_incarnation(player_id: String) -> void:
 func _on_client_player_left(player_id: String) -> void:
 	var pair := _recovery_pair(player_id)
 	if pair != null:
-		pair.retired = true
+		pair.retire()
 	_drop_peer(player_id)
 
 
@@ -534,7 +534,7 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 		)
 	):
 		for pair: Recovery in _recovery_pairs.values():
-			pair.retired = true
+			pair.retire()
 	for uuid: String in _retired_generations.keys():
 		if _retired_generations[uuid] != plan.generation:
 			_retired_generations.erase(uuid)
@@ -587,7 +587,7 @@ func _update_recovery_plan(plan: SFSessionTypesScript.SessionPlanInfo, wanted: D
 			var pair: Recovery = _recovery_pairs[uuid]
 			var directive: SFSessionTypesScript.SessionPeerInfo = wanted.get(uuid)
 			if directive == null or directive.initiate != pair.initiate:
-				pair.retired = true
+				pair.retire()
 		return
 	if not _recovery_generation.is_empty():
 		return
@@ -663,6 +663,9 @@ func _tick_recovery(now: int) -> void:
 		var pair := _recovery_pair(uuid)
 		if not _recovery_is_current(pair):
 			continue
+		_tick_offer_probe(pair, now)
+		if not _recovery_is_current(pair):
+			continue
 		if pair.expires >= 0 and now >= pair.expires:
 			_schedule_recovery(pair, now)
 			_drop_peer(uuid)
@@ -671,21 +674,25 @@ func _tick_recovery(now: int) -> void:
 		pair.due = -1
 		if pair.initiate:
 			if pair.attempt < Recovery.MAX_ATTEMPTS:
-				_begin_recovery(pair, pair.attempt + 1, now)
+				_begin_recovery(pair, pair.attempt + 1, _recovery_deadline(now))
 		elif pair.request_count < Recovery.MAX_ATTEMPTS and pair.attempt < Recovery.MAX_ATTEMPTS:
 			pair.request_count += 1
 			pair.due = now + clampi(pair_recovery_retry_msec, 1, 60000)
 			_client.send_signal(pair.peer, pair.generation, pair.envelope("request"))
 
 
-func _begin_recovery(pair: Recovery, attempt: int, now: int) -> void:
+func _recovery_deadline(now: int) -> int:
+	return now + clampi(pair_recovery_timeout_msec, 1, 60000)
+
+
+func _begin_recovery(pair: Recovery, attempt: int, expires: int) -> void:
 	if not _recovery_is_current(pair) or attempt <= pair.attempt:
 		return
 	pair.attempt = attempt
 	pair.request_count = 0
 	pair.was_ready = true
 	pair.due = -1
-	pair.expires = now + clampi(pair_recovery_timeout_msec, 1, 60000)
+	pair.expires = expires
 	_drop_peer(pair.peer)
 	if _recovery_is_current(pair) and pair.attempt == attempt:
 		_open_peer(pair.peer, pair.initiate, attempt)
@@ -708,28 +715,104 @@ func _receive_recovery(pair: Recovery, message: Dictionary) -> void:
 	if attempt == 0 or body.is_empty():
 		return
 	var now: int = pair_recovery_clock.call()
-	if (
-		kind == "Offer"
-		and not pair.initiate
-		and attempt > pair.attempt
-		and Recovery.has_data_offer_shape(body)
-	):
-		_begin_recovery(pair, attempt, now)
-	if not _recovery_is_current(pair) or pair.attempt != attempt or pair.due >= 0:
+	if not _recovery_is_current(pair):
 		return
-	if pair.expires >= 0 and now >= pair.expires:
+	if kind == "Offer" and not pair.initiate and attempt > pair.attempt:
+		_receive_recovery_offer(pair, attempt, body, now)
+		return
+	var probe := pair.offer_probe
+	if kind == "IceCandidate" and probe != null and probe.attempt == attempt:
+		if now < probe.expires and probe.candidates.size() < Recovery.MAX_EARLY_CANDIDATES:
+			probe.candidates.append(body)
 		return
 	var entry: _MeshPeer = _peers.get(pair.peer)
-	if entry == null or entry.attempt != attempt:
+	if (
+		entry == null
+		or entry.attempt != attempt
+		or pair.attempt != attempt
+		or pair.due >= 0
+		or (pair.expires >= 0 and now >= pair.expires)
+	):
 		return
-	var expected_description := "Answer" if pair.initiate else "Offer"
-	if kind == expected_description:
-		if entry.remote_description_seen:
-			return
+	if kind == "Answer" and pair.initiate and not entry.remote_description_seen:
 		entry.remote_description_seen = true
 	elif kind != "IceCandidate" or not entry.remote_description_seen:
 		return
 	_apply_peer_signal(entry, {kind: body})
+
+
+func _receive_recovery_offer(pair: Recovery, attempt: int, body: String, now: int) -> void:
+	if attempt <= pair.last_probed_attempt or not Recovery.has_data_offer_shape(body):
+		return
+	var expires := _recovery_deadline(now)
+	if pair.offer_probe != null or _peers.has(pair.peer):
+		_probe_recovery_offer(pair, attempt, body, expires)
+		return
+	_install_recovery_offer(pair, attempt, body, expires)
+
+
+func _probe_recovery_offer(pair: Recovery, attempt: int, body: String, expires: int) -> void:
+	pair.last_probed_attempt = attempt
+	pair.clear_offer_probe()
+	if not _recovery_is_current(pair) or pair.last_probed_attempt != attempt:
+		return
+	var probe := Recovery.OfferProbe.new()
+	probe.attempt = attempt
+	probe.sdp = body
+	probe.expires = expires
+	pair.offer_probe = probe
+	var connection := _make_peer_connection()
+	if not _recovery_is_current(pair) or pair.offer_probe != probe:
+		if connection != null:
+			connection.call("close")
+		return
+	if connection == null:
+		pair.clear_offer_probe()
+		return
+	probe.connection = connection
+	# Godot creates the multiplayer channels on a fresh connection. This
+	# probe waits for async SDP acceptance without touching the old peer.
+	var error: Error = connection.call("initialize", {})
+	if pair.offer_probe != probe:
+		return
+	if error == OK:
+		probe.listen()
+		error = connection.call("set_remote_description", "offer", body)
+	if error != OK and pair.offer_probe == probe:
+		pair.clear_offer_probe()
+
+
+func _tick_offer_probe(pair: Recovery, now: int) -> void:
+	var probe := pair.offer_probe
+	if probe == null or probe.connection == null:
+		return
+	if now >= probe.expires:
+		pair.clear_offer_probe()
+		return
+	var error: Error = probe.connection.call("poll")
+	if not _recovery_is_current(pair) or pair.offer_probe != probe:
+		return
+	if error != OK or probe.accepted:
+		pair.clear_offer_probe()
+	if error != OK or not probe.accepted or pair.last_probed_attempt != probe.attempt:
+		return
+	var entry := _install_recovery_offer(pair, probe.attempt, probe.sdp, probe.expires)
+	if entry == null:
+		return
+	for candidate: String in probe.candidates:
+		if _peers.get(entry.uuid) != entry:
+			return
+		_apply_ice_candidate(entry, candidate)
+
+
+func _install_recovery_offer(pair: Recovery, attempt: int, body: String, expires: int) -> _MeshPeer:
+	_begin_recovery(pair, attempt, expires)
+	var entry: _MeshPeer = _peers.get(pair.peer)
+	if not _recovery_is_current(pair) or entry == null or entry.attempt != attempt:
+		return null
+	entry.remote_description_seen = true
+	_apply_peer_signal(entry, {"Offer": body})
+	return entry
 
 
 func _open_peer(uuid: String, initiate: bool, attempt := 0) -> void:
@@ -852,9 +935,12 @@ func _reset_mesh() -> void:
 	_plan = null
 	_retired_generations.clear()
 	_known_peers.clear()
+	var retiring := _recovery_pairs.values()
 	_recovery_pairs.clear()
 	_recovery_generation = ""
 	_ice_servers = []
+	for pair: Recovery in retiring:
+		pair.retire()
 	for uuid: String in _peers.keys():
 		_drop_peer(uuid)
 	if _mp_peer != null:
