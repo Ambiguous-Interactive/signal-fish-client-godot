@@ -120,6 +120,7 @@ var _retired_generations: Dictionary = {}
 var _known_peers: Dictionary = {}
 var _recovery_pairs: Dictionary = {}
 var _recovery_generation := ""
+var _used_recovery_generations: Dictionary = {}
 var _mp_peer: Object = null
 var _safe_mp_peer: SFWebRTCMultiplayerPeerScript = null
 var _reported_connected := false
@@ -449,6 +450,8 @@ func _on_client_new_peer(peer_id: String, you_initiate: bool) -> void:
 	# the primary membership mechanism; this obeys you_initiate verbatim.
 	if _plan == null or _plan.transport != SFSessionTypesScript.TransportKind.WEBRTC:
 		return
+	if _is_retired_recovery_generation(_plan.generation):
+		return
 	if _peers.has(peer_id) or _recovery_pair(peer_id) != null:
 		return
 	if _peers.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
@@ -544,15 +547,21 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 			or plan.transport != SFSessionTypesScript.TransportKind.WEBRTC
 		)
 	):
-		for pair: Recovery in _recovery_pairs.values():
+		var retiring := _recovery_pairs.values()
+		_recovery_pairs.clear()
+		_recovery_generation = ""
+		for pair: Recovery in retiring:
 			pair.retire()
-			if _plan != plan:
-				return
+		if _plan != plan:
+			return
 	for uuid: String in _retired_generations.keys():
 		if _retired_generations[uuid] != plan.generation:
 			_retired_generations.erase(uuid)
 	_ice_servers = plan.ice_servers.duplicate()
-	if plan.transport != SFSessionTypesScript.TransportKind.WEBRTC:
+	if (
+		plan.transport != SFSessionTypesScript.TransportKind.WEBRTC
+		or _is_retired_recovery_generation(plan.generation)
+	):
 		# Only a webrtc plan carries peer connections for this mesh. A relay
 		# floor or a host+direct plan empties it — opening connections whose
 		# signals would be gated away could never complete a handshake.
@@ -613,9 +622,10 @@ func _update_recovery_plan(plan: SFSessionTypesScript.SessionPlanInfo, wanted: D
 				if _plan != plan:
 					return
 		return
-	if not _recovery_generation.is_empty():
+	if _used_recovery_generations.size() >= Recovery.MAX_GENERATIONS:
 		return
 	_recovery_generation = plan.generation
+	_used_recovery_generations[plan.generation] = true
 	var local_epoch := _client._get_player_epoch(_client.get_player_id())
 	if local_epoch < 0:
 		return
@@ -633,6 +643,10 @@ func _update_recovery_plan(plan: SFSessionTypesScript.SessionPlanInfo, wanted: D
 		pair.remote_epoch = remote_epoch
 		pair.initiate = directive.initiate
 		_recovery_pairs[uuid] = pair
+
+
+func _is_retired_recovery_generation(generation: String) -> bool:
+	return generation != _recovery_generation and _used_recovery_generations.has(generation)
 
 
 func _recovery_pair(uuid: String) -> Recovery:
@@ -1020,6 +1034,7 @@ func _reset_mesh() -> void:
 	var retiring := _recovery_pairs.values()
 	_recovery_pairs.clear()
 	_recovery_generation = ""
+	_used_recovery_generations.clear()
 	_ice_servers = []
 	for pair: Recovery in retiring:
 		pair.retire()

@@ -36,6 +36,7 @@ func run_all() -> void:
 		_test_recovery_buffers_ice_before_remote_description,
 		_test_answerer_recovers_after_dropped_offer,
 		_test_recovery_budget_and_retirement,
+		_test_new_generation_recovers_independently,
 		_test_answerer_requests_after_restored_attempt,
 		_test_reentrant_clock_claims_sdp_once,
 		_test_reentrant_clock_does_not_strand_ice,
@@ -406,6 +407,10 @@ func _test_recovery_budget_and_retirement() -> void:
 		elif retirement == "reused generation":
 			_owner.call("_inject_plan", client, roster, NEXT_GENERATION)
 			_owner.call("_inject_plan", client, roster, GENERATION)
+			var transport: TransportScript = client.transport
+			transport.inject_server_message(
+				{"type": "NewPeer", "data": {"peer_id": PLAYER_B, "you_initiate": true}}
+			)
 		for next_time: int in [5, 10, 15, 100]:
 			clock[0] = next_time
 			mesh.poll()
@@ -418,6 +423,45 @@ func _test_recovery_budget_and_retirement() -> void:
 		_assert_equal(0, mesh.get_peer_count(), retirement + " leaves no active connection")
 		mesh.free()
 		client.free()
+	_done()
+
+
+func _test_new_generation_recovers_independently() -> void:
+	var fixture := _make_recovery_mesh(PLAYER_B, [0])
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var old: Object = created[0]
+	old.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	mesh.poll()
+	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+	_assert_equal(2, created.size(), "first generation has a pending validator")
+	_owner.call("_inject_plan", client, roster, NEXT_GENERATION)
+	_assert_equal(3, created.size(), "new generation opens a fresh initial link")
+	if created.size() == 3:
+		var old_validator: Object = created[1]
+		_assert_equal(true, old_validator.get("closed"), "new generation closes old validator")
+		var initial: Object = created[2]
+		initial.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+		mesh.poll()
+		_close_unreliable(initial)
+		mesh.poll()
+		_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+		_assert_equal(3, created.size(), "retired generation cannot allocate in the fresh plan")
+		var fresh := _recovery_offer(1, OFFER_SDP)
+		fresh["generation"] = NEXT_GENERATION
+		_deliver(client, offerer, fresh)
+		_assert_equal(4, created.size(), "new generation starts its own recovery attempt one")
+		if created.size() == 4:
+			var replacement: Object = created[3]
+			_assert_equal(
+				["offer", OFFER_SDP], replacement.get("remote_description"), "fresh SDP applied"
+			)
+	mesh.free()
+	client.free()
 	_done()
 
 

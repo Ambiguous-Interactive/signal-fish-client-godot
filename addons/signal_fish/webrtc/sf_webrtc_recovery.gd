@@ -4,6 +4,7 @@ const SFTypeUtils = preload("res://addons/signal_fish/protocol/sf_type_utils.gd"
 const TAG := "MeshRecovery"
 const MAX_ATTEMPTS := 3
 const MAX_EARLY_CANDIDATES := 16
+const MAX_GENERATIONS := 256
 
 var peer: String
 var local_player: String
