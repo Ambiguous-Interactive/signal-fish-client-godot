@@ -1533,6 +1533,7 @@ class FakePeerConnection:
 	var initialize_result: Error = OK
 	var refused_operation := ""
 	var create_offer_calls := 0
+	var local_description_calls := 0
 	var local_description: Array[String] = []
 	var local_description_hook: Callable
 	var remote_description: Array[String] = []
@@ -1553,6 +1554,7 @@ class FakePeerConnection:
 		return ERR_CANT_CREATE if refused_operation == "create_offer" else OK
 
 	func set_local_description(type: String, sdp: String) -> Error:
+		local_description_calls += 1
 		local_description = [type, sdp]
 		if local_description_hook.is_valid():
 			var hook := local_description_hook

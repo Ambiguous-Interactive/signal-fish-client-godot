@@ -210,7 +210,6 @@ func poll() -> void:
 		var pair := _recovery_pair(uuid)
 		if _peer_is_ready_for_recovery(entry, pair):
 			pair.was_ready = true
-			pair.request_count = 0
 			pair.expires = -1
 		_drain_relay(entry)
 	_update_transport_status()
@@ -683,6 +682,7 @@ func _begin_recovery(pair: Recovery, attempt: int, now: int) -> void:
 	if not _recovery_is_current(pair) or attempt <= pair.attempt:
 		return
 	pair.attempt = attempt
+	pair.request_count = 0
 	pair.was_ready = true
 	pair.due = -1
 	pair.expires = now + clampi(pair_recovery_timeout_msec, 1, 60000)
@@ -952,13 +952,12 @@ func _on_peer_session_description(entry: _MeshPeer, type: String, sdp: String) -
 		return
 	if entry.attempt > 0:
 		var expected := "offer" if entry.initiate else "answer"
-		if (
-			type != expected
-			or entry.local_description_claimed
-			or not _recovery_accepts_callbacks(entry)
-		):
+		if type != expected or entry.local_description_claimed:
 			return
 		entry.local_description_claimed = true
+		if not _recovery_accepts_callbacks(entry):
+			entry.local_description_claimed = false
+			return
 	var payload: Dictionary = {}
 	if type == "offer":
 		payload["Offer"] = sdp
@@ -985,12 +984,12 @@ func _on_peer_ice_candidate(
 	if candidate.is_empty():
 		return
 	if entry.attempt > 0 and not entry.local_description_sent:
-		if (
-			_recovery_accepts_callbacks(entry)
-			and entry.early_ice.size() < Recovery.MAX_EARLY_CANDIDATES
-		):
-			entry.early_ice.append(candidate)
-		return
+		if not _recovery_accepts_callbacks(entry):
+			return
+		if not entry.local_description_sent:
+			if entry.early_ice.size() < Recovery.MAX_EARLY_CANDIDATES:
+				entry.early_ice.append(candidate)
+			return
 	_send_signal_to(entry, {"IceCandidate": candidate})
 
 

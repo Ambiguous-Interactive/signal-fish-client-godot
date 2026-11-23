@@ -35,6 +35,8 @@ func run_all() -> void:
 		_test_answerer_recovers_after_dropped_offer,
 		_test_recovery_budget_and_retirement,
 		_test_answerer_requests_after_restored_attempt,
+		_test_reentrant_clock_claims_sdp_once,
+		_test_reentrant_clock_does_not_strand_ice,
 		_test_malformed_offer_preserves_active_link,
 	]
 	CompletionGuard.drive(self, cases, _failures)
@@ -422,6 +424,12 @@ func _recovery_offer(attempt: int, sdp: String) -> Dictionary:
 
 
 func _test_answerer_requests_after_restored_attempt() -> void:
+	for observe_open: bool in [true, false]:
+		_check_answerer_requests_after_restored_attempt(observe_open)
+	_done()
+
+
+func _check_answerer_requests_after_restored_attempt(observe_open: bool) -> void:
 	var clock: Array[int] = [0]
 	var fixture := _make_recovery_mesh(PLAYER_B, clock)
 	var client: ClientScript = fixture[0]
@@ -443,18 +451,71 @@ func _test_answerer_requests_after_restored_attempt() -> void:
 	if created.size() == 2:
 		var replacement: Object = created[1]
 		replacement.set("state", WebRTCPeerConnection.STATE_CONNECTED)
-		mesh.poll()
+		if observe_open:
+			mesh.poll()
 		_close_unreliable(replacement)
 		mesh.poll()
 		mesh.poll()
 		_assert_equal(
-			4, _get_signals(client).size(), "restored and reclosed pair gets a new request budget"
+			4,
+			_get_signals(client).size(),
+			"reclosed pair renews requests (observed open: %s)" % observe_open
 		)
 	else:
 		_assert_equal(2, created.size(), "one valid offer creates replacement")
 	mesh.free()
 	client.free()
+
+
+func _test_reentrant_clock_claims_sdp_once() -> void:
+	_check_reentrant_recovery_clock("session_description_created")
 	_done()
+
+
+func _test_reentrant_clock_does_not_strand_ice() -> void:
+	_check_reentrant_recovery_clock("ice_candidate_created")
+	_done()
+
+
+func _check_reentrant_recovery_clock(signal_name: String) -> void:
+	var fixture := _make_recovery_mesh(ClientFixtures.PLAYER_A, [0])
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var roster: Array[Dictionary] = [_owner.call("_peer", PLAYER_B, true)]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = created[0]
+	original.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	mesh.poll()
+	_close_unreliable(original)
+	mesh.poll()
+	mesh.poll()
+	_assert_equal(2, created.size(), "clock test starts a recovery attempt")
+	if created.size() == 2:
+		var replacement: Object = created[1]
+		var entered: Array[bool] = [false]
+		mesh.pair_recovery_clock = func() -> int:
+			if not entered[0]:
+				entered[0] = true
+				replacement.call("emit_session_description_created", "offer", "from-clock")
+			return 0
+		if signal_name == "session_description_created":
+			replacement.call("emit_session_description_created", "offer", OFFER_SDP)
+		else:
+			replacement.call("emit_ice_candidate_created", "", 0, "clock-candidate")
+		_assert_equal(true, entered[0], "clock reentered the local description callback")
+		_assert_equal(
+			1, replacement.get("local_description_calls"), "clock reentry reaches engine once"
+		)
+		var actual: Array[String] = []
+		for outbound: Dictionary in _get_signals(client):
+			actual.append(outbound["signal"]["MeshRecovery"]["kind"])
+		var expected := (
+			["Offer"] if signal_name == "session_description_created" else ["Offer", "IceCandidate"]
+		)
+		_assert_equal(expected, actual, "clock reentry preserves SDP and candidate ordering")
+	mesh.free()
+	client.free()
 
 
 func _test_malformed_offer_preserves_active_link() -> void:
