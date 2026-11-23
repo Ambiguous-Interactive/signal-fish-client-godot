@@ -204,10 +204,12 @@ func poll() -> void:
 		var error: Error = entry.connection.call("poll")
 		if not _check_peer_result(entry, "poll", error):
 			continue
+		var pair := _recovery_pair(uuid)
+		if entry.attempt > 0 and _expire_recovery_attempt(pair, entry.attempt):
+			continue
 		if _peer_is_terminal(entry):
 			_lose_peer(entry, now)
 			continue
-		var pair := _recovery_pair(uuid)
 		if _peer_is_ready_for_recovery(entry, pair):
 			pair.was_ready = true
 			pair.expires = -1
@@ -694,8 +696,24 @@ func _begin_recovery(pair: Recovery, attempt: int, expires: int) -> void:
 	pair.due = -1
 	pair.expires = expires
 	_drop_peer(pair.peer)
+	if _expire_recovery_attempt(pair, attempt):
+		return
 	if _recovery_is_current(pair) and pair.attempt == attempt:
 		_open_peer(pair.peer, pair.initiate, attempt)
+		_expire_recovery_attempt(pair, attempt)
+
+
+func _expire_recovery_attempt(pair: Recovery, attempt: int) -> bool:
+	if pair == null or pair.expires < 0:
+		return false
+	var now: int = pair_recovery_clock.call()
+	if not _recovery_is_current(pair) or pair.attempt != attempt or pair.expires < 0:
+		return false
+	if now < pair.expires:
+		return false
+	_schedule_recovery(pair, now)
+	_drop_peer(pair.peer)
+	return true
 
 
 func _receive_recovery(pair: Recovery, message: Dictionary) -> void:
@@ -823,11 +841,13 @@ func _install_recovery_offer(pair: Recovery, offer: Recovery.Offer) -> void:
 		var index := 0
 		while (
 			index < offer.candidates.size()
+			and not _expire_recovery_attempt(pair, offer.attempt)
 			and pair.installing_offer == offer
 			and _peers.get(entry.uuid) == entry
 		):
 			_apply_ice_candidate(entry, offer.candidates[index])
 			index += 1
+		_expire_recovery_attempt(pair, offer.attempt)
 	pair.installing_offer = null
 
 
@@ -906,11 +926,12 @@ func _open_peer(uuid: String, initiate: bool, attempt := 0) -> void:
 func _can_open_peer(
 	client: SignalFishClientScript, revision: int, uuid: String, pair: Recovery, attempt: int
 ) -> bool:
+	var now: int = pair_recovery_clock.call() if attempt > 0 else 0
 	if _client != client or _mesh_revision != revision or _peers.has(uuid):
 		return false
 	if attempt == 0:
 		return pair == null or (not pair.retired and pair.attempt == 0)
-	return _recovery_is_current(pair) and pair.attempt == attempt
+	return _recovery_is_current(pair) and pair.attempt == attempt and now < pair.expires
 
 
 func _check_peer_result(entry: _MeshPeer, operation: String, error: Error) -> bool:

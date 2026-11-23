@@ -44,6 +44,7 @@ func run_all() -> void:
 		_test_promoting_offer_keeps_ice_when_new_offer_arrives,
 		_test_promotion_cannot_revive_retired_pair,
 		_test_staged_offer_expires_during_engine_callbacks,
+		_test_committed_offer_expires_during_installation,
 		_test_probe_poll_resists_reentry,
 	]
 	CompletionGuard.drive(self, cases, _failures)
@@ -715,6 +716,56 @@ func _test_staged_offer_expires_during_engine_callbacks() -> void:
 			_assert_equal(false, original.get("closed"), "%s expiry preserves old link" % boundary)
 			_assert_equal(true, probe.get("closed"), "%s expiry closes validator" % boundary)
 			_assert_equal(2, created.size(), "%s expiry cannot install replacement" % boundary)
+		mesh.free()
+		client.free()
+	_done()
+
+
+func _test_committed_offer_expires_during_installation() -> void:
+	for boundary: String in ["close_hook", "initialize_hook", "remote_description_hook"]:
+		var clock: Array[int] = [0]
+		var fixture := _make_recovery_mesh(PLAYER_B, clock)
+		var client: ClientScript = fixture[0]
+		var mesh: MeshScript = fixture[1]
+		var offerer := ClientFixtures.PLAYER_A
+		var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+		_owner.call("_inject_plan", client, roster)
+		var created: Array = _owner.call("_mesh_peers", mesh)
+		var original: Object = created[0]
+		original.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+		mesh.poll()
+		_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+		_assert_equal(2, created.size(), "%s allocates a validator" % boundary)
+		if created.size() == 2:
+			var reach_deadline := func() -> void: clock[0] = 5
+			if boundary == "close_hook":
+				original.set(boundary, reach_deadline)
+			else:
+				var factory := mesh.peer_connection_factory
+				mesh.peer_connection_factory = func() -> Object:
+					var connection: Object = factory.call()
+					connection.set(boundary, reach_deadline)
+					return connection
+			_deliver_ice(client, offerer, 1, "queued-before-deadline")
+			var validator: Object = created[1]
+			validator.call("emit_session_description_created", "answer", OFFER_SDP)
+			mesh.poll()
+			_assert_equal(5, clock[0], "%s reaches the committed deadline" % boundary)
+			var peer_id := MeshScript.uuid_to_peer_id(offerer)
+			var multiplayer: Object = _owner.call("_mesh_multiplayer", mesh)
+			_assert_equal(
+				false, multiplayer.call("has_peer", peer_id), "%s leaves no expired peer" % boundary
+			)
+			if boundary == "close_hook":
+				_assert_equal(2, created.size(), "old close crossing deadline skips opening")
+			elif created.size() == 3:
+				var expired: Object = created[2]
+				_assert_equal(
+					true, expired.get("closed"), "%s closes the expired replacement" % boundary
+				)
+				_assert_equal(
+					[], expired.get("added_candidates"), "%s drops expired ICE" % boundary
+				)
 		mesh.free()
 		client.free()
 	_done()
