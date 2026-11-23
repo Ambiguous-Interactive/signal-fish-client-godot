@@ -86,6 +86,7 @@ class OfferProbe:
 	var sdp: String
 	var expires: int
 	var connection: Object
+	var can_poll := false
 	var accepted := false
 	var candidates: Array[String] = []
 
@@ -102,10 +103,12 @@ class OfferProbe:
 				return
 
 	func close() -> void:
-		if connection == null:
+		can_poll = false
+		var closing := connection
+		connection = null
+		if closing == null:
 			return
-		var session_created: Signal = connection.get("session_description_created")
+		var session_created: Signal = closing.get("session_description_created")
 		if session_created.is_connected(_on_description_created):
 			session_created.disconnect(_on_description_created)
-		connection.call("close")
-		connection = null
+		closing.call("close")

@@ -775,28 +775,55 @@ func _probe_recovery_offer(pair: Recovery, attempt: int, body: String, expires: 
 	var error: Error = connection.call("initialize", {})
 	if pair.offer_probe != probe:
 		return
-	if error == OK:
+	if error == OK and _recovery_is_current(pair):
 		probe.listen()
 		error = connection.call("set_remote_description", "offer", body)
-	if error != OK and pair.offer_probe == probe:
+	if pair.offer_probe != probe:
+		return
+	if error != OK or not _recovery_is_current(pair):
 		pair.clear_offer_probe()
+		return
+	probe.can_poll = true
 
 
 func _tick_offer_probe(pair: Recovery, now: int) -> void:
 	var probe := pair.offer_probe
-	if probe == null or probe.connection == null:
+	if probe == null or not probe.can_poll:
 		return
 	if now >= probe.expires:
 		pair.clear_offer_probe()
 		return
+	probe.can_poll = false
 	var error: Error = probe.connection.call("poll")
-	if not _recovery_is_current(pair) or pair.offer_probe != probe:
+	if not _check_offer_probe_deadline(pair, probe):
 		return
-	if error != OK or probe.accepted:
+	if error != OK:
 		pair.clear_offer_probe()
-	if error != OK or not probe.accepted or pair.last_probed_attempt != probe.attempt:
+		return
+	if probe.accepted:
+		_finish_offer_probe(pair, probe)
+	else:
+		probe.can_poll = true
+
+
+func _check_offer_probe_deadline(pair: Recovery, probe: Recovery.OfferProbe) -> bool:
+	var now: int = pair_recovery_clock.call()
+	if not _recovery_is_current(pair) or pair.offer_probe != probe:
+		return false
+	if now < probe.expires:
+		return true
+	pair.clear_offer_probe()
+	return false
+
+
+func _finish_offer_probe(pair: Recovery, probe: Recovery.OfferProbe) -> void:
+	# Keep matching ICE routable until the replacement owns the remote SDP.
+	probe.close()
+	if not _check_offer_probe_deadline(pair, probe):
 		return
 	var entry := _install_recovery_offer(pair, probe.attempt, probe.sdp, probe.expires)
+	if pair.offer_probe == probe:
+		pair.clear_offer_probe()
 	if entry == null:
 		return
 	for candidate: String in probe.candidates:

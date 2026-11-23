@@ -1530,6 +1530,7 @@ class FakePeerConnection:
 
 	var state: int = 0  # WebRTCPeerConnection.STATE_NEW
 	var initialize_config: Variant = null
+	var initialize_hook: Callable
 	var initialize_result: Error = OK
 	var refused_operation := ""
 	var create_offer_calls := 0
@@ -1537,8 +1538,11 @@ class FakePeerConnection:
 	var local_description: Array[String] = []
 	var local_description_hook: Callable
 	var remote_description: Array[String] = []
+	var remote_description_hook: Callable
 	var added_candidates: Array[Array] = []
 	var poll_calls := 0
+	var poll_hook: Callable
+	var close_hook: Callable
 	var closed := false
 	var live_at_creation := 0
 	var channels: Array[FakeDataChannel] = [
@@ -1547,6 +1551,8 @@ class FakePeerConnection:
 
 	func initialize(configuration: Variant) -> Error:
 		initialize_config = configuration
+		if initialize_hook.is_valid():
+			initialize_hook.call()
 		return initialize_result
 
 	func create_offer() -> Error:
@@ -1564,6 +1570,8 @@ class FakePeerConnection:
 
 	func set_remote_description(type: String, sdp: String) -> Error:
 		remote_description = [type, sdp]
+		if remote_description_hook.is_valid():
+			remote_description_hook.call()
 		return ERR_CANT_CREATE if refused_operation == "set_remote_description" else OK
 
 	func add_ice_candidate(media: String, index: int, name: String) -> Error:
@@ -1575,10 +1583,18 @@ class FakePeerConnection:
 
 	func poll() -> Error:
 		poll_calls += 1
+		if poll_hook.is_valid():
+			var hook := poll_hook
+			poll_hook = Callable()
+			hook.call()
 		return ERR_CANT_CREATE if refused_operation == "poll" else OK
 
 	func close() -> void:
 		closed = true
+		if close_hook.is_valid():
+			var hook := close_hook
+			close_hook = Callable()
+			hook.call()
 
 	func emit_session_description_created(type: String, sdp: String) -> void:
 		session_description_created.emit(type, sdp)

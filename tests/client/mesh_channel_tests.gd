@@ -40,6 +40,8 @@ func run_all() -> void:
 		_test_malformed_offer_preserves_active_link,
 		_test_replacement_waits_for_engine_offer_validation,
 		_test_staged_offer_retires_with_pair,
+		_test_staged_offer_expires_during_engine_callbacks,
+		_test_probe_poll_resists_reentry,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -584,10 +586,14 @@ func _test_replacement_waits_for_engine_offer_validation() -> void:
 		if created.size() == 3:
 			var accepted: Object = created[2]
 			_deliver(client, offerer, _recovery_offer(2, OFFER_SDP))
-			var candidate := _recovery_offer(2, "while-validating")
-			candidate["signal"]["MeshRecovery"]["kind"] = "IceCandidate"
-			_deliver(client, offerer, candidate)
+			_deliver_ice(client, offerer, 2, "while-validating")
 			_assert_equal(3, created.size(), "duplicate offer cannot restart verification")
+			accepted.set(
+				"close_hook", func() -> void: _deliver_ice(client, offerer, 2, "during-probe-close")
+			)
+			original.set(
+				"close_hook", func() -> void: _deliver_ice(client, offerer, 2, "during-old-close")
+			)
 			accepted.call("emit_session_description_created", "answer", OFFER_SDP)
 			mesh.poll()
 			_assert_equal(true, accepted.get("closed"), "validated standalone connection retires")
@@ -609,9 +615,13 @@ func _test_replacement_waits_for_engine_offer_validation() -> void:
 					"replacement applies exactly the verified offer"
 				)
 				_assert_equal(
-					[["", 0, "while-validating"]],
+					[
+						["", 0, "while-validating"],
+						["", 0, "during-probe-close"],
+						["", 0, "during-old-close"],
+					],
 					replacement.get("added_candidates"),
-					"matching ICE queued during validation reaches replacement"
+					"matching ICE through the handoff reaches replacement"
 				)
 	mesh.free()
 	client.free()
@@ -663,3 +673,72 @@ func _check_staged_offer_retires_with_pair(retire_by_plan: bool) -> void:
 		_assert_equal(0, _get_signals(client).size(), "retired validation cannot send SDP")
 	mesh.free()
 	client.free()
+
+
+func _deliver_ice(client: ClientScript, offerer: String, attempt: int, name: String) -> void:
+	var candidate := _recovery_offer(attempt, name)
+	candidate["signal"]["MeshRecovery"]["kind"] = "IceCandidate"
+	_deliver(client, offerer, candidate)
+
+
+func _test_staged_offer_expires_during_engine_callbacks() -> void:
+	for boundary: String in ["poll_hook", "close_hook"]:
+		var clock: Array[int] = [0]
+		var fixture := _make_recovery_mesh(PLAYER_B, clock)
+		var client: ClientScript = fixture[0]
+		var mesh: MeshScript = fixture[1]
+		var offerer := ClientFixtures.PLAYER_A
+		var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+		_owner.call("_inject_plan", client, roster)
+		var created: Array = _owner.call("_mesh_peers", mesh)
+		var original: Object = created[0]
+		original.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+		mesh.poll()
+		_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+		_assert_equal(2, created.size(), "deadline test allocates validator")
+		if created.size() == 2:
+			var probe: Object = created[1]
+			probe.set(
+				boundary,
+				func() -> void:
+					clock[0] = 5
+					if boundary == "poll_hook":
+						probe.call("emit_session_description_created", "answer", OFFER_SDP)
+			)
+			if boundary == "close_hook":
+				probe.call("emit_session_description_created", "answer", OFFER_SDP)
+			mesh.poll()
+			_assert_equal(5, clock[0], "%s reaches deadline" % boundary)
+			_assert_equal(false, original.get("closed"), "%s expiry preserves old link" % boundary)
+			_assert_equal(true, probe.get("closed"), "%s expiry closes validator" % boundary)
+			_assert_equal(2, created.size(), "%s expiry cannot install replacement" % boundary)
+		mesh.free()
+		client.free()
+	_done()
+
+
+func _test_probe_poll_resists_reentry() -> void:
+	var fixture := _make_recovery_mesh(PLAYER_B, [0])
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+	_owner.call("_inject_plan", client, roster)
+	var factory := mesh.peer_connection_factory
+	mesh.peer_connection_factory = func() -> Object:
+		var connection: Object = factory.call()
+		connection.set("initialize_hook", mesh.poll)
+		connection.set("remote_description_hook", mesh.poll)
+		connection.set("poll_hook", mesh.poll)
+		return connection
+	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	_assert_equal(2, created.size(), "reentry test allocates validator")
+	if created.size() == 2:
+		var probe: Object = created[1]
+		_assert_equal(0, probe.get("poll_calls"), "setup reentry cannot poll validator")
+		mesh.poll()
+		_assert_equal(1, probe.get("poll_calls"), "nested poll calls engine once")
+	mesh.free()
+	client.free()
+	_done()
