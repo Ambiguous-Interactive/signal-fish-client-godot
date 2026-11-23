@@ -187,14 +187,8 @@ func detach() -> void:
 func poll() -> void:
 	if not _client_is_live():
 		return
-	var recovering := (
-		_plan != null
-		and _plan.generation == _recovery_generation
-		and not _recovery_pairs.is_empty()
-	)
-	var now: int = pair_recovery_clock.call() if recovering else 0
-	if recovering:
-		_tick_recovery(now)
+	if not _recovery_pairs.is_empty():
+		_tick_recovery()
 	# Iterate a keys copy: a real connection's poll() can pump callbacks that
 	# end in consumer handlers, which may legally mutate the mesh re-entrantly
 	# (a peer dropped mid-poll is simply skipped).
@@ -218,6 +212,7 @@ func poll() -> void:
 		if entry.attempt > 0 and _expire_recovery_attempt(pair, entry.attempt):
 			continue
 		if _peer_is_terminal(entry):
+			var now: int = pair_recovery_clock.call() if pair != null else 0
 			_lose_peer(entry, now)
 			continue
 		if _peer_is_ready_for_recovery(entry, pair):
@@ -697,26 +692,29 @@ func _schedule_recovery(pair: Recovery, now: int) -> void:
 		pair.due = now + clampi(pair_recovery_retry_msec, 0, 60000)
 
 
-func _tick_recovery(now: int) -> void:
+func _tick_recovery() -> void:
 	for uuid: String in _recovery_pairs.keys():
 		var pair := _recovery_pair(uuid)
 		if not _recovery_is_current(pair) or pair.installing_offer != null:
 			continue
-		_tick_offer_probe(pair, now)
-		if not _recovery_is_current(pair):
+		if pair.offer_probe != null:
+			var probe_time: int = pair_recovery_clock.call()
+			if not _recovery_is_current(pair) or pair.installing_offer != null:
+				continue
+			_tick_offer_probe(pair, probe_time)
+		_expire_recovery_attempt(pair, pair.attempt)
+		if not _recovery_is_current(pair) or pair.due < 0:
 			continue
-		if pair.expires >= 0 and now >= pair.expires:
-			_schedule_recovery(pair, now)
-			_drop_peer(uuid)
-		if not _recovery_is_current(pair) or pair.due < 0 or now < pair.due:
+		var started_at: int = pair_recovery_clock.call()
+		if not _recovery_is_current(pair) or pair.due < 0 or started_at < pair.due:
 			continue
 		pair.due = -1
 		if pair.initiate:
 			if pair.attempt < Recovery.MAX_ATTEMPTS:
-				_begin_recovery(pair, pair.attempt + 1, _recovery_deadline(now))
+				_begin_recovery(pair, pair.attempt + 1, _recovery_deadline(started_at))
 		elif pair.request_count < Recovery.MAX_ATTEMPTS and pair.attempt < Recovery.MAX_ATTEMPTS:
 			pair.request_count += 1
-			pair.due = now + clampi(pair_recovery_retry_msec, 1, 60000)
+			pair.due = started_at + clampi(pair_recovery_retry_msec, 1, 60000)
 			_client.send_signal(pair.peer, pair.generation, pair.envelope("request"))
 
 
@@ -1248,6 +1246,15 @@ func _drain_relay(entry: _MeshPeer) -> void:
 	if entry.relay_due_msec > Time.get_ticks_msec():
 		return
 	while not entry.pending_signals.is_empty():
+		if entry.attempt > 0:
+			if not _recovery_accepts_callbacks(entry):
+				entry.pending_signals.clear()
+				entry.last_relayed = {}
+				entry.has_last_relayed = false
+				entry.last_relayed_pending = false
+				return
+			if entry.pending_signals.is_empty():
+				return
 		var payload: Dictionary = entry.pending_signals[0]
 		var sent: Error = _client.send_signal(entry.uuid, entry.generation, payload)
 		if _peers.get(entry.uuid) != entry or not _client_connected():

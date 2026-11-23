@@ -49,6 +49,8 @@ func run_all() -> void:
 		_test_staged_offer_expires_during_engine_callbacks,
 		_test_committed_offer_expires_during_installation,
 		_test_expired_replacement_skips_engine_poll,
+		_test_attempt_deadline_starts_after_other_pair_work,
+		_test_retired_attempt_does_not_drain_relay_queue,
 		_test_probe_retirement_preserves_reentrant_plan,
 		_test_probe_poll_resists_reentry,
 	]
@@ -854,6 +856,80 @@ func _test_expired_replacement_skips_engine_poll() -> void:
 		_assert_equal(0, replacement.get("poll_calls"), "expired replacement skips the engine poll")
 	mesh.free()
 	client.free()
+	_done()
+
+
+func _test_attempt_deadline_starts_after_other_pair_work() -> void:
+	var clock: Array[int] = [0]
+	var fixture := _make_recovery_mesh(PLAYER_B, clock)
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [
+		_owner.call("_peer", offerer, false), _owner.call("_peer", PLAYER_C, true)
+	]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original_answerer: Object = created[0]
+	var original_offerer: Object = created[1]
+	_ready_recovery_connection(mesh, original_answerer)
+	_ready_recovery_connection(mesh, original_offerer)
+	_close_unreliable(original_offerer)
+	mesh.poll()
+	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+	_assert_equal(3, created.size(), "other pair has a pending validator")
+	if created.size() == 3:
+		var validator: Object = created[2]
+		validator.set("poll_hook", func() -> void: clock[0] = 5)
+		mesh.poll()
+		_assert_equal(5, clock[0], "earlier pair crosses the poll-start window")
+		_assert_equal(4, created.size(), "the due offerer still gets a full attempt window")
+		if created.size() == 4:
+			var replacement: Object = created[3]
+			_assert_equal(
+				1, replacement.get("create_offer_calls"), "fresh attempt produces an offer"
+			)
+	mesh.free()
+	client.free()
+	_done()
+
+
+func _test_retired_attempt_does_not_drain_relay_queue() -> void:
+	for retire: bool in [false, true]:
+		var fixture := _make_recovery_mesh(ClientFixtures.PLAYER_A, [0])
+		var client: ClientScript = fixture[0]
+		var mesh: MeshScript = fixture[1]
+		mesh.signal_retry_msec = 0
+		var roster: Array[Dictionary] = [_owner.call("_peer", PLAYER_B, true)]
+		_owner.call("_inject_plan", client, roster)
+		var created: Array = _owner.call("_mesh_peers", mesh)
+		var original: Object = created[0]
+		_ready_recovery_connection(mesh, original)
+		_close_unreliable(original)
+		mesh.poll()
+		mesh.poll()
+		_assert_equal(2, created.size(), "relay fixture opens a recovery attempt")
+		if created.size() == 2:
+			var replacement: Object = created[1]
+			var transport: TransportScript = client.transport
+			transport.busy_on_send = true
+			replacement.call("emit_session_description_created", "offer", OFFER_SDP)
+			replacement.call("emit_ice_candidate_created", "", 0, "queued-ice")
+			_assert_equal(0, _get_signals(client).size(), "transport refuses attempt signals")
+			if retire:
+				mesh.pair_recovery_retry_msec = 10
+				var request := _recovery_offer(1, "")
+				request["signal"]["MeshRecovery"]["kind"] = "request"
+				_deliver(client, PLAYER_B, request)
+			transport.busy_on_send = false
+			mesh.poll()
+			_assert_equal(
+				0 if retire else 2,
+				_get_signals(client).size(),
+				"relay drain retirement=%s" % retire
+			)
+		mesh.free()
+		client.free()
 	_done()
 
 
