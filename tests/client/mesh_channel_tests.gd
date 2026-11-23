@@ -45,6 +45,7 @@ func run_all() -> void:
 		_test_promotion_cannot_revive_retired_pair,
 		_test_staged_offer_expires_during_engine_callbacks,
 		_test_committed_offer_expires_during_installation,
+		_test_probe_retirement_preserves_reentrant_plan,
 		_test_probe_poll_resists_reentry,
 	]
 	CompletionGuard.drive(self, cases, _failures)
@@ -768,6 +769,39 @@ func _test_committed_offer_expires_during_installation() -> void:
 				)
 		mesh.free()
 		client.free()
+	_done()
+
+
+func _test_probe_retirement_preserves_reentrant_plan() -> void:
+	var fixture := _make_recovery_mesh(PLAYER_B, [0])
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = created[0]
+	original.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	mesh.poll()
+	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+	_assert_equal(2, created.size(), "plan retirement test allocates a validator")
+	if created.size() == 2:
+		var probe: Object = created[1]
+		var third_generation := "40000000-0000-0000-0000-000000000003"
+		probe.set(
+			"close_hook",
+			func() -> void:
+				var empty_roster: Array[Dictionary] = []
+				_owner.call("_inject_plan", client, empty_roster, third_generation, "relay")
+		)
+		_owner.call("_inject_plan", client, roster, NEXT_GENERATION)
+		_assert_equal(true, probe.get("closed"), "new generation closes the validator")
+		_assert_equal(2, created.size(), "older plan cannot reopen a peer after nested relay plan")
+		var multiplayer: Object = _owner.call("_mesh_multiplayer", mesh)
+		var peer_id := MeshScript.uuid_to_peer_id(offerer)
+		_assert_equal(false, multiplayer.call("has_peer", peer_id), "nested relay plan has no peer")
+	mesh.free()
+	client.free()
 	_done()
 
 

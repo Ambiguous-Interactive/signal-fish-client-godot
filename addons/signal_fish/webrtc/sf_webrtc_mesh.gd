@@ -537,6 +537,8 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 	):
 		for pair: Recovery in _recovery_pairs.values():
 			pair.retire()
+			if _plan != plan:
+				return
 	for uuid: String in _retired_generations.keys():
 		if _retired_generations[uuid] != plan.generation:
 			_retired_generations.erase(uuid)
@@ -547,6 +549,8 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 		# signals would be gated away could never complete a handshake.
 		for uuid: String in _peers.keys():
 			_drop_peer(uuid)
+			if _plan != plan:
+				return
 		return
 	var wanted: Dictionary = {}
 	var peer_count: int = plan.peers.size()
@@ -562,6 +566,8 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 		var peer: SFSessionTypesScript.SessionPeerInfo = plan.peers[index]
 		wanted[peer.player_id] = peer
 	_update_recovery_plan(plan, wanted)
+	if _plan != plan:
+		return
 	for uuid: String in wanted:
 		var entry: _MeshPeer = _peers.get(uuid)
 		if entry == null:
@@ -569,27 +575,34 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 		var wanted_peer: SFSessionTypesScript.SessionPeerInfo = wanted[uuid]
 		if entry.initiate != wanted_peer.initiate or entry.generation != plan.generation:
 			_drop_peer(uuid)
+			if _plan != plan:
+				return
 	# Drops precede opens: a full-roster plan flip must never hold both
 	# generations past the tracked-peer ceiling (issue #335).
 	for uuid: String in _peers.keys():
 		if not wanted.has(uuid):
 			_drop_peer(uuid)
+			if _plan != plan:
+				return
 	for uuid: String in wanted:
 		var pair := _recovery_pair(uuid)
 		if not _peers.has(uuid) and (pair == null or (not pair.retired and not pair.was_ready)):
 			var wanted_peer: SFSessionTypesScript.SessionPeerInfo = wanted[uuid]
 			_open_peer(uuid, wanted_peer.initiate)
+			if _plan != plan:
+				return
 
 
 func _update_recovery_plan(plan: SFSessionTypesScript.SessionPlanInfo, wanted: Dictionary) -> void:
 	if not pair_recovery_enabled or plan.generation.is_empty():
 		return
 	if plan.generation == _recovery_generation:
-		for uuid: String in _recovery_pairs:
-			var pair: Recovery = _recovery_pairs[uuid]
-			var directive: SFSessionTypesScript.SessionPeerInfo = wanted.get(uuid)
+		for pair: Recovery in _recovery_pairs.values():
+			var directive: SFSessionTypesScript.SessionPeerInfo = wanted.get(pair.peer)
 			if directive == null or directive.initiate != pair.initiate:
 				pair.retire()
+				if _plan != plan:
+					return
 		return
 	if not _recovery_generation.is_empty():
 		return
