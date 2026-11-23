@@ -10,6 +10,10 @@ const CompletionGuard = preload("res://tests/completion_guard.gd")
 const PLAYER_B := "10000000-0000-0000-0000-000000000002"
 const PLAYER_C := "10000000-0000-0000-0000-000000000003"
 const GENERATION := "40000000-0000-0000-0000-000000000001"
+const OFFER_SDP := (
+	"v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n"
+	+ "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n"
+)
 const NEXT_GENERATION := "40000000-0000-0000-0000-000000000002"
 
 var _failures: Array[String] = []
@@ -30,6 +34,8 @@ func run_all() -> void:
 		_test_closed_pair_is_rebuilt_in_room,
 		_test_answerer_recovers_after_dropped_offer,
 		_test_recovery_budget_and_retirement,
+		_test_answerer_requests_after_restored_attempt,
+		_test_malformed_offer_preserves_active_link,
 	]
 	CompletionGuard.drive(self, cases, _failures)
 	CompletionGuard.check_registration(self, cases, _failures)
@@ -268,7 +274,18 @@ func _test_answerer_recovers_after_dropped_offer() -> void:
 	_assert_equal(2, offers.size(), "answerer request causes one offerer rebuild")
 	if offers.size() == 2:
 		var first: Object = offers[1]
-		first.call("emit_session_description_created", "offer", "first-lost")
+		first.set(
+			"local_description_hook",
+			func() -> void: first.call("emit_session_description_created", "offer", "reentered")
+		)
+		first.call("emit_session_description_created", "offer", OFFER_SDP)
+		var first_signals := _get_signals(offerer)
+		_assert_equal(1, first_signals.size(), "reentrant local SDP only sends one offer")
+		_assert_equal(
+			["offer", OFFER_SDP],
+			first.get("local_description"),
+			"reentrant SDP cannot reach engine"
+		)
 	clock[0] = 4
 	offer_mesh.poll()
 	_assert_equal(2, offers.size(), "an unanswered offer retains its attempt before deadline")
@@ -278,7 +295,7 @@ func _test_answerer_recovers_after_dropped_offer() -> void:
 	if offers.size() == 3:
 		var second: Object = offers[2]
 		second.call("emit_ice_candidate_created", "", 0, "early")
-		second.call("emit_session_description_created", "offer", "second")
+		second.call("emit_session_description_created", "offer", OFFER_SDP)
 		stale_description.call("offer", "retired")
 		stale_candidate.call("", 0, "retired")
 		var signals := _get_signals(offerer)
@@ -301,7 +318,7 @@ func _test_answerer_recovers_after_dropped_offer() -> void:
 				var reply: Object = answers[1]
 				_assert_equal(0, reply.get("create_offer_calls"), "answerer never creates an offer")
 				_assert_equal(
-					["offer", "second"], reply.get("remote_description"), "active offer applied"
+					["offer", OFFER_SDP], reply.get("remote_description"), "active offer applied"
 				)
 				_assert_equal(
 					[["", 0, "early"]],
@@ -344,7 +361,7 @@ func _test_answerer_recovers_after_dropped_offer() -> void:
 
 
 func _test_recovery_budget_and_retirement() -> void:
-	for retirement: String in ["exhausted", "left", "detach", "reused generation"]:
+	for retirement: String in ["exhausted", "left", "detach", "reused generation", "role change"]:
 		var clock: Array[int] = [0]
 		var fixture := _make_recovery_mesh(ClientFixtures.PLAYER_A, clock)
 		var client: ClientScript = fixture[0]
@@ -364,6 +381,9 @@ func _test_recovery_budget_and_retirement() -> void:
 			_owner.call("_inject_plan", client, roster, GENERATION)
 		elif retirement == "detach":
 			mesh.detach()
+		elif retirement == "role change":
+			var changed_role: Array[Dictionary] = [_owner.call("_peer", PLAYER_B, false)]
+			_owner.call("_inject_plan", client, changed_role, GENERATION)
 		elif retirement == "reused generation":
 			_owner.call("_inject_plan", client, roster, NEXT_GENERATION)
 			_owner.call("_inject_plan", client, roster, GENERATION)
@@ -379,4 +399,78 @@ func _test_recovery_budget_and_retirement() -> void:
 		_assert_equal(0, mesh.get_peer_count(), retirement + " leaves no active connection")
 		mesh.free()
 		client.free()
+	_done()
+
+
+func _recovery_offer(attempt: int, sdp: String) -> Dictionary:
+	return {
+		"generation": GENERATION,
+		"signal":
+		{
+			"MeshRecovery":
+			{
+				"v": 1,
+				"room": ClientFixtures.ROOM_ID,
+				"from_epoch": 1,
+				"to_epoch": 1,
+				"attempt": attempt,
+				"kind": "Offer",
+				"body": sdp,
+			},
+		},
+	}
+
+
+func _test_answerer_requests_after_restored_attempt() -> void:
+	var clock: Array[int] = [0]
+	var fixture := _make_recovery_mesh(PLAYER_B, clock)
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = created[0]
+	original.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	mesh.poll()
+	_close_unreliable(original)
+	mesh.poll()
+	for time: int in [0, 1, 2, 3, 4]:
+		clock[0] = time
+		mesh.poll()
+	_assert_equal(3, _get_signals(client).size(), "one failed physical attempt caps requests")
+	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+	if created.size() == 2:
+		var replacement: Object = created[1]
+		replacement.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+		mesh.poll()
+		_close_unreliable(replacement)
+		mesh.poll()
+		mesh.poll()
+		_assert_equal(
+			4, _get_signals(client).size(), "restored and reclosed pair gets a new request budget"
+		)
+	else:
+		_assert_equal(2, created.size(), "one valid offer creates replacement")
+	mesh.free()
+	client.free()
+	_done()
+
+
+func _test_malformed_offer_preserves_active_link() -> void:
+	var fixture := _make_recovery_mesh(PLAYER_B, [0])
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = created[0]
+	original.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	mesh.poll()
+	_deliver(client, offerer, _recovery_offer(1, "not-an-sdp"))
+	_assert_equal(1, created.size(), "malformed higher offer cannot allocate a replacement")
+	_assert_equal(false, original.get("closed"), "malformed higher offer preserves the active link")
+	mesh.free()
+	client.free()
 	_done()

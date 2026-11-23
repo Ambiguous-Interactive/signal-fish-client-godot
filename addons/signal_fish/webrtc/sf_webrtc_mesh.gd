@@ -210,6 +210,7 @@ func poll() -> void:
 		var pair := _recovery_pair(uuid)
 		if _peer_is_ready_for_recovery(entry, pair):
 			pair.was_ready = true
+			pair.request_count = 0
 			pair.expires = -1
 		_drain_relay(entry)
 	_update_transport_status()
@@ -707,7 +708,12 @@ func _receive_recovery(pair: Recovery, message: Dictionary) -> void:
 	if attempt == 0 or body.is_empty():
 		return
 	var now: int = pair_recovery_clock.call()
-	if kind == "Offer" and not pair.initiate and attempt > pair.attempt:
+	if (
+		kind == "Offer"
+		and not pair.initiate
+		and attempt > pair.attempt
+		and Recovery.has_data_offer_shape(body)
+	):
 		_begin_recovery(pair, attempt, now)
 	if not _recovery_is_current(pair) or pair.attempt != attempt or pair.due >= 0:
 		return
@@ -948,10 +954,11 @@ func _on_peer_session_description(entry: _MeshPeer, type: String, sdp: String) -
 		var expected := "offer" if entry.initiate else "answer"
 		if (
 			type != expected
-			or entry.local_description_sent
+			or entry.local_description_claimed
 			or not _recovery_accepts_callbacks(entry)
 		):
 			return
+		entry.local_description_claimed = true
 	var payload: Dictionary = {}
 	if type == "offer":
 		payload["Offer"] = sdp
@@ -1165,6 +1172,7 @@ class _MeshPeer:
 	var generation: String = ""
 	var epoch: int = -1
 	var attempt := 0
+	var local_description_claimed := false
 	var local_description_sent := false
 	var remote_description_seen := false
 	var early_ice: Array[String] = []

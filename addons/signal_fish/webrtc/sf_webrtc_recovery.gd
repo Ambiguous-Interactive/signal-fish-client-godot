@@ -54,3 +54,12 @@ func accepts(message: Dictionary) -> bool:
 
 static func _integer_equals(value: Variant, expected: int) -> bool:
 	return SFTypeUtils.is_integral_number(value) and value == expected
+
+
+static func has_data_offer_shape(sdp: String) -> bool:
+	return (
+		(sdp.begins_with("v=0\r\n") or sdp.begins_with("v=0\n"))
+		and sdp.contains("\no=")
+		and sdp.contains("\nt=")
+		and sdp.contains("\nm=application ")
+	)

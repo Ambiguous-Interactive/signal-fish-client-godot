@@ -1534,6 +1534,7 @@ class FakePeerConnection:
 	var refused_operation := ""
 	var create_offer_calls := 0
 	var local_description: Array[String] = []
+	var local_description_hook: Callable
 	var remote_description: Array[String] = []
 	var added_candidates: Array[Array] = []
 	var poll_calls := 0
@@ -1553,6 +1554,10 @@ class FakePeerConnection:
 
 	func set_local_description(type: String, sdp: String) -> Error:
 		local_description = [type, sdp]
+		if local_description_hook.is_valid():
+			var hook := local_description_hook
+			local_description_hook = Callable()
+			hook.call()
 		return ERR_CANT_CREATE if refused_operation == "set_local_description" else OK
 
 	func set_remote_description(type: String, sdp: String) -> Error:

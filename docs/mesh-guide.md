@@ -95,7 +95,9 @@ connections stay in service.
 
 Recovery requires known v3 roster epochs on both ends. A departure,
 changed plan, changed offerer, or mesh teardown cancels pending work for
-the affected scope. The application owns the relay fallback and decides
+the affected scope. When an opt-in pair changes roles within the same
+generation, it stays on relay until a new generation. The application
+owns the relay fallback and decides
 when to send gameplay on a replacement channel. This option defaults to
 off.
 
