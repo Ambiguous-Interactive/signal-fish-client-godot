@@ -47,6 +47,7 @@ func run_all() -> void:
 		_test_promotion_cannot_revive_retired_pair,
 		_test_staged_offer_expires_during_engine_callbacks,
 		_test_committed_offer_expires_during_installation,
+		_test_expired_replacement_skips_engine_poll,
 		_test_probe_retirement_preserves_reentrant_plan,
 		_test_probe_poll_resists_reentry,
 	]
@@ -778,6 +779,37 @@ func _test_committed_offer_expires_during_installation() -> void:
 				)
 		mesh.free()
 		client.free()
+	_done()
+
+
+func _test_expired_replacement_skips_engine_poll() -> void:
+	var clock: Array[int] = [0]
+	var fixture := _make_recovery_mesh(PLAYER_B, clock)
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [
+		_owner.call("_peer", offerer, false), _owner.call("_peer", PLAYER_C, false)
+	]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = created[0]
+	original.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	mesh.poll()
+	_close_unreliable(original)
+	mesh.poll()
+	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+	_assert_equal(3, created.size(), "one replacement follows the unaffected link in poll order")
+	if created.size() == 3:
+		var unaffected: Object = created[1]
+		var replacement: Object = created[2]
+		unaffected.set("poll_hook", func() -> void: clock[0] = 5)
+		mesh.poll()
+		_assert_equal(5, clock[0], "another peer's poll advances past the deadline")
+		_assert_equal(true, replacement.get("closed"), "expired replacement closes")
+		_assert_equal(0, replacement.get("poll_calls"), "expired replacement skips the engine poll")
+	mesh.free()
+	client.free()
 	_done()
 
 

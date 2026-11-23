@@ -201,10 +201,19 @@ func poll() -> void:
 		var entry: _MeshPeer = _peers.get(uuid)
 		if entry == null:
 			continue
+		var pair := _recovery_pair(uuid)
+		if (
+			entry.attempt > 0
+			and (
+				_expire_recovery_attempt(pair, entry.attempt)
+				or _peers.get(uuid) != entry
+				or not _recovery_is_current(pair)
+			)
+		):
+			continue
 		var error: Error = entry.connection.call("poll")
 		if not _check_peer_result(entry, "poll", error):
 			continue
-		var pair := _recovery_pair(uuid)
 		if entry.attempt > 0 and _expire_recovery_attempt(pair, entry.attempt):
 			continue
 		if _peer_is_terminal(entry):
