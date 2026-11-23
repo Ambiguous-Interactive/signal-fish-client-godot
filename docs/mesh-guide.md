@@ -84,6 +84,26 @@ reports empty datagrams and read errors as `ERR_UNAVAILABLE`; use
 - Status retry delays end when the room resets or its plan generation changes.
 - Peer ids derive deterministically from player UUIDs.
 
+## Recover a closed pair
+
+Set `mesh.pair_recovery_enabled = true` before the first WebRTC plan on
+both ends. Use this option with a fixed roster and a separate gameplay
+relay path. The accepted offerer can build up to three replacement
+connections for a previously connected pair in that plan. The other end
+can request a replacement. A peer with an active connection keeps it
+while Godot validates a replacement offer. The same multiplayer peer
+and unaffected connections stay in service.
+
+Recovery requires known v3 roster epochs on both ends. A departure,
+new generation, changed transport or offerer, or mesh teardown cancels
+pending work for the affected scope. A fresh WebRTC generation starts a new
+recovery budget once the new links open. An in-generation role change or a
+reused recovery generation keeps affected routes on relay. After 256 distinct
+recovery generations in one room lifetime, new
+generations use the normal mesh without pair recovery until the room resets.
+The application owns relay fallback and chooses when to send gameplay on a
+replacement channel. This option defaults to off.
+
 ## Direct plan updates
 
 Handle each `session_plan` signal when your game owns Direct sockets.

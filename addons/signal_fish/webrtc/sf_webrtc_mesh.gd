@@ -57,6 +57,7 @@ extends Node
 const SFWebRTCMultiplayerPeerScript = preload(
 	"res://addons/signal_fish/webrtc/sf_webrtc_multiplayer_peer.gd"
 )
+const Recovery = preload("res://addons/signal_fish/webrtc/sf_webrtc_recovery.gd")
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFSessionTypesScript = preload("res://addons/signal_fish/protocol/sf_session_types.gd")
 const SFTypesScript = preload("res://addons/signal_fish/protocol/sf_types.gd")
@@ -101,6 +102,12 @@ var signal_retry_msec := 1000
 ## its pending queue (issue #127).
 var signal_retry_budget := 10
 
+## Enable before the first WebRTC plan. Both endpoints must opt in.
+var pair_recovery_enabled := false
+var pair_recovery_retry_msec := 500
+var pair_recovery_timeout_msec := 5000
+var pair_recovery_clock: Callable = Time.get_ticks_msec
+
 var _client: SignalFishClientScript = null
 # Distinguishes "never attached / detached" from "the attached client node was
 # freed": Godot reads a freed object held by a script-typed variable as null,
@@ -111,6 +118,9 @@ var _ice_servers: Array[SFSessionTypesScript.IceServerInfo] = []
 var _peers: Dictionary = {}
 var _retired_generations: Dictionary = {}
 var _known_peers: Dictionary = {}
+var _recovery_pairs: Dictionary = {}
+var _recovery_generation := ""
+var _used_recovery_generations: Dictionary = {}
 var _mp_peer: Object = null
 var _safe_mp_peer: SFWebRTCMultiplayerPeerScript = null
 var _reported_connected := false
@@ -177,9 +187,8 @@ func detach() -> void:
 func poll() -> void:
 	if not _client_is_live():
 		return
-	if _peers.is_empty():
-		_update_transport_status()
-		return
+	if not _recovery_pairs.is_empty():
+		_tick_recovery()
 	# Iterate a keys copy: a real connection's poll() can pump callbacks that
 	# end in consumer handlers, which may legally mutate the mesh re-entrantly
 	# (a peer dropped mid-poll is simply skipped).
@@ -187,12 +196,28 @@ func poll() -> void:
 		var entry: _MeshPeer = _peers.get(uuid)
 		if entry == null:
 			continue
+		var pair := _recovery_pair(uuid)
+		if (
+			entry.attempt > 0
+			and (
+				_expire_recovery_attempt(pair, entry.attempt)
+				or _peers.get(uuid) != entry
+				or not _recovery_is_current(pair)
+			)
+		):
+			continue
 		var error: Error = entry.connection.call("poll")
 		if not _check_peer_result(entry, "poll", error):
 			continue
-		if _peer_is_terminal(entry):
-			_drop_peer(uuid)
+		if entry.attempt > 0 and _expire_recovery_attempt(pair, entry.attempt):
 			continue
+		if _peer_is_terminal(entry):
+			var now: int = pair_recovery_clock.call() if pair != null else 0
+			_lose_peer(entry, now)
+			continue
+		if _peer_is_ready_for_recovery(entry, pair):
+			pair.was_ready = true
+			pair.expires = -1
 		_drain_relay(entry)
 	_update_transport_status()
 
@@ -350,12 +375,22 @@ func _on_client_signal_received(from_player: String, generation: String, payload
 		return
 	if generation != _plan.generation:
 		return
-	var entry: _MeshPeer = _peers.get(from_player)
-	if entry == null:
-		return
-	if typeof(payload) != TYPE_DICTIONARY:
+	if not payload is Dictionary:
 		return
 	var message: Dictionary = payload
+	var pair := _recovery_pair(from_player)
+	if message.has(Recovery.TAG):
+		if message.size() == 1 and message[Recovery.TAG] is Dictionary:
+			var recovery_message: Dictionary = message[Recovery.TAG]
+			_receive_recovery(pair, recovery_message)
+		return
+	var entry: _MeshPeer = _peers.get(from_player)
+	if entry == null or (pair != null and (pair.attempt > 0 or pair.retired)):
+		return
+	_apply_peer_signal(entry, message)
+
+
+func _apply_peer_signal(entry: _MeshPeer, message: Dictionary) -> void:
 	if message.has("Offer") or message.has("Answer"):
 		var type := "offer" if message.has("Offer") else "answer"
 		var sdp: String = str(message["Offer"] if type == "offer" else message["Answer"])
@@ -410,7 +445,9 @@ func _on_client_new_peer(peer_id: String, you_initiate: bool) -> void:
 	# the primary membership mechanism; this obeys you_initiate verbatim.
 	if _plan == null or _plan.transport != SFSessionTypesScript.TransportKind.WEBRTC:
 		return
-	if _peers.has(peer_id):
+	if _is_retired_recovery_generation(_plan.generation):
+		return
+	if _peers.has(peer_id) or _recovery_pair(peer_id) != null:
 		return
 	if _peers.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
 		# Hostile NewPeer streams must not open unbounded peer connections
@@ -433,6 +470,9 @@ func _on_client_player_reconnected(player_id: String) -> void:
 func _retire_prior_incarnation(player_id: String) -> void:
 	if _plan == null:
 		return
+	var pair := _recovery_pair(player_id)
+	if pair != null and _client._get_player_epoch(player_id) != pair.remote_epoch:
+		pair.retire()
 	var entry: _MeshPeer = _peers.get(player_id)
 	if entry == null:
 		if _known_peers.has(player_id):
@@ -455,6 +495,9 @@ func _retire_prior_incarnation(player_id: String) -> void:
 
 
 func _on_client_player_left(player_id: String) -> void:
+	var pair := _recovery_pair(player_id)
+	if pair != null:
+		pair.retire()
 	_drop_peer(player_id)
 
 
@@ -492,16 +535,35 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 	if _plan == null or _plan.generation != plan.generation:
 		_known_peers.clear()
 	_plan = plan
+	if (
+		not _recovery_generation.is_empty()
+		and (
+			plan.generation != _recovery_generation
+			or plan.transport != SFSessionTypesScript.TransportKind.WEBRTC
+		)
+	):
+		var retiring := _recovery_pairs.values()
+		_recovery_pairs.clear()
+		_recovery_generation = ""
+		for pair: Recovery in retiring:
+			pair.retire()
+		if _plan != plan:
+			return
 	for uuid: String in _retired_generations.keys():
 		if _retired_generations[uuid] != plan.generation:
 			_retired_generations.erase(uuid)
 	_ice_servers = plan.ice_servers.duplicate()
-	if plan.transport != SFSessionTypesScript.TransportKind.WEBRTC:
+	if (
+		plan.transport != SFSessionTypesScript.TransportKind.WEBRTC
+		or _is_retired_recovery_generation(plan.generation)
+	):
 		# Only a webrtc plan carries peer connections for this mesh. A relay
 		# floor or a host+direct plan empties it — opening connections whose
 		# signals would be gated away could never complete a handshake.
 		for uuid: String in _peers.keys():
 			_drop_peer(uuid)
+			if _plan != plan:
+				return
 		return
 	var wanted: Dictionary = {}
 	var peer_count: int = plan.peers.size()
@@ -516,6 +578,9 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 	for index: int in peer_count:
 		var peer: SFSessionTypesScript.SessionPeerInfo = plan.peers[index]
 		wanted[peer.player_id] = peer
+	_update_recovery_plan(plan, wanted)
+	if _plan != plan:
+		return
 	for uuid: String in wanted:
 		var entry: _MeshPeer = _peers.get(uuid)
 		if entry == null:
@@ -523,34 +588,356 @@ func _apply_plan(plan: SFSessionTypesScript.SessionPlanInfo) -> void:
 		var wanted_peer: SFSessionTypesScript.SessionPeerInfo = wanted[uuid]
 		if entry.initiate != wanted_peer.initiate or entry.generation != plan.generation:
 			_drop_peer(uuid)
+			if _plan != plan:
+				return
 	# Drops precede opens: a full-roster plan flip must never hold both
 	# generations past the tracked-peer ceiling (issue #335).
 	for uuid: String in _peers.keys():
 		if not wanted.has(uuid):
 			_drop_peer(uuid)
+			if _plan != plan:
+				return
 	for uuid: String in wanted:
-		if not _peers.has(uuid):
+		var pair := _recovery_pair(uuid)
+		if not _peers.has(uuid) and (pair == null or (not pair.retired and not pair.was_ready)):
 			var wanted_peer: SFSessionTypesScript.SessionPeerInfo = wanted[uuid]
 			_open_peer(uuid, wanted_peer.initiate)
+			if _plan != plan:
+				return
 
 
-func _open_peer(uuid: String, initiate: bool) -> void:
-	if _client == null or uuid.is_empty() or uuid == _client.get_player_id():
+func _update_recovery_plan(plan: SFSessionTypesScript.SessionPlanInfo, wanted: Dictionary) -> void:
+	if not pair_recovery_enabled or plan.generation.is_empty():
 		return
-	if _retired_generations.has(uuid):
+	if plan.generation == _recovery_generation:
+		for pair: Recovery in _recovery_pairs.values():
+			var directive: SFSessionTypesScript.SessionPeerInfo = wanted.get(pair.peer)
+			if directive == null or directive.initiate != pair.initiate:
+				pair.retire()
+				if _plan != plan:
+					return
+		return
+	if _used_recovery_generations.size() >= Recovery.MAX_GENERATIONS:
+		return
+	_recovery_generation = plan.generation
+	_used_recovery_generations[plan.generation] = true
+	var local_epoch := _client._get_player_epoch(_client.get_player_id())
+	if local_epoch < 0:
+		return
+	for uuid: String in wanted:
+		var remote_epoch := _client._get_player_epoch(uuid)
+		if uuid == _client.get_player_id() or remote_epoch < 0:
+			continue
+		var directive: SFSessionTypesScript.SessionPeerInfo = wanted[uuid]
+		var pair := Recovery.new()
+		pair.peer = uuid
+		pair.local_player = _client.get_player_id()
+		pair.room = _client.get_room_id()
+		pair.generation = plan.generation
+		pair.local_epoch = local_epoch
+		pair.remote_epoch = remote_epoch
+		pair.initiate = directive.initiate
+		_recovery_pairs[uuid] = pair
+
+
+func _is_retired_recovery_generation(generation: String) -> bool:
+	return generation != _recovery_generation and _used_recovery_generations.has(generation)
+
+
+func _recovery_pair(uuid: String) -> Recovery:
+	if _plan == null or _plan.generation != _recovery_generation:
+		return null
+	return _recovery_pairs.get(uuid)
+
+
+func _recovery_is_current(pair: Recovery) -> bool:
+	return (
+		pair != null
+		and not pair.retired
+		and _recovery_pairs.get(pair.peer) == pair
+		and _plan != null
+		and _plan.generation == pair.generation
+		and _client_connected()
+		and _client.get_room_id() == pair.room
+		and _client.get_player_id() == pair.local_player
+		and _client._get_player_epoch(pair.local_player) == pair.local_epoch
+		and _client._get_player_epoch(pair.peer) == pair.remote_epoch
+	)
+
+
+func _peer_is_ready_for_recovery(entry: _MeshPeer, pair: Recovery) -> bool:
+	return (
+		_recovery_is_current(pair)
+		and (not pair.was_ready or pair.expires >= 0)
+		and entry.attempt == pair.attempt
+		and _peer_is_ready(entry)
+		and _peers.get(entry.uuid) == entry
+		and _recovery_is_current(pair)
+	)
+
+
+func _lose_peer(entry: _MeshPeer, now: int) -> void:
+	if _peers.get(entry.uuid) != entry:
+		return
+	var pair := _recovery_pair(entry.uuid)
+	if _recovery_is_current(pair) and pair.was_ready and entry.attempt == pair.attempt:
+		_schedule_recovery(pair, now)
+	_drop_peer(entry.uuid)
+
+
+func _schedule_recovery(pair: Recovery, now: int) -> void:
+	pair.discard_ice(pair.attempt)
+	pair.expires = -1
+	if pair.due == -1:
+		pair.due = now + clampi(pair_recovery_retry_msec, 0, 60000)
+
+
+func _tick_recovery() -> void:
+	for uuid: String in _recovery_pairs.keys():
+		var pair := _recovery_pair(uuid)
+		if not _recovery_is_current(pair) or pair.installing_offer != null:
+			continue
+		if pair.offer_probe != null:
+			var probe_time: int = pair_recovery_clock.call()
+			if not _recovery_is_current(pair) or pair.installing_offer != null:
+				continue
+			_tick_offer_probe(pair, probe_time)
+		_expire_recovery_attempt(pair, pair.attempt)
+		if not _recovery_is_current(pair) or pair.due < 0:
+			continue
+		var started_at: int = pair_recovery_clock.call()
+		if not _recovery_is_current(pair) or pair.due < 0 or started_at < pair.due:
+			continue
+		pair.due = -1
+		if pair.initiate:
+			if pair.attempt < Recovery.MAX_ATTEMPTS:
+				_begin_recovery(pair, pair.attempt + 1, _recovery_deadline(started_at))
+		elif pair.request_count < Recovery.MAX_ATTEMPTS and pair.attempt < Recovery.MAX_ATTEMPTS:
+			pair.request_count += 1
+			pair.due = started_at + clampi(pair_recovery_retry_msec, 1, 60000)
+			_client.send_signal(pair.peer, pair.generation, pair.envelope("request"))
+
+
+func _recovery_deadline(now: int) -> int:
+	return now + clampi(pair_recovery_timeout_msec, 1, 60000)
+
+
+func _begin_recovery(pair: Recovery, attempt: int, expires: int) -> void:
+	if not _recovery_is_current(pair) or not pair.was_ready or attempt <= pair.attempt:
+		return
+	pair.discard_ice(pair.attempt)
+	pair.attempt = attempt
+	pair.request_count = 0
+	pair.due = -1
+	pair.expires = expires
+	_drop_peer(pair.peer)
+	if _expire_recovery_attempt(pair, attempt):
+		return
+	if _recovery_is_current(pair) and pair.attempt == attempt:
+		_open_peer(pair.peer, pair.initiate, attempt)
+		_expire_recovery_attempt(pair, attempt)
+
+
+func _expire_recovery_attempt(pair: Recovery, attempt: int) -> bool:
+	if pair == null or pair.expires < 0:
+		return false
+	var now: int = pair_recovery_clock.call()
+	if not _recovery_is_current(pair) or pair.attempt != attempt or pair.expires < 0:
+		return false
+	if now < pair.expires:
+		return false
+	_schedule_recovery(pair, now)
+	_drop_peer(pair.peer)
+	return true
+
+
+func _receive_recovery(pair: Recovery, message: Dictionary) -> void:
+	if not _recovery_is_current(pair) or not pair.accepts(message):
+		return
+	var wire_attempt: float = message["attempt"]
+	var attempt := int(wire_attempt)
+	var kind: String = message["kind"]
+	var body: String = message["body"]
+	if kind == "request":
+		if pair.initiate and pair.was_ready and attempt == pair.attempt and body.is_empty():
+			if pair.attempt < Recovery.MAX_ATTEMPTS and pair.due == -1:
+				var requested_at: int = pair_recovery_clock.call()
+				if _recovery_is_current(pair) and pair.attempt == attempt:
+					_schedule_recovery(pair, requested_at)
+		return
+	if attempt == 0 or body.is_empty():
+		return
+	var now: int = pair_recovery_clock.call()
+	if not _recovery_is_current(pair):
+		return
+	if not pair.initiate and attempt > pair.attempt and (kind == "Offer" or kind == "IceCandidate"):
+		if not pair.was_ready:
+			var original: _MeshPeer = _peers.get(pair.peer)
+			if original == null or not _peer_is_ready_for_recovery(original, pair):
+				return
+			pair.was_ready = true
+		if kind == "Offer":
+			_receive_recovery_offer(pair, attempt, body, now)
+			return
+	if kind == "IceCandidate":
+		var offer := pair.offer_for_ice(attempt)
+		var before_offer := not pair.initiate and attempt > pair.last_offer_attempt
+		if offer != null or before_offer:
+			if before_offer or now < offer.expires:
+				pair.buffer_ice(attempt, body)
+			return
+	var entry: _MeshPeer = _peers.get(pair.peer)
+	if (
+		entry == null
+		or entry.attempt != attempt
+		or pair.attempt != attempt
+		or pair.due >= 0
+		or (pair.expires >= 0 and now >= pair.expires)
+	):
+		return
+	if kind == "Answer" and pair.initiate and entry.remote_sdp == _MeshPeer.RemoteSdp.MISSING:
+		_apply_recovery_description(pair, entry, kind, body)
+	elif kind == "IceCandidate":
+		if entry.remote_sdp == _MeshPeer.RemoteSdp.APPLIED:
+			_apply_ice_candidate(entry, body)
+		else:
+			pair.buffer_ice(attempt, body)
+
+
+func _receive_recovery_offer(pair: Recovery, attempt: int, body: String, now: int) -> void:
+	if attempt <= pair.last_offer_attempt or not Recovery.has_data_offer_shape(body):
+		return
+	for skipped: int in range(maxi(pair.last_offer_attempt, pair.attempt) + 1, attempt):
+		pair.discard_ice(skipped)
+	pair.last_offer_attempt = attempt
+	var offer := Recovery.Offer.new()
+	offer.attempt = attempt
+	offer.sdp = body
+	offer.expires = _recovery_deadline(now)
+	if pair.offer_probe != null or pair.installing_offer != null or _peers.has(pair.peer):
+		_probe_recovery_offer(pair, offer)
+		return
+	_install_recovery_offer(pair, offer)
+
+
+func _probe_recovery_offer(pair: Recovery, offer: Recovery.Offer) -> void:
+	pair.replace_offer_probe(offer)
+	if not _offer_probe_active(pair, offer):
+		return
+	var connection := _make_peer_connection()
+	if pair.offer_probe != offer:
+		if connection != null:
+			connection.call("close")
+		return
+	offer.connection = connection
+	if not _offer_probe_active(pair, offer, OK if connection != null else ERR_UNAVAILABLE):
+		return
+	# Godot creates the multiplayer channels on a fresh connection. This
+	# probe waits for async SDP acceptance without touching the old peer.
+	var error: Error = connection.call("initialize", {})
+	if not _offer_probe_active(pair, offer, error):
+		return
+	offer.listen()
+	error = connection.call("set_remote_description", "offer", offer.sdp)
+	if _offer_probe_active(pair, offer, error):
+		offer.can_poll = true
+
+
+func _tick_offer_probe(pair: Recovery, now: int) -> void:
+	var offer := pair.offer_probe
+	if offer == null or not offer.can_poll:
+		return
+	if now >= offer.expires:
+		pair.replace_offer_probe()
+		return
+	offer.can_poll = false
+	var error: Error = offer.connection.call("poll")
+	if not _offer_probe_active(pair, offer, error):
+		return
+	if not offer.accepted:
+		offer.can_poll = true
+		return
+	offer.close()
+	if _offer_probe_active(pair, offer):
+		pair.offer_probe = null
+		_install_recovery_offer(pair, offer)
+
+
+func _offer_probe_active(pair: Recovery, offer: Recovery.Offer, error: Error = OK) -> bool:
+	if pair.offer_probe != offer:
+		return false
+	var now: int = pair_recovery_clock.call()
+	if pair.offer_probe != offer:
+		return false
+	if error == OK and now < offer.expires and _recovery_is_current(pair):
+		return true
+	pair.replace_offer_probe()
+	return false
+
+
+func _install_recovery_offer(pair: Recovery, offer: Recovery.Offer) -> void:
+	# The next offer can start validating during engine close, but matching
+	# ICE stays with this offer until its registered peer can receive it.
+	pair.installing_offer = offer
+	_begin_recovery(pair, offer.attempt, offer.expires)
+	var entry: _MeshPeer = _peers.get(pair.peer)
+	if _recovery_is_current(pair) and entry != null and entry.attempt == offer.attempt:
+		_apply_recovery_description(pair, entry, "Offer", offer.sdp)
+	else:
+		pair.discard_ice(offer.attempt)
+	pair.installing_offer = null
+
+
+func _apply_recovery_description(
+	pair: Recovery, entry: _MeshPeer, kind: String, sdp: String
+) -> void:
+	entry.remote_sdp = _MeshPeer.RemoteSdp.APPLYING
+	_apply_peer_signal(entry, {kind: sdp})
+	var candidates := pair.queued_ice(entry.attempt)
+	var index := 0
+	while (
+		not _expire_recovery_attempt(pair, entry.attempt)
+		and _peers.get(entry.uuid) == entry
+		and _recovery_is_current(pair)
+		and pair.due < 0
+		and index < candidates.size()
+	):
+		_apply_ice_candidate(entry, candidates[index])
+		index += 1
+	entry.remote_sdp = _MeshPeer.RemoteSdp.APPLIED
+	pair.discard_ice(entry.attempt)
+
+
+func _open_peer(uuid: String, initiate: bool, attempt := 0) -> void:
+	if (
+		_client == null
+		or uuid.is_empty()
+		or uuid == _client.get_player_id()
+		or _retired_generations.has(uuid)
+	):
 		return
 	if not _known_peers.has(uuid) and _known_peers.size() >= SFTypeUtils.MAX_TRACKED_PEERS:
 		return
+	var opening_client := _client
+	var opening_revision := _mesh_revision
+	var pair := _recovery_pair(uuid)
 	var connection: Object = _make_peer_connection()
 	if connection == null:
 		return
+	if not _can_open_peer(opening_client, opening_revision, uuid, pair, attempt):
+		connection.call("close")
+		return
 	var error: Error = connection.call("initialize", _rtc_configuration())
-	if error != OK:
-		SFLogScript.error("mesh: peer connection refused (%d)" % error)
+	if error != OK or not _can_open_peer(opening_client, opening_revision, uuid, pair, attempt):
+		if error != OK:
+			SFLogScript.error("mesh: peer connection refused (%d)" % error)
 		connection.call("close")
 		return
 	var multiplayer_peer: Object = _multiplayer_peer()
-	if multiplayer_peer == null:
+	if (
+		multiplayer_peer == null
+		or not _can_open_peer(opening_client, opening_revision, uuid, pair, attempt)
+	):
 		connection.call("close")
 		return
 	var entry := _MeshPeer.new()
@@ -560,9 +947,17 @@ func _open_peer(uuid: String, initiate: bool) -> void:
 	entry.initiate = initiate
 	entry.generation = _plan.generation if _plan != null else ""
 	entry.epoch = _client._get_player_epoch(uuid)
+	entry.attempt = attempt
 	error = multiplayer_peer.call("add_peer", connection, entry.peer_id)
 	if error != OK:
 		SFLogScript.error("mesh: add_peer refused (%d)" % error)
+		connection.call("close")
+		return
+	if not _can_open_peer(opening_client, opening_revision, uuid, pair, attempt):
+		if multiplayer_peer.call("has_peer", entry.peer_id):
+			var added: Dictionary = multiplayer_peer.call("get_peer", entry.peer_id)
+			if added.get("connection") == connection:
+				multiplayer_peer.call("remove_peer", entry.peer_id)
 		connection.call("close")
 		return
 	# The callables are kept on the entry so `_drop_peer` can disconnect
@@ -585,12 +980,24 @@ func _open_peer(uuid: String, initiate: bool) -> void:
 		_check_peer_result(entry, "create_offer", error)
 
 
+func _can_open_peer(
+	client: SignalFishClientScript, revision: int, uuid: String, pair: Recovery, attempt: int
+) -> bool:
+	var now: int = pair_recovery_clock.call() if attempt > 0 else 0
+	if _client != client or _mesh_revision != revision or _peers.has(uuid):
+		return false
+	if attempt == 0:
+		return pair == null or (not pair.retired and pair.attempt == 0)
+	return _recovery_is_current(pair) and pair.attempt == attempt and now < pair.expires
+
+
 func _check_peer_result(entry: _MeshPeer, operation: String, error: Error) -> bool:
 	if _peers.get(entry.uuid) != entry:
 		return false
 	if error == OK:
 		return true
-	_drop_peer(entry.uuid)
+	var now: int = pair_recovery_clock.call() if _recovery_pair(entry.uuid) != null else 0
+	_lose_peer(entry, now)
 	SFLogScript.error("mesh: %s refused (%d)" % [operation, error])
 	return false
 
@@ -622,7 +1029,13 @@ func _reset_mesh() -> void:
 	_plan = null
 	_retired_generations.clear()
 	_known_peers.clear()
+	var retiring := _recovery_pairs.values()
+	_recovery_pairs.clear()
+	_recovery_generation = ""
+	_used_recovery_generations.clear()
 	_ice_servers = []
+	for pair: Recovery in retiring:
+		pair.retire()
 	for uuid: String in _peers.keys():
 		_drop_peer(uuid)
 	if _mp_peer != null:
@@ -692,26 +1105,25 @@ func _peer_is_terminal(entry: _MeshPeer) -> bool:
 	return false
 
 
+func _peer_is_ready(entry: _MeshPeer) -> bool:
+	if entry.connection.call("get_connection_state") != WebRTCPeerConnection.STATE_CONNECTED:
+		return false
+	if _mp_peer == null or not _mp_peer.call("has_peer", entry.peer_id):
+		return false
+	# The connection can stay connected after a channel closes (#365).
+	var peer: Dictionary = _mp_peer.call("get_peer", entry.peer_id)
+	var channels: Array = peer["channels"]
+	for channel: Object in channels:
+		if channel.call("get_ready_state") != WebRTCDataChannel.STATE_OPEN:
+			return false
+	return not channels.is_empty()
+
+
 func _count_connected_peers() -> int:
-	if _mp_peer == null:
-		return 0
 	var connected := 0
 	for uuid: String in _peers:
 		var entry: _MeshPeer = _peers[uuid]
-		if entry.connection.call("get_connection_state") != WebRTCPeerConnection.STATE_CONNECTED:
-			continue
-		if not _mp_peer.call("has_peer", entry.peer_id):
-			continue
-		# A closed data channel can leave the connection connected (#365).
-		# Inspect physical channel state even before MultiplayerAPI polls.
-		var peer: Dictionary = _mp_peer.call("get_peer", entry.peer_id)
-		var channels: Array = peer["channels"]
-		var channels_open := not channels.is_empty()
-		for channel: Object in channels:
-			if channel.call("get_ready_state") != WebRTCDataChannel.STATE_OPEN:
-				channels_open = false
-				break
-		if channels_open:
+		if _peer_is_ready(entry):
 			connected += 1
 	return connected
 
@@ -719,6 +1131,14 @@ func _count_connected_peers() -> int:
 func _on_peer_session_description(entry: _MeshPeer, type: String, sdp: String) -> void:
 	if _peers.get(entry.uuid) != entry:
 		return
+	if entry.attempt > 0:
+		var expected := "offer" if entry.initiate else "answer"
+		if type != expected or entry.local_description_claimed:
+			return
+		entry.local_description_claimed = true
+		if not _recovery_accepts_callbacks(entry):
+			entry.local_description_claimed = false
+			return
 	var payload: Dictionary = {}
 	if type == "offer":
 		payload["Offer"] = sdp
@@ -730,21 +1150,58 @@ func _on_peer_session_description(entry: _MeshPeer, type: String, sdp: String) -
 	if not _check_peer_result(entry, "set_local_description", error):
 		return
 	_send_signal_to(entry, payload)
+	if entry.attempt > 0 and _peers.get(entry.uuid) == entry:
+		entry.local_description_sent = true
+		for candidate: String in entry.early_ice:
+			_send_signal_to(entry, {"IceCandidate": candidate})
+		entry.early_ice.clear()
 
 
-func _on_peer_ice_candidate(
-	entry: _MeshPeer, _media: String, _index: int, candidate: String
-) -> void:
+func _on_peer_ice_candidate(entry: _MeshPeer, media: String, index: int, candidate: String) -> void:
 	if _peers.get(entry.uuid) != entry:
 		return
 	if candidate.is_empty():
 		return
-	_send_signal_to(entry, {"IceCandidate": candidate})
+	var body := candidate
+	# Some adapters already carry the ICE coordinates inside the candidate.
+	if (
+		entry.attempt > 0
+		and (not media.is_empty() or index != 0)
+		and not candidate.strip_edges().begins_with("{")
+	):
+		body = JSON.stringify({"candidate": candidate, "sdpMid": media, "sdpMLineIndex": index})
+	if entry.attempt > 0 and not entry.local_description_sent:
+		if not _recovery_accepts_callbacks(entry):
+			return
+		if not entry.local_description_sent:
+			if entry.early_ice.size() < Recovery.MAX_EARLY_CANDIDATES:
+				entry.early_ice.append(body)
+			return
+	_send_signal_to(entry, {"IceCandidate": body})
+
+
+func _recovery_accepts_callbacks(entry: _MeshPeer) -> bool:
+	var pair := _recovery_pair(entry.uuid)
+	var now: int = pair_recovery_clock.call()
+	return (
+		_peers.get(entry.uuid) == entry
+		and _recovery_is_current(pair)
+		and pair.attempt == entry.attempt
+		and pair.due < 0
+		and (pair.expires < 0 or now < pair.expires)
+	)
 
 
 func _send_signal_to(entry: _MeshPeer, payload: Dictionary) -> void:
-	if not _client_connected():
+	if not _client_connected() or _peers.get(entry.uuid) != entry:
 		return
+	if entry.attempt > 0:
+		if not _recovery_accepts_callbacks(entry):
+			return
+		var pair: Recovery = _recovery_pairs[entry.uuid]
+		var kind: String = payload.keys()[0]
+		var body: String = payload[kind]
+		payload = pair.envelope(kind, body)
 	entry.relay_dropped = false
 	# The freshest payload per peer doubles as the rate-limit healing
 	# candidate: a server-refused relay re-queues exactly this payload.
@@ -763,7 +1220,8 @@ func _send_signal_to(entry: _MeshPeer, payload: Dictionary) -> void:
 
 
 func _dispatch_relay(entry: _MeshPeer, payload: Dictionary) -> void:
-	if _client.send_signal(entry.uuid, entry.generation, payload) == OK:
+	var sent: Error = _client.send_signal(entry.uuid, entry.generation, payload)
+	if sent == OK or _peers.get(entry.uuid) != entry:
 		return
 	entry.relay_attempts += 1
 	_enqueue_relay(entry, payload)
@@ -794,8 +1252,20 @@ func _drain_relay(entry: _MeshPeer) -> void:
 	if entry.relay_due_msec > Time.get_ticks_msec():
 		return
 	while not entry.pending_signals.is_empty():
+		if entry.attempt > 0:
+			if not _recovery_accepts_callbacks(entry):
+				entry.pending_signals.clear()
+				entry.last_relayed = {}
+				entry.has_last_relayed = false
+				entry.last_relayed_pending = false
+				return
+			if entry.pending_signals.is_empty():
+				return
 		var payload: Dictionary = entry.pending_signals[0]
-		if _client.send_signal(entry.uuid, entry.generation, payload) != OK:
+		var sent: Error = _client.send_signal(entry.uuid, entry.generation, payload)
+		if _peers.get(entry.uuid) != entry or not _client_connected():
+			return
+		if sent != OK:
 			entry.relay_attempts += 1
 			if entry.relay_attempts >= signal_retry_budget:
 				SFLogScript.error(
@@ -890,12 +1360,19 @@ class ReceivedPacket:
 
 class _MeshPeer:
 	extends RefCounted
+
+	enum RemoteSdp { MISSING, APPLYING, APPLIED }
 	var uuid: String = ""
 	var peer_id: int = 0
 	var connection: Object = null
 	var initiate: bool = false
 	var generation: String = ""
 	var epoch: int = -1
+	var attempt := 0
+	var local_description_claimed := false
+	var local_description_sent := false
+	var remote_sdp := RemoteSdp.MISSING
+	var early_ice: Array[String] = []
 	var receive_channel_cursor: int = 0
 	var session_cb: Callable = Callable()
 	var ice_cb: Callable = Callable()
