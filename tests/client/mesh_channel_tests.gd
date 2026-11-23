@@ -40,6 +40,9 @@ func run_all() -> void:
 		_test_malformed_offer_preserves_active_link,
 		_test_replacement_waits_for_engine_offer_validation,
 		_test_staged_offer_retires_with_pair,
+		_test_superseding_offer_owns_reentrant_ice,
+		_test_promoting_offer_keeps_ice_when_new_offer_arrives,
+		_test_promotion_cannot_revive_retired_pair,
 		_test_staged_offer_expires_during_engine_callbacks,
 		_test_probe_poll_resists_reentry,
 	]
@@ -739,6 +742,131 @@ func _test_probe_poll_resists_reentry() -> void:
 		_assert_equal(0, probe.get("poll_calls"), "setup reentry cannot poll validator")
 		mesh.poll()
 		_assert_equal(1, probe.get("poll_calls"), "nested poll calls engine once")
+	mesh.free()
+	client.free()
+	_done()
+
+
+func _test_superseding_offer_owns_reentrant_ice() -> void:
+	var fixture := _make_recovery_mesh(PLAYER_B, [0])
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+	_assert_equal(2, created.size(), "first offer allocates validator")
+	if created.size() == 2:
+		var superseded: Object = created[1]
+		superseded.set(
+			"close_hook", func() -> void: _deliver_ice(client, offerer, 2, "during-supersession")
+		)
+		_deliver(client, offerer, _recovery_offer(2, OFFER_SDP))
+		_assert_equal(3, created.size(), "second offer allocates validator")
+		if created.size() == 3:
+			_deliver_ice(client, offerer, 2, "after-supersession")
+			var pending: Object = created[2]
+			pending.call("emit_session_description_created", "answer", OFFER_SDP)
+			mesh.poll()
+			_assert_equal(4, created.size(), "validated superseding offer installs peer")
+			if created.size() == 4:
+				var new_peer: Object = created[3]
+				_assert_equal(
+					[["", 0, "during-supersession"], ["", 0, "after-supersession"]],
+					new_peer.get("added_candidates"),
+					"superseding probe owns matching ICE throughout old probe close"
+				)
+	mesh.free()
+	client.free()
+	_done()
+
+
+func _test_promoting_offer_keeps_ice_when_new_offer_arrives() -> void:
+	var fixture := _make_recovery_mesh(PLAYER_B, [0])
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = created[0]
+	original.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	mesh.poll()
+	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+	_assert_equal(2, created.size(), "first offer allocates validator")
+	if created.size() == 2:
+		var first_probe: Object = created[1]
+		original.set(
+			"close_hook",
+			func() -> void:
+				_deliver(client, offerer, _recovery_offer(2, OFFER_SDP))
+				_deliver_ice(client, offerer, 1, "committed-after-new-offer")
+				_deliver_ice(client, offerer, 2, "new-validator")
+				mesh.poll()
+				var second_probe: Object = created[2]
+				_assert_equal(
+					0, second_probe.get("poll_calls"), "nested poll waits for committed install"
+				)
+		)
+		_deliver_ice(client, offerer, 1, "committed-before-new-offer")
+		first_probe.call("emit_session_description_created", "answer", OFFER_SDP)
+		mesh.poll()
+		_assert_equal(4, created.size(), "new offer and committed install allocate once")
+		if created.size() == 4:
+			var first_replacement: Object = created[3]
+			_assert_equal(
+				[
+					["", 0, "committed-before-new-offer"],
+					["", 0, "committed-after-new-offer"],
+				],
+				first_replacement.get("added_candidates"),
+				"committed offer owns matching ICE even after newer offer starts validating"
+			)
+			var second_probe: Object = created[2]
+			second_probe.call("emit_session_description_created", "answer", OFFER_SDP)
+			mesh.poll()
+			_assert_equal(5, created.size(), "second validation installs once")
+			if created.size() == 5:
+				var second_replacement: Object = created[4]
+				_assert_equal(
+					[["", 0, "new-validator"]],
+					second_replacement.get("added_candidates"),
+					"newer offer owns only its matching ICE"
+				)
+	mesh.free()
+	client.free()
+	_done()
+
+
+func _test_promotion_cannot_revive_retired_pair() -> void:
+	var fixture := _make_recovery_mesh(PLAYER_B, [0])
+	var client: ClientScript = fixture[0]
+	var mesh: MeshScript = fixture[1]
+	var offerer := ClientFixtures.PLAYER_A
+	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+	_owner.call("_inject_plan", client, roster)
+	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = created[0]
+	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+	_assert_equal(2, created.size(), "first offer allocates validator")
+	if created.size() == 2:
+		var first_probe: Object = created[1]
+		original.set(
+			"close_hook",
+			func() -> void:
+				_deliver(client, offerer, _recovery_offer(2, OFFER_SDP))
+				mesh.detach()
+		)
+		first_probe.call("emit_session_description_created", "answer", OFFER_SDP)
+		mesh.poll()
+		_assert_equal(
+			3, created.size(), "detach closes new validator without installing either offer"
+		)
+		if created.size() == 3:
+			var second_probe: Object = created[2]
+			_assert_equal(true, second_probe.get("closed"), "detach closes new validator")
+		_assert_equal(null, mesh.get_multiplayer_peer(), "detach leaves no registered connection")
 	mesh.free()
 	client.free()
 	_done()

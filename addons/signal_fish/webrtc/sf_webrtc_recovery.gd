@@ -18,20 +18,30 @@ var attempt := 0
 var request_count := 0
 var due := -1
 var expires := -1
-var last_probed_attempt := 0
-var offer_probe: OfferProbe
+var last_offer_attempt := 0
+var offer_probe: Offer
+var installing_offer: Offer
 
 
 func retire() -> void:
 	retired = true
-	clear_offer_probe()
+	installing_offer = null
+	replace_offer_probe()
 
 
-func clear_offer_probe() -> void:
-	var probe := offer_probe
-	offer_probe = null
-	if probe != null:
-		probe.close()
+func replace_offer_probe(next: Offer = null) -> void:
+	var previous := offer_probe
+	offer_probe = next
+	if previous != null:
+		previous.close()
+
+
+func offer_for_ice(attempt_number: int) -> Offer:
+	if installing_offer != null and installing_offer.attempt == attempt_number:
+		return installing_offer
+	if offer_probe != null and offer_probe.attempt == attempt_number:
+		return offer_probe
+	return null
 
 
 func envelope(kind: String, body := "") -> Dictionary:
@@ -79,7 +89,7 @@ static func has_data_offer_shape(sdp: String) -> bool:
 	)
 
 
-class OfferProbe:
+class Offer:
 	extends RefCounted
 
 	var attempt: int
@@ -95,7 +105,7 @@ class OfferProbe:
 		session_created.connect(_on_description_created)
 
 	func _on_description_created(type: String, answer: String) -> void:
-		if type != "answer":
+		if connection == null or type != "answer":
 			return
 		for line: String in answer.split("\n"):
 			if line.begins_with("m=application ") and line.get_slice(" ", 1).to_int() > 0:

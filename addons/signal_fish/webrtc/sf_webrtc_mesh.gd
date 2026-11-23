@@ -661,7 +661,7 @@ func _schedule_recovery(pair: Recovery, now: int) -> void:
 func _tick_recovery(now: int) -> void:
 	for uuid: String in _recovery_pairs.keys():
 		var pair := _recovery_pair(uuid)
-		if not _recovery_is_current(pair):
+		if not _recovery_is_current(pair) or pair.installing_offer != null:
 			continue
 		_tick_offer_probe(pair, now)
 		if not _recovery_is_current(pair):
@@ -720,11 +720,12 @@ func _receive_recovery(pair: Recovery, message: Dictionary) -> void:
 	if kind == "Offer" and not pair.initiate and attempt > pair.attempt:
 		_receive_recovery_offer(pair, attempt, body, now)
 		return
-	var probe := pair.offer_probe
-	if kind == "IceCandidate" and probe != null and probe.attempt == attempt:
-		if now < probe.expires and probe.candidates.size() < Recovery.MAX_EARLY_CANDIDATES:
-			probe.candidates.append(body)
-		return
+	if kind == "IceCandidate":
+		var offer := pair.offer_for_ice(attempt)
+		if offer != null:
+			if now < offer.expires and offer.candidates.size() < Recovery.MAX_EARLY_CANDIDATES:
+				offer.candidates.append(body)
+			return
 	var entry: _MeshPeer = _peers.get(pair.peer)
 	if (
 		entry == null
@@ -742,104 +743,92 @@ func _receive_recovery(pair: Recovery, message: Dictionary) -> void:
 
 
 func _receive_recovery_offer(pair: Recovery, attempt: int, body: String, now: int) -> void:
-	if attempt <= pair.last_probed_attempt or not Recovery.has_data_offer_shape(body):
+	if attempt <= pair.last_offer_attempt or not Recovery.has_data_offer_shape(body):
 		return
-	var expires := _recovery_deadline(now)
-	if pair.offer_probe != null or _peers.has(pair.peer):
-		_probe_recovery_offer(pair, attempt, body, expires)
+	pair.last_offer_attempt = attempt
+	var offer := Recovery.Offer.new()
+	offer.attempt = attempt
+	offer.sdp = body
+	offer.expires = _recovery_deadline(now)
+	if pair.offer_probe != null or pair.installing_offer != null or _peers.has(pair.peer):
+		_probe_recovery_offer(pair, offer)
 		return
-	_install_recovery_offer(pair, attempt, body, expires)
+	_install_recovery_offer(pair, offer)
 
 
-func _probe_recovery_offer(pair: Recovery, attempt: int, body: String, expires: int) -> void:
-	pair.last_probed_attempt = attempt
-	pair.clear_offer_probe()
-	if not _recovery_is_current(pair) or pair.last_probed_attempt != attempt:
+func _probe_recovery_offer(pair: Recovery, offer: Recovery.Offer) -> void:
+	pair.replace_offer_probe(offer)
+	if not _offer_probe_active(pair, offer):
 		return
-	var probe := Recovery.OfferProbe.new()
-	probe.attempt = attempt
-	probe.sdp = body
-	probe.expires = expires
-	pair.offer_probe = probe
 	var connection := _make_peer_connection()
-	if not _recovery_is_current(pair) or pair.offer_probe != probe:
+	if pair.offer_probe != offer:
 		if connection != null:
 			connection.call("close")
 		return
-	if connection == null:
-		pair.clear_offer_probe()
+	offer.connection = connection
+	if not _offer_probe_active(pair, offer, OK if connection != null else ERR_UNAVAILABLE):
 		return
-	probe.connection = connection
 	# Godot creates the multiplayer channels on a fresh connection. This
 	# probe waits for async SDP acceptance without touching the old peer.
 	var error: Error = connection.call("initialize", {})
-	if pair.offer_probe != probe:
+	if not _offer_probe_active(pair, offer, error):
 		return
-	if error == OK and _recovery_is_current(pair):
-		probe.listen()
-		error = connection.call("set_remote_description", "offer", body)
-	if pair.offer_probe != probe:
-		return
-	if error != OK or not _recovery_is_current(pair):
-		pair.clear_offer_probe()
-		return
-	probe.can_poll = true
+	offer.listen()
+	error = connection.call("set_remote_description", "offer", offer.sdp)
+	if _offer_probe_active(pair, offer, error):
+		offer.can_poll = true
 
 
 func _tick_offer_probe(pair: Recovery, now: int) -> void:
-	var probe := pair.offer_probe
-	if probe == null or not probe.can_poll:
+	var offer := pair.offer_probe
+	if offer == null or not offer.can_poll:
 		return
-	if now >= probe.expires:
-		pair.clear_offer_probe()
+	if now >= offer.expires:
+		pair.replace_offer_probe()
 		return
-	probe.can_poll = false
-	var error: Error = probe.connection.call("poll")
-	if not _check_offer_probe_deadline(pair, probe):
+	offer.can_poll = false
+	var error: Error = offer.connection.call("poll")
+	if not _offer_probe_active(pair, offer, error):
 		return
-	if error != OK:
-		pair.clear_offer_probe()
+	if not offer.accepted:
+		offer.can_poll = true
 		return
-	if probe.accepted:
-		_finish_offer_probe(pair, probe)
-	else:
-		probe.can_poll = true
+	offer.close()
+	if _offer_probe_active(pair, offer):
+		pair.offer_probe = null
+		_install_recovery_offer(pair, offer)
 
 
-func _check_offer_probe_deadline(pair: Recovery, probe: Recovery.OfferProbe) -> bool:
-	var now: int = pair_recovery_clock.call()
-	if not _recovery_is_current(pair) or pair.offer_probe != probe:
+func _offer_probe_active(pair: Recovery, offer: Recovery.Offer, error: Error = OK) -> bool:
+	if pair.offer_probe != offer:
 		return false
-	if now < probe.expires:
+	var now: int = pair_recovery_clock.call()
+	if pair.offer_probe != offer:
+		return false
+	if error == OK and now < offer.expires and _recovery_is_current(pair):
 		return true
-	pair.clear_offer_probe()
+	pair.replace_offer_probe()
 	return false
 
 
-func _finish_offer_probe(pair: Recovery, probe: Recovery.OfferProbe) -> void:
-	# Keep matching ICE routable until the replacement owns the remote SDP.
-	probe.close()
-	if not _check_offer_probe_deadline(pair, probe):
-		return
-	var entry := _install_recovery_offer(pair, probe.attempt, probe.sdp, probe.expires)
-	if pair.offer_probe == probe:
-		pair.clear_offer_probe()
-	if entry == null:
-		return
-	for candidate: String in probe.candidates:
-		if _peers.get(entry.uuid) != entry:
-			return
-		_apply_ice_candidate(entry, candidate)
-
-
-func _install_recovery_offer(pair: Recovery, attempt: int, body: String, expires: int) -> _MeshPeer:
-	_begin_recovery(pair, attempt, expires)
+func _install_recovery_offer(pair: Recovery, offer: Recovery.Offer) -> void:
+	# The next offer can start validating during engine close, but matching
+	# ICE stays with this offer until its registered peer can receive it.
+	pair.installing_offer = offer
+	_begin_recovery(pair, offer.attempt, offer.expires)
 	var entry: _MeshPeer = _peers.get(pair.peer)
-	if not _recovery_is_current(pair) or entry == null or entry.attempt != attempt:
-		return null
-	entry.remote_description_seen = true
-	_apply_peer_signal(entry, {"Offer": body})
-	return entry
+	if _recovery_is_current(pair) and entry != null and entry.attempt == offer.attempt:
+		entry.remote_description_seen = true
+		_apply_peer_signal(entry, {"Offer": offer.sdp})
+		var index := 0
+		while (
+			index < offer.candidates.size()
+			and pair.installing_offer == offer
+			and _peers.get(entry.uuid) == entry
+		):
+			_apply_ice_candidate(entry, offer.candidates[index])
+			index += 1
+	pair.installing_offer = null
 
 
 func _open_peer(uuid: String, initiate: bool, attempt := 0) -> void:
