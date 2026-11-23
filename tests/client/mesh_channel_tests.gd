@@ -32,6 +32,8 @@ func run_all() -> void:
 	var cases: Array[Callable] = [
 		_test_required_channels_control_transport_reports,
 		_test_closed_pair_is_rebuilt_in_room,
+		_test_recovery_offer_requires_local_ready_link,
+		_test_recovery_buffers_ice_before_remote_description,
 		_test_answerer_recovers_after_dropped_offer,
 		_test_recovery_budget_and_retirement,
 		_test_answerer_requests_after_restored_attempt,
@@ -210,6 +212,11 @@ func _make_recovery_mesh(local_player: String, clock: Array[int]) -> Array:
 	mesh.pair_recovery_timeout_msec = 5
 	mesh.pair_recovery_clock = func() -> int: return clock[0]
 	return [client, mesh]
+
+
+func _ready_recovery_connection(mesh: MeshScript, connection: Object) -> void:
+	connection.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+	mesh.poll()
 
 
 func _get_signals(client: ClientScript) -> Array[Dictionary]:
@@ -647,6 +654,8 @@ func _check_staged_offer_retires_with_pair(retire_by_plan: bool) -> void:
 	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
 	_owner.call("_inject_plan", client, roster)
 	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = created[0]
+	_ready_recovery_connection(mesh, original)
 	for attempt: int in [1, 2]:
 		_deliver(client, offerer, _recovery_offer(attempt, OFFER_SDP))
 	_assert_equal(3, created.size(), "newer offer allocates one replacement verification")
@@ -812,6 +821,9 @@ func _test_probe_poll_resists_reentry() -> void:
 	var offerer := ClientFixtures.PLAYER_A
 	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
 	_owner.call("_inject_plan", client, roster)
+	var initial_connections: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = initial_connections[0]
+	_ready_recovery_connection(mesh, original)
 	var factory := mesh.peer_connection_factory
 	mesh.peer_connection_factory = func() -> Object:
 		var connection: Object = factory.call()
@@ -840,6 +852,8 @@ func _test_superseding_offer_owns_reentrant_ice() -> void:
 	var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
 	_owner.call("_inject_plan", client, roster)
 	var created: Array = _owner.call("_mesh_peers", mesh)
+	var original: Object = created[0]
+	_ready_recovery_connection(mesh, original)
 	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
 	_assert_equal(2, created.size(), "first offer allocates validator")
 	if created.size() == 2:
@@ -933,6 +947,7 @@ func _test_promotion_cannot_revive_retired_pair() -> void:
 	_owner.call("_inject_plan", client, roster)
 	var created: Array = _owner.call("_mesh_peers", mesh)
 	var original: Object = created[0]
+	_ready_recovery_connection(mesh, original)
 	_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
 	_assert_equal(2, created.size(), "first offer allocates validator")
 	if created.size() == 2:
@@ -954,4 +969,101 @@ func _test_promotion_cannot_revive_retired_pair() -> void:
 		_assert_equal(null, mesh.get_multiplayer_peer(), "detach leaves no registered connection")
 	mesh.free()
 	client.free()
+	_done()
+
+
+func _test_recovery_offer_requires_local_ready_link() -> void:
+	for initial_state: int in [
+		WebRTCPeerConnection.STATE_NEW,
+		WebRTCPeerConnection.STATE_FAILED,
+		WebRTCPeerConnection.STATE_CONNECTED,
+	]:
+		var fixture := _make_recovery_mesh(PLAYER_B, [0])
+		var client: ClientScript = fixture[0]
+		var mesh: MeshScript = fixture[1]
+		var offerer := ClientFixtures.PLAYER_A
+		var roster: Array[Dictionary] = [_owner.call("_peer", offerer, false)]
+		_owner.call("_inject_plan", client, roster)
+		var created: Array = _owner.call("_mesh_peers", mesh)
+		var original: Object = created[0]
+		original.set("state", initial_state)
+		if initial_state == WebRTCPeerConnection.STATE_CONNECTED:
+			# A signaling callback may run before mesh.poll records readiness.
+			original.set(
+				"poll_hook",
+				func() -> void: _deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+			)
+			mesh.poll()
+			_assert_equal(2, created.size(), "reentrant offer sees an already connected link")
+		else:
+			mesh.poll()
+			_deliver(client, offerer, _recovery_offer(1, OFFER_SDP))
+			_assert_equal(
+				1, created.size(), "unready initial state %d cannot recover" % initial_state
+			)
+			if initial_state == WebRTCPeerConnection.STATE_NEW:
+				if created.size() == 2:
+					var probe: Object = created[1]
+					probe.call("emit_session_description_created", "answer", OFFER_SDP)
+					mesh.poll()
+				_deliver(
+					client, offerer, {"generation": GENERATION, "signal": {"Offer": OFFER_SDP}}
+				)
+				_assert_equal(
+					["offer", OFFER_SDP],
+					original.get("remote_description"),
+					"original negotiation is still available"
+				)
+		mesh.free()
+		client.free()
+	_done()
+
+
+func _test_recovery_buffers_ice_before_remote_description() -> void:
+	for initiate: bool in [false, true]:
+		var local_player := ClientFixtures.PLAYER_A if initiate else PLAYER_B
+		var sender := PLAYER_B if initiate else ClientFixtures.PLAYER_A
+		var fixture := _make_recovery_mesh(local_player, [0])
+		var client: ClientScript = fixture[0]
+		var mesh: MeshScript = fixture[1]
+		var roster: Array[Dictionary] = [_owner.call("_peer", sender, initiate)]
+		_owner.call("_inject_plan", client, roster)
+		var created: Array = _owner.call("_mesh_peers", mesh)
+		var original: Object = created[0]
+		original.set("state", WebRTCPeerConnection.STATE_CONNECTED)
+		mesh.poll()
+		if initiate:
+			_close_unreliable(original)
+			mesh.poll()
+			mesh.poll()
+		var expected_candidates: Array[Array] = []
+		for index: int in 17:
+			var candidate := "before-description-%d" % index
+			_deliver_ice(client, sender, 1, candidate)
+			if index < 16:
+				expected_candidates.append(["", 0, candidate])
+		_deliver_ice(client, sender, 2, "different-attempt")
+		var description := _recovery_offer(1, OFFER_SDP)
+		if initiate:
+			description["signal"]["MeshRecovery"]["kind"] = "Answer"
+		_deliver(client, sender, description)
+		if not initiate and created.size() == 2:
+			var probe: Object = created[1]
+			probe.call("emit_session_description_created", "answer", OFFER_SDP)
+			mesh.poll()
+		_deliver_ice(client, sender, 1, "after-description")
+		expected_candidates.append(["", 0, "after-description"])
+		var expected_count := 2 if initiate else 3
+		var kind := "answer" if initiate else "offer"
+		_assert_equal(expected_count, created.size(), "one physical recovery after %s" % kind)
+		if created.size() == expected_count:
+			var replacement: Object = created[-1]
+			_assert_equal([kind, OFFER_SDP], replacement.get("remote_description"), "remote SDP")
+			_assert_equal(
+				expected_candidates,
+				replacement.get("added_candidates"),
+				"ICE before and after %s stays bounded and in order" % kind
+			)
+		mesh.free()
+		client.free()
 	_done()

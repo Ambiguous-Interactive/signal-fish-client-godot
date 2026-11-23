@@ -21,11 +21,13 @@ var expires := -1
 var last_offer_attempt := 0
 var offer_probe: Offer
 var installing_offer: Offer
+var _early_ice: Dictionary = {}
 
 
 func retire() -> void:
 	retired = true
 	installing_offer = null
+	_early_ice.clear()
 	replace_offer_probe()
 
 
@@ -33,6 +35,7 @@ func replace_offer_probe(next: Offer = null) -> void:
 	var previous := offer_probe
 	offer_probe = next
 	if previous != null:
+		discard_ice(previous.attempt)
 		previous.close()
 
 
@@ -42,6 +45,25 @@ func offer_for_ice(attempt_number: int) -> Offer:
 	if offer_probe != null and offer_probe.attempt == attempt_number:
 		return offer_probe
 	return null
+
+
+func buffer_ice(attempt_number: int, candidate: String) -> void:
+	if attempt_number < 1 or attempt_number > MAX_ATTEMPTS:
+		return
+	var candidates := queued_ice(attempt_number)
+	if candidates.size() < MAX_EARLY_CANDIDATES:
+		candidates.append(candidate)
+
+
+func queued_ice(attempt_number: int) -> Array[String]:
+	if not _early_ice.has(attempt_number):
+		var candidates: Array[String] = []
+		_early_ice[attempt_number] = candidates
+	return _early_ice[attempt_number]
+
+
+func discard_ice(attempt_number: int) -> void:
+	_early_ice.erase(attempt_number)
 
 
 func envelope(kind: String, body := "") -> Dictionary:
@@ -98,7 +120,6 @@ class Offer:
 	var connection: Object
 	var can_poll := false
 	var accepted := false
-	var candidates: Array[String] = []
 
 	func listen() -> void:
 		var session_created: Signal = connection.get("session_description_created")

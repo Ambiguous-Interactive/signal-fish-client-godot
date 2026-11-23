@@ -668,6 +668,7 @@ func _lose_peer(entry: _MeshPeer, now: int) -> void:
 
 
 func _schedule_recovery(pair: Recovery, now: int) -> void:
+	pair.discard_ice(pair.attempt)
 	pair.expires = -1
 	if pair.due == -1:
 		pair.due = now + clampi(pair_recovery_retry_msec, 0, 60000)
@@ -701,11 +702,11 @@ func _recovery_deadline(now: int) -> int:
 
 
 func _begin_recovery(pair: Recovery, attempt: int, expires: int) -> void:
-	if not _recovery_is_current(pair) or attempt <= pair.attempt:
+	if not _recovery_is_current(pair) or not pair.was_ready or attempt <= pair.attempt:
 		return
+	pair.discard_ice(pair.attempt)
 	pair.attempt = attempt
 	pair.request_count = 0
-	pair.was_ready = true
 	pair.due = -1
 	pair.expires = expires
 	_drop_peer(pair.peer)
@@ -748,14 +749,21 @@ func _receive_recovery(pair: Recovery, message: Dictionary) -> void:
 	var now: int = pair_recovery_clock.call()
 	if not _recovery_is_current(pair):
 		return
-	if kind == "Offer" and not pair.initiate and attempt > pair.attempt:
-		_receive_recovery_offer(pair, attempt, body, now)
-		return
+	if not pair.initiate and attempt > pair.attempt and (kind == "Offer" or kind == "IceCandidate"):
+		if not pair.was_ready:
+			var original: _MeshPeer = _peers.get(pair.peer)
+			if original == null or not _peer_is_ready_for_recovery(original, pair):
+				return
+			pair.was_ready = true
+		if kind == "Offer":
+			_receive_recovery_offer(pair, attempt, body, now)
+			return
 	if kind == "IceCandidate":
 		var offer := pair.offer_for_ice(attempt)
-		if offer != null:
-			if now < offer.expires and offer.candidates.size() < Recovery.MAX_EARLY_CANDIDATES:
-				offer.candidates.append(body)
+		var before_offer := not pair.initiate and attempt > pair.last_offer_attempt
+		if offer != null or before_offer:
+			if before_offer or now < offer.expires:
+				pair.buffer_ice(attempt, body)
 			return
 	var entry: _MeshPeer = _peers.get(pair.peer)
 	if (
@@ -766,16 +774,20 @@ func _receive_recovery(pair: Recovery, message: Dictionary) -> void:
 		or (pair.expires >= 0 and now >= pair.expires)
 	):
 		return
-	if kind == "Answer" and pair.initiate and not entry.remote_description_seen:
-		entry.remote_description_seen = true
-	elif kind != "IceCandidate" or not entry.remote_description_seen:
-		return
-	_apply_peer_signal(entry, {kind: body})
+	if kind == "Answer" and pair.initiate and entry.remote_sdp == _MeshPeer.RemoteSdp.MISSING:
+		_apply_recovery_description(pair, entry, kind, body)
+	elif kind == "IceCandidate":
+		if entry.remote_sdp == _MeshPeer.RemoteSdp.APPLIED:
+			_apply_ice_candidate(entry, body)
+		else:
+			pair.buffer_ice(attempt, body)
 
 
 func _receive_recovery_offer(pair: Recovery, attempt: int, body: String, now: int) -> void:
 	if attempt <= pair.last_offer_attempt or not Recovery.has_data_offer_shape(body):
 		return
+	for skipped: int in range(maxi(pair.last_offer_attempt, pair.attempt) + 1, attempt):
+		pair.discard_ice(skipped)
 	pair.last_offer_attempt = attempt
 	var offer := Recovery.Offer.new()
 	offer.attempt = attempt
@@ -849,19 +861,30 @@ func _install_recovery_offer(pair: Recovery, offer: Recovery.Offer) -> void:
 	_begin_recovery(pair, offer.attempt, offer.expires)
 	var entry: _MeshPeer = _peers.get(pair.peer)
 	if _recovery_is_current(pair) and entry != null and entry.attempt == offer.attempt:
-		entry.remote_description_seen = true
-		_apply_peer_signal(entry, {"Offer": offer.sdp})
-		var index := 0
-		while (
-			index < offer.candidates.size()
-			and not _expire_recovery_attempt(pair, offer.attempt)
-			and pair.installing_offer == offer
-			and _peers.get(entry.uuid) == entry
-		):
-			_apply_ice_candidate(entry, offer.candidates[index])
-			index += 1
-		_expire_recovery_attempt(pair, offer.attempt)
+		_apply_recovery_description(pair, entry, "Offer", offer.sdp)
+	else:
+		pair.discard_ice(offer.attempt)
 	pair.installing_offer = null
+
+
+func _apply_recovery_description(
+	pair: Recovery, entry: _MeshPeer, kind: String, sdp: String
+) -> void:
+	entry.remote_sdp = _MeshPeer.RemoteSdp.APPLYING
+	_apply_peer_signal(entry, {kind: sdp})
+	var candidates := pair.queued_ice(entry.attempt)
+	var index := 0
+	while (
+		not _expire_recovery_attempt(pair, entry.attempt)
+		and _peers.get(entry.uuid) == entry
+		and _recovery_is_current(pair)
+		and pair.due < 0
+		and index < candidates.size()
+	):
+		_apply_ice_candidate(entry, candidates[index])
+		index += 1
+	entry.remote_sdp = _MeshPeer.RemoteSdp.APPLIED
+	pair.discard_ice(entry.attempt)
 
 
 func _open_peer(uuid: String, initiate: bool, attempt := 0) -> void:
@@ -1300,6 +1323,8 @@ class ReceivedPacket:
 
 class _MeshPeer:
 	extends RefCounted
+
+	enum RemoteSdp { MISSING, APPLYING, APPLIED }
 	var uuid: String = ""
 	var peer_id: int = 0
 	var connection: Object = null
@@ -1309,7 +1334,7 @@ class _MeshPeer:
 	var attempt := 0
 	var local_description_claimed := false
 	var local_description_sent := false
-	var remote_description_seen := false
+	var remote_sdp := RemoteSdp.MISSING
 	var early_ice: Array[String] = []
 	var receive_channel_cursor: int = 0
 	var session_cb: Callable = Callable()
