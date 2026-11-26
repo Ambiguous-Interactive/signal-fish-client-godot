@@ -67,9 +67,7 @@ static func decode(
 			),
 		}
 	# Ordinary binary data begins with a MessagePack map marker.
-	var addressed := not payload.is_empty() and payload[0] == _ADDRESSED_OPCODE
-	if addressed and not allow_addressed:
-		return {"ok": false, "error": "addressed binary game data is unavailable"}
+	var addressed := allow_addressed and not payload.is_empty() and payload[0] == _ADDRESSED_OPCODE
 	var frame := SFBinaryFramesScript.decode_envelope(payload, 1 if addressed else 0)
 	if not frame["ok"]:
 		return frame

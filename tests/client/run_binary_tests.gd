@@ -190,7 +190,25 @@ func _test_addressed_negotiation_and_sends() -> void:
 func _test_addressed_receive_shape() -> void:
 	var payload := PackedByteArray([0x01, 0x00, 0xFF])
 	var ordinary := _v3_binary_frame(PLAYER_B, "message_pack", payload)
-	var addressed := PackedByteArray([1]) + ordinary
+	var cases := [
+		["v3", ordinary, ""],
+		[
+			"v2",
+			_binary_frame(PLAYER_B, "message_pack", payload),
+			"invalid addressed binary game data"
+		],
+		[
+			"wrong encoding",
+			_v3_binary_frame(PLAYER_B, "rkyv", payload),
+			"invalid addressed binary game data"
+		],
+		[
+			"trailing byte",
+			ordinary + PackedByteArray([0]),
+			"binary game-data envelope contains trailing bytes"
+		],
+		["empty frame", PackedByteArray(), "binary game-data envelope is not a MessagePack map"],
+	]
 	var info := _protocol_info()
 	info["protocol_version"] = 3
 	info["game_data_formats"] = ["message_pack", "rkyv"]
@@ -208,19 +226,25 @@ func _test_addressed_receive_shape() -> void:
 		)
 		var errors := _track_protocol_errors(client)
 		fake.inject_server_message({"type": "ProtocolInfo", "data": info})
-		fake.inject_binary(ordinary)
-		fake.inject_binary(addressed)
-		fake.inject_binary(PackedByteArray([1]) + _binary_frame(PLAYER_B, "message_pack", payload))
-		fake.inject_binary(PackedByteArray([1]) + _v3_binary_frame(PLAYER_B, "rkyv", payload))
-		fake.inject_binary(addressed + PackedByteArray([0]))
-		fake.inject_binary(PackedByteArray([1]))
 		var expected := [PLAYER_B, SFTypesScript.GameDataEncoding.MESSAGE_PACK, payload]
-		_assert_equal(
-			[expected, expected] if requested else [expected],
-			received,
-			"only negotiated v3 addressed bytes are delivered as ordinary raw payload"
-		)
-		_assert_equal(4 if requested else 5, errors.size(), "malformed addressed frames rejected")
+		fake.inject_binary(ordinary)
+		_assert_equal([expected], received, "ordinary v3 frame delivers once")
+		_assert_equal([], errors, "ordinary v3 frame has no protocol error")
+		for row: Array in cases:
+			var label := "addressed %s with capability request %s" % [row[0], requested]
+			var frame: PackedByteArray = row[1]
+			var expected_error: String = (
+				row[2] if requested else "binary game-data envelope is not a MessagePack map"
+			)
+			received.clear()
+			errors.clear()
+			fake.inject_binary(PackedByteArray([1]) + frame)
+			if expected_error.is_empty():
+				_assert_equal([expected], received, label + " delivers once")
+				_assert_equal([], errors, label + " has no protocol error")
+			else:
+				_assert_equal([], received, label + " delivers nothing")
+				_assert_equal([expected_error], errors, label + " reports exact protocol error")
 		client.free()
 	_done()
 
