@@ -42,7 +42,7 @@ The `game_data_format` config field negotiates the format with the server.
 Accepted values are `""` (JSON), `json`, `message_pack`, and the opaque
 `rkyv`/`protobuf` pass-through encodings.
 
-`send_game_data_binary(bytes)` sends one raw binary frame:
+`send_game_data_binary(bytes)` broadcasts one binary frame:
 
 ```gdscript
 client.send_game_data_binary(payload_bytes)
@@ -53,6 +53,26 @@ client.send_game_data_binary(payload_bytes)
 - On a `json`-negotiated connection the client refuses the send locally
   with `ERR_UNAVAILABLE`. The server drops binary frames on JSON
   connections anyway.
+
+## Addressed binary game data
+
+Add `SignalFishClient.ADDRESSED_BINARY_GAME_DATA_CAPABILITY` to
+`config.requested_capabilities` before connecting. Wait for `protocol_info`
+and check `client.has_addressed_binary_game_data()`.
+
+```gdscript
+if client.has_addressed_binary_game_data():
+    client.send_game_data_binary_to(peer_uuid, payload_bytes)
+```
+
+The server accepts a target seated in the same room when the target also
+negotiated the capability and the same binary format. The sender's API
+reports local send status. The receiver uses the regular game-data signals.
+
+Older servers retain the existing broadcast behavior.
+`send_game_data_binary_to` returns `ERR_UNAVAILABLE` when the server lacks
+support. A capability request keeps binary sends pending with `ERR_BUSY`
+until `protocol_info` arrives.
 
 ## Raw-byte pass-through
 

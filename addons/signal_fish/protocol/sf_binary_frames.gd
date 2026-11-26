@@ -40,7 +40,7 @@ static var _uuid_cache: Dictionary = {}
 ## [code]{ok: bool, from_player: String, encoding: int, payload: PackedByteArray,
 ## version: int, error: String}[/code]. [code]from_player[/code] is the
 ## canonical lowercase UUID string.
-static func decode_envelope(bytes: PackedByteArray) -> Dictionary:
+static func decode_envelope(bytes: PackedByteArray, start := 0) -> Dictionary:
 	var result := {
 		"ok": false,
 		"from_player": "",
@@ -49,9 +49,13 @@ static func decode_envelope(bytes: PackedByteArray) -> Dictionary:
 		"version": 0,
 		"error": "",
 	}
+	if start < 0 or start > bytes.size():
+		result["error"] = "binary game-data envelope offset is out of bounds"
+		return result
 	var peer := StreamPeerBuffer.new()
 	peer.data_array = bytes
 	peer.big_endian = true
+	peer.seek(start)
 	var count := _read_map_header(peer)
 	if count < 0:
 		result["error"] = "binary game-data envelope is not a MessagePack map"

@@ -9,7 +9,8 @@
 # games read the authority off the client instead of tracking a signal.
 # get_supports_authority joined with issue #338 so the Steam bootstrap reads
 # the room's authority flag off the client instead of tracking baselines.
-max-public-methods: 32
+# Addressed binary data adds a send method and a negotiation query.
+max-public-methods: 34
 
 # max-file-lines: the headless test runners are single-file SceneTree scripts
 # with table-driven cases; the limit keeps each transport area in one runner

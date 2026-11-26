@@ -96,8 +96,7 @@ const SFEventsScript = preload("res://addons/signal_fish/protocol/sf_events.gd")
 const SFErrorCodesScript = preload("res://addons/signal_fish/protocol/sf_error_codes.gd")
 const SFLogScript = preload("res://addons/signal_fish/protocol/sf_log.gd")
 const SFMessagesScript = preload("res://addons/signal_fish/protocol/sf_messages.gd")
-const SFMsgpackScript = preload("res://addons/signal_fish/protocol/sf_msgpack.gd")
-const SFBinaryFramesScript = preload("res://addons/signal_fish/protocol/sf_binary_frames.gd")
+const SFBinaryGameDataScript = preload("res://addons/signal_fish/protocol/sf_binary_game_data.gd")
 const SFGameDataFormatScript = preload("res://addons/signal_fish/protocol/sf_game_data_format.gd")
 const SFDiagnosticsScript = preload("res://addons/signal_fish/protocol/sf_diagnostics.gd")
 const SFTransportScript = preload("res://addons/signal_fish/transport/sf_transport.gd")
@@ -127,18 +126,14 @@ const MAX_REMEMBERED_SECRETS := 16
 ## the episode is over and retrying can never rejoin.
 const CLOSE_CODE_KICKED := 4007
 
+## Request this capability through [member SignalFishConfig.requested_capabilities]
+## to enable [method send_game_data_binary_to] on compatible servers.
+const ADDRESSED_BINARY_GAME_DATA_CAPABILITY := "addressed_binary_game_data"
+
 const _PLAYER_ROOM_STATES: Array[SessionState] = [
 	SessionState.IN_ROOM_WAITING,
 	SessionState.IN_ROOM_LOBBY,
 	SessionState.IN_ROOM_FINALIZED,
-]
-
-## The negotiated formats under which WebSocket binary frames carry game
-## data; anything else (json / server-default) drops binary upstream.
-const _BINARY_GAME_DATA_FORMATS: Array[int] = [
-	SFTypesScript.GameDataEncoding.MESSAGE_PACK,
-	SFTypesScript.GameDataEncoding.RKYV,
-	SFTypesScript.GameDataEncoding.PROTOBUF,
 ]
 
 ## Active transport adapter. Tests may inject an [code]SFTransport[/code]
@@ -221,6 +216,8 @@ var _effective_game_data_format: int = SFTypesScript.GameDataEncoding.UNKNOWN
 # Gates the v3-only opaque wire shapes (rkyv/protobuf) on the version the
 # server actually picked, not the one the config requested.
 var _negotiated_protocol_version := 0
+var _addressed_binary_requested := false
+var _addressed_binary_negotiated := false
 # Latest authoritative session plan. Sends gated on it mirror the rust
 # client's ensure_v3 + SessionPlanUnavailable + stale-generation refusals:
 # the server relays signals verbatim but refuses generation-less frames at
@@ -389,6 +386,11 @@ func is_authenticated() -> bool:
 	return not _session_state in [SessionState.UNAUTHENTICATED, SessionState.AUTHENTICATING]
 
 
+## Whether the current connection negotiated addressed binary game data.
+func has_addressed_binary_game_data() -> bool:
+	return _connection_state == ConnectionState.CONNECTED and _addressed_binary_negotiated
+
+
 func get_connection_state() -> ConnectionState:
 	return _connection_state
 
@@ -482,70 +484,66 @@ func send_game_data(data: Variant) -> Error:
 	return _send_envelope(SFMessagesScript.game_data(data), "send_game_data")
 
 
-## Sends opaque game-data bytes as one WebSocket binary frame. Upstream
-## semantics: the server tags inbound binary with the negotiated format and
-## drops binary on [code]json[/code] connections
-## (server `websocket/connection.rs`), so the client refuses that case
-## locally. Pair with [member SignalFishConfig.game_data_format] set to
-## [code]message_pack[/code] or an opaque [code]rkyv[/code]/[code]protobuf[/code]
-## request (server issue #627; opaque encodings are v3-only). If the server
-## downgraded the requested format (see [signal protocol_info]), the
-## effective negotiation rules.
+## Broadcasts opaque game data using the negotiated binary format.
 func send_game_data_binary(bytes: PackedByteArray) -> Error:
-	var guard := _guard_player_send("send_game_data_binary")
+	return _send_binary_game_data(bytes, "send_game_data_binary")
+
+
+## Sends opaque bytes to a current seated peer with the same binary format
+## and negotiated addressed capability. The server validates the seat.
+## Returns [code]ERR_UNAVAILABLE[/code] without negotiation and [code]ERR_BUSY[/code]
+## while negotiation is pending or transport capacity is unavailable.
+func send_game_data_binary_to(recipient_uuid: String, bytes: PackedByteArray) -> Error:
+	if not SFTypeUtils.is_canonical_uuid_text(recipient_uuid) or recipient_uuid == _player_id:
+		_emit_protocol_error("send_game_data_binary_to requires another player's UUID")
+		return ERR_INVALID_PARAMETER
+	var recipient := recipient_uuid.replace("-", "").hex_decode()
+	return _send_binary_game_data(bytes, "send_game_data_binary_to", recipient)
+
+
+func _send_binary_game_data(
+	bytes: PackedByteArray, action: String, recipient := PackedByteArray()
+) -> Error:
+	var guard := _guard_player_send(action)
 	if guard != OK:
 		return guard
 	if bytes.is_empty():
-		_emit_protocol_error("send_game_data_binary requires non-empty bytes")
+		_emit_protocol_error("%s requires non-empty bytes" % action)
 		return ERR_INVALID_PARAMETER
-	var negotiated := _negotiated_game_data_format()
-	if not _BINARY_GAME_DATA_FORMATS.has(negotiated):
-		_emit_protocol_error(
-			(
-				"send_game_data_binary requires a binary game_data_format"
-				+ " (message_pack, rkyv, or protobuf); this connection"
-				+ " negotiates %s" % _game_data_format_label(negotiated)
-			)
-		)
-		return ERR_UNAVAILABLE
-	if (
-		negotiated != SFTypesScript.GameDataEncoding.MESSAGE_PACK
-		and _negotiated_protocol_version < 3
-	):
-		# Defense in depth: ProtocolInfo already downgraded a v2-opaque
-		# request; without that statement the version is unknown, and the
-		# opaque v2 pass-through carries no sender attribution (issue #627).
-		_emit_protocol_error(
-			(
-				"%s game data requires protocol version 3; no v3 negotiation seen"
-				% _game_data_format_label(negotiated)
-			)
-		)
-		return ERR_UNAVAILABLE
-	var buffered: int = transport.get_buffered_amount()
-	if buffered > _config.max_buffered_bytes:
-		_emit_protocol_error(
-			(
-				(
-					"transport backpressure: %d buffered bytes exceeds cap %d;"
-					+ " send_game_data_binary dropped"
-				)
-				% [buffered, _config.max_buffered_bytes]
-			)
-		)
+	if _addressed_binary_requested and not _protocol_info_seen:
 		return ERR_BUSY
-	if bytes.size() > _config.max_outbound_frame_bytes:
+	if not recipient.is_empty():
+		if not has_addressed_binary_game_data():
+			return ERR_UNAVAILABLE
+		if not _session_state in _PLAYER_ROOM_STATES:
+			_emit_protocol_error("%s requires a seated room member" % action)
+			return ERR_UNAUTHORIZED
+	return _send_binary_frame(bytes, action, recipient)
+
+
+func _send_binary_frame(
+	bytes: PackedByteArray, action: String, recipient: PackedByteArray
+) -> Error:
+	var format_error := SFBinaryGameDataScript.send_format_error(
+		action, _negotiated_game_data_format(), _negotiated_protocol_version
+	)
+	if not format_error.is_empty():
+		_emit_protocol_error(format_error)
+		return ERR_UNAVAILABLE
+	if _over_outbound_buffer_cap(action):
+		return ERR_BUSY
+	var use_carrier := _addressed_binary_negotiated
+	var frame_size := SFBinaryGameDataScript.frame_size(bytes, recipient, use_carrier)
+	if frame_size > _config.max_outbound_frame_bytes:
 		_emit_protocol_error(
 			(
-				"send_game_data_binary: %d bytes exceeds outbound cap %d"
-				% [bytes.size(), _config.max_outbound_frame_bytes]
+				"%s: %d bytes exceeds outbound cap %d"
+				% [action, frame_size, _config.max_outbound_frame_bytes]
 			)
 		)
 		return ERR_INVALID_DATA
-	var error: Error = transport.send_binary(bytes)
-	if error != OK and error != ERR_BUSY:
-		_emit_protocol_error("send_game_data_binary send failed: %s" % error_string(error))
-	return error
+	var frame := SFBinaryGameDataScript.encode(bytes, recipient, use_carrier)
+	return _report_send_error(transport.send_binary(frame), action)
 
 
 func set_ready() -> Error:
@@ -799,6 +797,8 @@ func _open_transport(target: String) -> Error:
 	_reconnect_dial = not _reconnect_auth_token.is_empty()
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.UNKNOWN
 	_negotiated_protocol_version = 0
+	_addressed_binary_requested = false
+	_addressed_binary_negotiated = false
 	# Reconnect dials keep their budget until a room baseline arrives.
 	_reconnect_timer_running = false
 	_reset_session()
@@ -887,6 +887,8 @@ func _send_authenticate() -> Error:
 	var protocol_version: Variant = null
 	if _config.protocol_version > 0:
 		protocol_version = _config.protocol_version
+	var requested_capabilities := _config.requested_capabilities
+	_addressed_binary_requested = ADDRESSED_BINARY_GAME_DATA_CAPABILITY in requested_capabilities
 	var envelope := SFMessagesScript.authenticate(
 		_config.app_id,
 		_optional_string(_config.sdk_version),
@@ -895,7 +897,7 @@ func _send_authenticate() -> Error:
 		protocol_version,
 		_string_list_or_null(_config.supported_transports),
 		_string_list_or_null(_config.supported_topologies),
-		_string_list_or_null(_config.requested_capabilities),
+		_string_list_or_null(requested_capabilities),
 		_optional_string(_config.credential)
 	)
 	return _send_envelope(envelope, "authenticate")
@@ -933,39 +935,26 @@ func _on_transport_packet(payload: PackedByteArray, is_text: bool) -> void:
 
 func _handle_binary_frame(payload: PackedByteArray) -> void:
 	if _connection_state != ConnectionState.CONNECTED:
-		# Mirror the text path: while CLOSING the client only polls for the
-		# close frame; late binary frames must not surface game data (or
-		# re-arm anything) after a user close.
+		# As on the text path, late data during close must stay silent.
 		return
-	var negotiated := _negotiated_game_data_format()
-	if negotiated in _BINARY_GAME_DATA_FORMATS:
-		var frame: Dictionary = SFBinaryFramesScript.decode_envelope(payload)
-		if not frame["ok"]:
-			var frame_error: String = frame["error"]
-			_emit_protocol_error(frame_error)
-			return
-		var frame_encoding: int = frame["encoding"]
-		var from_player: String = frame["from_player"]
-		var frame_payload: PackedByteArray = frame["payload"]
-		if (
-			_config.decode_msgpack_payloads
-			and (frame_encoding == SFTypesScript.GameDataEncoding.MESSAGE_PACK)
-		):
-			var decoded: Dictionary = SFMsgpackScript.decode(frame_payload)
-			if decoded["ok"]:
-				game_data_received.emit(from_player, decoded["value"])
-				return
-			_emit_protocol_error(
-				"message_pack payload decode failed (%s); surfacing raw bytes" % decoded["error"]
-			)
-		game_data_binary_received.emit(from_player, frame_encoding, frame_payload)
-	else:
-		_emit_protocol_error(
-			(
-				"binary frame on a %s-negotiated connection; dropped"
-				% _game_data_format_label(negotiated)
-			)
-		)
+	var allow_addressed := _addressed_binary_negotiated and _session_state in _PLAYER_ROOM_STATES
+	var frame := SFBinaryGameDataScript.decode(
+		payload, _negotiated_game_data_format(), allow_addressed, _config.decode_msgpack_payloads
+	)
+	if not frame["ok"]:
+		var frame_error: String = frame["error"]
+		_emit_protocol_error(frame_error)
+		return
+	var from_player: String = frame["from_player"]
+	if frame.has("value"):
+		game_data_received.emit(from_player, frame["value"])
+		return
+	if frame.has("warning"):
+		var warning: String = frame["warning"]
+		_emit_protocol_error(warning)
+	var frame_encoding: int = frame["encoding"]
+	var frame_payload: PackedByteArray = frame["payload"]
+	game_data_binary_received.emit(from_player, frame_encoding, frame_payload)
 
 
 func _negotiated_game_data_format() -> int:
@@ -986,13 +975,9 @@ func _downgrade_game_data_format(reason: String) -> void:
 	if _effective_game_data_format == SFTypesScript.GameDataEncoding.JSON:
 		return
 	_effective_game_data_format = SFTypesScript.GameDataEncoding.JSON
-	# WARN, not info (issue #146): a game that asked for binary data cannot
-	# send any after the fallback, so it must clear the default log level.
+	_addressed_binary_negotiated = false
+	# WARN keeps this send-blocking fallback visible at the default log level (#146).
 	SFLogScript.warn("%s; falling back to json" % reason, _secrets)
-
-
-func _game_data_format_label(encoding: int) -> String:
-	return SFGameDataFormatScript.label(encoding)
 
 
 func _on_transport_closed(code: int, reason: String) -> void:
@@ -1085,6 +1070,12 @@ func _handle_event(event: SFTypesScript.DecodedEvent) -> void:
 				)
 				if not reason.is_empty():
 					_downgrade_game_data_format(reason)
+				_addressed_binary_negotiated = (
+					_addressed_binary_requested
+					and info.protocol_version >= 3
+					and SFBinaryGameDataScript.supports_encoding(_negotiated_game_data_format())
+					and ADDRESSED_BINARY_GAME_DATA_CAPABILITY in info.capabilities
+				)
 				protocol_info.emit(info)
 		&"authentication_error":
 			_session_state = SessionState.UNAUTHENTICATED
@@ -1306,14 +1297,7 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 		# down mid-dispatch, e.g. from a `connected` signal handler.
 		_emit_protocol_error("%s requires a connected transport" % action)
 		return ERR_UNCONFIGURED
-	var buffered: int = transport.get_buffered_amount()
-	if buffered > _config.max_buffered_bytes:
-		_emit_protocol_error(
-			(
-				"transport backpressure: %d buffered bytes exceeds cap %d; %s dropped"
-				% [buffered, _config.max_buffered_bytes, action]
-			)
-		)
+	if _over_outbound_buffer_cap(action):
 		return ERR_BUSY
 	# Reject unrepresentable nested Variants before sending an empty frame.
 	var wire := SFMessagesScript.encode(envelope)
@@ -1329,7 +1313,23 @@ func _send_envelope(envelope: Dictionary, action: String) -> Error:
 			)
 		)
 		return ERR_INVALID_DATA
-	var error: Error = transport.send_text(wire)
+	return _report_send_error(transport.send_text(wire), action)
+
+
+func _over_outbound_buffer_cap(action: String) -> bool:
+	var buffered: int = transport.get_buffered_amount()
+	if buffered <= _config.max_buffered_bytes:
+		return false
+	_emit_protocol_error(
+		(
+			"transport backpressure: %d buffered bytes exceeds cap %d; %s dropped"
+			% [buffered, _config.max_buffered_bytes, action]
+		)
+	)
+	return true
+
+
+func _report_send_error(error: Error, action: String) -> Error:
 	if error != OK and error != ERR_BUSY:
 		_emit_protocol_error("%s send failed: %s" % [action, error_string(error)])
 	return error

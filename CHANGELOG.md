@@ -10,6 +10,8 @@ released version.
 
 ### Added
 
+- Send binary game data to one seated peer on compatible servers.
+
 - Add opt-in `SFWebRTCMesh.pair_recovery_enabled` to rebuild a closed WebRTC
   pair inside the current room and plan. Both peers must enable it before the
   plan starts. The game manages relay fallback (#585).
