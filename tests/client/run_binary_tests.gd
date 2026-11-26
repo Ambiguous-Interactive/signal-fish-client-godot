@@ -12,6 +12,7 @@ const ClientFixtures = preload("res://tests/client/client_fixtures.gd")
 const CompletionGuard = preload("res://tests/completion_guard.gd")
 
 const PLAYER_B := ClientFixtures.PLAYER_B
+const ADDRESSED_CAPABILITY := "addressed_binary_game_data"
 
 var _failures: Array[String] = []
 var _test_done := false
@@ -43,6 +44,8 @@ func _init() -> void:
 func _run() -> void:
 	var cases: Array[Callable] = [
 		_test_send_guards_and_wire_bytes,
+		_test_addressed_negotiation_and_sends,
+		_test_addressed_receive_shape,
 		_test_envelope_receive_paths,
 		_test_rkyv_pass_through,
 		_test_opaque_format_negotiation,
@@ -115,6 +118,110 @@ func _test_send_guards_and_wire_bytes() -> void:
 	var cap_error: String = errors[errors.size() - 1]
 	_assert_string_contains(cap_error, "outbound cap", "binary cap message")
 	client.free()
+	_done()
+
+
+func _test_addressed_negotiation_and_sends() -> void:
+	var config := _opaque_config("message_pack")
+	config.requested_capabilities = PackedStringArray([ADDRESSED_CAPABILITY])
+	var payload := PackedByteArray([0x01, 0x00, 0xFF])
+	var client := _make_in_room_client_with(config)
+	var fake: SFFakeTransportScript = client.transport
+	_assert_equal(ERR_BUSY, client.send_game_data_binary(payload), "wait for ProtocolInfo")
+	_assert_equal([], fake.sent_binary, "pre-negotiation bytes stay off wire")
+	var info := _protocol_info()
+	info["protocol_version"] = 3
+	info["game_data_formats"] = ["message_pack"]
+	fake.inject_server_message({"type": "ProtocolInfo", "data": info})
+	_assert_equal(OK, client.send_game_data_binary(payload), "server without capability sends")
+	_assert_equal([payload], fake.sent_binary, "server without capability receives legacy bytes")
+	_assert_equal(false, client.has_addressed_binary_game_data(), "legacy capability query")
+	_assert_equal(
+		ERR_UNAVAILABLE,
+		client.send_game_data_binary_to(PLAYER_B, payload),
+		"server without capability refuses addressed send"
+	)
+	_assert_equal([payload], fake.sent_binary, "addressed refusal never broadcasts")
+	client.free()
+
+	client = _make_in_room_client_with(config)
+	fake = client.transport
+	info["capabilities"] = [ADDRESSED_CAPABILITY]
+	fake.inject_server_message({"type": "ProtocolInfo", "data": info})
+	_assert_equal(true, client.has_addressed_binary_game_data(), "negotiated capability query")
+	_assert_equal(OK, client.send_game_data_binary(payload), "negotiated broadcast sends")
+	var broadcast := PackedByteArray([0]) + payload
+	var directed := PackedByteArray([1]) + _uuid_bytes(PLAYER_B) + payload
+	_assert_equal([broadcast], fake.sent_binary, "negotiated broadcast has opcode")
+	var configured_cap := config.max_outbound_frame_bytes
+	config.max_outbound_frame_bytes = directed.size() - 1
+	_assert_equal(
+		ERR_INVALID_DATA,
+		client.send_game_data_binary_to(PLAYER_B, payload),
+		"addressed cap includes opcode and target"
+	)
+	config.max_outbound_frame_bytes = directed.size()
+	_assert_equal(
+		ERR_INVALID_PARAMETER,
+		client.send_game_data_binary_to("bad", payload),
+		"malformed target refused"
+	)
+	fake.busy_on_send = true
+	_assert_equal(
+		ERR_BUSY, client.send_game_data_binary_to(PLAYER_B, payload), "addressed engine pressure"
+	)
+	fake.busy_on_send = false
+	_assert_equal(OK, client.send_game_data_binary_to(PLAYER_B, payload), "addressed retry sends")
+	_assert_equal([broadcast, directed], fake.sent_binary, "exact directed retry bytes")
+	config.max_outbound_frame_bytes = configured_cap
+	_assert_equal(OK, client.close(), "deliberate close")
+	_assert_equal(false, client.has_addressed_binary_game_data(), "closed capability query")
+	client.transport = SFFakeTransportScript.new()
+	fake = client.transport
+	_assert_equal(OK, client.connect_to_server("ws://example.test/socket"), "redial")
+	fake.inject_open()
+	fake.inject_server_message({"type": "Authenticated", "data": _authenticated_data()})
+	_assert_equal(ERR_BUSY, client.send_game_data_binary(payload), "redial waits for new echo")
+	_assert_equal([], fake.sent_binary, "redial does not inherit carrier")
+	client.free()
+	_done()
+
+
+func _test_addressed_receive_shape() -> void:
+	var payload := PackedByteArray([0x01, 0x00, 0xFF])
+	var ordinary := _v3_binary_frame(PLAYER_B, "message_pack", payload)
+	var addressed := PackedByteArray([1]) + ordinary
+	var info := _protocol_info()
+	info["protocol_version"] = 3
+	info["game_data_formats"] = ["message_pack", "rkyv"]
+	info["capabilities"] = [ADDRESSED_CAPABILITY]
+	for requested: bool in [false, true]:
+		var config := _opaque_config("message_pack")
+		if requested:
+			config.requested_capabilities = PackedStringArray([ADDRESSED_CAPABILITY])
+		var client := _make_in_room_client_with(config)
+		var fake: SFFakeTransportScript = client.transport
+		var received: Array[Array] = []
+		client.game_data_binary_received.connect(
+			func(from_player: String, encoding: int, bytes: PackedByteArray) -> void:
+				received.append([from_player, encoding, bytes])
+		)
+		var errors := _track_protocol_errors(client)
+		fake.inject_server_message({"type": "ProtocolInfo", "data": info})
+		fake.inject_binary(ordinary)
+		fake.inject_binary(addressed)
+		fake.inject_binary(PackedByteArray([1]) + _binary_frame(PLAYER_B, "message_pack", payload))
+		fake.inject_binary(PackedByteArray([1]) + _v3_binary_frame(PLAYER_B, "rkyv", payload))
+		fake.inject_binary(addressed + PackedByteArray([0]))
+		fake.inject_binary(PackedByteArray([1]))
+		var expected := [PLAYER_B, SFTypesScript.GameDataEncoding.MESSAGE_PACK, payload]
+		_assert_equal(
+			[expected, expected] if requested else [expected],
+			received,
+			"only negotiated v3 addressed bytes are delivered as ordinary raw payload"
+		)
+		_assert_equal(4 if requested else 5, errors.size(), "malformed addressed frames rejected")
+		client.free()
 	_done()
 
 
